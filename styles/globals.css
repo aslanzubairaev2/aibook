@@ -483,6 +483,225 @@ ol, ul { list-style: none; }
   to { transform: translateX(-50%) translateY(0); opacity: 1; }
 }
 
+/* ─── Home Dashboard ─────────────────────────────────────────────────────── */
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 22px;
+  padding-top: 20px;
+}
+
+.home-title {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.home-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.home-streak {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--accent);
+  min-width: 20px;
+}
+
+/* Book hero card */
+.book-hero-card {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(212, 168, 71, 0.15) 0%, var(--bg-elevated) 60%);
+  display: grid;
+  grid-template-columns: 68px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.book-hero-cover {
+  width: 68px;
+  height: 90px;
+  border-radius: 8px;
+  display: grid;
+  place-items: flex-end center;
+  padding-bottom: 8px;
+  flex-shrink: 0;
+  grid-row: 1 / 3;
+}
+
+.book-hero-lang {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: rgba(20, 18, 16, 0.6);
+}
+
+.book-hero-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 4px;
+}
+
+.book-hero-title {
+  display: block;
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 2px;
+}
+
+.book-hero-author {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.book-hero-progress { margin-top: 2px; }
+
+.book-hero-cta {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
+/* Vocabulary section */
+.vocab-section {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.vocab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.vocab-title {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.vocab-today {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.vocab-grid {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 16px;
+  align-items: center;
+}
+
+.vocab-ring-wrap {
+  position: relative;
+  width: 80px;
+  height: 80px;
+}
+
+.vocab-ring {
+  width: 80px;
+  height: 80px;
+}
+
+.vocab-ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.vocab-ring-count {
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.vocab-ring-sub {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.vocab-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vocab-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vocab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.vocab-stat-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.vocab-stat-val {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+/* ─── Speak Button ───────────────────────────────────────────────────────── */
+.speak-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: rgba(212, 168, 71, 0.1);
+  color: var(--accent);
+  flex-shrink: 0;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+.speak-btn:hover { background: rgba(212, 168, 71, 0.22); transform: scale(1.08); }
+.speak-btn:active { transform: scale(0.94); }
+
+/* ─── Clickable word in AI panel ─────────────────────────────────────────── */
+.panel-clickable-word {
+  display: inline;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+.panel-clickable-word:hover {
+  background: rgba(212, 168, 71, 0.18);
+}
+
 /* ─── Responsive ─────────────────────────────────────────────────────────── */
 @media (min-width: 640px) {
   .screen { padding: 28px 24px 0; }

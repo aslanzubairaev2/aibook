@@ -12,25 +12,11 @@ type Props = {
 };
 
 export function SettingsView({ profile, onProfileChange }: Props) {
-  const [apiKey, setApiKey] = useState("");
-  const [saved, setSaved] = useState(false);
-
   function setLang(field: "nativeLanguage" | "targetLanguage", value: string) {
     const updated = { ...profile, [field]: value };
     saveLocalProfile(updated);
     onProfileChange(updated);
   }
-
-  function handleSaveApiKey() {
-    if (!apiKey.trim()) return;
-    // In production: send to server or store encrypted
-    // For MVP: store key in localStorage (user-provided key)
-    localStorage.setItem("aibook_api_key", apiKey.trim());
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }
-
-  const hasStoredKey = typeof window !== "undefined" && Boolean(localStorage.getItem("aibook_api_key"));
 
   return (
     <section className="screen">
@@ -81,30 +67,6 @@ export function SettingsView({ profile, onProfileChange }: Props) {
         </div>
       </div>
 
-      {/* API Key */}
-      <p className="setting-section-title">AI · Gemini API</p>
-      <div className="surface-card" style={{ padding: 16, marginBottom: 8 }}>
-        <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12, lineHeight: 1.5 }}>
-          Ключ хранится только в вашем браузере и используется для AI-анализа текста.
-          {hasStoredKey && <span style={{ color: "var(--green)", marginLeft: 6 }}>✓ Ключ сохранён</span>}
-        </p>
-        <input
-          className="api-key-input"
-          type="password"
-          placeholder="AIza..."
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          style={{ marginBottom: 10 }}
-        />
-        <button
-          className="primary-btn"
-          type="button"
-          onClick={handleSaveApiKey}
-          disabled={!apiKey.trim()}
-        >
-          {saved ? <><Check size={16} /> Сохранено</> : "Сохранить ключ"}
-        </button>
-      </div>
 
       {/* Info */}
       <p className="setting-section-title">О приложении</p>

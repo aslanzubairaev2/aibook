@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { BookOpen, Trash2, Upload } from "lucide-react";
 import { parseBook } from "@/lib/parser/index";
 import { saveLocalBook, deleteLocalBook } from "@/lib/db/local";
-import { BOOK_FORMATS, SUPPORTED_LANGUAGES } from "@/lib/config";
+import { BOOK_FORMATS } from "@/lib/config";
 import type { Book } from "@/lib/types";
 
 type Props = {
@@ -15,12 +15,12 @@ type Props = {
 };
 
 const COVER_COLORS = [
-  "linear-gradient(135deg, #d4a847, #a07c2e)",
-  "linear-gradient(135deg, #7aab6a, #4a7040)",
-  "linear-gradient(135deg, #6a98c4, #3a5880)",
-  "linear-gradient(135deg, #c46a6a, #8a3a3a)",
-  "linear-gradient(135deg, #9b7ab0, #5a3a70)",
-  "linear-gradient(135deg, #c4956a, #8a5a30)",
+  "linear-gradient(160deg, #c49a28 0%, #7a5c10 100%)",
+  "linear-gradient(160deg, #4a7a5c 0%, #254030 100%)",
+  "linear-gradient(160deg, #3a5c8a 0%, #1a2c4a 100%)",
+  "linear-gradient(160deg, #8a3a3a 0%, #4a1a1a 100%)",
+  "linear-gradient(160deg, #6a3a8a 0%, #35174a 100%)",
+  "linear-gradient(160deg, #8a5a2a 0%, #4a2a0a 100%)",
 ];
 
 function pickColor(title: string) {
@@ -53,7 +53,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
         title,
         author: "Неизвестен",
         language: "de",
-        format: (ext as "txt" | "epub"),
+        format: ext as "txt" | "epub",
         progress: 0,
         paragraphIndex: 0,
         chapterTitle: "Начало",
@@ -70,8 +70,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
     }
   }
 
-  function handleDelete(e: React.MouseEvent, id: string) {
-    e.stopPropagation();
+  function handleDelete(id: string) {
     deleteLocalBook(id);
     onBooksChange(books.filter((b) => b.id !== id));
   }
@@ -89,7 +88,6 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
         </button>
       </header>
 
-      {/* Hidden file input */}
       <input
         ref={fileRef}
         type="file"
@@ -98,29 +96,24 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
         onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }}
       />
 
-      {/* Dropzone */}
+      {/* Drop zone */}
       <div
         className={`upload-zone${isDragOver ? " drag-over" : ""}`}
         style={{ marginBottom: 20 }}
         onClick={() => fileRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
         onDragLeave={() => setIsDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setIsDragOver(false);
-          const f = e.dataTransfer.files[0];
-          if (f) void handleFile(f);
-        }}
+        onDrop={(e) => { e.preventDefault(); setIsDragOver(false); const f = e.dataTransfer.files[0]; if (f) void handleFile(f); }}
       >
         {isLoading ? (
           <>
-            <div className="shimmer-line" style={{ width: 40, height: 40, borderRadius: "50%" }} />
+            <div className="shimmer-line" style={{ width: 40, height: 40, borderRadius: "50%", margin: "0 auto" }} />
             <strong>Разбираем книгу…</strong>
             <span>Это займёт несколько секунд</span>
           </>
         ) : (
           <>
-            <Upload size={32} />
+            <Upload size={28} />
             <strong>Перетащите файл сюда</strong>
             <span>или нажмите для выбора · TXT, EPUB</span>
           </>
@@ -128,12 +121,11 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
       </div>
 
       {error && (
-        <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: 8, background: "rgba(196, 106, 106, 0.15)", border: "1px solid rgba(196,106,106,0.3)", color: "#c46a6a", fontSize: 14 }}>
+        <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: 8, background: "rgba(196,106,106,0.15)", border: "1px solid rgba(196,106,106,0.3)", color: "#e08888", fontSize: 14 }}>
           {error}
         </div>
       )}
 
-      {/* Book list */}
       {books.length === 0 ? (
         <div className="empty-state">
           <BookOpen size={40} />
@@ -143,11 +135,14 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
       ) : (
         <div className="book-list">
           {books.map((book) => (
-            <button
+            // Use div + role=button to avoid nesting buttons inside buttons
+            <div
               key={book.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               className={`book-card${book.id === activeBookId ? " active" : ""}`}
               onClick={() => onOpenBook(book)}
+              onKeyDown={(e) => { if (e.key === "Enter") onOpenBook(book); }}
             >
               <span className="book-cover" style={{ background: book.coverColor }}>
                 {book.language.toUpperCase()}
@@ -161,17 +156,18 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
               </span>
               <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }}>
                 <span className="book-pct">{Math.round(book.progress)}%</span>
+                {/* Separate button — safe because parent is div not button */}
                 <button
                   type="button"
                   className="icon-btn"
                   style={{ width: 32, height: 32 }}
-                  onClick={(e) => handleDelete(e, book.id)}
+                  onClick={(e) => { e.stopPropagation(); handleDelete(book.id); }}
                   aria-label="Удалить книгу"
                 >
-                  <Trash2 size={15} style={{ color: "var(--red)" }} />
+                  <Trash2 size={14} style={{ color: "var(--red)" }} />
                 </button>
               </span>
-            </button>
+            </div>
           ))}
         </div>
       )}

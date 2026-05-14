@@ -3,11 +3,11 @@
   position: fixed;
   inset: 0;
   z-index: 40;
-  display: grid;
-  place-items: end center;
-  padding: 0;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
   animation: backdrop-in 0.2s ease forwards;
 }
 
@@ -18,39 +18,39 @@
 
 /* ─── Word Modal ─────────────────────────────────────────────────────────── */
 .word-modal {
-  width: min(100%, 560px);
-  max-height: 90svh;
+  width: min(100%, 580px);
+  max-height: 92svh;
   overflow-y: auto;
-  padding: 16px 16px 40px;
+  padding: 16px 18px 48px;
   border-top: 1px solid var(--border-strong);
   border-radius: 20px 20px 0 0;
   background: var(--bg-secondary);
-  animation: modal-slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: modal-slide-up 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes modal-slide-up {
-  from { transform: translateY(40px); opacity: 0; }
+  from { transform: translateY(32px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
 }
 
-/* ─── Modal Header ───────────────────────────────────────────────────────── */
+/* ─── Modal Top Bar ──────────────────────────────────────────────────────── */
 .modal-top-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
 /* ─── Word Hero ──────────────────────────────────────────────────────────── */
 .word-hero {
-  margin: 14px 0 18px;
+  margin: 16px 0 20px;
 }
 
 .word-hero-lemma {
-  font-size: 36px;
+  font-size: 38px;
   font-weight: 900;
   color: var(--accent);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   line-height: 1;
 }
 
@@ -58,12 +58,12 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .word-meta-chip {
   display: inline-block;
-  padding: 3px 10px;
+  padding: 4px 12px;
   border-radius: 99px;
   border: 1px solid var(--border);
   font-size: 12px;
@@ -72,7 +72,7 @@
   background: var(--bg-elevated);
 }
 
-.word-meta-chip.gender { color: var(--accent); border-color: var(--border-strong); }
+.word-meta-chip.gender { color: var(--accent); border-color: rgba(212,168,71,0.4); background: rgba(212,168,71,0.08); }
 
 /* ─── Modal Sections ─────────────────────────────────────────────────────── */
 .modal-section {
@@ -94,11 +94,14 @@
 }
 
 .modal-translation { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
-.modal-explanation { font-size: 14px; color: var(--surface-dim); line-height: 1.6; }
+.modal-explanation { font-size: 13px; color: var(--surface-dim); line-height: 1.6; }
 
-/* ─── Examples List ──────────────────────────────────────────────────────── */
-.examples-list { display: grid; gap: 8px; }
+/* ─── Examples ───────────────────────────────────────────────────────────── */
+.examples-list { display: flex; flex-direction: column; gap: 8px; }
+
 .example-item {
+  display: flex;
+  gap: 8px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: rgba(240, 230, 211, 0.04);
@@ -108,27 +111,37 @@
   font-family: var(--font-reading);
 }
 
-/* ─── Action Grid ────────────────────────────────────────────────────────── */
-.action-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-  margin-top: 12px;
+.example-num {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: 700;
 }
 
-.action-grid-btn {
+/* ─── Action List (reference: rows with arrow) ───────────────────────────── */
+.action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.action-list-btn {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 44px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  justify-content: space-between;
+  padding: 14px 16px;
+  border: 0;
+  border-top: 1px solid var(--border);
   color: var(--text-primary);
   background: var(--bg-elevated);
-  font-size: 13px;
-  font-weight: 700;
-  transition: background var(--transition-fast), border-color var(--transition-fast);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  transition: background var(--transition-fast);
 }
-.action-grid-btn:hover { background: var(--bg-card); border-color: var(--border-strong); }
+
+.action-list-btn:first-child { border-top: 0; }
+.action-list-btn:hover { background: var(--bg-card); }

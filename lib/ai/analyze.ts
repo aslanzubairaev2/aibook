@@ -10,14 +10,9 @@ interface AnalyzeParams {
 }
 
 export async function analyzeSelection(params: AnalyzeParams): Promise<AiAnalysis> {
-  const storedKey = typeof window !== "undefined" ? localStorage.getItem("aibook_api_key") ?? "" : "";
-
   const res = await fetch("/api/ai/analyze", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(storedKey ? { "x-gemini-key": storedKey } : {}),
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
   });
 

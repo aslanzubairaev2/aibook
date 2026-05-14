@@ -2,7 +2,7 @@
 .reader-screen {
   max-width: 100%;
   min-height: 100svh;
-  padding-bottom: 340px;
+  padding-bottom: 380px;
 }
 
 .reader-toolbar {
@@ -13,8 +13,8 @@
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: rgba(20, 18, 16, 0.94);
-  backdrop-filter: blur(18px);
+  background: rgba(18, 15, 10, 0.96);
+  backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border);
 }
 
@@ -39,24 +39,30 @@
   white-space: nowrap;
 }
 
+.reader-pct {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
 /* ─── Reading Progress Bar ───────────────────────────────────────────────── */
 .reading-progress-bar {
   position: sticky;
   top: 61px;
   z-index: 9;
   height: 2px;
-  background: rgba(240, 230, 211, 0.07);
-  overflow: hidden;
+  background: rgba(240, 230, 211, 0.06);
 }
 .reading-progress-fill {
   height: 100%;
   background: var(--accent);
-  transition: width 1s ease;
+  transition: width 1.2s ease;
 }
 
 /* ─── Book Text ──────────────────────────────────────────────────────────── */
 .reader-content {
-  max-width: 700px;
+  max-width: 680px;
   margin: 0 auto;
   padding: 28px 20px 0;
 }
@@ -69,9 +75,7 @@
   word-break: break-word;
 }
 
-.reader-text p {
-  margin-bottom: 28px;
-}
+.reader-text p { margin-bottom: 28px; }
 
 /* ─── Text Token (clickable word) ────────────────────────────────────────── */
 .text-token {
@@ -89,18 +93,23 @@
 }
 .text-token:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* ─── Highlight Levels ───────────────────────────────────────────────────── */
-.hl-sentence {
-  background: var(--hl-sentence);
-  border-radius: 6px;
-  padding: 2px 4px;
+/* ─── Three-level Highlights ─────────────────────────────────────────────── */
+
+/* Level 3 — Sentence: applied per-token inside active sentence, very faint */
+.text-token.hl-sentence-tok {
+  background: rgba(212, 168, 71, 0.10);
+  border-radius: 3px;
 }
-.hl-phrase {
-  background: var(--hl-phrase);
+
+/* Level 2 — Phrase: comma-segment, medium amber */
+.text-token.hl-phrase {
+  background: rgba(212, 168, 71, 0.36);
   border-radius: 4px;
   padding: 1px 3px;
 }
-.hl-word {
+
+/* Level 1 — Word: fully opaque amber */
+.text-token.hl-word {
   background: var(--hl-word);
   border-radius: 3px;
   color: var(--hl-word-text);

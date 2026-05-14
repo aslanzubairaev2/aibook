@@ -5,7 +5,7 @@ import { ArrowLeft } from "lucide-react";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { analyzeSelection } from "@/lib/ai/analyze";
-import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
+import { splitIntoTokens, normalizeToken, splitSentencesWithRanges, findPhraseOffsets } from "@/lib/selector/text";
 import { saveLocalProgress, saveLocalBook } from "@/lib/db/local";
 import { APP_CONFIG } from "@/lib/config";
 import type { AiAnalysis, Book, Flashcard, UserProfile } from "@/lib/types";
@@ -20,8 +20,14 @@ type Props = {
 
 type ActiveToken = {
   token: string;
-  normalized: string;
-  sentence: string;
+  paraIndex: number;
+  tokIdxInPara: number; // paragraph-level token index → used for exact word highlight
+  sentStart: number;    // paragraph char offset of sentence start
+  sentEnd: number;      // paragraph char offset of sentence end
+  phraseStart: number;  // paragraph char offset of phrase start
+  phraseEnd: number;    // paragraph char offset of phrase end
+  sentence: string;     // sentence text (for AI + panel)
+  phraseText: string;   // phrase text (for panel)
   sentenceBefore: string;
   sentenceAfter: string;
 };
@@ -35,89 +41,134 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   const contentRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Scroll to last saved position
   useEffect(() => {
-    if (book.paragraphIndex > 0 && contentRef.current) {
-      const paragraphs = contentRef.current.querySelectorAll("p[data-idx]");
-      const target = paragraphs[Math.min(book.paragraphIndex, paragraphs.length - 1)];
-      target?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, [book.paragraphIndex]);
+    if (book.paragraphIndex <= 0) return;
+    const t = setTimeout(() => {
+      const els = contentRef.current?.querySelectorAll("p[data-idx]");
+      const el = els?.[Math.min(book.paragraphIndex, (els?.length ?? 1) - 1)];
+      el?.scrollIntoView({ behavior: "instant", block: "start" });
+    }, 200);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Auto-save progress on scroll
   const handleScroll = useCallback(() => {
     if (!contentRef.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       if (!contentRef.current) return;
-      const paragraphs = Array.from(contentRef.current.querySelectorAll("p[data-idx]"));
-      const viewportMid = window.innerHeight / 2;
-      let closestIdx = 0;
-      let minDist = Infinity;
-      for (const p of paragraphs) {
-        const rect = p.getBoundingClientRect();
-        const dist = Math.abs(rect.top - viewportMid);
-        if (dist < minDist) {
-          minDist = dist;
-          closestIdx = Number((p as HTMLElement).dataset.idx ?? 0);
-        }
+      const els = Array.from(contentRef.current.querySelectorAll("p[data-idx]"));
+      const mid = window.innerHeight / 2;
+      let best = 0, bestDist = Infinity;
+      for (const el of els) {
+        const d = Math.abs(el.getBoundingClientRect().top - mid);
+        if (d < bestDist) { bestDist = d; best = Number((el as HTMLElement).dataset.idx ?? 0); }
       }
-      const progress = Math.round((closestIdx / Math.max(book.paragraphs.length - 1, 1)) * 100);
-      const updated = { ...book, paragraphIndex: closestIdx, progress };
-      saveLocalProgress(book.id, closestIdx);
+      const progress = Math.round((best / Math.max(book.paragraphs.length - 1, 1)) * 100);
+      const updated = { ...book, paragraphIndex: best, progress };
+      saveLocalProgress(book.id, best);
       saveLocalBook(updated);
       onProgressUpdate(updated);
     }, APP_CONFIG.progressSaveDebounceMs);
   }, [book, onProgressUpdate]);
 
-  const sentences = book.paragraphs; // each paragraph is treated as a sentence-group
+  useEffect(() => {
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [handleScroll]);
 
-  async function handleTokenTap(token: string, paraIndex: number) {
-    const normalized = normalizeToken(token);
-    if (!normalized) return;
+  async function handleTokenTap(token: string, paraIndex: number, tokIdxInPara: number) {
+    const norm = normalizeToken(token);
+    if (!norm) return;
 
-    const sentence = book.paragraphs[paraIndex];
-    const sentenceBefore = book.paragraphs[paraIndex - 1] ?? "";
-    const sentenceAfter = book.paragraphs[paraIndex + 1] ?? "";
+    const para = book.paragraphs[paraIndex];
 
-    setActive({ token, normalized, sentence, sentenceBefore, sentenceAfter });
+    // Build para token char offsets
+    const tokens = splitIntoTokens(para);
+    const offsets: number[] = [];
+    let off = 0;
+    for (const t of tokens) { offsets.push(off); off += t.length; }
+
+    const targetChar = offsets[tokIdxInPara];
+
+    // Find which sentence contains this char
+    const sentRanges = splitSentencesWithRanges(para);
+    let sentStart = 0, sentEnd = para.length, sentText = para, sentIdx = 0;
+    for (let i = 0; i < sentRanges.length; i++) {
+      if (targetChar >= sentRanges[i].start && targetChar < sentRanges[i].end) {
+        ({ start: sentStart, end: sentEnd, text: sentText } = sentRanges[i]);
+        sentIdx = i;
+        break;
+      }
+    }
+
+    // Phrase offsets in para coords
+    const [phraseStart, phraseEnd] = findPhraseOffsets(para, sentStart, sentEnd, targetChar);
+    const phraseText = para.slice(phraseStart, phraseEnd).trim();
+
+    const newActive: ActiveToken = {
+      token, paraIndex, tokIdxInPara,
+      sentStart, sentEnd, phraseStart, phraseEnd,
+      sentence: sentText.trim(),
+      phraseText,
+      sentenceBefore: sentRanges[sentIdx - 1]?.text.trim() ?? book.paragraphs[paraIndex - 1] ?? "",
+      sentenceAfter: sentRanges[sentIdx + 1]?.text.trim() ?? book.paragraphs[paraIndex + 1] ?? "",
+    };
+
+    setActive(newActive);
     setAnalysis(null);
     setIsLoading(true);
 
     try {
       const result = await analyzeSelection({
         word: token,
-        sentence,
-        sentenceBefore,
-        sentenceAfter,
+        sentence: newActive.sentence,
+        sentenceBefore: newActive.sentenceBefore,
+        sentenceAfter: newActive.sentenceAfter,
         nativeLanguage: profile.nativeLanguage,
         targetLanguage: profile.targetLanguage,
       });
       setAnalysis(result);
     } catch (err) {
       console.error("AI analysis failed:", err);
-      setAnalysis(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  // Called from AiPanel when user taps a word in phrase/sentence text
+  async function handleWordTapInPanel(word: string) {
+    if (!active) return;
+    const norm = normalizeToken(word);
+    if (!norm) return;
+    setAnalysis(null);
+    setIsLoading(true);
+    setIsWordModalOpen(true);
+    try {
+      const result = await analyzeSelection({
+        word,
+        sentence: active.sentence,
+        sentenceBefore: active.sentenceBefore,
+        sentenceAfter: active.sentenceAfter,
+        nativeLanguage: profile.nativeLanguage,
+        targetLanguage: profile.targetLanguage,
+      });
+      setAnalysis(result);
+    } catch (err) {
+      console.error("Panel word tap failed:", err);
     } finally {
       setIsLoading(false);
     }
   }
 
   function handleAddCard(type: Flashcard["type"]) {
-    if (!analysis) return;
-    const cardByType = {
-      word:     { front: analysis.word.lemma,     back: analysis.word.translation },
-      phrase:   { front: analysis.phrase.text,    back: analysis.phrase.translation },
-      sentence: { front: analysis.sentence.text,  back: analysis.sentence.translation },
+    if (!analysis || !active) return;
+    const map = {
+      word:     { front: analysis.word.lemma,  back: analysis.word.translation },
+      phrase:   { front: active.phraseText,    back: analysis.phrase.translation },
+      sentence: { front: active.sentence,      back: analysis.sentence.translation },
     };
-    const card: Flashcard = {
-      id: `card-${Date.now()}`,
-      type,
-      source: book.title,
-      addedAt: new Date().toISOString(),
-      status: "new",
-      ...cardByType[type],
-    };
-    onAddCard(card);
+    onAddCard({ id: `card-${Date.now()}`, type, source: book.title, addedAt: new Date().toISOString(), status: "new", ...map[type] });
     showToast("✓ Карточка добавлена");
   }
 
@@ -126,11 +177,8 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     setTimeout(() => setToast(null), 2000);
   }
 
-  const phraseWords = analysis?.phrase.text.toLowerCase().split(/\s+/) ?? [];
-
   return (
-    <div className="reader-screen" onScroll={handleScroll}>
-      {/* Toolbar */}
+    <div className="reader-screen">
       <header className="reader-toolbar">
         <button className="icon-btn" onClick={onBack} type="button" aria-label="Назад">
           <ArrowLeft size={20} />
@@ -139,49 +187,61 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           <strong>{book.title}</strong>
           <span>{book.author}</span>
         </div>
-        <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent)", flexShrink: 0 }}>
-          {Math.round(book.progress)}%
-        </span>
+        <span className="reader-pct">{Math.round(book.progress)}%</span>
       </header>
 
-      {/* Progress bar */}
       <div className="reading-progress-bar">
         <div className="reading-progress-fill" style={{ width: `${book.progress}%` }} />
       </div>
 
-      {/* Text */}
       <div className="reader-content" ref={contentRef}>
         <article className="reader-text">
           {book.paragraphs.map((para, paraIndex) => {
-            const isSentenceActive = active?.sentence === para;
+            const isParaActive = active?.paraIndex === paraIndex;
+
+            // Build token array + char offsets once per paragraph
+            const tokens = splitIntoTokens(para);
+            const offsets: number[] = [];
+            let off = 0;
+            for (const t of tokens) { offsets.push(off); off += t.length; }
+
             return (
-              <p
-                key={paraIndex}
-                data-idx={paraIndex}
-                className={isSentenceActive ? "hl-sentence" : undefined}
-              >
-                {splitIntoTokens(para).map((token, tokIdx) => {
+              <p key={paraIndex} data-idx={paraIndex}>
+                {tokens.map((token, tokIdx) => {
                   const norm = normalizeToken(token);
                   if (!norm) return <span key={tokIdx}>{token}</span>;
 
-                  const isWord   = isSentenceActive && active?.normalized === norm;
-                  const isPhrase = isSentenceActive && phraseWords.some((pw) => normalizeToken(pw) === norm);
+                  const charPos = offsets[tokIdx];
+
+                  // Word: exact match by paragraph-level token index
+                  const isWord = isParaActive && tokIdx === active!.tokIdxInPara;
+
+                  // Sentence: char in [sentStart, sentEnd)
+                  const inSent = isParaActive &&
+                    charPos >= active!.sentStart && charPos < active!.sentEnd;
+
+                  // Phrase: char in [phraseStart, phraseEnd) AND in sentence
+                  const isPhrase = inSent && !isWord &&
+                    charPos >= active!.phraseStart && charPos < active!.phraseEnd;
 
                   const cls = [
                     "text-token",
-                    isWord   ? "hl-word"   : "",
-                    isPhrase && !isWord ? "hl-phrase" : "",
+                    isWord  ? "hl-word"         : "",
+                    isPhrase ? "hl-phrase"       : "",
+                    inSent && !isWord && !isPhrase ? "hl-sentence-tok" : "",
                   ].filter(Boolean).join(" ");
 
                   return (
-                    <button
+                    <span
                       key={tokIdx}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       className={cls}
-                      onClick={() => void handleTokenTap(token, paraIndex)}
+                      onClick={() => void handleTokenTap(token, paraIndex, tokIdx)}
+                      onKeyDown={(e) => { if (e.key === "Enter") void handleTokenTap(token, paraIndex, tokIdx); }}
                     >
                       {token}
-                    </button>
+                    </span>
                   );
                 })}
               </p>
@@ -190,29 +250,30 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
         </article>
       </div>
 
-      {/* AI Panel */}
       {active && (
         <AiPanel
           selection={active}
           analysis={analysis}
           isLoading={isLoading}
+          lang={profile.targetLanguage}
           onClose={() => { setActive(null); setAnalysis(null); }}
           onOpenWordModal={() => setIsWordModalOpen(true)}
           onAddCard={handleAddCard}
+          onWordTap={handleWordTapInPanel}
         />
       )}
 
-      {/* Word Modal */}
       {analysis && (
         <WordModal
           analysis={analysis}
           isOpen={isWordModalOpen}
+          isLoading={isLoading}
+          lang={profile.targetLanguage}
           onClose={() => setIsWordModalOpen(false)}
           onAddCard={() => { handleAddCard("word"); setIsWordModalOpen(false); }}
         />
       )}
 
-      {/* Toast */}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
