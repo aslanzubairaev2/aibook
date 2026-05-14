@@ -1,0 +1,109 @@
+/* ─── Reader Layout ──────────────────────────────────────────────────────── */
+.reader-screen {
+  max-width: 100%;
+  min-height: 100svh;
+  padding-bottom: 340px;
+}
+
+.reader-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(20, 18, 16, 0.94);
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--border);
+}
+
+.reader-toolbar-info {
+  flex: 1;
+  min-width: 0;
+}
+.reader-toolbar-info strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reader-toolbar-info span {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Reading Progress Bar ───────────────────────────────────────────────── */
+.reading-progress-bar {
+  position: sticky;
+  top: 61px;
+  z-index: 9;
+  height: 2px;
+  background: rgba(240, 230, 211, 0.07);
+  overflow: hidden;
+}
+.reading-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 1s ease;
+}
+
+/* ─── Book Text ──────────────────────────────────────────────────────────── */
+.reader-content {
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 28px 20px 0;
+}
+
+.reader-text {
+  color: var(--surface);
+  font-family: var(--font-reading);
+  font-size: 19px;
+  line-height: 1.95;
+  word-break: break-word;
+}
+
+.reader-text p {
+  margin-bottom: 28px;
+}
+
+/* ─── Text Token (clickable word) ────────────────────────────────────────── */
+.text-token {
+  display: inline;
+  border: 0;
+  border-radius: 3px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.text-token:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ─── Highlight Levels ───────────────────────────────────────────────────── */
+.hl-sentence {
+  background: var(--hl-sentence);
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+.hl-phrase {
+  background: var(--hl-phrase);
+  border-radius: 4px;
+  padding: 1px 3px;
+}
+.hl-word {
+  background: var(--hl-word);
+  border-radius: 3px;
+  color: var(--hl-word-text);
+  padding: 1px 2px;
+  font-weight: 700;
+}

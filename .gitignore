@@ -1,0 +1,10 @@
+node_modules
+.next
+out
+.env
+.env.local
+.npm-cache
+npm-debug.log*
+next-dev.*.log
+.playwright-mcp
+.local-server.log

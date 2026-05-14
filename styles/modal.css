@@ -1,0 +1,134 @@
+/* ─── Modal Backdrop ─────────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: end center;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  animation: backdrop-in 0.2s ease forwards;
+}
+
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ─── Word Modal ─────────────────────────────────────────────────────────── */
+.word-modal {
+  width: min(100%, 560px);
+  max-height: 90svh;
+  overflow-y: auto;
+  padding: 16px 16px 40px;
+  border-top: 1px solid var(--border-strong);
+  border-radius: 20px 20px 0 0;
+  background: var(--bg-secondary);
+  animation: modal-slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes modal-slide-up {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* ─── Modal Header ───────────────────────────────────────────────────────── */
+.modal-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+/* ─── Word Hero ──────────────────────────────────────────────────────────── */
+.word-hero {
+  margin: 14px 0 18px;
+}
+
+.word-hero-lemma {
+  font-size: 36px;
+  font-weight: 900;
+  color: var(--accent);
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.word-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.word-meta-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+}
+
+.word-meta-chip.gender { color: var(--accent); border-color: var(--border-strong); }
+
+/* ─── Modal Sections ─────────────────────────────────────────────────────── */
+.modal-section {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.modal-section-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.modal-translation { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+.modal-explanation { font-size: 14px; color: var(--surface-dim); line-height: 1.6; }
+
+/* ─── Examples List ──────────────────────────────────────────────────────── */
+.examples-list { display: grid; gap: 8px; }
+.example-item {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(240, 230, 211, 0.04);
+  font-size: 14px;
+  color: var(--surface);
+  line-height: 1.55;
+  font-family: var(--font-reading);
+}
+
+/* ─── Action Grid ────────────────────────────────────────────────────────── */
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.action-grid-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  font-size: 13px;
+  font-weight: 700;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.action-grid-btn:hover { background: var(--bg-card); border-color: var(--border-strong); }

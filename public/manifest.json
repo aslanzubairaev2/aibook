@@ -1,0 +1,10 @@
+{
+  "name": "AI Language Reader",
+  "short_name": "AI Reader",
+  "description": "AI-powered book reader for language learning",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1512",
+  "theme_color": "#1a1512",
+  "icons": []
+}

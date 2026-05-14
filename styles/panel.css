@@ -1,0 +1,107 @@
+/* ─── AI Panel (Bottom Sheet) ────────────────────────────────────────────── */
+.ai-panel {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 30;
+  max-height: 70svh;
+  max-width: 720px;
+  margin: 0 auto;
+  overflow-y: auto;
+  padding: 0 14px 108px;
+  border-top: 1px solid var(--border-strong);
+  border-radius: 20px 20px 0 0;
+  background: rgba(28, 25, 18, 0.98);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.5);
+  animation: panel-slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes panel-slide-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* ─── Panel Drag Handle ──────────────────────────────────────────────────── */
+.panel-drag-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 6px;
+}
+
+.panel-handle-bar {
+  width: 36px;
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(240, 230, 211, 0.2);
+}
+
+.panel-close-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 2px;
+}
+
+.panel-selected-word {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+/* ─── Panel Sections ─────────────────────────────────────────────────────── */
+.panel-section {
+  margin-bottom: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(39, 35, 25, 0.95);
+}
+
+.panel-section-word   { border-color: rgba(212, 168, 71, 0.45); }
+.panel-section-phrase { border-color: rgba(212, 168, 71, 0.25); }
+
+.panel-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.panel-section-label {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.panel-text-main    { display: block; font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+.panel-text-trans   { display: block; color: var(--surface); font-size: 15px; margin-bottom: 5px; }
+.panel-text-note    { display: block; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+
+/* ─── Shimmer Skeleton ───────────────────────────────────────────────────── */
+.shimmer-line {
+  display: block;
+  height: 12px;
+  border-radius: 99px;
+  background: linear-gradient(
+    90deg,
+    rgba(240, 230, 211, 0.06) 0%,
+    rgba(240, 230, 211, 0.14) 50%,
+    rgba(240, 230, 211, 0.06) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite ease-in-out;
+  margin-bottom: 8px;
+}
+.shimmer-line.short { width: 58%; }
+.shimmer-line.medium { width: 78%; }
+
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
