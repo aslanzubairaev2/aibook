@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Play, Pause } from "lucide-react";
-import { subscribeTTS, pauseTTS, resumeTTS, seekTTS, TTSState, getTTSState } from "@/lib/tts";
+import { Play, Pause, X } from "lucide-react";
+import { subscribeTTS, pauseTTS, resumeTTS, seekTTS, stopTTS, TTSState, getTTSState } from "@/lib/tts";
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -101,6 +101,14 @@ export function AudioScrubber() {
             <span>{formatTime(duration)}</span>
           </div>
         </div>
+
+        <button 
+          className="audio-close-btn" 
+          onClick={stopTTS}
+          aria-label="Остановить"
+        >
+          <X size={18} />
+        </button>
       </div>
     </div>
   );
