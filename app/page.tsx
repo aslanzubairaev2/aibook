@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/ui/AppShell";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
 import { LibraryView } from "@/components/library/LibraryView";
+import { DiscoverView } from "@/components/discover/DiscoverView";
 import { ReaderView } from "@/components/reader/ReaderView";
 import { CardsView } from "@/components/cards/CardsView";
 import { SettingsView } from "@/components/settings/SettingsView";
@@ -181,7 +182,16 @@ function AppInner() {
           activeBookId={activeBook?.id ?? null}
           onBooksChange={handleBooksChange}
           onOpenBook={handleOpenBook}
+          onNavigate={setSection}
           defaultLanguage={profile.targetLanguage}
+        />
+      )}
+
+      {section === "discover" && (
+        <DiscoverView
+          books={books}
+          onBooksChange={handleBooksChange}
+          onOpenBook={handleOpenBook}
         />
       )}
 
@@ -238,6 +248,7 @@ function dbBookToBook(db: DbBook, paragraphs: string[], paragraphIndex: number, 
     chapterTitle: "Глава 1",
     lastReadAt: new Date(db.created_at).toLocaleDateString("ru"),
     coverColor: db.cover_color,
+    coverUrl: db.cover_url,
     paragraphs,
   };
 }

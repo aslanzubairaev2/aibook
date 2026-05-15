@@ -85,7 +85,7 @@ ol, ul { list-style: none; }
   gap: 2px;
   max-width: 620px;
   margin: 0 auto;
-  padding: 6px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
   background: rgba(30, 27, 22, 0.96);
@@ -96,13 +96,13 @@ ol, ul { list-style: none; }
 .nav-item {
   display: grid;
   place-items: center;
-  gap: 3px;
-  min-height: 54px;
+  gap: 2px;
+  min-height: 44px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 12px;
   color: var(--text-muted);
   background: transparent;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.02em;
   transition: color var(--transition-fast), background var(--transition-fast);

@@ -1,4 +1,4 @@
-export type AppSection = "home" | "books" | "reader" | "cards" | "settings";
+export type AppSection = "home" | "discover" | "books" | "reader" | "cards" | "settings";
 
 export type SelectionType = "word" | "phrase" | "sentence";
 
@@ -13,6 +13,7 @@ export type Book = {
   chapterTitle: string;
   lastReadAt: string;
   coverColor: string;       // CSS color for cover gradient
+  coverUrl?: string | null; // Optional external cover URL
   paragraphs: string[];
 };
 

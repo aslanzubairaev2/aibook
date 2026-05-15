@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Home, Library, Settings, SquareStack } from "lucide-react";
+import { BookOpen, Home, Library, Settings, SquareStack, Globe } from "lucide-react";
 import type { AppSection } from "@/lib/types";
 
 type Props = {
@@ -11,8 +11,8 @@ type Props = {
 
 const NAV = [
   { id: "home" as AppSection, label: "Главная", Icon: Home },
+  { id: "discover" as AppSection, label: "Каталог", Icon: Globe },
   { id: "books" as AppSection, label: "Книги", Icon: Library },
-  { id: "reader" as AppSection, label: "Читалка", Icon: BookOpen },
   { id: "cards" as AppSection, label: "Карточки", Icon: SquareStack },
   { id: "settings" as AppSection, label: "Настройки", Icon: Settings },
 ];
@@ -30,7 +30,7 @@ export function AppShell({ activeSection, onSectionChange, children }: Props) {
             onClick={() => onSectionChange(id)}
             aria-current={activeSection === id ? "page" : undefined}
           >
-            <Icon size={21} aria-hidden />
+            <Icon size={18} aria-hidden />
             <span>{label}</span>
           </button>
         ))}

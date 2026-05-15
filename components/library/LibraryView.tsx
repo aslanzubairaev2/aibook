@@ -1,13 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { BookOpen, Trash2, Upload } from "lucide-react";
+import { BookOpen, Trash2, Upload, Plus, FileText, Globe } from "lucide-react";
 import { parseBook } from "@/lib/parser/index";
 import { saveLocalBook, deleteLocalBook } from "@/lib/db/local";
 import { sbUpsertBook, sbUpsertChapter, sbDeleteBook } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { BOOK_FORMATS } from "@/lib/config";
-import type { Book } from "@/lib/types";
+import type { Book, AppSection } from "@/lib/types";
 
 import { franc } from "franc-min";
 
@@ -16,6 +16,7 @@ type Props = {
   activeBookId: string | null;
   onBooksChange: (books: Book[]) => void;
   onOpenBook: (book: Book) => void;
+  onNavigate: (section: AppSection) => void;
   defaultLanguage: string;
 };
 
@@ -34,11 +35,12 @@ function pickColor(title: string) {
   return COVER_COLORS[hash % COVER_COLORS.length];
 }
 
-export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, defaultLanguage }: Props) {
+export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, onNavigate, defaultLanguage }: Props) {
   const { user } = useAuth();
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -77,6 +79,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, de
         chapterTitle: "Начало",
         lastReadAt: new Date().toLocaleDateString("ru"),
         coverColor,
+        coverUrl: null,
         paragraphs,
       };
 
@@ -126,16 +129,69 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, de
   }
 
   return (
-    <section className="screen">
+    <section 
+      className="screen"
+      style={{ position: "relative", minHeight: "100vh" }}
+      onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+    >
+      {/* Context Menu Overlay */}
+      {isMenuOpen && (
+        <div 
+          style={{ position: "fixed", inset: 0, zIndex: 40 }} 
+          onClick={() => setIsMenuOpen(false)} 
+        />
+      )}
+
       <header className="screen-header">
         <div>
           <p className="eyebrow">Библиотека</p>
           <h1>Книги</h1>
         </div>
-        <button className="pill-btn" type="button" onClick={() => fileRef.current?.click()}>
-          <Upload size={16} />
-          Загрузить
-        </button>
+        <div style={{ position: "relative" }}>
+          <button 
+            className="icon-btn" 
+            style={{ borderRadius: 99, background: "var(--accent)", color: "var(--text-dark)", border: "none" }}
+            type="button" 
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+          >
+            <Plus size={20} />
+          </button>
+          
+          {isMenuOpen && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 8px)",
+              right: 0,
+              width: 220,
+              background: "var(--bg-elevated)",
+              border: "1px solid var(--border-strong)",
+              borderRadius: "var(--radius-md)",
+              boxShadow: "var(--shadow-md)",
+              padding: 8,
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              zIndex: 50
+            }}>
+              <button 
+                className="action-card" 
+                style={{ padding: "10px 12px", border: "none", gap: 12, borderRadius: "var(--radius-sm)", gridTemplateColumns: "auto 1fr" }}
+                onClick={() => { setIsMenuOpen(false); fileRef.current?.click(); }}
+              >
+                <FileText size={18} style={{ color: "var(--accent)" }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>С компьютера</span>
+              </button>
+              <button 
+                className="action-card" 
+                style={{ padding: "10px 12px", border: "none", gap: 12, borderRadius: "var(--radius-sm)", gridTemplateColumns: "auto 1fr" }}
+                onClick={() => { setIsMenuOpen(false); onNavigate("discover"); }}
+              >
+                <Globe size={18} style={{ color: "var(--green)" }} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Из каталога</span>
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
       <input
@@ -148,29 +204,28 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, de
 
 
 
-      {/* Drop zone */}
-      <div
-        className={`upload-zone${isDragOver ? " drag-over" : ""}`}
-        style={{ marginBottom: 20 }}
-        onClick={() => fileRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={(e) => { e.preventDefault(); setIsDragOver(false); const f = e.dataTransfer.files[0]; if (f) void handleFile(f); }}
-      >
-        {isLoading ? (
-          <>
-            <div className="shimmer-line" style={{ width: 40, height: 40, borderRadius: "50%", margin: "0 auto" }} />
-            <strong>Разбираем книгу…</strong>
-            <span>Это займёт несколько секунд</span>
-          </>
-        ) : (
-          <>
-            <Upload size={28} />
-            <strong>Перетащите файл сюда</strong>
-            <span>или нажмите для выбора · TXT, EPUB</span>
-          </>
-        )}
-      </div>
+      {/* Drop zone overlay */}
+      {isDragOver && (
+        <div
+          className="upload-zone drag-over"
+          style={{ position: 'absolute', inset: 0, zIndex: 100, background: 'rgba(20, 18, 16, 0.95)', margin: 0, justifyContent: 'center' }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={(e) => { e.preventDefault(); setIsDragOver(false); const f = e.dataTransfer.files[0]; if (f) void handleFile(f); }}
+        >
+          <Upload size={48} style={{ marginBottom: 16 }} />
+          <strong style={{ fontSize: 24 }}>Отпустите файл здесь</strong>
+          <span style={{ fontSize: 16 }}>TXT или EPUB</span>
+        </div>
+      )}
+
+      {/* Loading State for parsing */}
+      {isLoading && (
+        <div style={{ marginBottom: 20, padding: 20, textAlign: "center", background: "var(--bg-elevated)", borderRadius: 12 }}>
+          <div className="shimmer-line" style={{ width: 40, height: 40, borderRadius: "50%", margin: "0 auto 12px" }} />
+          <strong>Разбираем книгу…</strong>
+          <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 4 }}>Это займёт несколько секунд</p>
+        </div>
+      )}
 
       {error && (
         <div style={{ marginBottom: 16, padding: "12px 14px", borderRadius: 8, background: "rgba(196,106,106,0.15)", border: "1px solid rgba(196,106,106,0.3)", color: "#e08888", fontSize: 14 }}>
@@ -195,8 +250,11 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, de
               onClick={() => onOpenBook(book)}
               onKeyDown={(e) => { if (e.key === "Enter") onOpenBook(book); }}
             >
-              <span className="book-cover" style={{ background: book.coverColor }}>
-                {book.language.toUpperCase()}
+              <span 
+                className="book-cover" 
+                style={book.coverUrl ? { backgroundImage: `url(${book.coverUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: book.coverColor }}
+              >
+                {!book.coverUrl && book.language.toUpperCase()}
               </span>
               <span className="book-info">
                 <span className="book-info-title">{book.title}</span>

@@ -437,6 +437,34 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
 
       <div className="reader-content" ref={contentRef}>
         <article className="reader-text">
+          <div style={{ textAlign: "center", padding: "40px 20px 60px", marginBottom: "40px", borderBottom: "1px solid var(--divider)" }}>
+            <div 
+              style={{
+                width: 140,
+                height: 210,
+                margin: "0 auto 24px",
+                borderRadius: 8,
+                boxShadow: "0 12px 32px rgba(0,0,0,0.15)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "rgba(255,255,255,0.8)",
+                fontSize: "2rem",
+                fontWeight: "bold",
+                ...(book.coverUrl 
+                  ? { backgroundImage: `url(${book.coverUrl})`, backgroundSize: "cover", backgroundPosition: "center" } 
+                  : { background: book.coverColor })
+              }}
+            >
+              {!book.coverUrl && book.language.toUpperCase()}
+            </div>
+            <h1 style={{ fontSize: "2rem", fontWeight: 800, marginBottom: "8px", color: "var(--text)" }}>
+              {book.title}
+            </h1>
+            <p style={{ fontSize: "1.25rem", color: "var(--text-secondary)" }}>
+              {book.author}
+            </p>
+          </div>
           {book.paragraphs.map((para, paraIndex) => {
             const isParaActive = active?.paraIndex === paraIndex;
 
