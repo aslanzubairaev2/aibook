@@ -118,6 +118,17 @@ export function resumeTTS() {
   }
 }
 
+export function stopTTS() {
+  if (state.status === "idle") return;
+  const profile = getLocalProfile();
+  if (profile.ttsProvider === "gemini") {
+    stopGeminiAudio();
+  } else if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+    updateState({ status: "idle" });
+  }
+}
+
 export function seekTTS(time: number) {
   if (state.status === "idle" || state.status === "loading") return;
   if (!currentBuffer || !currentAudioCtx) return;

@@ -11,6 +11,7 @@ import { saveLocalProgress, saveLocalBook } from "@/lib/db/local";
 import { sbUpsertProgress, sbInsertFlashcard, sbGetCachedWord, sbSaveCachedWord } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { APP_CONFIG } from "@/lib/config";
+import { stopTTS } from "@/lib/tts";
 import type { AiAnalysis, Book, Flashcard, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -100,6 +101,8 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   }, [handleScroll]);
 
   async function handleTokenTap(token: string, paraIndex: number, tokIdxInPara: number) {
+    stopTTS(); // Close scrubber when selecting a new word
+    
     const norm = normalizeToken(token);
     if (!norm) return;
 
@@ -184,6 +187,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   }
 
   async function handleWordTapInPanel(word: string, contextSentence?: string) {
+    stopTTS(); // Close scrubber when opening a new word
     if (!active) return;
     const norm = normalizeToken(word);
     if (!norm) return;

@@ -107,7 +107,14 @@ export function WordModal({ analysis, isOpen, isLoading, lang, onClose, onAddCar
                     <SpeakButton text={text} lang={lang} size={14} />
                   </div>
                   {translation && (
-                    <div style={{ paddingLeft: "24px", color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                    <div style={{ 
+                      paddingLeft: "24px", 
+                      color: "rgba(240, 230, 211, 0.45)", 
+                      fontSize: "13px",
+                      fontStyle: "italic",
+                      marginTop: "-2px",
+                      lineHeight: 1.4
+                    }}>
                       {translation}
                     </div>
                   )}

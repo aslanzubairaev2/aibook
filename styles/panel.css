@@ -194,9 +194,10 @@
 */
 .audio-scrubber-overlay {
   bottom: calc(env(safe-area-inset-bottom, 16px) + 120px);
-  left: 16px;
-  right: 16px;
-  max-width: 400px;
+  left: 0;
+  right: 0;
+  width: 95%;
+  max-width: 95%;
   margin: 0 auto;
   border-radius: 100px;
   padding: 8px 16px;
