@@ -17,6 +17,7 @@ export type TTSState = {
   duration: number;
   text: string;
   activeCharIndex?: number;
+  repeat?: boolean;
 };
 
 type TTSListener = (state: TTSState) => void;
@@ -65,6 +66,10 @@ export function getTTSState(): TTSState {
 function updateState(partial: Partial<TTSState>) {
   state = { ...state, ...partial };
   emitState();
+}
+
+export function toggleRepeat() {
+  updateState({ repeat: !state.repeat });
 }
 
 function stopGeminiAudio(silent = false) {
@@ -231,8 +236,13 @@ export async function speak(
         
         currentSource.onended = () => {
           if (!isPaused) {
-            stopGeminiAudio();
-            if (onEnd) onEnd();
+            if (state.repeat) {
+              startOffset = 0;
+              if (playSegmentFn) playSegmentFn(0);
+            } else {
+              stopGeminiAudio();
+              if (onEnd) onEnd();
+            }
           }
         };
       };
@@ -284,27 +294,33 @@ export async function speak(
   stopGeminiAudio(true);
   window.speechSynthesis.cancel();
   
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = LANG_MAP[lang] ?? lang;
-  utter.rate = 0.88;
-  
-  utter.onstart = () => { 
-    updateState({ status: "playing", activeCharIndex: 0 });
-    if (onStart) onStart(); 
+  const startSpeech = () => {
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = LANG_MAP[lang] ?? lang;
+    utter.rate = 0.88;
+    
+    utter.onstart = () => { 
+      updateState({ status: "playing", activeCharIndex: 0 });
+      if (onStart) onStart(); 
+    };
+    utter.onboundary = (e) => {
+      updateState({ activeCharIndex: e.charIndex });
+    };
+    utter.onend = () => { 
+      if (state.repeat) {
+        startSpeech();
+      } else {
+        updateState({ status: "idle", activeCharIndex: 0 });
+        if (onEnd) onEnd(); 
+      }
+    };
+    utter.onerror = () => { 
+      updateState({ status: "idle", activeCharIndex: 0 });
+      if (onEnd) onEnd(); 
+    };
+    window.speechSynthesis.speak(utter);
   };
-  utter.onboundary = (e) => {
-    updateState({ activeCharIndex: e.charIndex });
-  };
-  utter.onend = () => { 
-    updateState({ status: "idle", activeCharIndex: 0 });
-    if (onEnd) onEnd(); 
-  };
-  utter.onerror = () => { 
-    updateState({ status: "idle", activeCharIndex: 0 });
-    if (onEnd) onEnd(); 
-  };
-
-  window.speechSynthesis.speak(utter);
+  startSpeech();
   
   return {
     pause: () => {
