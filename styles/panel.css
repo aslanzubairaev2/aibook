@@ -317,3 +317,9 @@
   font-variant-numeric: tabular-nums;
   font-weight: 500;
 }
+
+/* ─── Karaoke Highlighting ───────────────────────────────────────────────── */
+.karaoke-spoken {
+  color: var(--accent);
+  transition: color 0.15s ease-out;
+}

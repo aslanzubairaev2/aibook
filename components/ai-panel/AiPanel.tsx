@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ChevronDown, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { normalizeToken } from "@/lib/selector/text";
+import { subscribeTTS, getTTSState, TTSState } from "@/lib/tts";
 import type { AiAnalysis, Flashcard } from "@/lib/types";
 
 type Tab = "word" | "phrase" | "sentence";
@@ -139,18 +140,64 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
 
 /** Renders text as clickable word tokens */
 function ClickableText({ text, lang, onWordTap, className }: { text: string; lang: string; onWordTap: (w: string) => void; className?: string }) {
+  const [ttsState, setTtsState] = useState<TTSState | null>(null);
+
+  useEffect(() => {
+    let unmounted = false;
+    let localState: TTSState | null = null;
+    let rAFRef: number | null = null;
+
+    const unsubscribe = subscribeTTS((newState) => {
+      localState = newState;
+      if (!unmounted) setTtsState(newState);
+    });
+
+    const tick = () => {
+      if (!unmounted && localState && localState.status === "playing") {
+        setTtsState(getTTSState());
+      }
+      rAFRef = requestAnimationFrame(tick);
+    };
+    rAFRef = requestAnimationFrame(tick);
+
+    return () => {
+      unmounted = true;
+      unsubscribe();
+      if (rAFRef) cancelAnimationFrame(rAFRef);
+    };
+  }, []);
+
+  const activeCharIndex = (ttsState && (ttsState.status === "playing" || ttsState.status === "paused") && ttsState.text === text) 
+    ? ttsState.activeCharIndex 
+    : undefined;
+
   const words = text.split(/(\s+)/);
+  let currentOffset = 0;
+
   return (
     <span className={className} style={{ flex: 1 }}>
       {words.map((chunk, i) => {
+        const startIndex = currentOffset;
+        const endIndex = currentOffset + chunk.length;
+        currentOffset = endIndex;
+
         const norm = normalizeToken(chunk);
-        if (!norm) return <span key={i}>{chunk}</span>;
+        
+        let isSpoken = false;
+        if (activeCharIndex !== undefined && activeCharIndex >= 0) {
+           if (activeCharIndex >= startIndex) {
+               isSpoken = true;
+           }
+        }
+
+        if (!norm) return <span key={i} className={isSpoken ? "karaoke-spoken" : ""}>{chunk}</span>;
+        
         return (
           <span
             key={i}
             role="button"
             tabIndex={0}
-            className="panel-clickable-word"
+            className={`panel-clickable-word ${isSpoken ? "karaoke-spoken" : ""}`}
             onClick={() => onWordTap(chunk)}
             onKeyDown={(e) => { if (e.key === "Enter") onWordTap(chunk); }}
           >

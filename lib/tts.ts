@@ -16,6 +16,7 @@ export type TTSState = {
   currentTime: number;
   duration: number;
   text: string;
+  activeCharIndex?: number;
 };
 
 type TTSListener = (state: TTSState) => void;
@@ -54,7 +55,9 @@ export function subscribeTTS(listener: TTSListener) {
 export function getTTSState(): TTSState {
   if (state.status === "playing" && currentAudioCtx && currentSource) {
     const elapsed = currentAudioCtx.currentTime - startTime;
-    return { ...state, currentTime: Math.min(startOffset + elapsed, state.duration) };
+    const currentTime = Math.min(startOffset + elapsed, state.duration);
+    const activeCharIndex = state.duration > 0 ? Math.floor((currentTime / state.duration) * state.text.length) : 0;
+    return { ...state, currentTime, activeCharIndex };
   }
   return state;
 }
@@ -96,7 +99,8 @@ export function pauseTTS() {
       startOffset += elapsed;
       currentSource.onended = null;
       currentSource.stop();
-      updateState({ status: "paused", currentTime: startOffset });
+      const activeCharIndex = state.duration > 0 ? Math.floor((startOffset / state.duration) * state.text.length) : 0;
+      updateState({ status: "paused", currentTime: startOffset, activeCharIndex });
     }
   } else if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.pause();
@@ -134,6 +138,7 @@ export function seekTTS(time: number) {
   if (!currentBuffer || !currentAudioCtx) return;
   
   const targetTime = Math.max(0, Math.min(time, state.duration));
+  const activeCharIndex = state.duration > 0 ? Math.floor((targetTime / state.duration) * state.text.length) : 0;
   
   if (state.status === "playing") {
     stopGeminiAudio(true);
@@ -141,7 +146,7 @@ export function seekTTS(time: number) {
     if (playSegmentFn) playSegmentFn(startOffset);
   } else if (state.status === "paused") {
     startOffset = targetTime;
-    updateState({ currentTime: startOffset });
+    updateState({ currentTime: startOffset, activeCharIndex });
   }
 }
 
@@ -247,7 +252,8 @@ export async function speak(
             startOffset += elapsed;
             currentSource.onended = null;
             currentSource.stop();
-            updateState({ status: "paused", currentTime: startOffset });
+            const activeCharIndex = state.duration > 0 ? Math.floor((startOffset / state.duration) * state.text.length) : 0;
+            updateState({ status: "paused", currentTime: startOffset, activeCharIndex });
           }
         },
         resume: () => {
@@ -283,15 +289,18 @@ export async function speak(
   utter.rate = 0.88;
   
   utter.onstart = () => { 
-    updateState({ status: "playing" });
+    updateState({ status: "playing", activeCharIndex: 0 });
     if (onStart) onStart(); 
   };
+  utter.onboundary = (e) => {
+    updateState({ activeCharIndex: e.charIndex });
+  };
   utter.onend = () => { 
-    updateState({ status: "idle" });
+    updateState({ status: "idle", activeCharIndex: 0 });
     if (onEnd) onEnd(); 
   };
   utter.onerror = () => { 
-    updateState({ status: "idle" });
+    updateState({ status: "idle", activeCharIndex: 0 });
     if (onEnd) onEnd(); 
   };
 
