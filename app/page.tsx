@@ -165,6 +165,7 @@ function AppInner() {
       {section === "home" && (
         <HomeDashboard
           book={lastBook}
+          books={books}
           profile={profile}
           cards={cards}
           onContinueReading={() => {
@@ -173,6 +174,7 @@ function AppInner() {
           }}
           onOpenCards={() => setSection("cards")}
           onOpenBooks={() => setSection("books")}
+          onOpenDiscover={() => setSection("discover")}
         />
       )}
 
