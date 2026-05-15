@@ -196,11 +196,25 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     const sentenceBefore = contextSentence ? "" : active.sentenceBefore;
     const sentenceAfter = contextSentence ? "" : active.sentenceAfter;
 
+    // Check cache first to avoid flicker and latency
+    const cached = await sbGetCachedWord(word, profile.targetLanguage, profile.nativeLanguage);
+    const existingSentenceData = sentenceCacheRef.current[sentenceToUse] || (sentenceToUse === active.sentence ? analysis?.sentence : null);
+
+    if (cached && existingSentenceData) {
+      setAnalysis({
+        ...cached,
+        sentence: existingSentenceData,
+      });
+      setIsWordModalOpen(true);
+      setIsLoading(false);
+      return;
+    }
+
+    // Only set loading if we actually need to fetch something
     setAnalysis(null);
     setIsLoading(true);
     setIsWordModalOpen(true);
     try {
-      const cached = await sbGetCachedWord(word, profile.targetLanguage, profile.nativeLanguage);
       if (cached) {
         let sentenceData;
         const cachedSentence = sentenceCacheRef.current[sentenceToUse];

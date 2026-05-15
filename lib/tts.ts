@@ -307,8 +307,39 @@ export async function speak(
     // Mobile browsers don't give duration for speech, so we estimate it
     const estimatedDuration = Math.max(1, text.length / 15);
     
+    let timerRef: any = null;
+    let startTime = 0;
+
+    const cleanup = () => {
+      if (timerRef) {
+        clearInterval(timerRef);
+        timerRef = null;
+      }
+    };
+
     utter.onstart = () => { 
+      startTime = Date.now();
       updateState({ status: "playing", activeCharIndex: 0, duration: estimatedDuration });
+      
+      // Fallback timer for browsers that don't support onboundary (like some mobile ones)
+      cleanup();
+      timerRef = setInterval(() => {
+        if (window.speechSynthesis.paused) return;
+        const elapsed = (Date.now() - startTime) / 1000;
+        if (elapsed >= estimatedDuration) {
+          cleanup();
+          return;
+        }
+        
+        // Only update if onboundary hasn't provided a more recent/precise index
+        // Or just let them coexist, they should be roughly aligned
+        const progress = Math.min(0.99, elapsed / estimatedDuration);
+        updateState({ 
+          activeCharIndex: Math.floor(progress * text.length),
+          currentTime: elapsed
+        });
+      }, 100);
+
       if (onStart) onStart(); 
     };
     utter.onboundary = (e) => {
@@ -320,6 +351,7 @@ export async function speak(
       });
     };
     utter.onend = () => { 
+      cleanup();
       if (state.repeat) {
         startSpeech();
       } else {
@@ -328,6 +360,7 @@ export async function speak(
       }
     };
     utter.onerror = (e: any) => { 
+      cleanup();
       // Ignore interrupted/canceled as they are often intentional (e.g. seeking or new speech)
       if (e.error === 'interrupted' || e.error === 'canceled') return;
       
