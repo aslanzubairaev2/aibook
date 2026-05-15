@@ -79,11 +79,11 @@ export const mockAnalysis: AiAnalysis = {
     structure: "Hauptsatz + Relativsatz mit Modalverb",
   },
   examples: [
-    "Sie schmiedeten heimlich einen Plan.",
-    "Der König schmiedete ein Bündnis.",
-    "Man kann Eisen schmieden.",
-    "Die Freunde schmiedeten Reisepläne.",
-    "Danglars schmiedete eine Intrige.",
+    { text: "Sie schmiedeten heimlich einen Plan.", translation: "Они тайно замышляли план." },
+    { text: "Der König schmiedete ein Bündnis.", translation: "Король заключил союз." },
+    { text: "Man kann Eisen schmieden.", translation: "Можно ковать железо." },
+    { text: "Die Freunde schmiedeten Reisepläne.", translation: "Друзья строили планы на путешествие." },
+    { text: "Danglars schmiedete eine Intrige.", translation: "Данглар замышлял интригу." },
   ],
 };
 

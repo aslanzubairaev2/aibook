@@ -48,7 +48,10 @@ export type AiAnalysis = {
     grammarNote: string;
     structure: string;
   };
-  examples: string[];
+  examples: {
+    text: string;
+    translation: string;
+  }[];
 };
 
 export type Flashcard = {

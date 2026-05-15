@@ -182,10 +182,15 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     }
   }
 
-  async function handleWordTapInPanel(word: string) {
+  async function handleWordTapInPanel(word: string, contextSentence?: string) {
     if (!active) return;
     const norm = normalizeToken(word);
     if (!norm) return;
+
+    const sentenceToUse = contextSentence || active.sentence;
+    const sentenceBefore = contextSentence ? "" : active.sentenceBefore;
+    const sentenceAfter = contextSentence ? "" : active.sentenceAfter;
+
     setAnalysis(null);
     setIsLoading(true);
     setIsWordModalOpen(true);
@@ -193,21 +198,21 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       const cached = await sbGetCachedWord(word, profile.targetLanguage, profile.nativeLanguage);
       if (cached) {
         let sentenceData;
-        const cachedSentence = sentenceCacheRef.current[active.sentence];
+        const cachedSentence = sentenceCacheRef.current[sentenceToUse];
         
         if (cachedSentence) {
           sentenceData = cachedSentence;
         } else {
           const sentenceAnalysis = await analyzeSentence({
             word,
-            sentence: active.sentence,
-            sentenceBefore: active.sentenceBefore,
-            sentenceAfter: active.sentenceAfter,
+            sentence: sentenceToUse,
+            sentenceBefore,
+            sentenceAfter,
             nativeLanguage: profile.nativeLanguage,
             targetLanguage: profile.targetLanguage,
           });
           sentenceData = sentenceAnalysis.sentence;
-          sentenceCacheRef.current[active.sentence] = sentenceData;
+          sentenceCacheRef.current[sentenceToUse] = sentenceData;
         }
 
         setAnalysis({
@@ -217,14 +222,14 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       } else {
         const result = await analyzeSelection({
           word,
-          sentence: active.sentence,
-          sentenceBefore: active.sentenceBefore,
-          sentenceAfter: active.sentenceAfter,
+          sentence: sentenceToUse,
+          sentenceBefore,
+          sentenceAfter,
           nativeLanguage: profile.nativeLanguage,
           targetLanguage: profile.targetLanguage,
         });
         setAnalysis(result);
-        sentenceCacheRef.current[active.sentence] = result.sentence;
+        sentenceCacheRef.current[sentenceToUse] = result.sentence;
         void sbSaveCachedWord(word, profile.targetLanguage, profile.nativeLanguage, result);
       }
     } catch (err) {
@@ -367,6 +372,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           lang={profile.targetLanguage}
           onClose={() => setIsWordModalOpen(false)}
           onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
+          onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
         />
       )}
 

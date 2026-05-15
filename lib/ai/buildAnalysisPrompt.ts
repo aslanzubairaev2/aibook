@@ -40,11 +40,11 @@ Analyze the word in context and return ONLY a valid JSON object (no markdown, no
     "structure": "brief description of sentence structure in ${p.nativeLanguage}"
   },
   "examples": [
-    "example phrase 1 in ${p.targetLanguage}",
-    "example phrase 2 in ${p.targetLanguage}",
-    "example phrase 3 in ${p.targetLanguage}",
-    "example phrase 4 in ${p.targetLanguage}",
-    "example phrase 5 in ${p.targetLanguage}"
+    { "text": "example phrase 1 in ${p.targetLanguage}", "translation": "translation in ${p.nativeLanguage}" },
+    { "text": "example phrase 2 in ${p.targetLanguage}", "translation": "translation in ${p.nativeLanguage}" },
+    { "text": "example phrase 3 in ${p.targetLanguage}", "translation": "translation in ${p.nativeLanguage}" },
+    { "text": "example phrase 4 in ${p.targetLanguage}", "translation": "translation in ${p.nativeLanguage}" },
+    { "text": "example phrase 5 in ${p.targetLanguage}", "translation": "translation in ${p.nativeLanguage}" }
   ]
 }`;
 }

@@ -3,6 +3,7 @@
 import { ChevronRight, Plus, X } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import type { AiAnalysis } from "@/lib/types";
+import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 
 type Props = {
   analysis: AiAnalysis;
@@ -11,6 +12,7 @@ type Props = {
   lang: string;
   onClose: () => void;
   onAddCard: () => void;
+  onWordTap?: (word: string, contextSentence: string) => void;
 };
 
 const POS_ACTIONS: Record<string, string[]> = {
@@ -31,7 +33,7 @@ function getActions(pos: string) {
   return POS_ACTIONS.default;
 }
 
-export function WordModal({ analysis, isOpen, isLoading, lang, onClose, onAddCard }: Props) {
+export function WordModal({ analysis, isOpen, isLoading, lang, onClose, onAddCard, onWordTap }: Props) {
   if (!isOpen) return null;
   const actions = getActions(analysis.word.partOfSpeech);
 
@@ -76,13 +78,42 @@ export function WordModal({ analysis, isOpen, isLoading, lang, onClose, onAddCar
         <div className="modal-section">
           <span className="modal-section-label">Примеры</span>
           <div className="examples-list">
-            {analysis.examples.map((ex, i) => (
-              <div key={i} className="example-item">
-                <span className="example-num">{i + 1}.</span>
-                <span style={{ flex: 1 }}>{ex}</span>
-                <SpeakButton text={ex} lang={lang} size={14} />
-              </div>
-            ))}
+            {analysis.examples.map((exItem, i) => {
+              const text = typeof exItem === "string" ? exItem : exItem.text;
+              const translation = typeof exItem === "string" ? "" : exItem.translation;
+              const tokens = splitIntoTokens(text);
+              return (
+                <div key={i} className="example-item" style={{ flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
+                  <div style={{ display: "flex", gap: "8px", width: "100%", alignItems: "flex-start" }}>
+                    <span className="example-num">{i + 1}.</span>
+                    <span style={{ flex: 1 }}>
+                      {tokens.map((token, tokIdx) => {
+                        const norm = normalizeToken(token);
+                        if (!norm) return <span key={tokIdx}>{token}</span>;
+                        return (
+                          <span
+                            key={tokIdx}
+                            role="button"
+                            tabIndex={0}
+                            className="text-token"
+                            onClick={() => onWordTap?.(token, text)}
+                            onKeyDown={(e) => { if (e.key === "Enter") onWordTap?.(token, text); }}
+                          >
+                            {token}
+                          </span>
+                        );
+                      })}
+                    </span>
+                    <SpeakButton text={text} lang={lang} size={14} />
+                  </div>
+                  {translation && (
+                    <div style={{ paddingLeft: "24px", color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                      {translation}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
