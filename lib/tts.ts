@@ -51,7 +51,7 @@ function emitState() {
 export function subscribeTTS(listener: TTSListener) {
   listeners.add(listener);
   listener(getTTSState());
-  return () => listeners.delete(listener);
+  return () => { listeners.delete(listener); };
 }
 
 export function getTTSState(): TTSState {
