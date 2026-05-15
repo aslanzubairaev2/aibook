@@ -97,6 +97,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   const [pageIndex, setPageIndex] = useState(() => findPageIndex(pages, book.paragraphIndex));
   const currentPage = pages[Math.min(pageIndex, pages.length - 1)] ?? pages[0];
   const visibleParagraphs = book.paragraphs.slice(currentPage.start, currentPage.end);
+  const isReaderAudioActive = tts.status === "playing" || tts.status === "paused";
 
   useEffect(() => {
     setPageIndex(findPageIndex(pages, book.paragraphIndex));
@@ -179,9 +180,21 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
 
   useEffect(() => {
     if (!dragSelection?.isDragging) return;
+
+    const move = (event: PointerEvent) => {
+      event.preventDefault();
+      updateTokenDragFromPoint(event.clientX, event.clientY);
+    };
     const finish = () => finishTokenDrag();
+
+    window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", finish);
-    return () => window.removeEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    };
   }, [dragSelection]);
 
   const handleScroll = useCallback(() => {
@@ -418,6 +431,18 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       if (prev.endTokIdx !== tokIdxInPara) dragMovedRef.current = true;
       return { ...prev, endTokIdx: tokIdxInPara };
     });
+  }
+
+  function updateTokenDragFromPoint(clientX: number, clientY: number) {
+    const tokenEl = document
+      .elementFromPoint(clientX, clientY)
+      ?.closest("[data-para-index][data-token-index]") as HTMLElement | null;
+
+    if (!tokenEl) return;
+    const paraIndex = Number(tokenEl.dataset.paraIndex);
+    const tokIdx = Number(tokenEl.dataset.tokenIndex);
+    if (!Number.isFinite(paraIndex) || !Number.isFinite(tokIdx)) return;
+    enterTokenDrag(paraIndex, tokIdx);
   }
 
   function finishTokenDrag() {
@@ -688,7 +713,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   }
 
   return (
-    <div className="reader-screen">
+    <div className={`reader-screen${isReaderAudioActive ? " audio-active" : ""}`}>
       <header className="reader-toolbar">
         <button className="icon-btn" onClick={onBack} type="button" aria-label="Назад">
           <ArrowLeft size={20} />
@@ -737,10 +762,11 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           </div>
           )}
           <div
+            className={`reader-token-layer${dragSelection?.isDragging ? " is-selecting" : ""}`}
             onPointerUp={finishTokenDrag}
             onPointerCancel={() => setDragSelection(null)}
-            onPointerLeave={() => {
-              if (dragSelection?.isDragging) finishTokenDrag();
+            onPointerLeave={(event) => {
+              if (event.pointerType === "mouse" && dragSelection?.isDragging) finishTokenDrag();
             }}
           >
           {visibleParagraphs.map((para, localIndex) => {
@@ -781,12 +807,15 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
                     <span
                       key={tokIdx}
                       data-token-id={`${paraIndex}-${tokIdx}`}
+                      data-para-index={paraIndex}
+                      data-token-index={tokIdx}
                       role="button"
                       tabIndex={0}
                       className={cls}
                       onPointerDown={(event) => {
                         if (event.pointerType === "mouse" && event.button !== 0) return;
                         startTokenDrag(paraIndex, tokIdx);
+                        updateTokenDragFromPoint(event.clientX, event.clientY);
                       }}
                       onPointerEnter={() => enterTokenDrag(paraIndex, tokIdx)}
                       onClick={() => void handleTokenTap(token, paraIndex, tokIdx)}

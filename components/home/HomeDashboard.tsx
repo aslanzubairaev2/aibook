@@ -70,6 +70,25 @@ function dayOfYear() {
   return Math.floor((Number(now) - Number(start)) / 86400000);
 }
 
+function bookKey(item: GutendexBook) {
+  return item.title.trim().toLowerCase();
+}
+
+function makeUniqueShelf(items: GutendexBook[], blocked: Set<string>, limit = 9) {
+  const seen = new Set(blocked);
+  const shelf: GutendexBook[] = [];
+
+  for (const item of items) {
+    const key = bookKey(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    shelf.push(item);
+    if (shelf.length >= limit) break;
+  }
+
+  return shelf;
+}
+
 export function HomeDashboard({
   book,
   books,
@@ -99,19 +118,44 @@ export function HomeDashboard({
 
     async function loadShelf(language: string) {
       setIsLoadingShelves(true);
+      const cacheKey = `aibook:home-shelves:${language}`;
+      const blockedByLibrary = new Set(libraryTitles);
+
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached) as { languageBooks?: GutendexBook[]; popularBooks?: GutendexBook[] };
+          const languageShelf = makeUniqueShelf(parsed.languageBooks ?? [], blockedByLibrary);
+          const blockedAfterLanguage = new Set([...blockedByLibrary, ...languageShelf.map(bookKey)]);
+          const popularShelf = makeUniqueShelf(parsed.popularBooks ?? [], blockedAfterLanguage);
+
+          if (languageShelf.length > 0 || popularShelf.length > 0) {
+            setRecommendations(languageShelf);
+            setTopBooks(popularShelf);
+            setIsLoadingShelves(false);
+          }
+        }
+      } catch {
+        localStorage.removeItem(cacheKey);
+      }
+
       try {
         const [langRes, topRes] = await Promise.all([
-          fetch(`https://gutendex.com/books/?sort=popular&languages=${language}`, { signal: controller.signal }),
-          fetch("https://gutendex.com/books/?sort=popular", { signal: controller.signal }),
+          fetch(`https://gutendex.com/books/?sort=popular&languages=${language}&mime_type=image/jpeg`, { signal: controller.signal }),
+          fetch("https://gutendex.com/books/?sort=popular&page=2&mime_type=image/jpeg", { signal: controller.signal }),
         ]);
 
         if (!langRes.ok || !topRes.ok) return;
 
         const [langData, topData] = await Promise.all([langRes.json(), topRes.json()]);
-        const filterNew = (item: GutendexBook) => !libraryTitles.has(item.title.toLowerCase());
+        const languageBooks = (langData.results as GutendexBook[]) ?? [];
+        const popularBooks = (topData.results as GutendexBook[]) ?? [];
+        const languageShelf = makeUniqueShelf(languageBooks, blockedByLibrary);
+        const blockedAfterLanguage = new Set([...blockedByLibrary, ...languageShelf.map(bookKey)]);
 
-        setRecommendations((langData.results as GutendexBook[]).filter(filterNew).slice(0, 9));
-        setTopBooks((topData.results as GutendexBook[]).filter(filterNew).slice(0, 9));
+        setRecommendations(languageShelf);
+        setTopBooks(makeUniqueShelf(popularBooks, blockedAfterLanguage));
+        localStorage.setItem(cacheKey, JSON.stringify({ languageBooks, popularBooks }));
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
       } finally {

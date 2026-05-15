@@ -245,10 +245,7 @@ export async function sbSaveCachedWord(
       analysis: analysis,
     }, { onConflict: "word_lower,target_language,native_language" });
 
-  if (error) {
-    console.error("sbSaveCachedWord error:", error.message);
-    return false;
-  }
+  if (error) return false;
   return true;
 }
 
