@@ -51,7 +51,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
       if (paragraphs.length === 0) throw new Error("Файл пустой или не удалось разобрать текст");
 
       const title = file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ");
-      const bookId = `book-${Date.now()}`;
+      const bookId = crypto.randomUUID();
       const coverColor = pickColor(title);
 
       const newBook: Book = {
@@ -89,7 +89,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
 
         if (savedId) {
           await sbUpsertChapter({
-            id: `ch-${bookId}-0`,
+            id: crypto.randomUUID(),
             user_id: user.id,
             book_id: savedId,
             chapter_index: 0,
