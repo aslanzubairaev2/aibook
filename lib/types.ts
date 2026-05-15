@@ -24,6 +24,7 @@ export type UserProfile = {
   booksStarted: number;
   booksFinished: number;
   savedItems: number;
+  ttsProvider?: "local" | "gemini";
 };
 
 export type AiAnalysis = {

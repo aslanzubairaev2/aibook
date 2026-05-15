@@ -100,6 +100,23 @@ export function SettingsView({ profile, onProfileChange }: Props) {
             ))}
           </select>
         </div>
+
+        <div className="setting-row">
+          <div>
+            <div className="setting-row-label">Голосовой движок</div>
+            <div className="setting-row-value">
+              {profile.ttsProvider === "gemini" ? "Gemini TTS (Preview)" : "Локальный (Браузер)"}
+            </div>
+          </div>
+          <select
+            className="lang-select"
+            value={profile.ttsProvider || "local"}
+            onChange={(e) => void setLang("ttsProvider" as any, e.target.value)}
+          >
+            <option value="local">Локальный</option>
+            <option value="gemini">Gemini TTS</option>
+          </select>
+        </div>
       </div>
 
       {/* Info */}
