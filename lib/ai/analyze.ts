@@ -7,6 +7,8 @@ interface AnalyzeParams {
   sentenceAfter: string;
   nativeLanguage: string;
   targetLanguage: string;
+  skipWord?: boolean;
+  skipSentence?: boolean;
 }
 
 export async function analyzeSelection(params: AnalyzeParams): Promise<AiAnalysis> {

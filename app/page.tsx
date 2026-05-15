@@ -181,6 +181,7 @@ function AppInner() {
           activeBookId={activeBook?.id ?? null}
           onBooksChange={handleBooksChange}
           onOpenBook={handleOpenBook}
+          defaultLanguage={profile.targetLanguage}
         />
       )}
 

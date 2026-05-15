@@ -193,7 +193,7 @@
    Let's make it float like a pill *above* the AI panel. 
 */
 .audio-scrubber-overlay {
-  bottom: calc(env(safe-area-inset-bottom, 16px) + 120px);
+  bottom: calc(env(safe-area-inset-bottom, 16px) + 40px);
   left: 0;
   right: 0;
   width: 95%;
@@ -281,7 +281,7 @@
 
 .audio-progress-bar {
   position: relative;
-  height: 6px;
+  height: 15px;
   background: rgba(255, 255, 255, 0.1);
   border-radius: 3px;
   overflow: hidden; /* For rounded fill */

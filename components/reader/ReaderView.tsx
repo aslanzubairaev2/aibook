@@ -46,6 +46,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   const contentRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sentenceCacheRef = useRef<Record<string, any>>({});
+  const phraseCacheRef = useRef<Record<string, any>>({});
 
   // Scroll to last read paragraph on mount
   useEffect(() => {
@@ -138,46 +139,65 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     };
 
     setActive(newActive);
-    setAnalysis(null);
+    
+    if (analysis && newActive.sentence === active?.sentence) {
+      // Keep sentence analysis, but clear word to show shimmer
+      const optimisticAnalysis = { ...analysis };
+      optimisticAnalysis.word = { ...analysis.word, translation: "", explanation: "" };
+      
+      if (newActive.phraseText !== active?.phraseText) {
+        optimisticAnalysis.phrase = { ...analysis.phrase, translation: "", explanation: "" };
+      }
+      setAnalysis(optimisticAnalysis);
+    } else {
+      setAnalysis(null);
+    }
+    
     setIsLoading(true);
 
     try {
-      const cached = await sbGetCachedWord(token, profile.targetLanguage, profile.nativeLanguage);
-      if (cached) {
-        let sentenceData;
-        const cachedSentence = sentenceCacheRef.current[newActive.sentence];
-        
-        if (cachedSentence) {
-          sentenceData = cachedSentence;
-        } else {
-          const sentenceAnalysis = await analyzeSentence({
-            word: token,
-            sentence: newActive.sentence,
-            sentenceBefore: newActive.sentenceBefore,
-            sentenceAfter: newActive.sentenceAfter,
-            nativeLanguage: profile.nativeLanguage,
-            targetLanguage: profile.targetLanguage,
-          });
-          sentenceData = sentenceAnalysis.sentence;
-          sentenceCacheRef.current[newActive.sentence] = sentenceData;
-        }
+      const cachedWord = await sbGetCachedWord(token, book.language, profile.nativeLanguage);
+      const existingSentenceData = sentenceCacheRef.current[newActive.sentence];
+      const phraseKey = `${newActive.sentence}_${token}`;
+      const existingPhraseData = phraseCacheRef.current[phraseKey];
 
+      if (cachedWord) {
         setAnalysis({
-          ...cached,
-          sentence: sentenceData,
+          ...cachedWord,
+          sentence: existingSentenceData || cachedWord.sentence,
+          phrase: existingPhraseData || cachedWord.phrase,
         });
-      } else {
-        const result = await analyzeSelection({
-          word: token,
-          sentence: newActive.sentence,
-          sentenceBefore: newActive.sentenceBefore,
-          sentenceAfter: newActive.sentenceAfter,
-          nativeLanguage: profile.nativeLanguage,
-          targetLanguage: profile.targetLanguage,
-        });
-        setAnalysis(result);
-        sentenceCacheRef.current[newActive.sentence] = result.sentence;
-        void sbSaveCachedWord(token, profile.targetLanguage, profile.nativeLanguage, result);
+        setIsLoading(false);
+        return;
+      }
+
+      const skipWord = !!cachedWord;
+      const skipSentence = !!existingSentenceData;
+
+      const result = await analyzeSelection({
+        word: token,
+        sentence: newActive.sentence,
+        sentenceBefore: newActive.sentenceBefore,
+        sentenceAfter: newActive.sentenceAfter,
+        nativeLanguage: profile.nativeLanguage,
+        targetLanguage: book.language,
+        skipWord,
+        skipSentence,
+      }) as Partial<AiAnalysis>;
+
+      const finalAnalysis: AiAnalysis = {
+        word: cachedWord?.word || result.word!,
+        phrase: result.phrase || existingPhraseData,
+        sentence: existingSentenceData || result.sentence!,
+        examples: cachedWord?.examples || result.examples || [],
+      };
+
+      setAnalysis(finalAnalysis);
+      sentenceCacheRef.current[newActive.sentence] = finalAnalysis.sentence;
+      phraseCacheRef.current[phraseKey] = finalAnalysis.phrase;
+
+      if (!cachedWord) {
+        void sbSaveCachedWord(token, book.language, profile.nativeLanguage, finalAnalysis);
       }
     } catch (err) {
       console.error("AI analysis failed:", err);
@@ -197,59 +217,63 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     const sentenceAfter = contextSentence ? "" : active.sentenceAfter;
 
     // Check cache first to avoid flicker and latency
-    const cached = await sbGetCachedWord(word, profile.targetLanguage, profile.nativeLanguage);
+    const cachedWord = await sbGetCachedWord(word, book.language, profile.nativeLanguage);
     const existingSentenceData = sentenceCacheRef.current[sentenceToUse] || (sentenceToUse === active.sentence ? analysis?.sentence : null);
+    const phraseKey = `${sentenceToUse}_${word}`;
+    const existingPhraseData = phraseCacheRef.current[phraseKey];
 
-    if (cached && existingSentenceData) {
+    // Pre-load the modal and set state before waiting, eliminating "lag" perception
+    setIsWordModalOpen(true);
+
+    if (cachedWord) {
       setAnalysis({
-        ...cached,
-        sentence: existingSentenceData,
+        ...cachedWord,
+        sentence: existingSentenceData || cachedWord.sentence,
+        phrase: existingPhraseData || cachedWord.phrase,
       });
-      setIsWordModalOpen(true);
       setIsLoading(false);
       return;
     }
 
-    // Only set loading if we actually need to fetch something
-    setAnalysis(null);
+    if (analysis) {
+      const optimisticAnalysis = { ...analysis };
+      optimisticAnalysis.word = { ...analysis.word, translation: "", explanation: "" };
+      if (sentenceToUse === active?.sentence) {
+        optimisticAnalysis.phrase = { ...analysis.phrase, translation: "", explanation: "" };
+      }
+      setAnalysis(optimisticAnalysis);
+    }
+    
     setIsLoading(true);
-    setIsWordModalOpen(true);
-    try {
-      if (cached) {
-        let sentenceData;
-        const cachedSentence = sentenceCacheRef.current[sentenceToUse];
-        
-        if (cachedSentence) {
-          sentenceData = cachedSentence;
-        } else {
-          const sentenceAnalysis = await analyzeSentence({
-            word,
-            sentence: sentenceToUse,
-            sentenceBefore,
-            sentenceAfter,
-            nativeLanguage: profile.nativeLanguage,
-            targetLanguage: profile.targetLanguage,
-          });
-          sentenceData = sentenceAnalysis.sentence;
-          sentenceCacheRef.current[sentenceToUse] = sentenceData;
-        }
 
-        setAnalysis({
-          ...cached,
-          sentence: sentenceData,
-        });
-      } else {
-        const result = await analyzeSelection({
-          word,
-          sentence: sentenceToUse,
-          sentenceBefore,
-          sentenceAfter,
-          nativeLanguage: profile.nativeLanguage,
-          targetLanguage: profile.targetLanguage,
-        });
-        setAnalysis(result);
-        sentenceCacheRef.current[sentenceToUse] = result.sentence;
-        void sbSaveCachedWord(word, profile.targetLanguage, profile.nativeLanguage, result);
+    try {
+      const skipWord = !!cachedWord;
+      const skipSentence = !!existingSentenceData;
+
+      const result = await analyzeSelection({
+        word,
+        sentence: sentenceToUse,
+        sentenceBefore,
+        sentenceAfter,
+        nativeLanguage: profile.nativeLanguage,
+        targetLanguage: book.language,
+        skipWord,
+        skipSentence,
+      }) as Partial<AiAnalysis>;
+
+      const finalAnalysis: AiAnalysis = {
+        word: cachedWord?.word || result.word!,
+        phrase: result.phrase || existingPhraseData,
+        sentence: existingSentenceData || result.sentence!,
+        examples: cachedWord?.examples || result.examples || [],
+      };
+
+      setAnalysis(finalAnalysis);
+      sentenceCacheRef.current[sentenceToUse] = finalAnalysis.sentence;
+      phraseCacheRef.current[phraseKey] = finalAnalysis.phrase;
+
+      if (!cachedWord) {
+        void sbSaveCachedWord(word, book.language, profile.nativeLanguage, finalAnalysis);
       }
     } catch (err) {
       console.error("Panel word tap failed:", err);
@@ -469,7 +493,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           selection={active}
           analysis={analysis}
           isLoading={isLoading}
-          lang={profile.targetLanguage}
+          lang={book.language}
           onClose={() => { setActive(null); setAnalysis(null); }}
           onOpenWordModal={() => setIsWordModalOpen(true)}
           onAddCard={(type) => void handleAddCard(type)}
@@ -484,7 +508,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           analysis={analysis}
           isOpen={isWordModalOpen}
           isLoading={isLoading}
-          lang={profile.targetLanguage}
+          lang={book.language}
           onClose={() => setIsWordModalOpen(false)}
           onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
           onWordTap={(word, context) => void handleWordTapInPanel(word, context)}

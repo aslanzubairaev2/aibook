@@ -9,11 +9,14 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { BOOK_FORMATS } from "@/lib/config";
 import type { Book } from "@/lib/types";
 
+import { franc } from "franc-min";
+
 type Props = {
   books: Book[];
   activeBookId: string | null;
   onBooksChange: (books: Book[]) => void;
   onOpenBook: (book: Book) => void;
+  defaultLanguage: string;
 };
 
 const COVER_COLORS = [
@@ -31,11 +34,12 @@ function pickColor(title: string) {
   return COVER_COLORS[hash % COVER_COLORS.length];
 }
 
-export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: Props) {
+export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, defaultLanguage }: Props) {
   const { user } = useAuth();
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadLanguage, setUploadLanguage] = useState(defaultLanguage || "de");
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
@@ -54,11 +58,19 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
       const bookId = crypto.randomUUID();
       const coverColor = pickColor(title);
 
+      // Auto-detect language
+      const sampleText = paragraphs.slice(0, 50).join(" ");
+      const iso639_3 = franc(sampleText);
+      const langMap: Record<string, string> = {
+        deu: "de", eng: "en", spa: "es", fra: "fr", ita: "it", rus: "ru"
+      };
+      const detectedLang = langMap[iso639_3] || uploadLanguage;
+
       const newBook: Book = {
         id: bookId,
         title,
         author: "Неизвестен",
-        language: "de",
+        language: detectedLang,
         format: ext as "txt" | "epub",
         progress: 0,
         paragraphIndex: 0,
@@ -79,7 +91,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
           user_id: user.id,
           title,
           author: "Неизвестен",
-          language: "de",
+          language: detectedLang,
           format: ext as "txt" | "epub",
           file_path: file.name,
           cover_url: null,
@@ -133,6 +145,24 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
         style={{ display: "none" }}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }}
       />
+
+      <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+        <label htmlFor="upload-lang" style={{ fontSize: 14, fontWeight: 500 }}>Язык книги:</label>
+        <select
+          id="upload-lang"
+          value={uploadLanguage}
+          onChange={(e) => setUploadLanguage(e.target.value)}
+          className="lang-select"
+          style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg-card)", color: "var(--text)", fontSize: 14 }}
+        >
+          <option value="de">Немецкий</option>
+          <option value="en">Английский</option>
+          <option value="es">Испанский</option>
+          <option value="fr">Французский</option>
+          <option value="it">Итальянский</option>
+          <option value="ru">Русский</option>
+        </select>
+      </div>
 
       {/* Drop zone */}
       <div

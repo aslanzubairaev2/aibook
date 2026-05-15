@@ -116,7 +116,7 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
                 <button className="mini-btn" type="button" disabled={!analysis} onClick={onOpenWordModal}>подробнее</button>
               </div>
             </div>
-            {analysis ? (
+            {analysis && analysis.word.translation ? (
               <>
                 <p className="tab-translation">{analysis.word.translation}</p>
                 <p className="tab-note">{analysis.word.explanation}</p>
@@ -133,7 +133,7 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
               <ClickableText text={selection.phraseText} lang={lang} onWordTap={onWordTap} className="tab-phrase-text karaoke-mode-fill" />
               <SpeakButton key={selection.phraseText} text={selection.phraseText} lang={lang} />
             </div>
-            {analysis ? (
+            {analysis && analysis.phrase.translation ? (
               <>
                 <p className="tab-translation">{analysis.phrase.translation}</p>
                 <p className="tab-note">{analysis.phrase.explanation}</p>
@@ -150,7 +150,7 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
               <ClickableText text={selection.sentence} lang={lang} onWordTap={onWordTap} className="tab-sentence-text" />
               <SpeakButton key={selection.sentence} text={selection.sentence} lang={lang} />
             </div>
-            {analysis ? (
+            {analysis && analysis.sentence.translation ? (
               <>
                 <p className="tab-translation">{analysis.sentence.translation}</p>
                 <p className="tab-note">{analysis.sentence.grammarNote}</p>

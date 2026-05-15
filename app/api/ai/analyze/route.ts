@@ -24,6 +24,8 @@ export async function POST(req: Request) {
     sentenceAfter: string;
     nativeLanguage: string;
     targetLanguage: string;
+    skipWord?: boolean;
+    skipSentence?: boolean;
   };
 
   const prompt = buildAnalysisPrompt(body);
