@@ -23,7 +23,10 @@ export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
     };
     jsonStructure.examples = [
       { text: `example phrase 1 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
-      { text: `example phrase 2 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` }
+      { text: `example phrase 2 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+      { text: `example phrase 3 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+      { text: `example phrase 4 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+      { text: `example phrase 5 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` }
     ];
   }
   
@@ -52,6 +55,8 @@ Previous sentence: "${p.sentenceBefore}"
 Current sentence: "${p.sentence}"
 Next sentence: "${p.sentenceAfter}"
 
-Analyze the word in context and return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:
+Analyze the exact word form in context. Keep "word.text" identical to the tapped word form, put the dictionary/base form only in "word.lemma", and return exactly 5 short example phrases when examples are requested.
+
+Return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 }

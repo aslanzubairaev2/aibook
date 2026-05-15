@@ -77,6 +77,18 @@
 
 .reader-text p { margin-bottom: 28px; }
 
+.reader-page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 36px 0 64px;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 /* ─── Text Token (clickable word) ────────────────────────────────────────── */
 .text-token {
   display: inline;
@@ -115,4 +127,15 @@
   color: var(--hl-word-text);
   padding: 1px 2px;
   font-weight: 700;
+}
+
+.reader-text .karaoke-spoken {
+  color: var(--accent);
+  text-shadow: 0 0 12px rgba(212, 168, 71, 0.18);
+}
+
+.reader-text .reader-karaoke-current {
+  background: rgba(212, 168, 71, 0.3);
+  border-radius: 4px;
+  color: var(--surface);
 }

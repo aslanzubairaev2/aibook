@@ -114,6 +114,21 @@
   font-weight: 500;
 }
 
+.tab-lemma-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tab-lemma-row b {
+  color: var(--surface-dim);
+  font-weight: 700;
+}
+
 .tab-phrase-text {
   font-size: 18px;
   font-weight: 700;
@@ -132,10 +147,16 @@
 }
 
 .tab-translation {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--surface-dim);
+  line-height: 1.45;
   margin: 0;
+}
+
+.word-translation {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .tab-note {
@@ -332,4 +353,11 @@
   /* Avoid horizontal padding/margin to prevent text jumping */
   padding: 1px 0;
   transition: background 0.1s ease-out, color 0.1s ease-out;
+}
+
+.translation-karaoke-active {
+  border-radius: 4px;
+  background: rgba(212, 168, 71, 0.18);
+  color: var(--text-primary);
+  transition: background 0.12s ease, color 0.12s ease;
 }

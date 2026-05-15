@@ -10,6 +10,7 @@ type Props = {
   isOpen: boolean;
   isLoading?: boolean;
   lang: string;
+  selectedWord: string;
   onClose: () => void;
   onAddCard: () => void;
   onWordTap?: (word: string, contextSentence: string) => void;
@@ -33,9 +34,11 @@ function getActions(pos: string) {
   return POS_ACTIONS.default;
 }
 
-export function WordModal({ analysis, isOpen, isLoading, lang, onClose, onAddCard, onWordTap }: Props) {
+export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onClose, onAddCard, onWordTap }: Props) {
   if (!isOpen) return null;
   const actions = getActions(analysis.word.partOfSpeech);
+  const displayWord = selectedWord || analysis.word.text || analysis.word.lemma;
+  const hasLemma = analysis.word.lemma && analysis.word.lemma.toLowerCase() !== displayWord.toLowerCase();
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -51,7 +54,7 @@ export function WordModal({ analysis, isOpen, isLoading, lang, onClose, onAddCar
           <button className="icon-btn" onClick={onClose} type="button" aria-label="Закрыть">
             <X size={20} />
           </button>
-          <SpeakButton text={analysis.word.lemma} lang={lang} size={18} />
+          <SpeakButton text={displayWord} lang={lang} size={18} />
           <button className="pill-btn" onClick={onAddCard} type="button" style={{ marginLeft: "auto" }}>
             <Plus size={15} />
             Карточка
@@ -60,11 +63,18 @@ export function WordModal({ analysis, isOpen, isLoading, lang, onClose, onAddCar
 
         {/* Hero */}
         <div className="word-hero">
-          <div className="word-hero-lemma">{analysis.word.lemma.toUpperCase()}</div>
+          <div className="word-hero-lemma">{displayWord.toUpperCase()}</div>
           <div className="word-hero-meta">
             <span className="word-meta-chip">{analysis.word.partOfSpeech}</span>
             {analysis.word.gender && <span className="word-meta-chip gender">{analysis.word.gender}</span>}
           </div>
+          {hasLemma && (
+            <div className="word-lemma-line">
+              <span>Инфинитив / словарная форма</span>
+              <strong>{analysis.word.lemma}</strong>
+              <SpeakButton text={analysis.word.lemma} lang={lang} size={13} />
+            </div>
+          )}
         </div>
 
         {/* Translation */}
@@ -78,7 +88,7 @@ export function WordModal({ analysis, isOpen, isLoading, lang, onClose, onAddCar
         <div className="modal-section">
           <span className="modal-section-label">Примеры</span>
           <div className="examples-list">
-            {analysis.examples.map((exItem, i) => {
+            {analysis.examples.slice(0, 5).map((exItem, i) => {
               const text = typeof exItem === "string" ? exItem : exItem.text;
               const translation = typeof exItem === "string" ? "" : exItem.translation;
               const tokens = splitIntoTokens(text);

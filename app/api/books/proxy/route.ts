@@ -36,6 +36,9 @@ export async function GET(req: NextRequest) {
   return new NextResponse(body, {
     headers: {
       "Content-Type": upstream.headers.get("content-type") ?? "text/plain; charset=utf-8",
+      ...(upstream.headers.get("content-length")
+        ? { "Content-Length": upstream.headers.get("content-length") as string }
+        : {}),
       "Cache-Control": "public, max-age=86400",
     },
   });

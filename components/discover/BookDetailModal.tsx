@@ -16,6 +16,11 @@ type Props = {
   coverColor: string;
   inLibrary: boolean;
   isDownloading: boolean;
+  downloadTask?: {
+    progress: number;
+    status: "downloading" | "parsing" | "saving" | "done" | "error";
+    message: string;
+  };
   onClose: () => void;
   onDownload: () => void;
   onOpen: () => void;
@@ -68,6 +73,7 @@ export function BookDetailModal({
   coverColor,
   inLibrary,
   isDownloading,
+  downloadTask,
   onClose,
   onDownload,
   onOpen,
@@ -176,6 +182,17 @@ export function BookDetailModal({
                   {isDownloading ? <Loader2 size={16} className="spin" /> : <Download size={16} />}
                   {isDownloading ? "Загрузка..." : "В библиотеку"}
                 </button>
+              )}
+              {downloadTask && (
+                <div className={`book-download-progress ${downloadTask.status}`}>
+                  <div>
+                    <span>{downloadTask.message}</span>
+                    <b>{Math.round(downloadTask.progress)}%</b>
+                  </div>
+                  <span className="book-download-track">
+                    <span style={{ width: `${downloadTask.progress}%` }} />
+                  </span>
+                </div>
               )}
             </div>
           </div>

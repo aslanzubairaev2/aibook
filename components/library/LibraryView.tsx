@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { BookOpen, Trash2, Upload, Plus, FileText, Globe } from "lucide-react";
-import { parseBook } from "@/lib/parser/index";
+import { parseBookDetailed } from "@/lib/parser/index";
 import { saveLocalBook, deleteLocalBook } from "@/lib/db/local";
 import { sbUpsertBook, sbUpsertChapter, sbDeleteBook } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -53,10 +53,12 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, on
     setError(null);
     setIsLoading(true);
     try {
-      const paragraphs = await parseBook(file);
+      const parsed = await parseBookDetailed(file);
+      const paragraphs = parsed.paragraphs;
       if (paragraphs.length === 0) throw new Error("Файл пустой или не удалось разобрать текст");
 
-      const title = file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ");
+      const title = parsed.title || file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ");
+      const author = parsed.author || "Неизвестен";
       const bookId = crypto.randomUUID();
       const coverColor = pickColor(title);
 
@@ -71,9 +73,9 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, on
       const newBook: Book = {
         id: bookId,
         title,
-        author: "Неизвестен",
+        author,
         language: detectedLang,
-        format: ext as "txt" | "epub",
+        format: ext as "txt" | "epub" | "fb2",
         progress: 0,
         paragraphIndex: 0,
         chapterTitle: "Начало",
@@ -93,9 +95,9 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, on
           id: bookId,
           user_id: user.id,
           title,
-          author: "Неизвестен",
+          author,
           language: detectedLang,
-          format: ext as "txt" | "epub",
+          format: ext === "fb2" ? "txt" : (ext as "txt" | "epub"),
           file_path: file.name,
           cover_url: null,
           total_chars: paragraphs.join("").length,
@@ -197,7 +199,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, on
       <input
         ref={fileRef}
         type="file"
-        accept=".txt,.epub"
+        accept=".txt,.epub,.fb2"
         style={{ display: "none" }}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }}
       />
@@ -214,7 +216,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, on
         >
           <Upload size={48} style={{ marginBottom: 16 }} />
           <strong style={{ fontSize: 24 }}>Отпустите файл здесь</strong>
-          <span style={{ fontSize: 16 }}>TXT или EPUB</span>
+          <span style={{ fontSize: 16 }}>TXT, EPUB или FB2</span>
         </div>
       )}
 
@@ -237,7 +239,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, on
         <div className="empty-state">
           <BookOpen size={40} />
           <strong>Книг пока нет</strong>
-          <p>Загрузите TXT или EPUB файл, чтобы начать читать и изучать язык</p>
+          <p>Загрузите TXT, EPUB или FB2 файл, чтобы начать читать и изучать язык</p>
         </div>
       ) : (
         <div className="book-list">

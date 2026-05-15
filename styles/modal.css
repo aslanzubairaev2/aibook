@@ -61,6 +61,24 @@
   margin-top: 10px;
 }
 
+.word-lemma-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(240, 230, 211, 0.05);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.word-lemma-line strong {
+  color: var(--surface-dim);
+  font-size: 13px;
+}
+
 .word-meta-chip {
   display: inline-block;
   padding: 4px 12px;

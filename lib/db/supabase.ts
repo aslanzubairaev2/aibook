@@ -238,12 +238,12 @@ export async function sbSaveCachedWord(
   
   const { error } = await supabase
     .from("ai_dictionary_cache")
-    .insert({
+    .upsert({
       word_lower: word.toLowerCase().trim(),
       target_language: targetLanguage,
       native_language: nativeLanguage,
       analysis: analysis,
-    });
+    }, { onConflict: "word_lower,target_language,native_language" });
 
   if (error) {
     console.error("sbSaveCachedWord error:", error.message);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { franc } from "franc-min";
 import { AppShell } from "@/components/ui/AppShell";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
 import { LibraryView } from "@/components/library/LibraryView";
@@ -12,12 +13,46 @@ import { AuthScreen } from "@/components/auth/AuthScreen";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import {
   sbGetBooks, sbGetChapters, sbGetFlashcards, sbGetSettings, sbGetProgress,
+  sbUpsertBook, sbUpsertChapter,
   type DbBook,
 } from "@/lib/db/supabase";
-import { getLocalBooks, getLocalCards, getLocalProfile, saveLocalCard, saveLocalProfile, saveLocalBooks } from "@/lib/db/local";
+import { getLocalBooks, getLocalCards, getLocalProfile, saveLocalBook, saveLocalCard, saveLocalProfile, saveLocalBooks } from "@/lib/db/local";
+import { parseBook } from "@/lib/parser/index";
 import type { AppSection, Book, Flashcard, UserProfile } from "@/lib/types";
 
 // ─── Inner app (needs auth context) ─────────────────────────────────────────
+
+type CatalogBook = {
+  id: number;
+  title: string;
+  authors: { name: string }[];
+  languages: string[];
+  formats: Record<string, string>;
+};
+
+type DownloadTask = {
+  bookId: number;
+  title: string;
+  progress: number;
+  status: "downloading" | "parsing" | "saving" | "done" | "error";
+  message: string;
+  bookLocalId?: string;
+};
+
+const COVER_COLORS = [
+  "linear-gradient(160deg, #c49a28 0%, #7a5c10 100%)",
+  "linear-gradient(160deg, #4a7a5c 0%, #254030 100%)",
+  "linear-gradient(160deg, #3a5c8a 0%, #1a2c4a 100%)",
+  "linear-gradient(160deg, #8a3a3a 0%, #4a1a1a 100%)",
+  "linear-gradient(160deg, #6a3a8a 0%, #35174a 100%)",
+  "linear-gradient(160deg, #8a5a2a 0%, #4a2a0a 100%)",
+];
+
+function pickColor(title: string) {
+  let hash = 0;
+  for (const ch of title) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffff;
+  return COVER_COLORS[hash % COVER_COLORS.length];
+}
 
 function AppInner() {
   const { user, isLoading: authLoading } = useAuth();
@@ -35,6 +70,7 @@ function AppInner() {
   });
   const [activeBook, setActiveBook] = useState<Book | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [downloadTasks, setDownloadTasks] = useState<Record<number, DownloadTask>>({});
 
   // ─── Data loading ─────────────────────────────────────────────────────────
   const loadData = useCallback(async (userId: string) => {
@@ -144,6 +180,152 @@ function AppInner() {
     }
   }
 
+  function setDownloadTask(bookId: number, patch: Partial<DownloadTask>) {
+    setDownloadTasks((prev) => ({
+      ...prev,
+      [bookId]: {
+        bookId,
+        title: patch.title ?? prev[bookId]?.title ?? "",
+        progress: patch.progress ?? prev[bookId]?.progress ?? 0,
+        status: patch.status ?? prev[bookId]?.status ?? "downloading",
+        message: patch.message ?? prev[bookId]?.message ?? "",
+        bookLocalId: patch.bookLocalId ?? prev[bookId]?.bookLocalId,
+      },
+    }));
+  }
+
+  async function handleCatalogDownload(bookInfo: CatalogBook) {
+    const existing = books.find((item) => item.title.toLowerCase() === bookInfo.title.toLowerCase());
+    if (existing) {
+      handleOpenBook(existing);
+      return;
+    }
+
+    const existingTask = downloadTasks[bookInfo.id];
+    if (existingTask?.status === "downloading" || existingTask?.status === "parsing" || existingTask?.status === "saving") return;
+
+    setDownloadTask(bookInfo.id, {
+      title: bookInfo.title,
+      progress: 2,
+      status: "downloading",
+      message: "Начинаем загрузку",
+    });
+
+    try {
+      const textKey = Object.keys(bookInfo.formats).find((key) => key.startsWith("text/plain"));
+      if (!textKey) throw new Error("Текст книги недоступен");
+
+      const textUrl = bookInfo.formats[textKey].replace("http://", "https://");
+      const res = await fetch(`/api/books/proxy?url=${encodeURIComponent(textUrl)}`);
+      if (!res.ok) throw new Error("Не удалось скачать текст книги");
+
+      const total = Number(res.headers.get("content-length") ?? 0);
+      const reader = res.body?.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            received += value.byteLength;
+            const progress = total > 0 ? Math.round((received / total) * 68) : Math.min(68, 12 + Math.round(received / 50000));
+            setDownloadTask(bookInfo.id, {
+              progress,
+              status: "downloading",
+              message: total > 0 ? `Загружено ${Math.min(100, Math.round((received / total) * 100))}%` : "Загружаем текст",
+            });
+          }
+        }
+      } else {
+        chunks.push(new Uint8Array(await res.arrayBuffer()));
+      }
+
+      setDownloadTask(bookInfo.id, { progress: 72, status: "parsing", message: "Разбираем текст" });
+      const blob = new Blob(chunks.map((chunk) => chunk.slice().buffer), { type: "text/plain" });
+      const file = new File([blob], `${bookInfo.title}.txt`, { type: "text/plain" });
+      const paragraphs = await parseBook(file);
+      if (paragraphs.length === 0) throw new Error("Файл пустой или не удалось разобрать текст");
+
+      const langMap: Record<string, string> = {
+        deu: "de",
+        eng: "en",
+        spa: "es",
+        fra: "fr",
+        ita: "it",
+        rus: "ru",
+      };
+      const detectedLang = langMap[franc(paragraphs.slice(0, 50).join(" "))] || bookInfo.languages?.[0] || "en";
+      const bookId = crypto.randomUUID();
+      const author = bookInfo.authors?.[0]?.name || "Неизвестен";
+      const coverKey = Object.keys(bookInfo.formats).find((key) => key.startsWith("image/jpeg"));
+      const coverUrl = coverKey ? bookInfo.formats[coverKey].replace("http://", "https://") : null;
+      const coverColor = pickColor(bookInfo.title);
+
+      const newBook: Book = {
+        id: bookId,
+        title: bookInfo.title,
+        author,
+        language: detectedLang,
+        format: "txt",
+        progress: 0,
+        paragraphIndex: 0,
+        chapterTitle: "Начало",
+        lastReadAt: new Date().toLocaleDateString("ru"),
+        coverColor,
+        coverUrl,
+        paragraphs,
+      };
+
+      setDownloadTask(bookInfo.id, { progress: 88, status: "saving", message: "Сохраняем в библиотеку" });
+      saveLocalBook(newBook);
+      setBooks((prev) => [newBook, ...prev]);
+
+      if (user) {
+        const savedId = await sbUpsertBook({
+          id: bookId,
+          user_id: user.id,
+          title: bookInfo.title,
+          author,
+          language: detectedLang,
+          format: "txt",
+          file_path: `${bookInfo.id}.txt`,
+          cover_url: coverUrl,
+          total_chars: paragraphs.join("").length,
+          cover_color: coverColor,
+        });
+
+        if (savedId) {
+          await sbUpsertChapter({
+            id: crypto.randomUUID(),
+            user_id: user.id,
+            book_id: savedId,
+            chapter_index: 0,
+            title: "Начало",
+            paragraphs,
+            plain_text: paragraphs.join("\n"),
+            char_count: paragraphs.join("").length,
+          });
+        }
+      }
+
+      setDownloadTask(bookInfo.id, {
+        progress: 100,
+        status: "done",
+        message: "Книга в библиотеке",
+        bookLocalId: newBook.id,
+      });
+    } catch (err) {
+      setDownloadTask(bookInfo.id, {
+        progress: 0,
+        status: "error",
+        message: err instanceof Error ? err.message : "Ошибка загрузки",
+      });
+    }
+  }
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   if (authLoading || !isHydrated) {
@@ -168,6 +350,10 @@ function AppInner() {
           books={books}
           profile={profile}
           cards={cards}
+          onBooksChange={handleBooksChange}
+          onOpenBook={handleOpenBook}
+          downloadTasks={downloadTasks}
+          onDownloadBook={(book) => void handleCatalogDownload(book)}
           onContinueReading={() => {
             if (lastBook) { setActiveBook(lastBook); setSection("reader"); }
             else setSection("books");
@@ -194,6 +380,8 @@ function AppInner() {
           books={books}
           onBooksChange={handleBooksChange}
           onOpenBook={handleOpenBook}
+          downloadTasks={downloadTasks}
+          onDownloadBook={(book) => void handleCatalogDownload(book)}
         />
       )}
 

@@ -129,7 +129,7 @@ export function SettingsView({ profile, onProfileChange }: Props) {
         {[
           { label: "Версия", value: "1.1.0" },
           { label: "AI модель", value: "gemini-3.1-flash-lite" },
-          { label: "Форматы книг", value: "TXT, EPUB" },
+          { label: "Форматы книг", value: "TXT, EPUB, FB2" },
           { label: "Хранилище", value: "Supabase + LocalStorage cache" },
         ].map(({ label, value }) => (
           <div key={label} className="setting-row">

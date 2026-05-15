@@ -7,7 +7,7 @@ export type Book = {
   title: string;
   author: string;
   language: string;
-  format: "txt" | "epub";
+  format: "txt" | "epub" | "fb2";
   progress: number;         // 0-100
   paragraphIndex: number;   // last read paragraph
   chapterTitle: string;

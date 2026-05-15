@@ -2,11 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X } from "lucide-react";
-import { franc } from "franc-min";
-import { parseBook } from "@/lib/parser/index";
-import { saveLocalBook } from "@/lib/db/local";
-import { sbUpsertBook, sbUpsertChapter } from "@/lib/db/supabase";
-import { useAuth } from "@/lib/auth/useAuth";
 import type { Book } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
 
@@ -14,6 +9,8 @@ type Props = {
   books: Book[];
   onBooksChange: (books: Book[]) => void;
   onOpenBook: (book: Book) => void;
+  downloadTasks: Record<number, DownloadTask>;
+  onDownloadBook: (book: GutendexBook) => void;
 };
 
 type GutendexBook = {
@@ -29,6 +26,13 @@ type GutendexResponse = {
   next: string | null;
   previous: string | null;
   results: GutendexBook[];
+};
+
+type DownloadTask = {
+  progress: number;
+  status: "downloading" | "parsing" | "saving" | "done" | "error";
+  message: string;
+  bookLocalId?: string;
 };
 
 const PAGE_SIZE = 32;
@@ -79,8 +83,7 @@ function buildCatalogUrl(searchQuery: string, language: string, page: number) {
   return `https://gutendex.com/books/?${params.toString()}`;
 }
 
-export function DiscoverView({ books, onBooksChange, onOpenBook }: Props) {
-  const { user } = useAuth();
+export function DiscoverView({ books, onOpenBook, downloadTasks, onDownloadBook }: Props) {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [language, setLanguage] = useState("");
@@ -89,7 +92,6 @@ export function DiscoverView({ books, onBooksChange, onOpenBook }: Props) {
   const [results, setResults] = useState<GutendexBook[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedBook, setSelectedBook] = useState<GutendexBook | null>(null);
-  const [downloadingId, setDownloadingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(count / PAGE_SIZE));
@@ -145,99 +147,6 @@ export function DiscoverView({ books, onBooksChange, onOpenBook }: Props) {
     setQuery("");
     setSubmittedQuery("");
     setPage(1);
-  }
-
-  async function handleDownload(bookInfo: GutendexBook) {
-    const existing = books.find((book) => book.title.toLowerCase() === bookInfo.title.toLowerCase());
-    if (existing) {
-      onOpenBook(existing);
-      return;
-    }
-
-    setDownloadingId(bookInfo.id);
-    setError(null);
-
-    try {
-      const textKey = Object.keys(bookInfo.formats).find((key) => key.startsWith("text/plain"));
-      if (!textKey) throw new Error("Текст книги недоступен");
-
-      const textUrl = bookInfo.formats[textKey].replace("http://", "https://");
-      const res = await fetch(`/api/books/proxy?url=${encodeURIComponent(textUrl)}`);
-      if (!res.ok) throw new Error("Не удалось скачать текст книги");
-
-      const textBuffer = await res.arrayBuffer();
-      const file = new File([textBuffer], `${bookInfo.title}.txt`, { type: "text/plain" });
-      const paragraphs = await parseBook(file);
-      if (paragraphs.length === 0) throw new Error("Файл пустой или не удалось разобрать текст");
-
-      const sampleText = paragraphs.slice(0, 50).join(" ");
-      const langMap: Record<string, string> = {
-        deu: "de",
-        eng: "en",
-        spa: "es",
-        fra: "fr",
-        ita: "it",
-        rus: "ru",
-      };
-      const detectedLang = langMap[franc(sampleText)] || bookInfo.languages?.[0] || "en";
-      const bookId = crypto.randomUUID();
-      const author = bookInfo.authors?.[0]?.name || "Неизвестен";
-      const coverColor = pickColor(bookInfo.title);
-      const coverUrl = getCoverUrl(bookInfo);
-
-      const newBook: Book = {
-        id: bookId,
-        title: bookInfo.title,
-        author,
-        language: detectedLang,
-        format: "txt",
-        progress: 0,
-        paragraphIndex: 0,
-        chapterTitle: "Начало",
-        lastReadAt: new Date().toLocaleDateString("ru"),
-        coverColor,
-        coverUrl,
-        paragraphs,
-      };
-
-      saveLocalBook(newBook);
-      onBooksChange([newBook, ...books]);
-
-      if (user) {
-        const savedId = await sbUpsertBook({
-          id: bookId,
-          user_id: user.id,
-          title: bookInfo.title,
-          author,
-          language: detectedLang,
-          format: "txt",
-          file_path: `${bookInfo.id}.txt`,
-          cover_url: coverUrl,
-          total_chars: paragraphs.join("").length,
-          cover_color: coverColor,
-        });
-
-        if (savedId) {
-          await sbUpsertChapter({
-            id: crypto.randomUUID(),
-            user_id: user.id,
-            book_id: savedId,
-            chapter_index: 0,
-            title: "Начало",
-            paragraphs,
-            plain_text: paragraphs.join("\n"),
-            char_count: paragraphs.join("").length,
-          });
-        }
-      }
-
-      onOpenBook(newBook);
-      setSelectedBook(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка при загрузке книги");
-    } finally {
-      setDownloadingId(null);
-    }
   }
 
   return (
@@ -299,11 +208,8 @@ export function DiscoverView({ books, onBooksChange, onOpenBook }: Props) {
         <span>Страница {page} из {totalPages}</span>
       </div>
 
-      {isLoading ? (
-        <div className="catalog-loading">
-          <span className="loading-dot" />
-          <span>Ищем книги...</span>
-        </div>
+      {isLoading && results.length === 0 ? (
+        <CatalogSkeleton />
       ) : results.length === 0 ? (
         <div className="empty-state">
           <Globe size={40} />
@@ -312,7 +218,7 @@ export function DiscoverView({ books, onBooksChange, onOpenBook }: Props) {
         </div>
       ) : (
         <>
-          <div className="discover-grid">
+          <div className={`discover-grid${isLoading ? " is-refreshing" : ""}`}>
             {results.map((bookInfo) => {
               const coverUrl = getCoverUrl(bookInfo);
               const isInLibrary = titleSet.has(bookInfo.title.toLowerCase());
@@ -374,9 +280,10 @@ export function DiscoverView({ books, onBooksChange, onOpenBook }: Props) {
           coverUrl={getCoverUrl(selectedBook)}
           coverColor={pickColor(selectedBook.title)}
           inLibrary={books.some((book) => book.title.toLowerCase() === selectedBook.title.toLowerCase())}
-          isDownloading={downloadingId === selectedBook.id}
+          downloadTask={downloadTasks[selectedBook.id]}
+          isDownloading={downloadTasks[selectedBook.id]?.status === "downloading" || downloadTasks[selectedBook.id]?.status === "parsing" || downloadTasks[selectedBook.id]?.status === "saving"}
           onClose={() => setSelectedBook(null)}
-          onDownload={() => void handleDownload(selectedBook)}
+          onDownload={() => onDownloadBook(selectedBook)}
           onOpen={() => {
             const existing = books.find((book) => book.title.toLowerCase() === selectedBook.title.toLowerCase());
             if (existing) {
@@ -387,5 +294,21 @@ export function DiscoverView({ books, onBooksChange, onOpenBook }: Props) {
         />
       )}
     </section>
+  );
+}
+
+function CatalogSkeleton() {
+  return (
+    <div className="discover-grid">
+      {Array.from({ length: 8 }).map((_, index) => (
+        <div className="catalog-book catalog-book-skeleton" key={index}>
+          <span className="catalog-cover skeleton-block" />
+          <span className="catalog-book-body">
+            <span className="shimmer-line" />
+            <span className="shimmer-line medium" />
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }

@@ -21,4 +21,4 @@ export const SUPPORTED_LANGUAGES = [
   { code: "fr", nameNative: "Français", nameEn: "French" },
 ] as const;
 
-export const BOOK_FORMATS = [".txt", ".epub"] as const;
+export const BOOK_FORMATS = [".txt", ".epub", ".fb2"] as const;

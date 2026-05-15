@@ -106,19 +106,25 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
           <div className="tab-body">
             <div className="tab-row-main">
               <div>
-                <span className="tab-main-word">{analysis?.word.text ?? selection.token}</span>
+                <span className="tab-main-word">{selection.token}</span>
                 {analysis?.word.partOfSpeech && (
                   <span className="tab-pos">{analysis.word.partOfSpeech}{analysis.word.gender ? ` · ${analysis.word.gender}` : ""}</span>
                 )}
+                {analysis?.word.lemma && analysis.word.lemma.toLowerCase() !== selection.token.toLowerCase() && (
+                  <span className="tab-lemma-row">
+                    Инфинитив / форма: <b>{analysis.word.lemma}</b>
+                    <SpeakButton text={analysis.word.lemma} lang={lang} size={13} />
+                  </span>
+                )}
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <SpeakButton key={analysis?.word.lemma ?? selection.token} text={analysis?.word.lemma ?? selection.token} lang={lang} />
+                <SpeakButton key={selection.token} text={selection.token} lang={lang} />
                 <button className="mini-btn" type="button" disabled={!analysis} onClick={onOpenWordModal}>подробнее</button>
               </div>
             </div>
             {analysis && analysis.word.translation ? (
               <>
-                <p className="tab-translation">{analysis.word.translation}</p>
+                <p className="tab-translation word-translation">{analysis.word.translation}</p>
                 <p className="tab-note">{analysis.word.explanation}</p>
               </>
             ) : (
@@ -135,7 +141,7 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
             </div>
             {analysis && analysis.phrase.translation ? (
               <>
-                <p className="tab-translation">{analysis.phrase.translation}</p>
+                <KaraokeTranslation text={analysis.phrase.translation} sourceText={selection.phraseText} />
                 <p className="tab-note">{analysis.phrase.explanation}</p>
               </>
             ) : (
@@ -152,7 +158,7 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
             </div>
             {analysis && analysis.sentence.translation ? (
               <>
-                <p className="tab-translation">{analysis.sentence.translation}</p>
+                <KaraokeTranslation text={analysis.sentence.translation} sourceText={selection.sentence} />
                 <p className="tab-note">{analysis.sentence.grammarNote}</p>
               </>
             ) : (
@@ -244,5 +250,60 @@ function ClickableText({ text, lang, onWordTap, className }: { text: string; lan
         );
       })}
     </span>
+  );
+}
+
+function KaraokeTranslation({ text, sourceText }: { text: string; sourceText: string }) {
+  const [ttsState, setTtsState] = useState<TTSState | null>(null);
+
+  useEffect(() => {
+    let unmounted = false;
+    let localState: TTSState | null = null;
+    let frame: number | null = null;
+
+    const unsubscribe = subscribeTTS((newState) => {
+      localState = newState;
+      if (!unmounted) setTtsState(newState);
+    });
+
+    const tick = () => {
+      if (!unmounted && localState && localState.status === "playing") {
+        setTtsState(getTTSState());
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      unmounted = true;
+      unsubscribe();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  const chunks = text.split(/([,;:—–-]|\.\s+|\?\s+|!\s+)/).reduce<string[]>((acc, part) => {
+    if (!part) return acc;
+    if (/^[,;:—–-]|\.\s+|\?\s+|!\s+$/.test(part) && acc.length) {
+      acc[acc.length - 1] += part;
+    } else {
+      acc.push(part);
+    }
+    return acc;
+  }, []).filter((part) => part.trim());
+
+  const isSourcePlaying = ttsState && (ttsState.status === "playing" || ttsState.status === "paused") && ttsState.text === sourceText;
+  const progress = isSourcePlaying && ttsState.duration > 0
+    ? Math.min(0.999, Math.max(0, ttsState.currentTime / ttsState.duration))
+    : -1;
+  const activeIndex = progress >= 0 ? Math.min(chunks.length - 1, Math.floor(progress * chunks.length)) : -1;
+
+  return (
+    <p className="tab-translation">
+      {chunks.map((chunk, index) => (
+        <span key={`${chunk}-${index}`} className={index === activeIndex ? "translation-karaoke-active" : ""}>
+          {chunk}
+        </span>
+      ))}
+    </p>
   );
 }

@@ -8,6 +8,9 @@ export const metadata: Metadata = {
   title: "AIBook — Language Learning Reader",
   description: "Read books and learn languages with AI. Tap any word for instant translation, grammar breakdown, and smart flashcards.",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/icon-512x512.png",
+  },
 };
 
 export const viewport: Viewport = {

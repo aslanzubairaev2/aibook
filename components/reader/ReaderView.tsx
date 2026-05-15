@@ -1,18 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
-import { analyzeSelection, analyzeSentence } from "@/lib/ai/analyze";
+import { analyzeSelection } from "@/lib/ai/analyze";
 import { splitIntoTokens, normalizeToken, splitSentencesWithRanges, findPhraseOffsets } from "@/lib/selector/text";
 import { saveLocalProgress, saveLocalBook } from "@/lib/db/local";
 import { sbUpsertProgress, sbInsertFlashcard, sbGetCachedWord, sbSaveCachedWord } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { APP_CONFIG } from "@/lib/config";
-import { stopTTS } from "@/lib/tts";
+import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
 import type { AiAnalysis, Book, Flashcard, UserProfile } from "@/lib/types";
+
+const PAGE_TARGET_CHARS = 7200;
+const PAGE_MAX_PARAGRAPHS = 28;
 
 type Props = {
   book: Book;
@@ -36,6 +39,37 @@ type ActiveToken = {
   sentenceAfter: string;
 };
 
+type ReaderPage = {
+  start: number;
+  end: number;
+};
+
+function buildReaderPages(paragraphs: string[]): ReaderPage[] {
+  const pages: ReaderPage[] = [];
+  let start = 0;
+  let chars = 0;
+
+  for (let i = 0; i < paragraphs.length; i++) {
+    chars += paragraphs[i].length;
+    const count = i - start + 1;
+    const shouldCut = chars >= PAGE_TARGET_CHARS || count >= PAGE_MAX_PARAGRAPHS;
+
+    if (shouldCut && i >= start) {
+      pages.push({ start, end: i + 1 });
+      start = i + 1;
+      chars = 0;
+    }
+  }
+
+  if (start < paragraphs.length) pages.push({ start, end: paragraphs.length });
+  return pages.length ? pages : [{ start: 0, end: 0 }];
+}
+
+function findPageIndex(pages: ReaderPage[], paraIndex: number) {
+  const idx = pages.findIndex((page) => paraIndex >= page.start && paraIndex < page.end);
+  return Math.max(0, idx);
+}
+
 export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate }: Props) {
   const { user } = useAuth();
   const [active, setActive] = useState<ActiveToken | null>(null);
@@ -43,22 +77,78 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   const [isLoading, setIsLoading] = useState(false);
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [tts, setTts] = useState<TTSState>(getTTSState());
   const contentRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAutoScrollRef = useRef(0);
   const sentenceCacheRef = useRef<Record<string, any>>({});
   const phraseCacheRef = useRef<Record<string, any>>({});
+  const pages = useMemo(() => buildReaderPages(book.paragraphs), [book.paragraphs]);
+  const [pageIndex, setPageIndex] = useState(() => findPageIndex(pages, book.paragraphIndex));
+  const currentPage = pages[Math.min(pageIndex, pages.length - 1)] ?? pages[0];
+  const visibleParagraphs = book.paragraphs.slice(currentPage.start, currentPage.end);
+
+  useEffect(() => {
+    setPageIndex(findPageIndex(pages, book.paragraphIndex));
+  }, [book.id, book.paragraphIndex, pages]);
+
+  useEffect(() => {
+    let unmounted = false;
+    let localState = getTTSState();
+    let frame: number | null = null;
+
+    const unsubscribe = subscribeTTS((state) => {
+      localState = state;
+      if (!unmounted) setTts(state);
+    });
+
+    const tick = () => {
+      if (!unmounted && localState.status === "playing") setTts(getTTSState());
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      unmounted = true;
+      unsubscribe();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  function focusToken(paraIndex: number, tokIdxInPara: number, behavior: ScrollBehavior = "smooth") {
+    window.setTimeout(() => {
+      const target = contentRef.current?.querySelector(
+        `[data-token-id="${paraIndex}-${tokIdxInPara}"]`,
+      ) as HTMLElement | null;
+      target?.scrollIntoView({ behavior, block: "center", inline: "nearest" });
+    }, 40);
+  }
+
+  function ensurePageForParagraph(paraIndex: number) {
+    const targetPage = findPageIndex(pages, paraIndex);
+    if (targetPage !== pageIndex) setPageIndex(targetPage);
+  }
 
   // Scroll to last read paragraph on mount
   useEffect(() => {
     if (book.paragraphIndex <= 0) return;
     const t = setTimeout(() => {
-      const els = contentRef.current?.querySelectorAll("p[data-idx]");
-      const el = els?.[Math.min(book.paragraphIndex, (els?.length ?? 1) - 1)];
+      const el = contentRef.current?.querySelector(`p[data-idx="${book.paragraphIndex}"]`);
       el?.scrollIntoView({ behavior: "instant", block: "start" });
     }, 200);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (tts.status !== "playing") return;
+    const now = Date.now();
+    if (now - lastAutoScrollRef.current < 650) return;
+    const el = contentRef.current?.querySelector(".reader-karaoke-current") as HTMLElement | null;
+    if (!el) return;
+    lastAutoScrollRef.current = now;
+    el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  }, [tts.activeCharIndex, tts.status]);
 
   const handleScroll = useCallback(() => {
     if (!contentRef.current) return;
@@ -138,7 +228,9 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       sentenceAfter: sentRanges[sentIdx + 1]?.text.trim() ?? book.paragraphs[paraIndex + 1] ?? "",
     };
 
+    ensurePageForParagraph(paraIndex);
     setActive(newActive);
+    focusToken(paraIndex, tokIdxInPara);
     
     if (analysis && newActive.sentence === active?.sentence) {
       // Keep sentence analysis, but clear word to show shimmer
@@ -161,7 +253,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       const phraseKey = `${newActive.sentence}_${token}`;
       const existingPhraseData = phraseCacheRef.current[phraseKey];
 
-      if (cachedWord) {
+      if (cachedWord && (cachedWord.examples?.length ?? 0) >= 5) {
         setAnalysis({
           ...cachedWord,
           sentence: existingSentenceData || cachedWord.sentence,
@@ -223,7 +315,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     // Pre-load the modal and set state before waiting, eliminating "lag" perception
     setIsWordModalOpen(true);
 
-    if (cachedWord) {
+    if (cachedWord && (cachedWord.examples?.length ?? 0) >= 5) {
       setAnalysis({
         ...cachedWord,
         sentence: existingSentenceData || cachedWord.sentence,
@@ -372,10 +464,28 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     }
   }
 
+  function goToPage(nextIndex: number) {
+    const clamped = Math.max(0, Math.min(pages.length - 1, nextIndex));
+    const target = pages[clamped];
+    setPageIndex(clamped);
+    setActive(null);
+    setAnalysis(null);
+    stopTTS();
+
+    const best = target.start;
+    const progress = Math.round((best / Math.max(book.paragraphs.length - 1, 1)) * 100);
+    const updated = { ...book, paragraphIndex: best, progress };
+    saveLocalProgress(book.id, best);
+    saveLocalBook(updated);
+    onProgressUpdate(updated);
+
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 40);
+  }
+
   async function handleAddCard(type: Flashcard["type"]) {
     if (!analysis || !active) return;
     const map = {
-      word:     { front: analysis.word.lemma,  back: analysis.word.translation },
+      word:     { front: active.token,         back: analysis.word.translation },
       phrase:   { front: active.phraseText,    back: analysis.phrase.translation },
       sentence: { front: active.sentence,      back: analysis.sentence.translation },
     };
@@ -418,6 +528,32 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     setTimeout(() => setToast(null), 2000);
   }
 
+  function getTokenKaraokeClass(paraIndex: number, tokenStart: number, tokenEnd: number, tokIdx: number) {
+    if (!active || active.paraIndex !== paraIndex) return "";
+    if (tts.status !== "playing" && tts.status !== "paused") return "";
+    if (tts.activeCharIndex === undefined || tts.activeCharIndex < 0) return "";
+
+    let baseStart = -1;
+    let text = "";
+    if (tts.text === active.sentence) {
+      baseStart = active.sentStart;
+      text = active.sentence;
+    } else if (tts.text === active.phraseText) {
+      baseStart = active.phraseStart;
+      text = active.phraseText;
+    } else if (tts.text === active.token && tokIdx === active.tokIdxInPara) {
+      return "karaoke-spoken reader-karaoke-current";
+    }
+
+    if (baseStart < 0 || !text) return "";
+
+    const spokenAbs = baseStart + Math.min(tts.activeCharIndex, text.length - 1);
+    if (tokenEnd <= baseStart || tokenStart >= baseStart + text.length) return "";
+    if (tokenStart <= spokenAbs && tokenEnd >= spokenAbs) return "karaoke-spoken reader-karaoke-current";
+    if (tokenStart < spokenAbs) return "karaoke-spoken";
+    return "";
+  }
+
   return (
     <div className="reader-screen">
       <header className="reader-toolbar">
@@ -437,7 +573,8 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
 
       <div className="reader-content" ref={contentRef}>
         <article className="reader-text">
-          <div style={{ textAlign: "center", padding: "40px 20px 60px", marginBottom: "40px", borderBottom: "1px solid var(--divider)" }}>
+          {pageIndex === 0 && (
+          <div style={{ textAlign: "center", padding: "40px 20px 60px", marginBottom: "40px", borderBottom: "1px solid var(--border)" }}>
             <div 
               style={{
                 width: 140,
@@ -458,14 +595,16 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
             >
               {!book.coverUrl && book.language.toUpperCase()}
             </div>
-            <h1 style={{ fontSize: "2rem", fontWeight: 800, marginBottom: "8px", color: "var(--text)" }}>
+            <h1 style={{ fontSize: "2rem", fontWeight: 800, marginBottom: "8px", color: "var(--text-primary)" }}>
               {book.title}
             </h1>
-            <p style={{ fontSize: "1.25rem", color: "var(--text-secondary)" }}>
+            <p style={{ fontSize: "1.25rem", color: "var(--text-muted)" }}>
               {book.author}
             </p>
           </div>
-          {book.paragraphs.map((para, paraIndex) => {
+          )}
+          {visibleParagraphs.map((para, localIndex) => {
+            const paraIndex = currentPage.start + localIndex;
             const isParaActive = active?.paraIndex === paraIndex;
 
             const tokens = splitIntoTokens(para);
@@ -491,11 +630,13 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
                     isWord   ? "hl-word"         : "",
                     isPhrase ? "hl-phrase"       : "",
                     inSent && !isWord && !isPhrase ? "hl-sentence-tok" : "",
+                    getTokenKaraokeClass(paraIndex, charPos, charPos + token.length, tokIdx),
                   ].filter(Boolean).join(" ");
 
                   return (
                     <span
                       key={tokIdx}
+                      data-token-id={`${paraIndex}-${tokIdx}`}
                       role="button"
                       tabIndex={0}
                       className={cls}
@@ -509,6 +650,27 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
               </p>
             );
           })}
+          <div className="reader-page-controls">
+            <button
+              className="mini-btn"
+              type="button"
+              disabled={pageIndex <= 0}
+              onClick={() => goToPage(pageIndex - 1)}
+            >
+              <ChevronLeft size={15} />
+              Назад
+            </button>
+            <span>Страница {pageIndex + 1} из {pages.length}</span>
+            <button
+              className="mini-btn"
+              type="button"
+              disabled={pageIndex >= pages.length - 1}
+              onClick={() => goToPage(pageIndex + 1)}
+            >
+              Вперёд
+              <ChevronRight size={15} />
+            </button>
+          </div>
         </article>
       </div>
 
@@ -533,6 +695,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           isOpen={isWordModalOpen}
           isLoading={isLoading}
           lang={book.language}
+          selectedWord={active?.token ?? analysis.word.text}
           onClose={() => setIsWordModalOpen(false)}
           onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
           onWordTap={(word, context) => void handleWordTapInPanel(word, context)}

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, ChevronRight, Library, Sparkles, SquareStack } from "lucide-react";
+import { BookOpen, ChevronRight, Library } from "lucide-react";
+import { BookDetailModal } from "@/components/discover/BookDetailModal";
 import type { Book, Flashcard, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -9,6 +10,10 @@ type Props = {
   books: Book[];
   profile: UserProfile;
   cards: Flashcard[];
+  onBooksChange: (books: Book[]) => void;
+  onOpenBook: (book: Book) => void;
+  downloadTasks: Record<number, DownloadTask>;
+  onDownloadBook: (book: GutendexBook) => void;
   onContinueReading: () => void;
   onOpenCards: () => void;
   onOpenBooks: () => void;
@@ -23,6 +28,13 @@ type GutendexBook = {
   formats: Record<string, string>;
 };
 
+type DownloadTask = {
+  progress: number;
+  status: "downloading" | "parsing" | "saving" | "done" | "error";
+  message: string;
+  bookLocalId?: string;
+};
+
 const LANG_NAMES: Record<string, string> = {
   ru: "Русский",
   de: "Deutsch",
@@ -31,6 +43,21 @@ const LANG_NAMES: Record<string, string> = {
   es: "Español",
   it: "Italiano",
 };
+
+const COVER_COLORS = [
+  "linear-gradient(160deg, #c49a28 0%, #7a5c10 100%)",
+  "linear-gradient(160deg, #4a7a5c 0%, #254030 100%)",
+  "linear-gradient(160deg, #3a5c8a 0%, #1a2c4a 100%)",
+  "linear-gradient(160deg, #8a3a3a 0%, #4a1a1a 100%)",
+  "linear-gradient(160deg, #6a3a8a 0%, #35174a 100%)",
+  "linear-gradient(160deg, #8a5a2a 0%, #4a2a0a 100%)",
+];
+
+function pickColor(title: string) {
+  let hash = 0;
+  for (const ch of title) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffff;
+  return COVER_COLORS[hash % COVER_COLORS.length];
+}
 
 function getCoverUrl(book: GutendexBook) {
   const coverKey = Object.keys(book.formats).find((key) => key.startsWith("image/jpeg"));
@@ -48,6 +75,10 @@ export function HomeDashboard({
   books,
   profile,
   cards,
+  onBooksChange,
+  onOpenBook,
+  downloadTasks,
+  onDownloadBook,
   onContinueReading,
   onOpenCards,
   onOpenBooks,
@@ -55,10 +86,11 @@ export function HomeDashboard({
 }: Props) {
   const [recommendations, setRecommendations] = useState<GutendexBook[]>([]);
   const [topBooks, setTopBooks] = useState<GutendexBook[]>([]);
+  const [isLoadingShelves, setIsLoadingShelves] = useState(true);
+  const [selectedBook, setSelectedBook] = useState<GutendexBook | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const totalCards = cards.length;
-  const wordCards = cards.filter((card) => card.type === "word").length;
-  const phraseCards = cards.filter((card) => card.type === "phrase").length;
   const activeLanguage = book?.language || profile.targetLanguage || "de";
   const libraryTitles = useMemo(() => new Set(books.map((item) => item.title.toLowerCase())), [books]);
 
@@ -66,6 +98,7 @@ export function HomeDashboard({
     const controller = new AbortController();
 
     async function loadShelf(language: string) {
+      setIsLoadingShelves(true);
       try {
         const [langRes, topRes] = await Promise.all([
           fetch(`https://gutendex.com/books/?sort=popular&languages=${language}`, { signal: controller.signal }),
@@ -81,6 +114,8 @@ export function HomeDashboard({
         setTopBooks((topData.results as GutendexBook[]).filter(filterNew).slice(0, 10));
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
+      } finally {
+        setIsLoadingShelves(false);
       }
     }
 
@@ -101,7 +136,6 @@ export function HomeDashboard({
           <h1 className="home-title">Твой учебный день</h1>
         </div>
         <div className="home-header-right">
-          <span className="home-streak">{totalCards}</span>
           <button className="icon-btn" onClick={onOpenBooks} type="button" aria-label="Библиотека">
             <Library size={19} />
           </button>
@@ -140,27 +174,42 @@ export function HomeDashboard({
           <span>
             <span className="action-card-label">Начать читать</span>
             <strong className="action-card-title">Загрузите первую книгу</strong>
-            <span className="action-card-sub">TXT или EPUB</span>
+            <span className="action-card-sub">TXT, EPUB или FB2</span>
           </span>
           <ChevronRight size={20} className="action-card-arrow" />
         </button>
       )}
 
-      <RecommendationShelf
-        title={`На ${LANG_NAMES[activeLanguage] ?? activeLanguage}`}
-        books={recommendations}
-        onOpenDiscover={onOpenDiscover}
-      />
+      {error && <div className="inline-error">{error}</div>}
 
-      <RecommendationShelf
-        title="Лучшие книги"
-        books={topBooks}
-        onOpenDiscover={onOpenDiscover}
-      />
+      {isLoadingShelves || (recommendations.length === 0 && topBooks.length === 0) ? (
+        <HomeShelvesSkeleton />
+      ) : (
+        <>
+          <RecommendationShelf
+            title={`На ${LANG_NAMES[activeLanguage] ?? activeLanguage}`}
+            books={recommendations}
+            onOpenDiscover={onOpenDiscover}
+            onBookSelect={setSelectedBook}
+          />
+
+          <RecommendationShelf
+            title="Лучшие книги"
+            books={topBooks}
+            onOpenDiscover={onOpenDiscover}
+            onBookSelect={setSelectedBook}
+          />
+        </>
+      )}
 
       {bookOfDay && (
-        <button className="book-of-day glass-card" type="button" onClick={onOpenDiscover}>
-          <span className="book-of-day-icon"><Sparkles size={17} /></span>
+        <button className="book-of-day glass-card" type="button" onClick={() => setSelectedBook(bookOfDay)}>
+          <span
+            className="book-of-day-cover"
+            style={getCoverUrl(bookOfDay) ? { backgroundImage: `url(${getCoverUrl(bookOfDay)})` } : { background: pickColor(bookOfDay.title) }}
+          >
+            {!getCoverUrl(bookOfDay) && (bookOfDay.languages?.[0] || "en").toUpperCase()}
+          </span>
           <span>
             <small>Книга дня</small>
             <strong>{bookOfDay.title}</strong>
@@ -170,61 +219,25 @@ export function HomeDashboard({
         </button>
       )}
 
-      <div className="vocab-section glass-card">
-        <div className="vocab-header">
-          <span className="vocab-title">Словарный прогресс</span>
-          <span className="vocab-today">На сегодня</span>
-        </div>
-        <div className="vocab-grid">
-          <div className="vocab-ring-wrap">
-            <svg viewBox="0 0 80 80" className="vocab-ring" aria-hidden>
-              <circle cx="40" cy="40" r="32" fill="none" strokeWidth="6" stroke="rgba(240,230,211,0.08)" />
-              <circle
-                cx="40"
-                cy="40"
-                r="32"
-                fill="none"
-                strokeWidth="6"
-                stroke="var(--accent)"
-                strokeLinecap="round"
-                strokeDasharray={`${Math.min(totalCards / 2, 200.96)}, 200.96`}
-                transform="rotate(-90 40 40)"
-              />
-            </svg>
-            <div className="vocab-ring-label">
-              <span className="vocab-ring-count">{totalCards}</span>
-              <span className="vocab-ring-sub">карточек</span>
-            </div>
-          </div>
-          <div className="vocab-stats">
-            <div className="vocab-stat">
-              <span className="vocab-dot" style={{ background: "var(--green)" }} />
-              <span className="vocab-stat-label">Слова</span>
-              <span className="vocab-stat-val">{wordCards}</span>
-            </div>
-            <div className="vocab-stat">
-              <span className="vocab-dot" style={{ background: "var(--blue)" }} />
-              <span className="vocab-stat-label">Фразы</span>
-              <span className="vocab-stat-val">{phraseCards}</span>
-            </div>
-            <div className="vocab-stat">
-              <span className="vocab-dot" style={{ background: "var(--accent)" }} />
-              <span className="vocab-stat-label">Из книг</span>
-              <span className="vocab-stat-val">{Math.max(0, totalCards - wordCards - phraseCards)}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <button className="action-card study glass-card" onClick={onOpenCards} type="button">
-        <span className="action-card-icon"><SquareStack size={24} /></span>
-        <span>
-          <span className="action-card-label">Продолжить обучение</span>
-          <strong className="action-card-title">Повтори слова и укрепи память</strong>
-          <span className="action-card-sub">{totalCards} карточек · {LANG_NAMES[profile.targetLanguage] ?? profile.targetLanguage}</span>
-        </span>
-        <ChevronRight size={20} className="action-card-arrow" />
-      </button>
+      {selectedBook && (
+        <BookDetailModal
+          book={selectedBook}
+          coverUrl={getCoverUrl(selectedBook)}
+          coverColor={pickColor(selectedBook.title)}
+          inLibrary={books.some((item) => item.title.toLowerCase() === selectedBook.title.toLowerCase())}
+          downloadTask={downloadTasks[selectedBook.id]}
+          isDownloading={downloadTasks[selectedBook.id]?.status === "downloading" || downloadTasks[selectedBook.id]?.status === "parsing" || downloadTasks[selectedBook.id]?.status === "saving"}
+          onClose={() => setSelectedBook(null)}
+          onDownload={() => onDownloadBook(selectedBook)}
+          onOpen={() => {
+            const existing = books.find((item) => item.title.toLowerCase() === selectedBook.title.toLowerCase());
+            if (existing) {
+              setSelectedBook(null);
+              onOpenBook(existing);
+            }
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -233,10 +246,12 @@ function RecommendationShelf({
   title,
   books,
   onOpenDiscover,
+  onBookSelect,
 }: {
   title: string;
   books: GutendexBook[];
   onOpenDiscover: () => void;
+  onBookSelect: (book: GutendexBook) => void;
 }) {
   if (books.length === 0) return null;
 
@@ -250,7 +265,7 @@ function RecommendationShelf({
         {books.map((item) => {
           const coverUrl = getCoverUrl(item);
           return (
-            <button key={item.id} className="shelf-book" type="button" onClick={onOpenDiscover}>
+            <button key={item.id} className="shelf-book" type="button" onClick={() => onBookSelect(item)}>
               <span
                 className="shelf-cover"
                 style={coverUrl ? { backgroundImage: `url(${coverUrl})` } : undefined}
@@ -264,5 +279,26 @@ function RecommendationShelf({
         })}
       </div>
     </section>
+  );
+}
+
+function HomeShelvesSkeleton() {
+  return (
+    <>
+      {[0, 1].map((section) => (
+        <section className="recommendation-section" key={section}>
+          <div className="shelf-title-skeleton shimmer-line" />
+          <div className="book-shelf">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div className="shelf-book-skeleton" key={index}>
+                <span className="shelf-cover skeleton-block" />
+                <span className="shimmer-line short" />
+                <span className="shimmer-line medium" />
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </>
   );
 }
