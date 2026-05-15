@@ -247,3 +247,35 @@ export async function sbSaveCachedWord(
   }
   return true;
 }
+
+// ─── AI TTS Cache ─────────────────────────────────────────────────────────────
+
+export async function sbGetCachedTts(text: string, lang: string, voiceName: string): Promise<string | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("ai_tts_cache")
+    .select("audio_base64")
+    .eq("text", text)
+    .eq("lang", lang)
+    .eq("voice_name", voiceName)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return data.audio_base64;
+}
+
+export async function sbSaveCachedTts(text: string, lang: string, voiceName: string, audioBase64: string): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("ai_tts_cache")
+    .upsert({
+      text,
+      lang,
+      voice_name: voiceName,
+      audio_base64: audioBase64,
+    }, { onConflict: "text,lang,voice_name" });
+
+  if (error) {
+    console.error("sbSaveCachedTts error:", error.message);
+  }
+}

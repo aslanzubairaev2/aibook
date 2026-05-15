@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sbGetCachedTts, sbSaveCachedTts } from "@/lib/db/supabase";
 
 export async function POST(req: Request) {
   try {
@@ -9,9 +10,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing API key" }, { status: 500 });
     }
 
-    // Determine voice based on language or just use a default.
-    // "Kore", "Aoede", "Puck", "Charon", "Fenrir"
-    const voiceName = "Kore"; 
+    // Use Algenib voice as requested
+    const voiceName = "Algenib";
+
+    // 1. Check database cache
+    const cachedAudio = await sbGetCachedTts(text, lang, voiceName);
+    if (cachedAudio) {
+      return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache" });
+    }
 
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`, {
       method: "POST",
@@ -47,7 +53,9 @@ export async function POST(req: Request) {
     const inlineData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
     
     if (inlineData?.data) {
-      return NextResponse.json({ audioBase64: inlineData.data });
+      // 2. Save to database cache
+      await sbSaveCachedTts(text, lang, voiceName, inlineData.data);
+      return NextResponse.json({ audioBase64: inlineData.data, source: "api" });
     }
 
     return NextResponse.json({ error: "No audio data received" }, { status: 500 });
