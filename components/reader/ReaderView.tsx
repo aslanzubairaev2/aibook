@@ -171,7 +171,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
         return;
       }
 
-      const skipWord = !!cachedWord;
+      const skipWord = false;
       const skipSentence = !!existingSentenceData;
 
       const result = await analyzeSelection({
@@ -186,19 +186,17 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       }) as Partial<AiAnalysis>;
 
       const finalAnalysis: AiAnalysis = {
-        word: cachedWord?.word || result.word!,
+        word: result.word!,
         phrase: result.phrase || existingPhraseData,
         sentence: existingSentenceData || result.sentence!,
-        examples: cachedWord?.examples || result.examples || [],
+        examples: result.examples || [],
       };
 
       setAnalysis(finalAnalysis);
       sentenceCacheRef.current[newActive.sentence] = finalAnalysis.sentence;
       phraseCacheRef.current[phraseKey] = finalAnalysis.phrase;
 
-      if (!cachedWord) {
-        void sbSaveCachedWord(token, book.language, profile.nativeLanguage, finalAnalysis);
-      }
+      void sbSaveCachedWord(token, book.language, profile.nativeLanguage, finalAnalysis);
     } catch (err) {
       console.error("AI analysis failed:", err);
     } finally {
@@ -247,7 +245,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     setIsLoading(true);
 
     try {
-      const skipWord = !!cachedWord;
+      const skipWord = false;
       const skipSentence = !!existingSentenceData;
 
       const result = await analyzeSelection({
@@ -262,19 +260,17 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       }) as Partial<AiAnalysis>;
 
       const finalAnalysis: AiAnalysis = {
-        word: cachedWord?.word || result.word!,
+        word: result.word!,
         phrase: result.phrase || existingPhraseData,
         sentence: existingSentenceData || result.sentence!,
-        examples: cachedWord?.examples || result.examples || [],
+        examples: result.examples || [],
       };
 
       setAnalysis(finalAnalysis);
       sentenceCacheRef.current[sentenceToUse] = finalAnalysis.sentence;
       phraseCacheRef.current[phraseKey] = finalAnalysis.phrase;
 
-      if (!cachedWord) {
-        void sbSaveCachedWord(word, book.language, profile.nativeLanguage, finalAnalysis);
-      }
+      void sbSaveCachedWord(word, book.language, profile.nativeLanguage, finalAnalysis);
     } catch (err) {
       console.error("Panel word tap failed:", err);
     } finally {
