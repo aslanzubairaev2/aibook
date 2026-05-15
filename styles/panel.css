@@ -321,5 +321,15 @@
 /* ─── Karaoke Highlighting ───────────────────────────────────────────────── */
 .karaoke-spoken {
   color: var(--accent);
-  transition: color 0.15s ease-out;
+  transition: color 0.1s ease-out;
+}
+
+/* Background fill mode for the "Phrase" tab */
+.karaoke-mode-fill .karaoke-spoken {
+  background: var(--accent);
+  color: #12100a; /* Dark text for contrast */
+  border-radius: 3px;
+  /* Avoid horizontal padding/margin to prevent text jumping */
+  padding: 1px 0;
+  transition: background 0.1s ease-out, color 0.1s ease-out;
 }

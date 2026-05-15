@@ -130,7 +130,7 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
         {tab === "phrase" && (
           <div className="tab-body">
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <ClickableText text={selection.phraseText} lang={lang} onWordTap={onWordTap} className="tab-phrase-text" />
+              <ClickableText text={selection.phraseText} lang={lang} onWordTap={onWordTap} className="tab-phrase-text karaoke-mode-fill" />
               <SpeakButton key={selection.phraseText} text={selection.phraseText} lang={lang} />
             </div>
             {analysis ? (
@@ -228,7 +228,7 @@ function ClickableText({ text, lang, onWordTap, className }: { text: string; lan
            }
         }
 
-        if (!norm) return <span key={i} className={isSpoken ? "karaoke-spoken" : ""}>{chunk}</span>;
+        if (!norm) return <span key={i}>{chunk}</span>;
         
         return (
           <span

@@ -327,7 +327,10 @@ export async function speak(
         if (onEnd) onEnd(); 
       }
     };
-    utter.onerror = (e) => { 
+    utter.onerror = (e: any) => { 
+      // Ignore interrupted/canceled as they are often intentional (e.g. seeking or new speech)
+      if (e.error === 'interrupted' || e.error === 'canceled') return;
+      
       console.error("SpeechSynthesis error", e);
       updateState({ status: "idle", activeCharIndex: 0 });
       if (onEnd) onEnd(); 
