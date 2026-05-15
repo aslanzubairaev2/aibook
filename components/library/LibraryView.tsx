@@ -39,7 +39,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, de
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [uploadLanguage, setUploadLanguage] = useState(defaultLanguage || "de");
+
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
@@ -64,7 +64,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, de
       const langMap: Record<string, string> = {
         deu: "de", eng: "en", spa: "es", fra: "fr", ita: "it", rus: "ru"
       };
-      const detectedLang = langMap[iso639_3] || uploadLanguage;
+      const detectedLang = langMap[iso639_3] || defaultLanguage || "de";
 
       const newBook: Book = {
         id: bookId,
@@ -146,23 +146,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, de
         onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ""; }}
       />
 
-      <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
-        <label htmlFor="upload-lang" style={{ fontSize: 14, fontWeight: 500 }}>Язык книги:</label>
-        <select
-          id="upload-lang"
-          value={uploadLanguage}
-          onChange={(e) => setUploadLanguage(e.target.value)}
-          className="lang-select"
-          style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg-card)", color: "var(--text)", fontSize: 14 }}
-        >
-          <option value="de">Немецкий</option>
-          <option value="en">Английский</option>
-          <option value="es">Испанский</option>
-          <option value="fr">Французский</option>
-          <option value="it">Итальянский</option>
-          <option value="ru">Русский</option>
-        </select>
-      </div>
+
 
       {/* Drop zone */}
       <div
