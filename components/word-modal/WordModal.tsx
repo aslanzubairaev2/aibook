@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import type { AiAnalysis } from "@/lib/types";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
@@ -16,27 +16,8 @@ type Props = {
   onWordTap?: (word: string, contextSentence: string) => void;
 };
 
-const POS_ACTIONS: Record<string, string[]> = {
-  "глагол":          ["Спряжение", "Синонимы", "Этимология", "Произношение"],
-  "verb":            ["Conjugation", "Synonyms", "Etymology", "Pronunciation"],
-  "существительное": ["Склонение", "Синонимы", "Этимология", "Произношение"],
-  "noun":            ["Declension", "Synonyms", "Etymology", "Pronunciation"],
-  "прилагательное":  ["Сравнение", "Антонимы", "Произношение", "Примеры"],
-  "adjective":       ["Comparison", "Antonyms", "Pronunciation", "Examples"],
-  "default":         ["Синонимы", "Антонимы", "Этимология", "Произношение"],
-};
-
-function getActions(pos: string) {
-  const lower = pos.toLowerCase();
-  for (const [key, acts] of Object.entries(POS_ACTIONS)) {
-    if (lower.includes(key)) return acts;
-  }
-  return POS_ACTIONS.default;
-}
-
 export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onClose, onAddCard, onWordTap }: Props) {
   if (!isOpen) return null;
-  const actions = getActions(analysis.word.partOfSpeech);
   const displayWord = selectedWord || analysis.word.text || analysis.word.lemma;
   const hasLemma = analysis.word.lemma && analysis.word.lemma.toLowerCase() !== displayWord.toLowerCase();
 
@@ -134,15 +115,6 @@ export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onC
           </div>
         </div>
 
-        {/* Action list */}
-        <div className="action-list">
-          {actions.map((label) => (
-            <button key={label} type="button" className="action-list-btn">
-              <span>{label}</span>
-              <ChevronRight size={16} style={{ color: "var(--text-muted)" }} />
-            </button>
-          ))}
-        </div>
       </section>
     </div>
   );

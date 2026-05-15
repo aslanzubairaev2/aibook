@@ -61,7 +61,7 @@ function pickColor(title: string) {
 
 function getCoverUrl(book: GutendexBook) {
   const coverKey = Object.keys(book.formats).find((key) => key.startsWith("image/jpeg"));
-  return coverKey ? book.formats[coverKey].replace("http://", "https://") : null;
+  return coverKey ? book.formats[coverKey].replace("http://", "https://").replace(".medium.", ".small.") : null;
 }
 
 function dayOfYear() {
@@ -110,8 +110,8 @@ export function HomeDashboard({
         const [langData, topData] = await Promise.all([langRes.json(), topRes.json()]);
         const filterNew = (item: GutendexBook) => !libraryTitles.has(item.title.toLowerCase());
 
-        setRecommendations((langData.results as GutendexBook[]).filter(filterNew).slice(0, 10));
-        setTopBooks((topData.results as GutendexBook[]).filter(filterNew).slice(0, 10));
+        setRecommendations((langData.results as GutendexBook[]).filter(filterNew).slice(0, 9));
+        setTopBooks((topData.results as GutendexBook[]).filter(filterNew).slice(0, 9));
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
       } finally {

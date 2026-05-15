@@ -27,6 +27,7 @@ type Props = {
 
 type ActiveToken = {
   token: string;
+  isCustomSentence?: boolean;
   paraIndex: number;
   tokIdxInPara: number;
   sentStart: number;
@@ -37,6 +38,13 @@ type ActiveToken = {
   phraseText: string;
   sentenceBefore: string;
   sentenceAfter: string;
+};
+
+type DragSelection = {
+  paraIndex: number;
+  startTokIdx: number;
+  endTokIdx: number;
+  isDragging: boolean;
 };
 
 type ReaderPage = {
@@ -78,9 +86,11 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [tts, setTts] = useState<TTSState>(getTTSState());
+  const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutoScrollRef = useRef(0);
+  const dragMovedRef = useRef(false);
   const sentenceCacheRef = useRef<Record<string, any>>({});
   const phraseCacheRef = useRef<Record<string, any>>({});
   const pages = useMemo(() => buildReaderPages(book.paragraphs), [book.paragraphs]);
@@ -120,8 +130,25 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       const target = contentRef.current?.querySelector(
         `[data-token-id="${paraIndex}-${tokIdxInPara}"]`,
       ) as HTMLElement | null;
-      target?.scrollIntoView({ behavior, block: "center", inline: "nearest" });
+      scrollElementIntoReaderFocus(target, behavior);
     }, 40);
+  }
+
+  function scrollElementIntoReaderFocus(target: HTMLElement | null, behavior: ScrollBehavior = "smooth") {
+    if (!target) return;
+
+    const toolbarBottom = document.querySelector(".reader-toolbar")?.getBoundingClientRect().bottom ?? 68;
+    const panelTop = document.querySelector(".ai-panel")?.getBoundingClientRect().top ?? window.innerHeight;
+    const safeTop = toolbarBottom + 20;
+    const safeBottom = Math.max(safeTop + 120, panelTop - 22);
+    const visibleCenter = safeTop + (safeBottom - safeTop) / 2;
+    const rect = target.getBoundingClientRect();
+    const targetCenter = rect.top + rect.height / 2;
+    const delta = targetCenter - visibleCenter;
+
+    if (Math.abs(delta) > 18) {
+      window.scrollBy({ top: delta, behavior });
+    }
   }
 
   function ensurePageForParagraph(paraIndex: number) {
@@ -147,8 +174,15 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     const el = contentRef.current?.querySelector(".reader-karaoke-current") as HTMLElement | null;
     if (!el) return;
     lastAutoScrollRef.current = now;
-    el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    scrollElementIntoReaderFocus(el, "smooth");
   }, [tts.activeCharIndex, tts.status]);
+
+  useEffect(() => {
+    if (!dragSelection?.isDragging) return;
+    const finish = () => finishTokenDrag();
+    window.addEventListener("pointerup", finish);
+    return () => window.removeEventListener("pointerup", finish);
+  }, [dragSelection]);
 
   const handleScroll = useCallback(() => {
     if (!contentRef.current) return;
@@ -192,6 +226,10 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   }, [handleScroll]);
 
   async function handleTokenTap(token: string, paraIndex: number, tokIdxInPara: number) {
+    if (dragMovedRef.current) {
+      dragMovedRef.current = false;
+      return;
+    }
     stopTTS(); // Close scrubber when selecting a new word
     
     const norm = normalizeToken(token);
@@ -221,6 +259,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
 
     const newActive: ActiveToken = {
       token, paraIndex, tokIdxInPara,
+      isCustomSentence: false,
       sentStart, sentEnd, phraseStart, phraseEnd,
       sentence: sentText.trim(),
       phraseText,
@@ -294,6 +333,100 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function handleTokenRangeSelection(paraIndex: number, startTokIdx: number, endTokIdx: number) {
+    stopTTS();
+    const para = book.paragraphs[paraIndex];
+    const tokens = splitIntoTokens(para);
+    const offsets: number[] = [];
+    let off = 0;
+    for (const token of tokens) {
+      offsets.push(off);
+      off += token.length;
+    }
+
+    const start = Math.min(startTokIdx, endTokIdx);
+    const end = Math.max(startTokIdx, endTokIdx);
+    const firstWord = tokens[start];
+    const selectedText = tokens.slice(start, end + 1).join("").trim();
+    if (!normalizeToken(firstWord) || !selectedText) return;
+
+    const sentStart = offsets[start];
+    const sentEnd = offsets[end] + tokens[end].length;
+    const newActive: ActiveToken = {
+      token: firstWord,
+      isCustomSentence: true,
+      paraIndex,
+      tokIdxInPara: start,
+      sentStart,
+      sentEnd,
+      phraseStart: sentStart,
+      phraseEnd: sentEnd,
+      sentence: selectedText,
+      phraseText: selectedText,
+      sentenceBefore: para.slice(0, sentStart).trim() || book.paragraphs[paraIndex - 1] || "",
+      sentenceAfter: para.slice(sentEnd).trim() || book.paragraphs[paraIndex + 1] || "",
+    };
+
+    ensurePageForParagraph(paraIndex);
+    setActive(newActive);
+    setAnalysis(null);
+    focusToken(paraIndex, start);
+    setIsLoading(true);
+
+    try {
+      const result = await analyzeSelection({
+        word: firstWord,
+        sentence: selectedText,
+        sentenceBefore: newActive.sentenceBefore,
+        sentenceAfter: newActive.sentenceAfter,
+        nativeLanguage: profile.nativeLanguage,
+        targetLanguage: book.language,
+      }) as Partial<AiAnalysis>;
+
+      const finalAnalysis: AiAnalysis = {
+        word: result.word!,
+        phrase: result.phrase || {
+          text: selectedText,
+          translation: "",
+          type: "custom_selection",
+          explanation: "",
+        },
+        sentence: result.sentence!,
+        examples: result.examples || [],
+      };
+
+      setAnalysis(finalAnalysis);
+      sentenceCacheRef.current[selectedText] = finalAnalysis.sentence;
+      void sbSaveCachedWord(firstWord, book.language, profile.nativeLanguage, finalAnalysis);
+    } catch (err) {
+      console.error("AI range analysis failed:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  function startTokenDrag(paraIndex: number, tokIdxInPara: number) {
+    dragMovedRef.current = false;
+    setDragSelection({ paraIndex, startTokIdx: tokIdxInPara, endTokIdx: tokIdxInPara, isDragging: true });
+  }
+
+  function enterTokenDrag(paraIndex: number, tokIdxInPara: number) {
+    setDragSelection((prev) => {
+      if (!prev?.isDragging || prev.paraIndex !== paraIndex) return prev;
+      if (prev.endTokIdx !== tokIdxInPara) dragMovedRef.current = true;
+      return { ...prev, endTokIdx: tokIdxInPara };
+    });
+  }
+
+  function finishTokenDrag() {
+    const selection = dragSelection;
+    setDragSelection(null);
+    if (!selection?.isDragging) return;
+    if (selection.startTokIdx === selection.endTokIdx) return;
+    dragMovedRef.current = true;
+    void handleTokenRangeSelection(selection.paraIndex, selection.startTokIdx, selection.endTokIdx);
   }
 
   async function handleWordTapInPanel(word: string, contextSentence?: string) {
@@ -603,6 +736,13 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
             </p>
           </div>
           )}
+          <div
+            onPointerUp={finishTokenDrag}
+            onPointerCancel={() => setDragSelection(null)}
+            onPointerLeave={() => {
+              if (dragSelection?.isDragging) finishTokenDrag();
+            }}
+          >
           {visibleParagraphs.map((para, localIndex) => {
             const paraIndex = currentPage.start + localIndex;
             const isParaActive = active?.paraIndex === paraIndex;
@@ -624,12 +764,16 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
                     charPos >= active!.sentStart && charPos < active!.sentEnd;
                   const isPhrase = inSent && !isWord &&
                     charPos >= active!.phraseStart && charPos < active!.phraseEnd;
+                  const isDragged = dragSelection?.paraIndex === paraIndex &&
+                    tokIdx >= Math.min(dragSelection.startTokIdx, dragSelection.endTokIdx) &&
+                    tokIdx <= Math.max(dragSelection.startTokIdx, dragSelection.endTokIdx);
 
                   const cls = [
                     "text-token",
                     isWord   ? "hl-word"         : "",
                     isPhrase ? "hl-phrase"       : "",
                     inSent && !isWord && !isPhrase ? "hl-sentence-tok" : "",
+                    isDragged ? "hl-drag-selection" : "",
                     getTokenKaraokeClass(paraIndex, charPos, charPos + token.length, tokIdx),
                   ].filter(Boolean).join(" ");
 
@@ -640,6 +784,11 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
                       role="button"
                       tabIndex={0}
                       className={cls}
+                      onPointerDown={(event) => {
+                        if (event.pointerType === "mouse" && event.button !== 0) return;
+                        startTokenDrag(paraIndex, tokIdx);
+                      }}
+                      onPointerEnter={() => enterTokenDrag(paraIndex, tokIdx)}
                       onClick={() => void handleTokenTap(token, paraIndex, tokIdx)}
                       onKeyDown={(e) => { if (e.key === "Enter") void handleTokenTap(token, paraIndex, tokIdx); }}
                     >
@@ -650,6 +799,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
               </p>
             );
           })}
+          </div>
           <div className="reader-page-controls">
             <button
               className="mini-btn"

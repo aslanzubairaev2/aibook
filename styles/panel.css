@@ -355,6 +355,12 @@
   transition: background 0.1s ease-out, color 0.1s ease-out;
 }
 
+@media (max-width: 520px) {
+  .ai-panel {
+    max-height: 62svh;
+  }
+}
+
 .translation-karaoke-active {
   border-radius: 4px;
   background: rgba(212, 168, 71, 0.18);

@@ -99,7 +99,7 @@ ol, ul { list-style: none; }
   gap: 2px;
   min-height: 44px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 17px;
   color: var(--text-muted);
   background: transparent;
   font-size: 9px;
@@ -111,6 +111,16 @@ ol, ul { list-style: none; }
 .nav-item.active {
   color: var(--text-dark);
   background: var(--accent);
+}
+
+.app-shell {
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
 }
 
 .nav-item:not(.active):hover { color: var(--text-primary); background: rgba(212, 168, 71, 0.08); }

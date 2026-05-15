@@ -10,7 +10,7 @@ import type { AiAnalysis, Flashcard } from "@/lib/types";
 type Tab = "word" | "phrase" | "sentence";
 
 type Props = {
-  selection: { token: string; phraseText: string; sentence: string };
+  selection: { token: string; phraseText: string; sentence: string; isCustomSentence?: boolean };
   analysis: AiAnalysis | null;
   isLoading: boolean;
   lang: string;
@@ -31,6 +31,10 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
   useEffect(() => {
     return subscribeTTS((s) => setTts(s));
   }, []);
+
+  useEffect(() => {
+    if (selection.isCustomSentence) setTab("sentence");
+  }, [selection.isCustomSentence, selection.sentence]);
 
   // Logic to auto-advance to next sentence
   useEffect(() => {

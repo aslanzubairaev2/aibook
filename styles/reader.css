@@ -3,6 +3,7 @@
   max-width: 100%;
   min-height: 100svh;
   padding-bottom: 380px;
+  user-select: none;
 }
 
 .reader-toolbar {
@@ -65,6 +66,7 @@
   max-width: 680px;
   margin: 0 auto;
   padding: 28px 20px 0;
+  touch-action: pan-y;
 }
 
 .reader-text {
@@ -109,7 +111,7 @@
 
 /* Level 3 — Sentence: applied per-token inside active sentence, very faint */
 .text-token.hl-sentence-tok {
-  background: rgba(212, 168, 71, 0.10);
+  background: rgba(212, 168, 71, 0.17);
   border-radius: 3px;
 }
 
@@ -122,11 +124,18 @@
 
 /* Level 1 — Word: fully opaque amber */
 .text-token.hl-word {
-  background: var(--hl-word);
-  border-radius: 3px;
-  color: var(--hl-word-text);
+  background: rgba(212, 168, 71, 0.38);
+  border-radius: 4px;
+  color: var(--surface);
+  padding: 1px 3px;
+  font-weight: 650;
+}
+
+.text-token.hl-drag-selection {
+  background: rgba(106, 152, 196, 0.32);
+  border-radius: 4px;
+  color: var(--surface);
   padding: 1px 2px;
-  font-weight: 700;
 }
 
 .reader-text .karaoke-spoken {
