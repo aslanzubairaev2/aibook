@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Plus, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, Plus, ChevronLeft, ChevronRight, Zap } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { normalizeToken } from "@/lib/selector/text";
-import { subscribeTTS, getTTSState, TTSState } from "@/lib/tts";
+import { subscribeTTS, getTTSState, TTSState, toggleAutoNext, speak } from "@/lib/tts";
 import type { AiAnalysis, Flashcard } from "@/lib/types";
 
 type Tab = "word" | "phrase" | "sentence";
@@ -24,6 +24,31 @@ type Props = {
 
 export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenWordModal, onAddCard, onWordTap, onNext, onPrev }: Props) {
   const [tab, setTab] = useState<Tab>("word");
+  const [tts, setTts] = useState<TTSState>(getTTSState());
+  const lastSentenceRef = useRef(selection.sentence);
+  const wasPlayingRef = useRef(false);
+
+  useEffect(() => {
+    return subscribeTTS((s) => setTts(s));
+  }, []);
+
+  // Logic to auto-advance to next sentence
+  useEffect(() => {
+    if (tts.autoNext && !tts.repeat && tts.status === "idle" && wasPlayingRef.current) {
+      if (tab === "sentence" && onNext) {
+        onNext("sentence");
+      }
+    }
+    wasPlayingRef.current = tts.status === "playing";
+  }, [tts.status, tts.autoNext, tts.repeat, tab, onNext]);
+
+  // Logic to auto-play when sentence changes due to auto-advance
+  useEffect(() => {
+    if (tts.autoNext && selection.sentence !== lastSentenceRef.current) {
+      speak(selection.sentence, lang);
+    }
+    lastSentenceRef.current = selection.sentence;
+  }, [selection.sentence, tts.autoNext, lang]);
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "word", label: "Слово" },
@@ -38,6 +63,19 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
         <div className="panel-close-row">
           <span className="panel-selected-word">{selection.token}</span>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <button 
+              className="icon-btn" 
+              style={{ 
+                width: 34, height: 34, 
+                color: tts.autoNext ? 'var(--accent)' : 'inherit',
+                opacity: tts.autoNext ? 1 : 0.6
+              }} 
+              onClick={toggleAutoNext}
+              type="button" 
+              aria-label="Автопереход"
+            >
+              <Zap size={16} fill={tts.autoNext ? "currentColor" : "none"} />
+            </button>
             {onPrev && (
               <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={() => onPrev(tab)} type="button" aria-label="Предыдущее">
                 <ChevronLeft size={18} />

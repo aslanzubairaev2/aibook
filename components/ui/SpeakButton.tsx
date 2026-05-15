@@ -1,22 +1,19 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { Volume2, Loader2, Pause, Play } from "lucide-react";
-import { speak, PlaybackController } from "@/lib/tts";
+import { speak, TTSState, getTTSState, subscribeTTS, pauseTTS, resumeTTS } from "@/lib/tts";
 
 type Props = { text: string; lang: string; size?: number };
 
 export function SpeakButton({ text, lang, size = 15 }: Props) {
-  const [status, setStatus] = useState<"idle" | "loading" | "playing" | "paused">("idle");
-  const controllerRef = useRef<PlaybackController | null>(null);
+  const [state, setState] = useState<TTSState>(getTTSState());
 
   useEffect(() => {
-    return () => {
-      // Clean up if unmounted
-      if (controllerRef.current) {
-        controllerRef.current.stop();
-      }
-    };
+    return subscribeTTS((newState) => setState(newState));
   }, []);
+
+  const isMe = state.text === text;
+  const status = isMe ? state.status : "idle";
 
   const handleClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -24,31 +21,16 @@ export function SpeakButton({ text, lang, size = 15 }: Props) {
     if (status === "loading") return;
 
     if (status === "playing") {
-      controllerRef.current?.pause();
-      setStatus("paused");
+      pauseTTS();
       return;
     }
 
     if (status === "paused") {
-      controllerRef.current?.resume();
-      setStatus("playing");
+      resumeTTS();
       return;
     }
 
-    setStatus("loading");
-    
-    const controller = await speak(
-      text, 
-      lang,
-      () => setStatus("playing"),
-      () => setStatus("idle")
-    );
-    
-    if (controller) {
-      controllerRef.current = controller;
-    } else {
-      setStatus("idle");
-    }
+    await speak(text, lang);
   };
 
   return (

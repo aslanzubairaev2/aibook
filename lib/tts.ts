@@ -18,6 +18,7 @@ export type TTSState = {
   text: string;
   activeCharIndex?: number;
   repeat?: boolean;
+  autoNext?: boolean;
 };
 
 type TTSListener = (state: TTSState) => void;
@@ -70,6 +71,10 @@ function updateState(partial: Partial<TTSState>) {
 
 export function toggleRepeat() {
   updateState({ repeat: !state.repeat });
+}
+
+export function toggleAutoNext() {
+  updateState({ autoNext: !state.autoNext });
 }
 
 function stopGeminiAudio(silent = false) {
@@ -299,12 +304,20 @@ export async function speak(
     utter.lang = LANG_MAP[lang] ?? lang;
     utter.rate = 0.88;
     
+    // Mobile browsers don't give duration for speech, so we estimate it
+    const estimatedDuration = Math.max(1, text.length / 15);
+    
     utter.onstart = () => { 
-      updateState({ status: "playing", activeCharIndex: 0 });
+      updateState({ status: "playing", activeCharIndex: 0, duration: estimatedDuration });
       if (onStart) onStart(); 
     };
     utter.onboundary = (e) => {
-      updateState({ activeCharIndex: e.charIndex });
+      const charIndex = e.charIndex;
+      const progress = text.length > 0 ? charIndex / text.length : 0;
+      updateState({ 
+        activeCharIndex: charIndex,
+        currentTime: progress * estimatedDuration
+      });
     };
     utter.onend = () => { 
       if (state.repeat) {
@@ -314,7 +327,8 @@ export async function speak(
         if (onEnd) onEnd(); 
       }
     };
-    utter.onerror = () => { 
+    utter.onerror = (e) => { 
+      console.error("SpeechSynthesis error", e);
       updateState({ status: "idle", activeCharIndex: 0 });
       if (onEnd) onEnd(); 
     };
