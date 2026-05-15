@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { normalizeToken } from "@/lib/selector/text";
 import type { AiAnalysis, Flashcard } from "@/lib/types";
@@ -17,9 +17,11 @@ type Props = {
   onOpenWordModal: () => void;
   onAddCard: (type: Flashcard["type"]) => void;
   onWordTap: (word: string) => void;
+  onNext?: (level: Tab) => void;
+  onPrev?: (level: Tab) => void;
 };
 
-export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenWordModal, onAddCard, onWordTap }: Props) {
+export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenWordModal, onAddCard, onWordTap, onNext, onPrev }: Props) {
   const [tab, setTab] = useState<Tab>("word");
 
   const tabs: { id: Tab; label: string }[] = [
@@ -34,9 +36,21 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
         <div className="panel-handle-bar" />
         <div className="panel-close-row">
           <span className="panel-selected-word">{selection.token}</span>
-          <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={onClose} type="button" aria-label="Закрыть">
-            <ChevronDown size={18} />
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            {onPrev && (
+              <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={() => onPrev(tab)} type="button" aria-label="Предыдущее">
+                <ChevronLeft size={18} />
+              </button>
+            )}
+            {onNext && (
+              <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={() => onNext(tab)} type="button" aria-label="Следующее">
+                <ChevronRight size={18} />
+              </button>
+            )}
+            <button className="icon-btn" style={{ width: 34, height: 34, marginLeft: 4 }} onClick={onClose} type="button" aria-label="Закрыть">
+              <ChevronDown size={18} />
+            </button>
+          </div>
         </div>
       </div>
 

@@ -244,6 +244,100 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     }
   }
 
+  function handleNextToken(level: "word" | "phrase" | "sentence" = "word") {
+    if (!active) return;
+    let { paraIndex, tokIdxInPara } = active;
+    
+    let minCharIndex = -1;
+    if (level === "phrase") minCharIndex = active.phraseEnd;
+    else if (level === "sentence") minCharIndex = active.sentEnd;
+
+    // search in current paragraph
+    let tokens = splitIntoTokens(book.paragraphs[paraIndex]);
+    let offsets: number[] = [];
+    let off = 0;
+    for (const t of tokens) { offsets.push(off); off += t.length; }
+
+    for (let i = tokIdxInPara + 1; i < tokens.length; i++) {
+      if (normalizeToken(tokens[i]) && (level === "word" || offsets[i] >= minCharIndex)) {
+        void handleTokenTap(tokens[i], paraIndex, i);
+        return;
+      }
+    }
+    // search in next paragraphs
+    for (let p = paraIndex + 1; p < book.paragraphs.length; p++) {
+      tokens = splitIntoTokens(book.paragraphs[p]);
+      for (let i = 0; i < tokens.length; i++) {
+        if (normalizeToken(tokens[i])) {
+          void handleTokenTap(tokens[i], p, i);
+          return;
+        }
+      }
+    }
+  }
+
+  function handlePrevToken(level: "word" | "phrase" | "sentence" = "word") {
+    if (!active) return;
+    let { paraIndex, tokIdxInPara } = active;
+    
+    let maxCharIndex = Infinity;
+    if (level === "phrase") maxCharIndex = active.phraseStart;
+    else if (level === "sentence") maxCharIndex = active.sentStart;
+
+    // search in current paragraph
+    let tokens = splitIntoTokens(book.paragraphs[paraIndex]);
+    let offsets: number[] = [];
+    let off = 0;
+    for (const t of tokens) { offsets.push(off); off += t.length; }
+
+    for (let i = tokIdxInPara - 1; i >= 0; i--) {
+      if (normalizeToken(tokens[i]) && (level === "word" || offsets[i] < maxCharIndex)) {
+        if (level !== "word") {
+          const sentRanges = splitSentencesWithRanges(book.paragraphs[paraIndex]);
+          let targetSent = sentRanges.find(r => offsets[i] >= r.start && offsets[i] < r.end);
+          if (targetSent) {
+            let startChar = level === "sentence" ? targetSent.start : findPhraseOffsets(book.paragraphs[paraIndex], targetSent.start, targetSent.end, offsets[i])[0];
+            for (let j = 0; j <= i; j++) {
+              if (normalizeToken(tokens[j]) && offsets[j] >= startChar) {
+                void handleTokenTap(tokens[j], paraIndex, j);
+                return;
+              }
+            }
+          }
+        }
+        void handleTokenTap(tokens[i], paraIndex, i);
+        return;
+      }
+    }
+    // search in previous paragraphs
+    for (let p = paraIndex - 1; p >= 0; p--) {
+      tokens = splitIntoTokens(book.paragraphs[p]);
+      let localOffsets: number[] = [];
+      let o = 0;
+      for (const t of tokens) { localOffsets.push(o); o += t.length; }
+
+      for (let i = tokens.length - 1; i >= 0; i--) {
+        if (normalizeToken(tokens[i])) {
+          if (level !== "word") {
+            const sentRanges = splitSentencesWithRanges(book.paragraphs[p]);
+            let targetSent = sentRanges.find(r => localOffsets[i] >= r.start && localOffsets[i] < r.end);
+            if (targetSent) {
+              let startChar = level === "sentence" ? targetSent.start : findPhraseOffsets(book.paragraphs[p], targetSent.start, targetSent.end, localOffsets[i])[0];
+              for (let j = 0; j <= i; j++) {
+                if (normalizeToken(tokens[j]) && localOffsets[j] >= startChar) {
+                  void handleTokenTap(tokens[j], p, j);
+                  return;
+                }
+              }
+            }
+          }
+          void handleTokenTap(tokens[i], p, i);
+          return;
+        }
+      }
+    }
+  }
+
   async function handleAddCard(type: Flashcard["type"]) {
     if (!analysis || !active) return;
     const map = {
@@ -366,6 +460,8 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           onOpenWordModal={() => setIsWordModalOpen(true)}
           onAddCard={(type) => void handleAddCard(type)}
           onWordTap={handleWordTapInPanel}
+          onNext={handleNextToken}
+          onPrev={handlePrevToken}
         />
       )}
 
