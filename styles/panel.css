@@ -167,3 +167,128 @@
   from { background-position: 200% 0; }
   to   { background-position: -200% 0; }
 }
+
+/* ─── Audio Scrubber Overlay ─────────────────────────────────────────────── */
+.audio-scrubber-overlay {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  padding: 12px 16px calc(env(safe-area-inset-bottom, 16px) + 16px);
+  background: rgba(18, 15, 10, 0.85);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.4);
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+  pointer-events: none;
+}
+
+/* When ai-panel is open, the scrubber sits above its top border. 
+   ai-panel handles its own positioning, but if we want it to float above it, 
+   we actually position it absolute to the panel, OR fixed with a specific bottom.
+   Since ai-panel can change height, let's just slide this in from the bottom 
+   and let it sit at the very bottom (hiding behind ai-panel? No, z-index 40 is higher!).
+   Wait! The user asked it to appear "прямно поверх AI панели" (directly above/on top of AI panel).
+   Let's make it float like a pill *above* the AI panel. 
+*/
+.audio-scrubber-overlay {
+  bottom: calc(env(safe-area-inset-bottom, 16px) + 120px);
+  left: 16px;
+  right: 16px;
+  max-width: 400px;
+  margin: 0 auto;
+  border-radius: 100px;
+  padding: 8px 16px;
+  background: rgba(30, 25, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* Specific visibility states */
+.audio-scrubber-overlay.hidden {
+  transform: translateY(150px) scale(0.9);
+  opacity: 0;
+}
+
+.audio-scrubber-overlay.visible {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.audio-scrubber-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.audio-play-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: var(--text-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.audio-play-btn:active {
+  transform: scale(0.92);
+}
+
+.audio-play-btn .play-icon {
+  margin-left: 2px;
+}
+
+.audio-progress-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.audio-progress-bar {
+  position: relative;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden; /* For rounded fill */
+}
+
+.audio-progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.audio-progress-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.audio-time {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}

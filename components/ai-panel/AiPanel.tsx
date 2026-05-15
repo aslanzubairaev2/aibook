@@ -59,7 +59,7 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
                 )}
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <SpeakButton text={analysis?.word.lemma ?? selection.token} lang={lang} />
+                <SpeakButton key={analysis?.word.lemma ?? selection.token} text={analysis?.word.lemma ?? selection.token} lang={lang} />
                 <button className="mini-btn" type="button" disabled={!analysis} onClick={onOpenWordModal}>подробнее</button>
               </div>
             </div>
@@ -78,7 +78,7 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
           <div className="tab-body">
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
               <ClickableText text={selection.phraseText} lang={lang} onWordTap={onWordTap} className="tab-phrase-text" />
-              <SpeakButton text={selection.phraseText} lang={lang} />
+              <SpeakButton key={selection.phraseText} text={selection.phraseText} lang={lang} />
             </div>
             {analysis ? (
               <>
@@ -95,7 +95,7 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
           <div className="tab-body">
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
               <ClickableText text={selection.sentence} lang={lang} onWordTap={onWordTap} className="tab-sentence-text" />
-              <SpeakButton text={selection.sentence} lang={lang} />
+              <SpeakButton key={selection.sentence} text={selection.sentence} lang={lang} />
             </div>
             {analysis ? (
               <>

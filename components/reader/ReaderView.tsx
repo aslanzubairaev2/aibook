@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { WordModal } from "@/components/word-modal/WordModal";
+import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { analyzeSelection, analyzeSentence } from "@/lib/ai/analyze";
 import { splitIntoTokens, normalizeToken, splitSentencesWithRanges, findPhraseOffsets } from "@/lib/selector/text";
 import { saveLocalProgress, saveLocalBook } from "@/lib/db/local";
@@ -375,6 +376,8 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
         />
       )}
+
+      <AudioScrubber />
 
       {toast && <div className="toast">{toast}</div>}
     </div>

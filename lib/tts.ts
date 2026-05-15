@@ -11,6 +11,15 @@ export type PlaybackController = {
   isPlaying: () => boolean;
 };
 
+export type TTSState = {
+  status: "idle" | "loading" | "playing" | "paused";
+  currentTime: number;
+  duration: number;
+  text: string;
+};
+
+type TTSListener = (state: TTSState) => void;
+
 let currentAudioCtx: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 let startOffset = 0;
@@ -20,7 +29,42 @@ let currentBuffer: AudioBuffer | null = null;
 let isPaused = false;
 let globalOnEnded: (() => void) | null = null;
 
-function stopGeminiAudio() {
+let state: TTSState = {
+  status: "idle",
+  currentTime: 0,
+  duration: 0,
+  text: "",
+};
+
+const listeners = new Set<TTSListener>();
+
+function emitState() {
+  const currentState = getTTSState();
+  for (const listener of listeners) {
+    listener(currentState);
+  }
+}
+
+export function subscribeTTS(listener: TTSListener) {
+  listeners.add(listener);
+  listener(getTTSState());
+  return () => listeners.delete(listener);
+}
+
+export function getTTSState(): TTSState {
+  if (state.status === "playing" && currentAudioCtx && currentSource) {
+    const elapsed = currentAudioCtx.currentTime - startTime;
+    return { ...state, currentTime: Math.min(startOffset + elapsed, state.duration) };
+  }
+  return state;
+}
+
+function updateState(partial: Partial<TTSState>) {
+  state = { ...state, ...partial };
+  emitState();
+}
+
+function stopGeminiAudio(silent = false) {
   if (currentSource) {
     currentSource.onended = null;
     try { currentSource.stop(); } catch(e) {}
@@ -30,9 +74,63 @@ function stopGeminiAudio() {
   isPaused = false;
   startOffset = 0;
   startTime = 0;
-  if (globalOnEnded) {
-    globalOnEnded();
-    globalOnEnded = null;
+  
+  if (!silent) {
+    updateState({ status: "idle", currentTime: 0, duration: 0 });
+    if (globalOnEnded) {
+      globalOnEnded();
+      globalOnEnded = null;
+    }
+  }
+}
+
+let playSegmentFn: ((offset: number) => void) | null = null;
+
+export function pauseTTS() {
+  if (state.status !== "playing") return;
+  const profile = getLocalProfile();
+  if (profile.ttsProvider === "gemini") {
+    if (!isPaused && currentSource && currentAudioCtx) {
+      isPaused = true;
+      const elapsed = currentAudioCtx.currentTime - startTime;
+      startOffset += elapsed;
+      currentSource.onended = null;
+      currentSource.stop();
+      updateState({ status: "paused", currentTime: startOffset });
+    }
+  } else if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.pause();
+    updateState({ status: "paused" });
+  }
+}
+
+export function resumeTTS() {
+  if (state.status !== "paused") return;
+  const profile = getLocalProfile();
+  if (profile.ttsProvider === "gemini") {
+    if (isPaused && currentAudioCtx) {
+      isPaused = false;
+      if (playSegmentFn) playSegmentFn(startOffset);
+    }
+  } else if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.resume();
+    updateState({ status: "playing" });
+  }
+}
+
+export function seekTTS(time: number) {
+  if (state.status === "idle" || state.status === "loading") return;
+  if (!currentBuffer || !currentAudioCtx) return;
+  
+  const targetTime = Math.max(0, Math.min(time, state.duration));
+  
+  if (state.status === "playing") {
+    stopGeminiAudio(true);
+    startOffset = targetTime;
+    if (playSegmentFn) playSegmentFn(startOffset);
+  } else if (state.status === "paused") {
+    startOffset = targetTime;
+    updateState({ currentTime: startOffset });
   }
 }
 
@@ -44,8 +142,10 @@ export async function speak(
 ): Promise<PlaybackController | null> {
   const profile = getLocalProfile();
   
+  updateState({ status: "loading", text, currentTime: 0, duration: 0 });
+  
   if (profile.ttsProvider === "gemini") {
-    stopGeminiAudio();
+    stopGeminiAudio(true); // silent stop
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
@@ -102,13 +202,16 @@ export async function speak(
       currentBuffer = currentAudioCtx.createBuffer(1, floatArray.length, 24000);
       currentBuffer.copyToChannel(floatArray, 0);
       
-      const playSegment = (offset: number) => {
+      updateState({ duration: currentBuffer.duration });
+
+      playSegmentFn = (offset: number) => {
         if (!currentAudioCtx || !currentBuffer) return;
         currentSource = currentAudioCtx.createBufferSource();
         currentSource.buffer = currentBuffer;
         currentSource.connect(currentAudioCtx.destination);
         currentSource.start(0, offset);
         startTime = currentAudioCtx.currentTime;
+        updateState({ status: "playing" });
         
         currentSource.onended = () => {
           if (!isPaused) {
@@ -123,7 +226,7 @@ export async function speak(
       startOffset = 0;
       
       if (onStart) onStart();
-      playSegment(0);
+      if (playSegmentFn) playSegmentFn(0);
 
       return {
         pause: () => {
@@ -133,12 +236,13 @@ export async function speak(
             startOffset += elapsed;
             currentSource.onended = null;
             currentSource.stop();
+            updateState({ status: "paused", currentTime: startOffset });
           }
         },
         resume: () => {
           if (isPaused && currentAudioCtx) {
             isPaused = false;
-            playSegment(startOffset);
+            if (playSegmentFn) playSegmentFn(startOffset);
           }
         },
         stop: () => {
@@ -147,6 +251,7 @@ export async function speak(
         isPlaying: () => !isPaused && !!currentSource
       };
     } else {
+      updateState({ status: "idle" });
       if (onEnd) onEnd();
       return null;
     }
@@ -154,27 +259,46 @@ export async function speak(
 
   // Fallback to local
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    updateState({ status: "idle" });
     if (onEnd) onEnd();
     return null;
   }
   
-  stopGeminiAudio();
+  stopGeminiAudio(true);
   window.speechSynthesis.cancel();
   
   const utter = new SpeechSynthesisUtterance(text);
   utter.lang = LANG_MAP[lang] ?? lang;
   utter.rate = 0.88;
   
-  utter.onstart = () => { if (onStart) onStart(); };
-  utter.onend = () => { if (onEnd) onEnd(); };
-  utter.onerror = () => { if (onEnd) onEnd(); };
+  utter.onstart = () => { 
+    updateState({ status: "playing" });
+    if (onStart) onStart(); 
+  };
+  utter.onend = () => { 
+    updateState({ status: "idle" });
+    if (onEnd) onEnd(); 
+  };
+  utter.onerror = () => { 
+    updateState({ status: "idle" });
+    if (onEnd) onEnd(); 
+  };
 
   window.speechSynthesis.speak(utter);
   
   return {
-    pause: () => window.speechSynthesis.pause(),
-    resume: () => window.speechSynthesis.resume(),
-    stop: () => window.speechSynthesis.cancel(),
+    pause: () => {
+      window.speechSynthesis.pause();
+      updateState({ status: "paused" });
+    },
+    resume: () => {
+      window.speechSynthesis.resume();
+      updateState({ status: "playing" });
+    },
+    stop: () => {
+      window.speechSynthesis.cancel();
+      updateState({ status: "idle" });
+    },
     isPlaying: () => window.speechSynthesis.speaking && !window.speechSynthesis.paused
   };
 }
