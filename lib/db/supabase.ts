@@ -215,7 +215,7 @@ export async function sbGetCachedWord(
     .eq("word_lower", word.toLowerCase().trim())
     .eq("target_language", targetLanguage)
     .eq("native_language", nativeLanguage)
-    .single();
+    .maybeSingle();
 
   if (error || !data) {
     return null;

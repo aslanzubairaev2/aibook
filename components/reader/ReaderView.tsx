@@ -43,6 +43,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   const [toast, setToast] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sentenceCacheRef = useRef<Record<string, any>>({});
 
   // Scroll to last read paragraph on mount
   useEffect(() => {
@@ -139,17 +140,27 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     try {
       const cached = await sbGetCachedWord(token, profile.targetLanguage, profile.nativeLanguage);
       if (cached) {
-        const sentenceAnalysis = await analyzeSentence({
-          word: token,
-          sentence: newActive.sentence,
-          sentenceBefore: newActive.sentenceBefore,
-          sentenceAfter: newActive.sentenceAfter,
-          nativeLanguage: profile.nativeLanguage,
-          targetLanguage: profile.targetLanguage,
-        });
+        let sentenceData;
+        const cachedSentence = sentenceCacheRef.current[newActive.sentence];
+        
+        if (cachedSentence) {
+          sentenceData = cachedSentence;
+        } else {
+          const sentenceAnalysis = await analyzeSentence({
+            word: token,
+            sentence: newActive.sentence,
+            sentenceBefore: newActive.sentenceBefore,
+            sentenceAfter: newActive.sentenceAfter,
+            nativeLanguage: profile.nativeLanguage,
+            targetLanguage: profile.targetLanguage,
+          });
+          sentenceData = sentenceAnalysis.sentence;
+          sentenceCacheRef.current[newActive.sentence] = sentenceData;
+        }
+
         setAnalysis({
           ...cached,
-          sentence: sentenceAnalysis.sentence,
+          sentence: sentenceData,
         });
       } else {
         const result = await analyzeSelection({
@@ -161,6 +172,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           targetLanguage: profile.targetLanguage,
         });
         setAnalysis(result);
+        sentenceCacheRef.current[newActive.sentence] = result.sentence;
         void sbSaveCachedWord(token, profile.targetLanguage, profile.nativeLanguage, result);
       }
     } catch (err) {
@@ -180,17 +192,27 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     try {
       const cached = await sbGetCachedWord(word, profile.targetLanguage, profile.nativeLanguage);
       if (cached) {
-        const sentenceAnalysis = await analyzeSentence({
-          word,
-          sentence: active.sentence,
-          sentenceBefore: active.sentenceBefore,
-          sentenceAfter: active.sentenceAfter,
-          nativeLanguage: profile.nativeLanguage,
-          targetLanguage: profile.targetLanguage,
-        });
+        let sentenceData;
+        const cachedSentence = sentenceCacheRef.current[active.sentence];
+        
+        if (cachedSentence) {
+          sentenceData = cachedSentence;
+        } else {
+          const sentenceAnalysis = await analyzeSentence({
+            word,
+            sentence: active.sentence,
+            sentenceBefore: active.sentenceBefore,
+            sentenceAfter: active.sentenceAfter,
+            nativeLanguage: profile.nativeLanguage,
+            targetLanguage: profile.targetLanguage,
+          });
+          sentenceData = sentenceAnalysis.sentence;
+          sentenceCacheRef.current[active.sentence] = sentenceData;
+        }
+
         setAnalysis({
           ...cached,
-          sentence: sentenceAnalysis.sentence,
+          sentence: sentenceData,
         });
       } else {
         const result = await analyzeSelection({
@@ -202,6 +224,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           targetLanguage: profile.targetLanguage,
         });
         setAnalysis(result);
+        sentenceCacheRef.current[active.sentence] = result.sentence;
         void sbSaveCachedWord(word, profile.targetLanguage, profile.nativeLanguage, result);
       }
     } catch (err) {
