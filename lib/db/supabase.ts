@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -110,6 +112,10 @@ export async function sbUpsertBook(book: Omit<DbBook, "created_at">): Promise<st
 
 export async function sbUpsertChapter(chapter: Omit<DbBookChapter, "created_at">): Promise<void> {
   if (!supabase) return;
+  if (!UUID_REGEX.test(chapter.book_id) || !UUID_REGEX.test(chapter.id)) {
+    console.warn("Skipping sbUpsertChapter: invalid UUID.", chapter);
+    return;
+  }
   const { error } = await supabase
     .from("book_chapters")
     .upsert(chapter, { onConflict: "book_id,chapter_index" });
@@ -118,6 +124,7 @@ export async function sbUpsertChapter(chapter: Omit<DbBookChapter, "created_at">
 
 export async function sbDeleteBook(bookId: string): Promise<void> {
   if (!supabase) return;
+  if (!UUID_REGEX.test(bookId)) return;
   const { error } = await supabase.from("books").delete().eq("id", bookId);
   if (error) console.error("sbDeleteBook:", error.message);
 }
@@ -136,6 +143,10 @@ export async function sbGetProgress(userId: string): Promise<DbReadingProgress[]
 
 export async function sbUpsertProgress(entry: Omit<DbReadingProgress, "id">): Promise<void> {
   if (!supabase) return;
+  if (!UUID_REGEX.test(entry.book_id)) {
+    console.warn("Skipping sbUpsertProgress: book_id is not a valid UUID (likely old local data).", entry.book_id);
+    return;
+  }
   const { error } = await supabase
     .from("reading_progress")
     .upsert(entry, { onConflict: "user_id,book_id" });
