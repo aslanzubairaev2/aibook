@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Mobile-first AI language learning book reader",
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0 --port 3000",
+    "dev": "next dev --webpack --hostname 0.0.0.0 --port 3000",
     "build": "next build --webpack",
     "start": "next start",
     "lint": "next lint"
