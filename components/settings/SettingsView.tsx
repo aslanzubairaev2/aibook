@@ -14,7 +14,7 @@ type Props = {
 export function SettingsView({ profile, onProfileChange }: Props) {
   const { user, signOut } = useAuth();
 
-  async function setLang(field: "nativeLanguage" | "targetLanguage", value: string) {
+  async function setLang(field: "nativeLanguage" | "targetLanguage" | "ttsProvider" | "uiLanguage", value: string) {
     const updated = { ...profile, [field]: value };
     saveLocalProfile(updated);
     onProfileChange(updated);
@@ -26,6 +26,10 @@ export function SettingsView({ profile, onProfileChange }: Props) {
         native_language: updated.nativeLanguage,
         active_target_lang: updated.targetLanguage,
         ui_language: updated.uiLanguage,
+        tts_provider: updated.ttsProvider ?? "local",
+        reading_minutes: updated.readingMinutes,
+        books_started: updated.booksStarted,
+        books_finished: updated.booksFinished,
         updated_at: new Date().toISOString(),
       });
     }

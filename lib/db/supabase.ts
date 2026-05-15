@@ -72,6 +72,10 @@ export type DbUserSettings = {
   native_language: string;
   active_target_lang: string;
   ui_language: string;
+  tts_provider: string;
+  reading_minutes: number;
+  books_started: number;
+  books_finished: number;
   updated_at: string;
 };
 
