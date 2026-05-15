@@ -7,7 +7,7 @@ export async function parseEpub(file: File): Promise<string[]> {
 
   const paragraphs: string[] = [];
 
-  const spine = book.spine as { items: { href: string }[] };
+  const spine = book.spine as unknown as { items: { href: string }[] };
   for (const item of spine.items) {
     const section = await book.load(item.href);
     const doc = section as Document;

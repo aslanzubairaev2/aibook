@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 import { BookOpen, Trash2, Upload } from "lucide-react";
 import { parseBook } from "@/lib/parser/index";
 import { saveLocalBook, deleteLocalBook } from "@/lib/db/local";
+import { sbUpsertBook, sbUpsertChapter, sbDeleteBook } from "@/lib/db/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { BOOK_FORMATS } from "@/lib/config";
 import type { Book } from "@/lib/types";
 
@@ -30,6 +32,7 @@ function pickColor(title: string) {
 }
 
 export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: Props) {
+  const { user } = useAuth();
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +51,11 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
       if (paragraphs.length === 0) throw new Error("Файл пустой или не удалось разобрать текст");
 
       const title = file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ");
+      const bookId = `book-${Date.now()}`;
+      const coverColor = pickColor(title);
+
       const newBook: Book = {
-        id: `book-${Date.now()}`,
+        id: bookId,
         title,
         author: "Неизвестен",
         language: "de",
@@ -58,11 +64,42 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
         paragraphIndex: 0,
         chapterTitle: "Начало",
         lastReadAt: new Date().toLocaleDateString("ru"),
-        coverColor: pickColor(title),
+        coverColor,
         paragraphs,
       };
+
+      // Save locally first for instant UI response
       saveLocalBook(newBook);
       onBooksChange([newBook, ...books]);
+
+      // Sync to Supabase in background
+      if (user) {
+        const savedId = await sbUpsertBook({
+          id: bookId,
+          user_id: user.id,
+          title,
+          author: "Неизвестен",
+          language: "de",
+          format: ext as "txt" | "epub",
+          file_path: file.name,
+          cover_url: null,
+          total_chars: paragraphs.join("").length,
+          cover_color: coverColor,
+        });
+
+        if (savedId) {
+          await sbUpsertChapter({
+            id: `ch-${bookId}-0`,
+            user_id: user.id,
+            book_id: savedId,
+            chapter_index: 0,
+            title: "Начало",
+            paragraphs,
+            plain_text: paragraphs.join("\n"),
+            char_count: paragraphs.join("").length,
+          });
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка при загрузке файла");
     } finally {
@@ -70,9 +107,10 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
     }
   }
 
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
     deleteLocalBook(id);
     onBooksChange(books.filter((b) => b.id !== id));
+    if (user) await sbDeleteBook(id);
   }
 
   return (
@@ -135,7 +173,6 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
       ) : (
         <div className="book-list">
           {books.map((book) => (
-            // Use div + role=button to avoid nesting buttons inside buttons
             <div
               key={book.id}
               role="button"
@@ -156,12 +193,11 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook }: 
               </span>
               <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }}>
                 <span className="book-pct">{Math.round(book.progress)}%</span>
-                {/* Separate button — safe because parent is div not button */}
                 <button
                   type="button"
                   className="icon-btn"
                   style={{ width: 32, height: 32 }}
-                  onClick={(e) => { e.stopPropagation(); handleDelete(book.id); }}
+                  onClick={(e) => { e.stopPropagation(); void handleDelete(book.id); }}
                   aria-label="Удалить книгу"
                 >
                   <Trash2 size={14} style={{ color: "var(--red)" }} />

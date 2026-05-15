@@ -1,9 +1,9 @@
 import type { AiAnalysis, Book, Flashcard, UserProfile } from "@/lib/types";
 
 export const mockProfile: UserProfile = {
-  nativeLanguage: "Русский",
-  targetLanguage: "Немецкий",
-  uiLanguage: "Русский",
+  nativeLanguage: "ru",
+  targetLanguage: "de",
+  uiLanguage: "ru",
   readingMinutes: 380,
   booksStarted: 3,
   booksFinished: 1,
@@ -15,12 +15,13 @@ export const mockBooks: Book[] = [
     id: "monte-cristo-de",
     title: "Граф Монте-Кристо",
     author: "Александр Дюма",
-    language: "DE",
+    language: "de",
     format: "epub",
     progress: 42,
+    paragraphIndex: 0,
     chapterTitle: "Глава 3. Заговор",
     lastReadAt: "Сегодня",
-    coverTone: "#d4a847",
+    coverColor: "linear-gradient(160deg, #c49a28 0%, #7a5c10 100%)",
     paragraphs: [
       "Edmond bemerkte, dass Caderousse leise sprach, während Danglars den Blick nicht von ihm abwandte.",
       "In diesem Augenblick schmiedeten die Männer einen Plan, der das Schicksal des jungen Seemanns verändern sollte.",
@@ -31,12 +32,13 @@ export const mockBooks: Book[] = [
     id: "kleine-prinz",
     title: "Der kleine Prinz",
     author: "Antoine de Saint-Exupéry",
-    language: "DE",
+    language: "de",
     format: "epub",
     progress: 12,
+    paragraphIndex: 0,
     chapterTitle: "Kapitel 2",
     lastReadAt: "Вчера",
-    coverTone: "#7a9f8d",
+    coverColor: "linear-gradient(160deg, #4a7a5c 0%, #254030 100%)",
     paragraphs: [
       "Der kleine Prinz betrachtete die Sterne und stellte eine Frage, die niemand erwartet hatte.",
     ],
@@ -45,12 +47,13 @@ export const mockBooks: Book[] = [
     id: "faust",
     title: "Faust",
     author: "Johann Wolfgang von Goethe",
-    language: "DE",
+    language: "de",
     format: "txt",
     progress: 0,
+    paragraphIndex: 0,
     chapterTitle: "Начало",
     lastReadAt: "Не начато",
-    coverTone: "#9b6c5a",
+    coverColor: "linear-gradient(160deg, #8a5a2a 0%, #4a2a0a 100%)",
     paragraphs: ["Habe nun, ach! Philosophie, Juristerei und Medizin studiert."],
   },
 ];
@@ -66,12 +69,14 @@ export const mockAnalysis: AiAnalysis = {
   phrase: {
     text: "einen Plan schmiedeten",
     translation: "замышляли план",
-    explanation: "Устойчивая образная фраза. В русском ближе всего: “строили план” или “замышляли”.",
+    type: "устойчивое выражение",
+    explanation: "Устойчивая образная фраза. В русском ближе всего: 'строили план' или 'замышляли'.",
   },
   sentence: {
     text: "In diesem Augenblick schmiedeten die Männer einen Plan, der das Schicksal des jungen Seemanns verändern sollte.",
     translation: "В этот момент мужчины замышляли план, который должен был изменить судьбу молодого моряка.",
     grammarNote: "Относительное придаточное с der относится к слову Plan. Sollte добавляет оттенок будущей неизбежности.",
+    structure: "Hauptsatz + Relativsatz mit Modalverb",
   },
   examples: [
     "Sie schmiedeten heimlich einen Plan.",
@@ -89,6 +94,7 @@ export const mockCards: Flashcard[] = [
     front: "schmieden",
     back: "ковать; замышлять",
     source: "Граф Монте-Кристо",
+    addedAt: new Date().toISOString(),
     status: "due",
   },
   {
@@ -97,6 +103,7 @@ export const mockCards: Flashcard[] = [
     front: "einen Plan schmieden",
     back: "замышлять / строить план",
     source: "Граф Монте-Кристо",
+    addedAt: new Date().toISOString(),
     status: "learning",
   },
   {
@@ -105,6 +112,7 @@ export const mockCards: Flashcard[] = [
     front: "der das Schicksal verändern sollte",
     back: "который должен был изменить судьбу",
     source: "Граф Монте-Кристо",
+    addedAt: new Date().toISOString(),
     status: "new",
   },
 ];

@@ -7,6 +7,8 @@ import { WordModal } from "@/components/word-modal/WordModal";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { splitIntoTokens, normalizeToken, splitSentencesWithRanges, findPhraseOffsets } from "@/lib/selector/text";
 import { saveLocalProgress, saveLocalBook } from "@/lib/db/local";
+import { sbUpsertProgress, sbInsertFlashcard } from "@/lib/db/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { APP_CONFIG } from "@/lib/config";
 import type { AiAnalysis, Book, Flashcard, UserProfile } from "@/lib/types";
 
@@ -21,18 +23,19 @@ type Props = {
 type ActiveToken = {
   token: string;
   paraIndex: number;
-  tokIdxInPara: number; // paragraph-level token index → used for exact word highlight
-  sentStart: number;    // paragraph char offset of sentence start
-  sentEnd: number;      // paragraph char offset of sentence end
-  phraseStart: number;  // paragraph char offset of phrase start
-  phraseEnd: number;    // paragraph char offset of phrase end
-  sentence: string;     // sentence text (for AI + panel)
-  phraseText: string;   // phrase text (for panel)
+  tokIdxInPara: number;
+  sentStart: number;
+  sentEnd: number;
+  phraseStart: number;
+  phraseEnd: number;
+  sentence: string;
+  phraseText: string;
   sentenceBefore: string;
   sentenceAfter: string;
 };
 
 export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate }: Props) {
+  const { user } = useAuth();
   const [active, setActive] = useState<ActiveToken | null>(null);
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -41,6 +44,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   const contentRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Scroll to last read paragraph on mount
   useEffect(() => {
     if (book.paragraphIndex <= 0) return;
     const t = setTimeout(() => {
@@ -66,11 +70,27 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       }
       const progress = Math.round((best / Math.max(book.paragraphs.length - 1, 1)) * 100);
       const updated = { ...book, paragraphIndex: best, progress };
+
+      // Save locally (instant)
       saveLocalProgress(book.id, best);
       saveLocalBook(updated);
       onProgressUpdate(updated);
+
+      // Sync to Supabase in background
+      if (user) {
+        void sbUpsertProgress({
+          user_id: user.id,
+          book_id: book.id,
+          chapter_index: 0,
+          paragraph_index: best,
+          scroll_pos: Math.round(window.scrollY),
+          percentage: progress,
+          last_read_at: new Date().toISOString(),
+          total_time_ms: 0,
+        });
+      }
     }, APP_CONFIG.progressSaveDebounceMs);
-  }, [book, onProgressUpdate]);
+  }, [book, user, onProgressUpdate]);
 
   useEffect(() => {
     window.addEventListener("scroll", handleScroll, { passive: true });
@@ -83,7 +103,6 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
 
     const para = book.paragraphs[paraIndex];
 
-    // Build para token char offsets
     const tokens = splitIntoTokens(para);
     const offsets: number[] = [];
     let off = 0;
@@ -91,7 +110,6 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
 
     const targetChar = offsets[tokIdxInPara];
 
-    // Find which sentence contains this char
     const sentRanges = splitSentencesWithRanges(para);
     let sentStart = 0, sentEnd = para.length, sentText = para, sentIdx = 0;
     for (let i = 0; i < sentRanges.length; i++) {
@@ -102,7 +120,6 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
       }
     }
 
-    // Phrase offsets in para coords
     const [phraseStart, phraseEnd] = findPhraseOffsets(para, sentStart, sentEnd, targetChar);
     const phraseText = para.slice(phraseStart, phraseEnd).trim();
 
@@ -136,7 +153,6 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     }
   }
 
-  // Called from AiPanel when user taps a word in phrase/sentence text
   async function handleWordTapInPanel(word: string) {
     if (!active) return;
     const norm = normalizeToken(word);
@@ -161,14 +177,44 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     }
   }
 
-  function handleAddCard(type: Flashcard["type"]) {
+  async function handleAddCard(type: Flashcard["type"]) {
     if (!analysis || !active) return;
     const map = {
       word:     { front: analysis.word.lemma,  back: analysis.word.translation },
       phrase:   { front: active.phraseText,    back: analysis.phrase.translation },
       sentence: { front: active.sentence,      back: analysis.sentence.translation },
     };
-    onAddCard({ id: `card-${Date.now()}`, type, source: book.title, addedAt: new Date().toISOString(), status: "new", ...map[type] });
+    const localCard: Flashcard = {
+      id: `card-${Date.now()}`,
+      type,
+      source: book.title,
+      addedAt: new Date().toISOString(),
+      status: "new",
+      ...map[type],
+    };
+    onAddCard(localCard);
+
+    // Sync to Supabase in background
+    if (user) {
+      const dbId = await sbInsertFlashcard({
+        user_id: user.id,
+        vocabulary_item_id: null,
+        front: localCard.front,
+        back: localCard.back,
+        source_book_title: book.title,
+        selection_type: type,
+        repetitions: 0,
+        easiness_factor: 2.5,
+        interval_days: 1,
+        next_review_at: null,
+        last_reviewed_at: null,
+      });
+      if (dbId) {
+        // Update local card id to match DB
+        localCard.id = dbId;
+      }
+    }
+
     showToast("✓ Карточка добавлена");
   }
 
@@ -199,7 +245,6 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           {book.paragraphs.map((para, paraIndex) => {
             const isParaActive = active?.paraIndex === paraIndex;
 
-            // Build token array + char offsets once per paragraph
             const tokens = splitIntoTokens(para);
             const offsets: number[] = [];
             let off = 0;
@@ -212,21 +257,15 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
                   if (!norm) return <span key={tokIdx}>{token}</span>;
 
                   const charPos = offsets[tokIdx];
-
-                  // Word: exact match by paragraph-level token index
                   const isWord = isParaActive && tokIdx === active!.tokIdxInPara;
-
-                  // Sentence: char in [sentStart, sentEnd)
                   const inSent = isParaActive &&
                     charPos >= active!.sentStart && charPos < active!.sentEnd;
-
-                  // Phrase: char in [phraseStart, phraseEnd) AND in sentence
                   const isPhrase = inSent && !isWord &&
                     charPos >= active!.phraseStart && charPos < active!.phraseEnd;
 
                   const cls = [
                     "text-token",
-                    isWord  ? "hl-word"         : "",
+                    isWord   ? "hl-word"         : "",
                     isPhrase ? "hl-phrase"       : "",
                     inSent && !isWord && !isPhrase ? "hl-sentence-tok" : "",
                   ].filter(Boolean).join(" ");
@@ -258,7 +297,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           lang={profile.targetLanguage}
           onClose={() => { setActive(null); setAnalysis(null); }}
           onOpenWordModal={() => setIsWordModalOpen(true)}
-          onAddCard={handleAddCard}
+          onAddCard={(type) => void handleAddCard(type)}
           onWordTap={handleWordTapInPanel}
         />
       )}
@@ -270,7 +309,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           isLoading={isLoading}
           lang={profile.targetLanguage}
           onClose={() => setIsWordModalOpen(false)}
-          onAddCard={() => { handleAddCard("word"); setIsWordModalOpen(false); }}
+          onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
         />
       )}
 

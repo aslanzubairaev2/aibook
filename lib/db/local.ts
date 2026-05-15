@@ -24,6 +24,11 @@ export function saveLocalBook(book: Book): void {
   localStorage.setItem(BOOKS_KEY, JSON.stringify(books));
 }
 
+/** Replace the entire books cache (used after Supabase sync) */
+export function saveLocalBooks(books: Book[]): void {
+  localStorage.setItem(BOOKS_KEY, JSON.stringify(books));
+}
+
 export function deleteLocalBook(id: string): void {
   const books = getLocalBooks().filter((b) => b.id !== id);
   localStorage.setItem(BOOKS_KEY, JSON.stringify(books));
@@ -72,7 +77,7 @@ export function saveLocalProfile(profile: UserProfile): void {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
 }
 
-// --- Reading Progress ---
+// --- Reading Progress (local cache) ---
 
 interface ProgressEntry {
   bookId: string;
