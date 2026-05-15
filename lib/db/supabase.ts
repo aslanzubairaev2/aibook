@@ -197,3 +197,53 @@ export async function sbUpsertSettings(settings: DbUserSettings): Promise<void> 
     .upsert(settings, { onConflict: "user_id" });
   if (error) console.error("sbUpsertSettings:", error.message);
 }
+
+// ─── AI Dictionary Cache ──────────────────────────────────────────────────────
+
+import { AiAnalysis } from "../types";
+
+export async function sbGetCachedWord(
+  word: string,
+  targetLanguage: string,
+  nativeLanguage: string
+): Promise<AiAnalysis | null> {
+  if (!supabase) return null;
+  
+  const { data, error } = await supabase
+    .from("ai_dictionary_cache")
+    .select("analysis")
+    .eq("word_lower", word.toLowerCase().trim())
+    .eq("target_language", targetLanguage)
+    .eq("native_language", nativeLanguage)
+    .single();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return data.analysis as AiAnalysis;
+}
+
+export async function sbSaveCachedWord(
+  word: string,
+  targetLanguage: string,
+  nativeLanguage: string,
+  analysis: AiAnalysis
+): Promise<boolean> {
+  if (!supabase) return false;
+  
+  const { error } = await supabase
+    .from("ai_dictionary_cache")
+    .insert({
+      word_lower: word.toLowerCase().trim(),
+      target_language: targetLanguage,
+      native_language: nativeLanguage,
+      analysis: analysis,
+    });
+
+  if (error) {
+    console.error("sbSaveCachedWord error:", error.message);
+    return false;
+  }
+  return true;
+}

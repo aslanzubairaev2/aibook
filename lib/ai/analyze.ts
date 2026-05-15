@@ -23,3 +23,25 @@ export async function analyzeSelection(params: AnalyzeParams): Promise<AiAnalysi
 
   return res.json() as Promise<AiAnalysis>;
 }
+
+export async function analyzeSentence(params: AnalyzeParams): Promise<{
+  sentence: {
+    text: string;
+    translation: string;
+    grammarNote: string;
+    structure: string;
+  };
+}> {
+  const res = await fetch("/api/ai/analyze-sentence", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || "AI sentence analysis failed");
+  }
+
+  return res.json();
+}

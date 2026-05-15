@@ -4,10 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { WordModal } from "@/components/word-modal/WordModal";
-import { analyzeSelection } from "@/lib/ai/analyze";
+import { analyzeSelection, analyzeSentence } from "@/lib/ai/analyze";
 import { splitIntoTokens, normalizeToken, splitSentencesWithRanges, findPhraseOffsets } from "@/lib/selector/text";
 import { saveLocalProgress, saveLocalBook } from "@/lib/db/local";
-import { sbUpsertProgress, sbInsertFlashcard } from "@/lib/db/supabase";
+import { sbUpsertProgress, sbInsertFlashcard, sbGetCachedWord, sbSaveCachedWord } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { APP_CONFIG } from "@/lib/config";
 import type { AiAnalysis, Book, Flashcard, UserProfile } from "@/lib/types";
@@ -137,15 +137,32 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     setIsLoading(true);
 
     try {
-      const result = await analyzeSelection({
-        word: token,
-        sentence: newActive.sentence,
-        sentenceBefore: newActive.sentenceBefore,
-        sentenceAfter: newActive.sentenceAfter,
-        nativeLanguage: profile.nativeLanguage,
-        targetLanguage: profile.targetLanguage,
-      });
-      setAnalysis(result);
+      const cached = await sbGetCachedWord(token, profile.targetLanguage, profile.nativeLanguage);
+      if (cached) {
+        const sentenceAnalysis = await analyzeSentence({
+          word: token,
+          sentence: newActive.sentence,
+          sentenceBefore: newActive.sentenceBefore,
+          sentenceAfter: newActive.sentenceAfter,
+          nativeLanguage: profile.nativeLanguage,
+          targetLanguage: profile.targetLanguage,
+        });
+        setAnalysis({
+          ...cached,
+          sentence: sentenceAnalysis.sentence,
+        });
+      } else {
+        const result = await analyzeSelection({
+          word: token,
+          sentence: newActive.sentence,
+          sentenceBefore: newActive.sentenceBefore,
+          sentenceAfter: newActive.sentenceAfter,
+          nativeLanguage: profile.nativeLanguage,
+          targetLanguage: profile.targetLanguage,
+        });
+        setAnalysis(result);
+        void sbSaveCachedWord(token, profile.targetLanguage, profile.nativeLanguage, result);
+      }
     } catch (err) {
       console.error("AI analysis failed:", err);
     } finally {
@@ -161,15 +178,32 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     setIsLoading(true);
     setIsWordModalOpen(true);
     try {
-      const result = await analyzeSelection({
-        word,
-        sentence: active.sentence,
-        sentenceBefore: active.sentenceBefore,
-        sentenceAfter: active.sentenceAfter,
-        nativeLanguage: profile.nativeLanguage,
-        targetLanguage: profile.targetLanguage,
-      });
-      setAnalysis(result);
+      const cached = await sbGetCachedWord(word, profile.targetLanguage, profile.nativeLanguage);
+      if (cached) {
+        const sentenceAnalysis = await analyzeSentence({
+          word,
+          sentence: active.sentence,
+          sentenceBefore: active.sentenceBefore,
+          sentenceAfter: active.sentenceAfter,
+          nativeLanguage: profile.nativeLanguage,
+          targetLanguage: profile.targetLanguage,
+        });
+        setAnalysis({
+          ...cached,
+          sentence: sentenceAnalysis.sentence,
+        });
+      } else {
+        const result = await analyzeSelection({
+          word,
+          sentence: active.sentence,
+          sentenceBefore: active.sentenceBefore,
+          sentenceAfter: active.sentenceAfter,
+          nativeLanguage: profile.nativeLanguage,
+          targetLanguage: profile.targetLanguage,
+        });
+        setAnalysis(result);
+        void sbSaveCachedWord(word, profile.targetLanguage, profile.nativeLanguage, result);
+      }
     } catch (err) {
       console.error("Panel word tap failed:", err);
     } finally {
