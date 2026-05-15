@@ -12,9 +12,8 @@ function formatTime(seconds: number) {
 
 export function AudioScrubber() {
   const [state, setState] = useState<TTSState>({ status: "idle", currentTime: 0, duration: 0, text: "" });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragTime, setDragTime] = useState(0);
   const rAFRef = useRef<number | null>(null);
+  const wasPlayingRef = useRef(false);
 
   useEffect(() => {
     let unmounted = false;
@@ -22,13 +21,13 @@ export function AudioScrubber() {
 
     const unsubscribe = subscribeTTS((newState) => {
       localState = newState;
-      if (!isDragging && !unmounted) {
+      if (!unmounted) {
         setState(newState);
       }
     });
 
     const tick = () => {
-      if (!unmounted && !isDragging && localState && localState.status === "playing") {
+      if (!unmounted && localState && localState.status === "playing") {
         setState(getTTSState());
       }
       rAFRef.current = requestAnimationFrame(tick);
@@ -40,26 +39,36 @@ export function AudioScrubber() {
       unsubscribe();
       if (rAFRef.current) cancelAnimationFrame(rAFRef.current);
     };
-  }, [isDragging]);
+  }, []);
 
   const show = state.status === "playing" || state.status === "paused" || state.status === "loading";
   
   // Return null or animate out
   if (!show && state.status === "idle") return null;
 
-  const displayTime = isDragging ? dragTime : state.currentTime;
+  const displayTime = state.currentTime;
   const duration = state.duration || 1; // avoid / 0
   const progressPercent = Math.min(100, Math.max(0, (displayTime / duration) * 100));
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = Number(e.target.value);
-    setDragTime(val);
+  const handleDragStart = () => {
+    if (state.status === "playing") {
+      wasPlayingRef.current = true;
+      pauseTTS();
+    } else {
+      wasPlayingRef.current = false;
+    }
   };
 
-  const handleDragStart = () => setIsDragging(true);
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = Number(e.target.value);
+    seekTTS(val);
+  };
+
   const handleDragEnd = () => {
-    setIsDragging(false);
-    seekTTS(dragTime);
+    seekTTS(state.currentTime); // ensure exact alignment
+    if (wasPlayingRef.current) {
+      resumeTTS();
+    }
   };
 
   const handleToggle = () => {
