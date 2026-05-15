@@ -1237,6 +1237,16 @@ textarea,
   color: var(--text-muted);
 }
 
+.catalog-loading-inline {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 12px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .loading-dot {
   width: 14px;
   height: 14px;

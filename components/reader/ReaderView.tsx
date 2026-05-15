@@ -84,6 +84,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
+  const [wordModalSelection, setWordModalSelection] = useState("");
   const [toast, setToast] = useState<string | null>(null);
   const [tts, setTts] = useState<TTSState>(getTTSState());
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
@@ -247,6 +248,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     
     const norm = normalizeToken(token);
     if (!norm) return;
+    setWordModalSelection(token);
 
     const para = book.paragraphs[paraIndex];
 
@@ -459,6 +461,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     if (!active) return;
     const norm = normalizeToken(word);
     if (!norm) return;
+    setWordModalSelection(word);
 
     const sentenceToUse = contextSentence || active.sentence;
     const sentenceBefore = contextSentence ? "" : active.sentenceBefore;
@@ -860,7 +863,10 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           isLoading={isLoading}
           lang={book.language}
           onClose={() => { setActive(null); setAnalysis(null); }}
-          onOpenWordModal={() => setIsWordModalOpen(true)}
+          onOpenWordModal={() => {
+            setWordModalSelection(active.token);
+            setIsWordModalOpen(true);
+          }}
           onAddCard={(type) => void handleAddCard(type)}
           onWordTap={handleWordTapInPanel}
           onNext={handleNextToken}
@@ -874,7 +880,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           isOpen={isWordModalOpen}
           isLoading={isLoading}
           lang={book.language}
-          selectedWord={active?.token ?? analysis.word.text}
+          selectedWord={wordModalSelection || active?.token || analysis.word.text}
           onClose={() => setIsWordModalOpen(false)}
           onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
           onWordTap={(word, context) => void handleWordTapInPanel(word, context)}

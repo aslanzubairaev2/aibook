@@ -35,7 +35,7 @@ type DownloadTask = {
   bookLocalId?: string;
 };
 
-const PAGE_SIZE = 32;
+const PAGE_SIZE = 18;
 
 const LANGUAGES = [
   { value: "", label: "Все языки" },
@@ -64,7 +64,7 @@ function pickColor(title: string) {
 
 function getCoverUrl(book: GutendexBook) {
   const coverKey = Object.keys(book.formats).find((key) => key.startsWith("image/jpeg"));
-  return coverKey ? book.formats[coverKey].replace("http://", "https://") : null;
+  return coverKey ? book.formats[coverKey].replace("http://", "https://").replace(".medium.", ".small.") : null;
 }
 
 function hasText(book: GutendexBook) {
@@ -75,6 +75,7 @@ function buildCatalogUrl(searchQuery: string, language: string, page: number) {
   const params = new URLSearchParams({
     sort: "popular",
     page: String(page),
+    page_size: String(PAGE_SIZE),
   });
 
   if (searchQuery.trim()) params.set("search", searchQuery.trim());
@@ -115,15 +116,30 @@ export function DiscoverView({ books, onOpenBook, downloadTasks, onDownloadBook 
     async function fetchBooks() {
       setIsLoading(true);
       setError(null);
+      const url = buildCatalogUrl(submittedQuery, language, page);
+      const cacheKey = `aibook:catalog:${url}`;
+
       try {
-        const res = await fetch(buildCatalogUrl(submittedQuery, language, page), {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const cachedData = JSON.parse(cached) as GutendexResponse;
+          setResults(cachedData.results.filter(hasText).slice(0, PAGE_SIZE));
+          setCount(cachedData.count);
+        }
+      } catch {
+        localStorage.removeItem(cacheKey);
+      }
+
+      try {
+        const res = await fetch(url, {
           signal: controller.signal,
         });
         if (!res.ok) throw new Error("Ошибка при загрузке каталога");
 
         const data = (await res.json()) as GutendexResponse;
-        setResults(data.results.filter(hasText));
+        setResults(data.results.filter(hasText).slice(0, PAGE_SIZE));
         setCount(data.count);
+        localStorage.setItem(cacheKey, JSON.stringify(data));
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setError(err instanceof Error ? err.message : "Неизвестная ошибка");
@@ -202,6 +218,12 @@ export function DiscoverView({ books, onOpenBook, downloadTasks, onDownloadBook 
       </div>
 
       {error && <div className="inline-error">{error}</div>}
+      {isLoading && (
+        <div className="catalog-loading-inline">
+          <span className="loading-dot" />
+          <span>{"\u0417\u0430\u0433\u0440\u0443\u0436\u0430\u044e \u043a\u0430\u0442\u0430\u043b\u043e\u0433..."}</span>
+        </div>
+      )}
 
       <div className="discover-meta">
         <span>{isSearching ? "Уточняю поиск..." : `${count || results.length} книг`}</span>
