@@ -1,18 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, BookmarkCheck, ChevronLeft, ChevronRight } from "lucide-react";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
+import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { analyzeSelection } from "@/lib/ai/analyze";
+import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
 import { splitIntoTokens, normalizeToken, splitSentencesWithRanges, findPhraseOffsets } from "@/lib/selector/text";
-import { saveLocalProgress, saveLocalBook } from "@/lib/db/local";
-import { sbUpsertProgress, sbInsertFlashcard, sbGetCachedWord, sbSaveCachedWord } from "@/lib/db/supabase";
+import {
+  getLocalAiAnalysis,
+  getLocalDiscussHistory,
+  getLocalProgressAnchor,
+  saveLocalAiAnalysis,
+  saveLocalBook,
+  saveLocalDiscussHistory,
+  saveLocalProfile,
+  saveLocalProgressAnchor,
+} from "@/lib/db/local";
+import { sbGetCachedAnalysis, sbInsertFlashcard, sbSaveCachedAnalysis, sbUpsertProgress, sbUpsertSettings } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
-import { APP_CONFIG } from "@/lib/config";
 import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
-import type { AiAnalysis, Book, Flashcard, UserProfile } from "@/lib/types";
+import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, UserProfile } from "@/lib/types";
 
 const PAGE_TARGET_CHARS = 7200;
 const PAGE_MAX_PARAGRAPHS = 28;
@@ -23,6 +33,7 @@ type Props = {
   onBack: () => void;
   onAddCard: (card: Flashcard) => void;
   onProgressUpdate: (book: Book) => void;
+  onProfileChange: (profile: UserProfile) => void;
 };
 
 type ActiveToken = {
@@ -78,22 +89,26 @@ function findPageIndex(pages: ReaderPage[], paraIndex: number) {
   return Math.max(0, idx);
 }
 
-export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate }: Props) {
+export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate, onProfileChange }: Props) {
   const { user } = useAuth();
   const [active, setActive] = useState<ActiveToken | null>(null);
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<AiMode>("word");
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
   const [wordModalSelection, setWordModalSelection] = useState("");
+  const [wordModalAnalysis, setWordModalAnalysis] = useState<AiAnalysis | null>(null);
+  const [isWordModalLoading, setIsWordModalLoading] = useState(false);
+  const [isDiscussOpen, setIsDiscussOpen] = useState(false);
+  const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
+  const [discussKey, setDiscussKey] = useState("");
+  const [readingAnchor, setReadingAnchor] = useState(() => getLocalProgressAnchor(book.id));
   const [toast, setToast] = useState<string | null>(null);
   const [tts, setTts] = useState<TTSState>(getTTSState());
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastAutoScrollRef = useRef(0);
   const dragMovedRef = useRef(false);
-  const sentenceCacheRef = useRef<Record<string, any>>({});
-  const phraseCacheRef = useRef<Record<string, any>>({});
   const pages = useMemo(() => buildReaderPages(book.paragraphs), [book.paragraphs]);
   const [pageIndex, setPageIndex] = useState(() => findPageIndex(pages, book.paragraphIndex));
   const currentPage = pages[Math.min(pageIndex, pages.length - 1)] ?? pages[0];
@@ -103,6 +118,10 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   useEffect(() => {
     setPageIndex(findPageIndex(pages, book.paragraphIndex));
   }, [book.id, book.paragraphIndex, pages]);
+
+  useEffect(() => {
+    setReadingAnchor(getLocalProgressAnchor(book.id));
+  }, [book.id]);
 
   useEffect(() => {
     let unmounted = false;
@@ -198,46 +217,147 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     };
   }, [dragSelection]);
 
-  const handleScroll = useCallback(() => {
-    if (!contentRef.current) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      if (!contentRef.current) return;
-      const els = Array.from(contentRef.current.querySelectorAll("p[data-idx]"));
-      const mid = window.innerHeight / 2;
-      let best = 0, bestDist = Infinity;
-      for (const el of els) {
-        const d = Math.abs(el.getBoundingClientRect().top - mid);
-        if (d < bestDist) { bestDist = d; best = Number((el as HTMLElement).dataset.idx ?? 0); }
-      }
-      const progress = Math.round((best / Math.max(book.paragraphs.length - 1, 1)) * 100);
-      const updated = { ...book, paragraphIndex: best, progress };
+  const saveReadingAnchor = useCallback((token: ActiveToken, charOffset = token.sentEnd) => {
+    const progress = Math.round((token.paraIndex / Math.max(book.paragraphs.length - 1, 1)) * 100);
+    const updated = { ...book, paragraphIndex: token.paraIndex, progress };
 
-      // Save locally (instant)
-      saveLocalProgress(book.id, best);
-      saveLocalBook(updated);
-      onProgressUpdate(updated);
+    saveLocalProgressAnchor(book.id, token.paraIndex, charOffset);
+    setReadingAnchor({ paragraphIndex: token.paraIndex, charOffset });
+    saveLocalBook(updated);
+    onProgressUpdate(updated);
 
-      // Sync to Supabase in background
-      if (user) {
-        void sbUpsertProgress({
-          user_id: user.id,
-          book_id: book.id,
-          chapter_index: 0,
-          paragraph_index: best,
-          scroll_pos: Math.round(window.scrollY),
-          percentage: progress,
-          last_read_at: new Date().toISOString(),
-          total_time_ms: 0,
-        });
-      }
-    }, APP_CONFIG.progressSaveDebounceMs);
+    if (user) {
+      void sbUpsertProgress({
+        user_id: user.id,
+        book_id: book.id,
+        chapter_index: 0,
+        paragraph_index: token.paraIndex,
+        char_offset: charOffset,
+        scroll_pos: Math.round(window.scrollY),
+        percentage: progress,
+        last_read_at: new Date().toISOString(),
+        total_time_ms: 0,
+      });
+    }
   }, [book, user, onProgressUpdate]);
 
+  function getTextForMode(token: ActiveToken, mode: AiMode) {
+    if (mode === "word") return token.token;
+    if (mode === "phrase") return token.phraseText;
+    return token.sentence;
+  }
+
+  function mergeAnalysis(prev: AiAnalysis | null, next: AiAnalysis): AiAnalysis {
+    return {
+      word: next.word ?? prev?.word,
+      phrase: next.phrase ?? prev?.phrase,
+      sentence: next.sentence ?? prev?.sentence,
+      examples: next.examples ?? prev?.examples ?? [],
+    };
+  }
+
+  async function loadAnalysisForMode(token: ActiveToken, mode: AiMode) {
+    const selectedText = getTextForMode(token, mode);
+    const cacheKey = makeAiCacheKey(mode, selectedText, book.language, profile.nativeLanguage);
+
+    const localCached = getLocalAiAnalysis(cacheKey);
+    if (localCached) {
+      setAnalysis((prev) => mergeAnalysis(prev, localCached));
+      saveReadingAnchor(token);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const remoteCached = await sbGetCachedAnalysis(cacheKey);
+      if (remoteCached) {
+        saveLocalAiAnalysis(cacheKey, remoteCached);
+        setAnalysis((prev) => mergeAnalysis(prev, remoteCached));
+        saveReadingAnchor(token);
+        return;
+      }
+
+      const result = await analyzeSelection({
+        mode,
+        word: token.token,
+        text: selectedText,
+        sentence: token.sentence,
+        sentenceBefore: token.sentenceBefore,
+        sentenceAfter: token.sentenceAfter,
+        nativeLanguage: profile.nativeLanguage,
+        targetLanguage: book.language,
+      });
+
+      saveLocalAiAnalysis(cacheKey, result);
+      void sbSaveCachedAnalysis(cacheKey, mode, result);
+      setAnalysis((prev) => mergeAnalysis(prev, result));
+      saveReadingAnchor(token);
+    } catch (err) {
+      console.error("AI analysis failed:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function loadWordModalAnalysis(word: string, contextSentence?: string) {
+    if (!active) return;
+    const proxyActive: ActiveToken = {
+      ...active,
+      token: word,
+      sentence: contextSentence || active.sentence,
+      sentenceBefore: contextSentence ? "" : active.sentenceBefore,
+      sentenceAfter: contextSentence ? "" : active.sentenceAfter,
+    };
+    const cacheKey = makeAiCacheKey("word", word, book.language, profile.nativeLanguage);
+
+    setIsWordModalLoading(true);
+    setWordModalAnalysis(null);
+
+    try {
+      const localCached = getLocalAiAnalysis(cacheKey);
+      if (localCached?.word) {
+        setWordModalAnalysis(localCached);
+        return;
+      }
+
+      const remoteCached = await sbGetCachedAnalysis(cacheKey);
+      if (remoteCached?.word) {
+        saveLocalAiAnalysis(cacheKey, remoteCached);
+        setWordModalAnalysis(remoteCached);
+        return;
+      }
+
+      const result = await analyzeSelection({
+        mode: "word",
+        word,
+        text: word,
+        sentence: proxyActive.sentence,
+        sentenceBefore: proxyActive.sentenceBefore,
+        sentenceAfter: proxyActive.sentenceAfter,
+        nativeLanguage: profile.nativeLanguage,
+        targetLanguage: book.language,
+      });
+
+      saveLocalAiAnalysis(cacheKey, result);
+      void sbSaveCachedAnalysis(cacheKey, "word", result);
+      setWordModalAnalysis(result);
+      setAnalysis((prev) => mergeAnalysis(prev, result));
+    } catch (err) {
+      console.error("Word modal analysis failed:", err);
+    } finally {
+      setIsWordModalLoading(false);
+    }
+  }
+
   useEffect(() => {
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, [handleScroll]);
+    if (!active) return;
+    const hasData =
+      activeTab === "word" ? Boolean(analysis?.word?.translation)
+        : activeTab === "phrase" ? Boolean(analysis?.phrase?.translation)
+          : Boolean(analysis?.sentence?.translation);
+    if (!hasData) void loadAnalysisForMode(active, activeTab);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, active?.paraIndex, active?.tokIdxInPara, active?.sentence]);
 
   async function handleTokenTap(token: string, paraIndex: number, tokIdxInPara: number) {
     if (dragMovedRef.current) {
@@ -285,69 +405,8 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     ensurePageForParagraph(paraIndex);
     setActive(newActive);
     focusToken(paraIndex, tokIdxInPara);
-    
-    if (analysis && newActive.sentence === active?.sentence) {
-      // Keep sentence analysis, but clear word to show shimmer
-      const optimisticAnalysis = { ...analysis };
-      optimisticAnalysis.word = { ...analysis.word, translation: "", explanation: "" };
-      
-      if (newActive.phraseText !== active?.phraseText) {
-        optimisticAnalysis.phrase = { ...analysis.phrase, translation: "", explanation: "" };
-      }
-      setAnalysis(optimisticAnalysis);
-    } else {
-      setAnalysis(null);
-    }
-    
-    setIsLoading(true);
-
-    try {
-      const cachedWord = await sbGetCachedWord(token, book.language, profile.nativeLanguage);
-      const existingSentenceData = sentenceCacheRef.current[newActive.sentence];
-      const phraseKey = `${newActive.sentence}_${token}`;
-      const existingPhraseData = phraseCacheRef.current[phraseKey];
-
-      if (cachedWord && (cachedWord.examples?.length ?? 0) >= 5) {
-        setAnalysis({
-          ...cachedWord,
-          sentence: existingSentenceData || cachedWord.sentence,
-          phrase: existingPhraseData || cachedWord.phrase,
-        });
-        setIsLoading(false);
-        return;
-      }
-
-      const skipWord = false;
-      const skipSentence = !!existingSentenceData;
-
-      const result = await analyzeSelection({
-        word: token,
-        sentence: newActive.sentence,
-        sentenceBefore: newActive.sentenceBefore,
-        sentenceAfter: newActive.sentenceAfter,
-        nativeLanguage: profile.nativeLanguage,
-        targetLanguage: book.language,
-        skipWord,
-        skipSentence,
-      }) as Partial<AiAnalysis>;
-
-      const finalAnalysis: AiAnalysis = {
-        word: result.word!,
-        phrase: result.phrase || existingPhraseData,
-        sentence: existingSentenceData || result.sentence!,
-        examples: result.examples || [],
-      };
-
-      setAnalysis(finalAnalysis);
-      sentenceCacheRef.current[newActive.sentence] = finalAnalysis.sentence;
-      phraseCacheRef.current[phraseKey] = finalAnalysis.phrase;
-
-      void sbSaveCachedWord(token, book.language, profile.nativeLanguage, finalAnalysis);
-    } catch (err) {
-      console.error("AI analysis failed:", err);
-    } finally {
-      setIsLoading(false);
-    }
+    setAnalysis({});
+    void loadAnalysisForMode(newActive, activeTab);
   }
 
   async function handleTokenRangeSelection(paraIndex: number, startTokIdx: number, endTokIdx: number) {
@@ -386,40 +445,10 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
 
     ensurePageForParagraph(paraIndex);
     setActive(newActive);
-    setAnalysis(null);
+    setActiveTab("sentence");
+    setAnalysis({});
     focusToken(paraIndex, start);
-    setIsLoading(true);
-
-    try {
-      const result = await analyzeSelection({
-        word: firstWord,
-        sentence: selectedText,
-        sentenceBefore: newActive.sentenceBefore,
-        sentenceAfter: newActive.sentenceAfter,
-        nativeLanguage: profile.nativeLanguage,
-        targetLanguage: book.language,
-      }) as Partial<AiAnalysis>;
-
-      const finalAnalysis: AiAnalysis = {
-        word: result.word!,
-        phrase: result.phrase || {
-          text: selectedText,
-          translation: "",
-          type: "custom_selection",
-          explanation: "",
-        },
-        sentence: result.sentence!,
-        examples: result.examples || [],
-      };
-
-      setAnalysis(finalAnalysis);
-      sentenceCacheRef.current[selectedText] = finalAnalysis.sentence;
-      void sbSaveCachedWord(firstWord, book.language, profile.nativeLanguage, finalAnalysis);
-    } catch (err) {
-      console.error("AI range analysis failed:", err);
-    } finally {
-      setIsLoading(false);
-    }
+    void loadAnalysisForMode(newActive, "sentence");
   }
 
   function startTokenDrag(paraIndex: number, tokIdxInPara: number) {
@@ -462,73 +491,8 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     const norm = normalizeToken(word);
     if (!norm) return;
     setWordModalSelection(word);
-
-    const sentenceToUse = contextSentence || active.sentence;
-    const sentenceBefore = contextSentence ? "" : active.sentenceBefore;
-    const sentenceAfter = contextSentence ? "" : active.sentenceAfter;
-
-    // Check cache first to avoid flicker and latency
-    const cachedWord = await sbGetCachedWord(word, book.language, profile.nativeLanguage);
-    const existingSentenceData = sentenceCacheRef.current[sentenceToUse] || (sentenceToUse === active.sentence ? analysis?.sentence : null);
-    const phraseKey = `${sentenceToUse}_${word}`;
-    const existingPhraseData = phraseCacheRef.current[phraseKey];
-
-    // Pre-load the modal and set state before waiting, eliminating "lag" perception
     setIsWordModalOpen(true);
-
-    if (cachedWord && (cachedWord.examples?.length ?? 0) >= 5) {
-      setAnalysis({
-        ...cachedWord,
-        sentence: existingSentenceData || cachedWord.sentence,
-        phrase: existingPhraseData || cachedWord.phrase,
-      });
-      setIsLoading(false);
-      return;
-    }
-
-    if (analysis) {
-      const optimisticAnalysis = { ...analysis };
-      optimisticAnalysis.word = { ...analysis.word, translation: "", explanation: "" };
-      if (sentenceToUse === active?.sentence) {
-        optimisticAnalysis.phrase = { ...analysis.phrase, translation: "", explanation: "" };
-      }
-      setAnalysis(optimisticAnalysis);
-    }
-    
-    setIsLoading(true);
-
-    try {
-      const skipWord = false;
-      const skipSentence = !!existingSentenceData;
-
-      const result = await analyzeSelection({
-        word,
-        sentence: sentenceToUse,
-        sentenceBefore,
-        sentenceAfter,
-        nativeLanguage: profile.nativeLanguage,
-        targetLanguage: book.language,
-        skipWord,
-        skipSentence,
-      }) as Partial<AiAnalysis>;
-
-      const finalAnalysis: AiAnalysis = {
-        word: result.word!,
-        phrase: result.phrase || existingPhraseData,
-        sentence: existingSentenceData || result.sentence!,
-        examples: result.examples || [],
-      };
-
-      setAnalysis(finalAnalysis);
-      sentenceCacheRef.current[sentenceToUse] = finalAnalysis.sentence;
-      phraseCacheRef.current[phraseKey] = finalAnalysis.phrase;
-
-      void sbSaveCachedWord(word, book.language, profile.nativeLanguage, finalAnalysis);
-    } catch (err) {
-      console.error("Panel word tap failed:", err);
-    } finally {
-      setIsLoading(false);
-    }
+    void loadWordModalAnalysis(word, contextSentence);
   }
 
   function handleNextToken(level: "word" | "phrase" | "sentence" = "word") {
@@ -636,7 +600,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     const best = target.start;
     const progress = Math.round((best / Math.max(book.paragraphs.length - 1, 1)) * 100);
     const updated = { ...book, paragraphIndex: best, progress };
-    saveLocalProgress(book.id, best);
+    saveLocalProgressAnchor(book.id, best, 0);
     saveLocalBook(updated);
     onProgressUpdate(updated);
 
@@ -646,10 +610,11 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
   async function handleAddCard(type: Flashcard["type"]) {
     if (!analysis || !active) return;
     const map = {
-      word:     { front: active.token,         back: analysis.word.translation },
-      phrase:   { front: active.phraseText,    back: analysis.phrase.translation },
-      sentence: { front: active.sentence,      back: analysis.sentence.translation },
+      word:     { front: active.token,         back: analysis.word?.translation ?? "" },
+      phrase:   { front: active.phraseText,    back: analysis.phrase?.translation ?? "" },
+      sentence: { front: active.sentence,      back: analysis.sentence?.translation ?? "" },
     };
+    if (!map[type].back) return;
     const localCard: Flashcard = {
       id: `card-${Date.now()}`,
       type,
@@ -689,6 +654,65 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
     setTimeout(() => setToast(null), 2000);
   }
 
+  function handleSetManualAnchor() {
+    if (active) {
+      saveReadingAnchor(active);
+      showToast("✓ Якорь сохранен");
+      return;
+    }
+
+    const fallback: ActiveToken = {
+      token: "",
+      paraIndex: currentPage.start,
+      tokIdxInPara: 0,
+      sentStart: 0,
+      sentEnd: 0,
+      phraseStart: 0,
+      phraseEnd: 0,
+      sentence: "",
+      phraseText: "",
+      sentenceBefore: "",
+      sentenceAfter: "",
+    };
+    saveReadingAnchor(fallback, 0);
+    showToast("✓ Якорь сохранен");
+  }
+
+  async function handleTtsProviderChange(provider: NonNullable<UserProfile["ttsProvider"]>) {
+    const updated = { ...profile, ttsProvider: provider };
+    saveLocalProfile(updated);
+    onProfileChange(updated);
+
+    if (user) {
+      await sbUpsertSettings({
+        user_id: user.id,
+        native_language: updated.nativeLanguage,
+        active_target_lang: updated.targetLanguage,
+        ui_language: updated.uiLanguage,
+        tts_provider: updated.ttsProvider ?? "local",
+        reading_minutes: updated.readingMinutes,
+        books_started: updated.booksStarted,
+        books_finished: updated.booksFinished,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  function openDiscuss() {
+    if (!active) return;
+    const selectedText = getTextForMode(active, activeTab);
+    const key = makeDiscussCacheKey(activeTab, selectedText, book.language, profile.nativeLanguage);
+    const history = getLocalDiscussHistory(key);
+    setDiscussKey(key);
+    setDiscussMessages(history);
+    setIsDiscussOpen(true);
+  }
+
+  function handleDiscussMessagesChange(messages: DiscussMessage[]) {
+    setDiscussMessages(messages);
+    if (discussKey) saveLocalDiscussHistory(discussKey, messages);
+  }
+
   function getTokenKaraokeClass(paraIndex: number, tokenStart: number, tokenEnd: number, tokIdx: number) {
     if (!active || active.paraIndex !== paraIndex) return "";
     if (tts.status !== "playing" && tts.status !== "paused") return "";
@@ -725,6 +749,9 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           <strong>{book.title}</strong>
           <span>{book.author}</span>
         </div>
+        <button className="icon-btn" onClick={handleSetManualAnchor} type="button" aria-label="Сохранить якорь прочитанного">
+          <BookmarkCheck size={18} />
+        </button>
         <span className="reader-pct">{Math.round(book.progress)}%</span>
       </header>
 
@@ -780,6 +807,11 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
             const offsets: number[] = [];
             let off = 0;
             for (const t of tokens) { offsets.push(off); off += t.length; }
+            const anchorTokenIndex = readingAnchor.paragraphIndex === paraIndex
+              ? tokens.reduce((last, token, index) => (
+                  normalizeToken(token) && offsets[index] < readingAnchor.charOffset ? index : last
+                ), -1)
+              : -1;
 
             return (
               <p key={paraIndex} data-idx={paraIndex}>
@@ -788,11 +820,17 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
                   if (!norm) return <span key={tokIdx}>{token}</span>;
 
                   const charPos = offsets[tokIdx];
-                  const isWord = isParaActive && tokIdx === active!.tokIdxInPara;
                   const inSent = isParaActive &&
                     charPos >= active!.sentStart && charPos < active!.sentEnd;
-                  const isPhrase = inSent && !isWord &&
+                  const inPhrase = inSent &&
                     charPos >= active!.phraseStart && charPos < active!.phraseEnd;
+                  const isWord = activeTab === "word" && isParaActive && tokIdx === active!.tokIdxInPara;
+                  const isPhrase = (activeTab === "word" || activeTab === "phrase") && inPhrase && !isWord;
+                  const isSentence = inSent && (
+                    activeTab === "sentence" ||
+                    (activeTab === "phrase" && !isPhrase) ||
+                    (activeTab === "word" && !isWord && !isPhrase)
+                  );
                   const isDragged = dragSelection?.paraIndex === paraIndex &&
                     tokIdx >= Math.min(dragSelection.startTokIdx, dragSelection.endTokIdx) &&
                     tokIdx <= Math.max(dragSelection.startTokIdx, dragSelection.endTokIdx);
@@ -801,30 +839,36 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
                     "text-token",
                     isWord   ? "hl-word"         : "",
                     isPhrase ? "hl-phrase"       : "",
-                    inSent && !isWord && !isPhrase ? "hl-sentence-tok" : "",
+                    isSentence ? "hl-sentence-tok" : "",
                     isDragged ? "hl-drag-selection" : "",
                     getTokenKaraokeClass(paraIndex, charPos, charPos + token.length, tokIdx),
                   ].filter(Boolean).join(" ");
 
                   return (
-                    <span
-                      key={tokIdx}
-                      data-token-id={`${paraIndex}-${tokIdx}`}
-                      data-para-index={paraIndex}
-                      data-token-index={tokIdx}
-                      role="button"
-                      tabIndex={0}
-                      className={cls}
-                      onPointerDown={(event) => {
-                        if (event.pointerType === "mouse" && event.button !== 0) return;
-                        startTokenDrag(paraIndex, tokIdx);
-                        updateTokenDragFromPoint(event.clientX, event.clientY);
-                      }}
-                      onPointerEnter={() => enterTokenDrag(paraIndex, tokIdx)}
-                      onClick={() => void handleTokenTap(token, paraIndex, tokIdx)}
-                      onKeyDown={(e) => { if (e.key === "Enter") void handleTokenTap(token, paraIndex, tokIdx); }}
-                    >
-                      {token}
+                    <span key={tokIdx} className="reader-token-wrap">
+                      <span
+                        data-token-id={`${paraIndex}-${tokIdx}`}
+                        data-para-index={paraIndex}
+                        data-token-index={tokIdx}
+                        role="button"
+                        tabIndex={0}
+                        className={cls}
+                        onPointerDown={(event) => {
+                          if (event.pointerType === "mouse" && event.button !== 0) return;
+                          startTokenDrag(paraIndex, tokIdx);
+                          updateTokenDragFromPoint(event.clientX, event.clientY);
+                        }}
+                        onPointerEnter={() => enterTokenDrag(paraIndex, tokIdx)}
+                        onClick={() => void handleTokenTap(token, paraIndex, tokIdx)}
+                        onKeyDown={(e) => { if (e.key === "Enter") void handleTokenTap(token, paraIndex, tokIdx); }}
+                      >
+                        {token}
+                      </span>
+                      {tokIdx === anchorTokenIndex && (
+                        <span className="reader-anchor-marker" title="Якорь прочитанного" aria-label="Якорь прочитанного">
+                          <BookmarkCheck size={12} />
+                        </span>
+                      )}
                     </span>
                   );
                 })}
@@ -861,31 +905,56 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate 
           selection={active}
           analysis={analysis}
           isLoading={isLoading}
+          activeTab={activeTab}
           lang={book.language}
+          ttsProvider={profile.ttsProvider}
           onClose={() => { setActive(null); setAnalysis(null); }}
           onOpenWordModal={() => {
             setWordModalSelection(active.token);
             setIsWordModalOpen(true);
+            void loadWordModalAnalysis(active.token);
           }}
+          onDiscuss={openDiscuss}
           onAddCard={(type) => void handleAddCard(type)}
           onWordTap={handleWordTapInPanel}
+          onTabChange={setActiveTab}
+          onTtsProviderChange={(provider) => void handleTtsProviderChange(provider)}
           onNext={handleNextToken}
           onPrev={handlePrevToken}
         />
       )}
 
-      {analysis && (
-        <WordModal
-          analysis={analysis}
-          isOpen={isWordModalOpen}
-          isLoading={isLoading}
-          lang={book.language}
-          selectedWord={wordModalSelection || active?.token || analysis.word.text}
-          onClose={() => setIsWordModalOpen(false)}
-          onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
+      {active && (
+        <DiscussAiModal
+          isOpen={isDiscussOpen}
+          mode={activeTab}
+          selectedText={getTextForMode(active, activeTab)}
+          sentence={active.sentence}
+          sentenceBefore={active.sentenceBefore}
+          sentenceAfter={active.sentenceAfter}
+          nativeLanguage={profile.nativeLanguage}
+          targetLanguage={book.language}
+          messages={discussMessages}
+          onMessagesChange={handleDiscussMessagesChange}
+          onClose={() => setIsDiscussOpen(false)}
           onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
         />
       )}
+
+      <WordModal
+        analysis={wordModalAnalysis}
+        isOpen={isWordModalOpen}
+        isLoading={isWordModalLoading}
+        lang={book.language}
+        selectedWord={wordModalSelection || active?.token || ""}
+        onClose={() => {
+          setIsWordModalOpen(false);
+          setWordModalAnalysis(null);
+          setWordModalSelection("");
+        }}
+        onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
+        onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
+      />
 
       <AudioScrubber />
 

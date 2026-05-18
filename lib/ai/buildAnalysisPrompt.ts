@@ -1,62 +1,97 @@
+import type { AiMode } from "@/lib/types";
+
 interface AnalysisPromptParams {
+  mode: AiMode;
   word: string;
+  text?: string;
   sentence: string;
   sentenceBefore: string;
   sentenceAfter: string;
   nativeLanguage: string;
   targetLanguage: string;
-  skipWord?: boolean;
-  skipSentence?: boolean;
 }
 
 export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
-  const jsonStructure: any = {};
-  
-  if (!p.skipWord) {
-    jsonStructure.word = {
-      text: "the exact word form as it appears",
-      lemma: "dictionary/base form",
-      partOfSpeech: `noun/verb/adjective/adverb/etc in ${p.nativeLanguage}`,
-      gender: "grammatical gender if applicable (der/die/das for German, etc), or empty string",
-      translation: `primary translation in ${p.nativeLanguage}`,
-      explanation: `brief contextual explanation in ${p.nativeLanguage}, 1-2 sentences`
-    };
-    jsonStructure.examples = [
-      { text: `example phrase 1 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
-      { text: `example phrase 2 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
-      { text: `example phrase 3 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
-      { text: `example phrase 4 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
-      { text: `example phrase 5 in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` }
-    ];
-  }
-  
-  jsonStructure.phrase = {
-    text: "the meaningful phrase or collocation this word belongs to (2-6 words typically)",
-    translation: `translation of the phrase in ${p.nativeLanguage}`,
-    type: "idiom OR collocation OR compound OR noun_phrase OR verb_phrase",
-    explanation: `why this phrase is interesting or notable, in ${p.nativeLanguage}`
+  const selectedText =
+    p.mode === "word" ? p.word : (p.text || (p.mode === "phrase" ? p.word : p.sentence)).trim();
+  const wordShape = {
+    word: {
+      text: p.word,
+      lemma: "dictionary/base form or infinitive",
+      partOfSpeech: `part of speech in ${p.nativeLanguage}`,
+      gender: "grammatical gender/article if applicable, otherwise empty string",
+      translation: `short primary translation in ${p.nativeLanguage}`,
+      explanation: `short dictionary-style note in ${p.nativeLanguage}`,
+      nounDetails: {
+        article: "article if it is a noun, otherwise empty string",
+        plural: "plural form if it is a noun, otherwise empty string",
+      },
+      verbDetails: {
+        infinitive: "infinitive if it is a verb, otherwise empty string",
+        tense: "tense/person context if obvious, otherwise empty string",
+        person: "person/number if obvious, otherwise empty string",
+      },
+    },
+    examples: [
+      { text: `short example in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+      { text: `short example in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+      { text: `short example in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+      { text: `short example in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+      { text: `short example in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+    ],
   };
-  
-  if (!p.skipSentence) {
-    jsonStructure.sentence = {
-      text: p.sentence,
-      translation: `full sentence translation in ${p.nativeLanguage}`,
-      grammarNote: `key grammar point illustrated by this sentence, in ${p.nativeLanguage}`,
-      structure: `brief description of sentence structure in ${p.nativeLanguage}`
-    };
+  const phraseShape = {
+    phrase: {
+      text: selectedText,
+      translation: `natural translation of the exact phrase in ${p.nativeLanguage}`,
+      type: "phrase",
+    },
+  };
+  const sentenceShape = {
+    sentence: {
+      text: selectedText,
+      translation: `natural translation of the exact sentence in ${p.nativeLanguage}`,
+    },
+  };
+
+  if (p.mode === "word") {
+    return `You are an expert language teacher. The student's native language is "${p.nativeLanguage}" and they are studying "${p.targetLanguage}".
+
+Analyze this single word as a clean dictionary entry, not as a sentence translation.
+
+Word: "${p.word}"
+Current sentence for form detection only: "${p.sentence}"
+
+Return ONLY a valid JSON object with this exact structure:
+${JSON.stringify(wordShape, null, 2)}
+
+Do not include phrase translation, sentence translation, or markdown.`;
+  }
+
+  if (p.mode === "phrase") {
+    return `You are an expert language teacher. The student's native language is "${p.nativeLanguage}" and they are studying "${p.targetLanguage}".
+
+Translate only this exact phrase. Do not translate the full sentence.
+
+Phrase: "${selectedText}"
+Current sentence for context only: "${p.sentence}"
+
+Return ONLY a valid JSON object with this exact structure:
+${JSON.stringify(phraseShape, null, 2)}
+
+Do not include word analysis, examples, sentence translation, markdown, or extra explanation.`;
   }
 
   return `You are an expert language teacher. The student's native language is "${p.nativeLanguage}" and they are studying "${p.targetLanguage}".
 
-The student tapped the word: "${p.word}"
+Translate only the current sentence.
 
-Context:
 Previous sentence: "${p.sentenceBefore}"
-Current sentence: "${p.sentence}"
+Current sentence: "${selectedText}"
 Next sentence: "${p.sentenceAfter}"
 
-Analyze the exact word form in context. Keep "word.text" identical to the tapped word form, put the dictionary/base form only in "word.lemma", and return exactly 5 short example phrases when examples are requested.
+Return ONLY a valid JSON object with this exact structure:
+${JSON.stringify(sentenceShape, null, 2)}
 
-Return ONLY a valid JSON object (no markdown, no explanation) with this exact structure:
-${JSON.stringify(jsonStructure, null, 2)}`;
+Do not include word analysis, phrase translation, examples, markdown, or extra explanation.`;
 }

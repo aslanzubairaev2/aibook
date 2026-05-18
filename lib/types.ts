@@ -28,31 +28,60 @@ export type UserProfile = {
   ttsProvider?: "local" | "gemini";
 };
 
+export type WordAnalysis = {
+  text: string;
+  lemma: string;
+  partOfSpeech: string;
+  gender?: string;
+  translation: string;
+  explanation?: string;
+  nounDetails?: {
+    article?: string;
+    plural?: string;
+  };
+  verbDetails?: {
+    infinitive?: string;
+    tense?: string;
+    person?: string;
+  };
+};
+
+export type PhraseAnalysis = {
+  text: string;
+  translation: string;
+  type?: string;
+  explanation?: string;
+};
+
+export type SentenceAnalysis = {
+  text: string;
+  translation: string;
+  grammarNote?: string;
+  structure?: string;
+};
+
 export type AiAnalysis = {
-  word: {
-    text: string;
-    lemma: string;
-    partOfSpeech: string;
-    gender?: string;
-    translation: string;
-    explanation: string;
-  };
-  phrase: {
-    text: string;
-    translation: string;
-    type: string;
-    explanation: string;
-  };
-  sentence: {
-    text: string;
-    translation: string;
-    grammarNote: string;
-    structure: string;
-  };
-  examples: {
+  word?: WordAnalysis;
+  phrase?: PhraseAnalysis;
+  sentence?: SentenceAnalysis;
+  examples?: {
     text: string;
     translation: string;
   }[];
+};
+
+export type AiMode = SelectionType;
+
+export type DiscussContentPart = {
+  type: "text" | "learning";
+  text: string;
+  translation?: string;
+};
+
+export type DiscussMessage = {
+  role: "user" | "model";
+  text?: string;
+  contentParts?: DiscussContentPart[];
 };
 
 export type Flashcard = {

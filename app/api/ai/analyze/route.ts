@@ -5,6 +5,18 @@ import { AI_CONFIG } from "@/lib/config";
 
 const serverApiKey = process.env.GEMINI_API_KEY ?? "";
 
+function parseJsonObject(text: string) {
+  const cleaned = text.replace(/```json|```/g, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+    throw new Error("AI returned invalid JSON");
+  }
+}
+
 export async function POST(req: Request) {
   // Use server env key; fall back to client-provided key in header
   const clientKey = req.headers.get("x-gemini-key") ?? "";
@@ -18,7 +30,9 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json() as {
+    mode: "word" | "phrase" | "sentence";
     word: string;
+    text?: string;
     sentence: string;
     sentenceBefore: string;
     sentenceAfter: string;
@@ -43,7 +57,7 @@ export async function POST(req: Request) {
 
     const result = await model.generateContent(prompt);
     const text = result.response.text();
-    const parsed = JSON.parse(text);
+    const parsed = parseJsonObject(text);
     return NextResponse.json(parsed);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";

@@ -6,7 +6,7 @@ import type { AiAnalysis } from "@/lib/types";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 
 type Props = {
-  analysis: AiAnalysis;
+  analysis: AiAnalysis | null;
   isOpen: boolean;
   isLoading?: boolean;
   lang: string;
@@ -18,8 +18,9 @@ type Props = {
 
 export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onClose, onAddCard, onWordTap }: Props) {
   if (!isOpen) return null;
-  const displayWord = selectedWord || analysis.word.text || analysis.word.lemma;
-  const hasLemma = analysis.word.lemma && analysis.word.lemma.toLowerCase() !== displayWord.toLowerCase();
+  const word = analysis?.word;
+  const displayWord = selectedWord || word?.text || word?.lemma || "";
+  const hasLemma = word?.lemma && word.lemma.toLowerCase() !== displayWord.toLowerCase();
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -35,25 +36,44 @@ export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onC
           <button className="icon-btn" onClick={onClose} type="button" aria-label="Закрыть">
             <X size={20} />
           </button>
-          <SpeakButton text={displayWord} lang={lang} size={18} />
-          <button className="pill-btn" onClick={onAddCard} type="button" style={{ marginLeft: "auto" }}>
+          {displayWord && <SpeakButton text={displayWord} lang={lang} size={18} />}
+          <button className="pill-btn" onClick={onAddCard} type="button" style={{ marginLeft: "auto" }} disabled={!word?.translation}>
             <Plus size={15} />
             Карточка
           </button>
         </div>
 
+        {isLoading || !word ? (
+          <div className="word-modal-skeleton">
+            <div className="word-hero">
+              <div className="word-hero-lemma">{displayWord ? displayWord.toUpperCase() : "..."}</div>
+            </div>
+            <div className="modal-section">
+              <span className="modal-section-label">Перевод</span>
+              <div className="shimmer-line" />
+              <div className="shimmer-line medium" />
+            </div>
+            <div className="modal-section">
+              <span className="modal-section-label">Примеры</span>
+              <div className="shimmer-line" />
+              <div className="shimmer-line medium" />
+              <div className="shimmer-line short" />
+            </div>
+          </div>
+        ) : (
+        <>
         {/* Hero */}
         <div className="word-hero">
           <div className="word-hero-lemma">{displayWord.toUpperCase()}</div>
           <div className="word-hero-meta">
-            <span className="word-meta-chip">{analysis.word.partOfSpeech}</span>
-            {analysis.word.gender && <span className="word-meta-chip gender">{analysis.word.gender}</span>}
+            <span className="word-meta-chip">{word.partOfSpeech}</span>
+            {word.gender && <span className="word-meta-chip gender">{word.gender}</span>}
           </div>
           {hasLemma && (
             <div className="word-lemma-line">
               <span>Инфинитив / словарная форма</span>
-              <strong>{analysis.word.lemma}</strong>
-              <SpeakButton text={analysis.word.lemma} lang={lang} size={13} />
+              <strong>{word.lemma}</strong>
+              <SpeakButton text={word.lemma} lang={lang} size={13} />
             </div>
           )}
         </div>
@@ -61,15 +81,23 @@ export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onC
         {/* Translation */}
         <div className="modal-section">
           <span className="modal-section-label">Перевод</span>
-          <div className="modal-translation">{analysis.word.translation}</div>
-          <div className="modal-explanation">{analysis.word.explanation}</div>
+          <div className="modal-translation">{word.translation}</div>
+          {word.explanation && <div className="modal-explanation">{word.explanation}</div>}
+          {(word.nounDetails?.article || word.nounDetails?.plural || word.verbDetails?.infinitive) && (
+            <div className="word-details-grid">
+              {word.nounDetails?.article && <span>Артикль <b>{word.nounDetails.article}</b></span>}
+              {word.nounDetails?.plural && <span>Мн. число <b>{word.nounDetails.plural}</b></span>}
+              {word.verbDetails?.infinitive && <span>Инфинитив <b>{word.verbDetails.infinitive}</b></span>}
+              {word.verbDetails?.person && <span>Форма <b>{word.verbDetails.person}</b></span>}
+            </div>
+          )}
         </div>
 
         {/* Examples */}
         <div className="modal-section">
           <span className="modal-section-label">Примеры</span>
           <div className="examples-list">
-            {analysis.examples.slice(0, 5).map((exItem, i) => {
+            {(analysis?.examples ?? []).slice(0, 5).map((exItem, i) => {
               const text = typeof exItem === "string" ? exItem : exItem.text;
               const translation = typeof exItem === "string" ? "" : exItem.translation;
               const tokens = splitIntoTokens(text);
@@ -114,6 +142,8 @@ export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onC
             })}
           </div>
         </div>
+        </>
+        )}
 
       </section>
     </div>

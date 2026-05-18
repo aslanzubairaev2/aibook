@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, Plus, ChevronLeft, ChevronRight, Zap } from "lucide-react";
+import { ChevronDown, MessageCircle, Plus, ChevronLeft, ChevronRight, Volume2, Zap } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { normalizeToken } from "@/lib/selector/text";
 import { subscribeTTS, getTTSState, TTSState, toggleAutoNext, speak } from "@/lib/tts";
-import type { AiAnalysis, Flashcard } from "@/lib/types";
+import type { AiAnalysis, Flashcard, UserProfile } from "@/lib/types";
 
 type Tab = "word" | "phrase" | "sentence";
 
@@ -13,17 +13,37 @@ type Props = {
   selection: { token: string; phraseText: string; sentence: string; isCustomSentence?: boolean };
   analysis: AiAnalysis | null;
   isLoading: boolean;
+  activeTab: Tab;
   lang: string;
+  ttsProvider: UserProfile["ttsProvider"];
   onClose: () => void;
   onOpenWordModal: () => void;
+  onDiscuss: () => void;
   onAddCard: (type: Flashcard["type"]) => void;
   onWordTap: (word: string) => void;
+  onTabChange: (tab: Tab) => void;
+  onTtsProviderChange: (provider: NonNullable<UserProfile["ttsProvider"]>) => void;
   onNext?: (level: Tab) => void;
   onPrev?: (level: Tab) => void;
 };
 
-export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenWordModal, onAddCard, onWordTap, onNext, onPrev }: Props) {
-  const [tab, setTab] = useState<Tab>("word");
+export function AiPanel({
+  selection,
+  analysis,
+  isLoading,
+  activeTab,
+  lang,
+  ttsProvider,
+  onClose,
+  onOpenWordModal,
+  onDiscuss,
+  onAddCard,
+  onWordTap,
+  onTabChange,
+  onTtsProviderChange,
+  onNext,
+  onPrev,
+}: Props) {
   const [tts, setTts] = useState<TTSState>(getTTSState());
   const lastSentenceRef = useRef(selection.sentence);
   const wasPlayingRef = useRef(false);
@@ -33,18 +53,18 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
   }, []);
 
   useEffect(() => {
-    if (selection.isCustomSentence) setTab("sentence");
-  }, [selection.isCustomSentence, selection.sentence]);
+    if (selection.isCustomSentence) onTabChange("sentence");
+  }, [selection.isCustomSentence, selection.sentence, onTabChange]);
 
   // Logic to auto-advance to next sentence
   useEffect(() => {
     if (tts.autoNext && !tts.repeat && tts.status === "idle" && wasPlayingRef.current) {
-      if (tab === "sentence" && onNext) {
+      if (activeTab === "sentence" && onNext) {
         onNext("sentence");
       }
     }
     wasPlayingRef.current = tts.status === "playing";
-  }, [tts.status, tts.autoNext, tts.repeat, tab, onNext]);
+  }, [tts.status, tts.autoNext, tts.repeat, activeTab, onNext]);
 
   // Logic to auto-play when sentence changes due to auto-advance
   useEffect(() => {
@@ -59,6 +79,11 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
     { id: "phrase", label: "Фраза" },
     { id: "sentence", label: "Предложение" },
   ];
+  const provider = ttsProvider || "local";
+  const hasActiveAnalysis =
+    activeTab === "word" ? Boolean(analysis?.word?.translation)
+      : activeTab === "phrase" ? Boolean(analysis?.phrase?.translation)
+        : Boolean(analysis?.sentence?.translation);
 
   return (
     <aside className="ai-panel">
@@ -80,13 +105,24 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
             >
               <Zap size={16} fill={tts.autoNext ? "currentColor" : "none"} />
             </button>
+            <button
+              className={`tts-toggle ${provider === "gemini" ? "gemini" : "local"}`}
+              type="button"
+              aria-label={provider === "gemini" ? "Переключить TTS на локальный" : "Переключить TTS на Gemini"}
+              title={provider === "gemini" ? "Gemini TTS" : "Local TTS"}
+              onClick={() => onTtsProviderChange(provider === "gemini" ? "local" : "gemini")}
+            >
+              <span className="tts-toggle-thumb">
+                {provider === "gemini" ? <span className="gemini-mark" aria-hidden>✦</span> : <Volume2 size={14} />}
+              </span>
+            </button>
             {onPrev && (
-              <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={() => onPrev(tab)} type="button" aria-label="Предыдущее">
+              <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={() => onPrev(activeTab)} type="button" aria-label="Предыдущее">
                 <ChevronLeft size={18} />
               </button>
             )}
             {onNext && (
-              <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={() => onNext(tab)} type="button" aria-label="Следующее">
+              <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={() => onNext(activeTab)} type="button" aria-label="Следующее">
                 <ChevronRight size={18} />
               </button>
             )}
@@ -99,22 +135,22 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
 
       <div className="panel-tabs">
         {tabs.map(({ id, label }) => (
-          <button key={id} type="button" className={`panel-tab${tab === id ? " active" : ""}`} onClick={() => setTab(id)}>
+          <button key={id} type="button" className={`panel-tab${activeTab === id ? " active" : ""}`} onClick={() => onTabChange(id)}>
             {label}
           </button>
         ))}
       </div>
 
       <div className="panel-tab-content">
-        {tab === "word" && (
+        {activeTab === "word" && (
           <div className="tab-body">
             <div className="tab-row-main">
               <div>
                 <span className="tab-main-word">{selection.token}</span>
-                {analysis?.word.partOfSpeech && (
+                {analysis?.word?.partOfSpeech && (
                   <span className="tab-pos">{analysis.word.partOfSpeech}{analysis.word.gender ? ` · ${analysis.word.gender}` : ""}</span>
                 )}
-                {analysis?.word.lemma && analysis.word.lemma.toLowerCase() !== selection.token.toLowerCase() && (
+                {analysis?.word?.lemma && analysis.word.lemma.toLowerCase() !== selection.token.toLowerCase() && (
                   <span className="tab-lemma-row">
                     Инфинитив / форма: <b>{analysis.word.lemma}</b>
                     <SpeakButton text={analysis.word.lemma} lang={lang} size={13} />
@@ -126,10 +162,9 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
                 <button className="mini-btn" type="button" disabled={!analysis} onClick={onOpenWordModal}>подробнее</button>
               </div>
             </div>
-            {analysis && analysis.word.translation ? (
+            {analysis?.word?.translation ? (
               <>
                 <p className="tab-translation word-translation">{analysis.word.translation}</p>
-                <p className="tab-note">{analysis.word.explanation}</p>
               </>
             ) : (
               <>{isLoading && <><div className="shimmer-line" /><div className="shimmer-line medium" /></>}</>
@@ -137,16 +172,16 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
           </div>
         )}
 
-        {tab === "phrase" && (
+        {activeTab === "phrase" && (
           <div className="tab-body">
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
               <ClickableText text={selection.phraseText} lang={lang} onWordTap={onWordTap} className="tab-phrase-text karaoke-mode-fill" />
               <SpeakButton key={selection.phraseText} text={selection.phraseText} lang={lang} />
             </div>
-            {analysis && analysis.phrase.translation ? (
+            {analysis?.phrase?.translation ? (
               <>
                 <KaraokeTranslation text={analysis.phrase.translation} sourceText={selection.phraseText} />
-                <p className="tab-note">{analysis.phrase.explanation}</p>
+                {analysis.phrase.explanation && <p className="tab-note">{analysis.phrase.explanation}</p>}
               </>
             ) : (
               <>{isLoading && <><div className="shimmer-line" style={{ marginTop: 8 }} /><div className="shimmer-line medium" /></>}</>
@@ -154,16 +189,16 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
           </div>
         )}
 
-        {tab === "sentence" && (
+        {activeTab === "sentence" && (
           <div className="tab-body">
             <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
               <ClickableText text={selection.sentence} lang={lang} onWordTap={onWordTap} className="tab-sentence-text" />
               <SpeakButton key={selection.sentence} text={selection.sentence} lang={lang} />
             </div>
-            {analysis && analysis.sentence.translation ? (
+            {analysis?.sentence?.translation ? (
               <>
                 <KaraokeTranslation text={analysis.sentence.translation} sourceText={selection.sentence} />
-                <p className="tab-note">{analysis.sentence.grammarNote}</p>
+                {analysis.sentence.grammarNote && <p className="tab-note">{analysis.sentence.grammarNote}</p>}
               </>
             ) : (
               <>{isLoading && <><div className="shimmer-line" style={{ marginTop: 8 }} /><div className="shimmer-line medium" /><div className="shimmer-line short" /></>}</>
@@ -172,16 +207,21 @@ export function AiPanel({ selection, analysis, isLoading, lang, onClose, onOpenW
         )}
       </div>
 
-      <button
-        className="primary-btn"
-        type="button"
-        disabled={!analysis}
-        onClick={() => onAddCard(tab === "word" ? "word" : tab === "phrase" ? "phrase" : "sentence")}
-        style={{ marginTop: 12 }}
-      >
-        <Plus size={18} />
-        Добавить карточку
-      </button>
+      <div className="panel-actions">
+        <button className="secondary-btn panel-action-btn" type="button" onClick={onDiscuss}>
+          <MessageCircle size={17} />
+          Обсудить с AI
+        </button>
+        <button
+          className="primary-btn panel-action-btn"
+          type="button"
+          disabled={!hasActiveAnalysis}
+          onClick={() => onAddCard(activeTab === "word" ? "word" : activeTab === "phrase" ? "phrase" : "sentence")}
+        >
+          <Plus size={18} />
+          Карточка
+        </button>
+      </div>
     </aside>
   );
 }

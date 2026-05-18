@@ -392,6 +392,7 @@ function AppInner() {
           onBack={() => setSection("home")}
           onAddCard={handleAddCard}
           onProgressUpdate={handleProgressUpdate}
+          onProfileChange={handleProfileChange}
         />
       ) : section === "reader" ? (
         <>{setSection("books")}</>

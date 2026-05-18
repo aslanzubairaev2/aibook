@@ -1,7 +1,9 @@
-import type { AiAnalysis } from "@/lib/types";
+import type { AiAnalysis, AiMode } from "@/lib/types";
 
 interface AnalyzeParams {
+  mode: AiMode;
   word: string;
+  text?: string;
   sentence: string;
   sentenceBefore: string;
   sentenceAfter: string;

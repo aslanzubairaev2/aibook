@@ -1,9 +1,11 @@
-import type { Book, Flashcard, UserProfile } from "@/lib/types";
+import type { AiAnalysis, Book, DiscussMessage, Flashcard, UserProfile } from "@/lib/types";
 
 const BOOKS_KEY = "aibook_books";
 const CARDS_KEY = "aibook_cards";
 const PROFILE_KEY = "aibook_profile";
 const PROGRESS_KEY = "aibook_progress";
+const AI_CACHE_KEY = "aibook_ai_selection_cache";
+const DISCUSS_CACHE_KEY = "aibook_discuss_cache";
 
 // --- Books ---
 
@@ -83,6 +85,7 @@ export function saveLocalProfile(profile: UserProfile): void {
 interface ProgressEntry {
   bookId: string;
   paragraphIndex: number;
+  charOffset?: number;
   updatedAt: string;
 }
 
@@ -96,6 +99,20 @@ export function getLocalProgress(bookId: string): number {
   }
 }
 
+export function getLocalProgressAnchor(bookId: string): { paragraphIndex: number; charOffset: number } {
+  if (typeof window === "undefined") return { paragraphIndex: 0, charOffset: 0 };
+  try {
+    const all = JSON.parse(localStorage.getItem(PROGRESS_KEY) ?? "[]") as ProgressEntry[];
+    const entry = all.find((e) => e.bookId === bookId);
+    return {
+      paragraphIndex: entry?.paragraphIndex ?? 0,
+      charOffset: entry?.charOffset ?? 0,
+    };
+  } catch {
+    return { paragraphIndex: 0, charOffset: 0 };
+  }
+}
+
 export function saveLocalProgress(bookId: string, paragraphIndex: number): void {
   try {
     const all = JSON.parse(localStorage.getItem(PROGRESS_KEY) ?? "[]") as ProgressEntry[];
@@ -104,6 +121,77 @@ export function saveLocalProgress(bookId: string, paragraphIndex: number): void 
     if (idx >= 0) all[idx] = entry;
     else all.push(entry);
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
+  } catch {
+    // silently fail
+  }
+}
+
+export function saveLocalProgressAnchor(bookId: string, paragraphIndex: number, charOffset = 0): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(PROGRESS_KEY) ?? "[]") as ProgressEntry[];
+    const idx = all.findIndex((e) => e.bookId === bookId);
+    const entry: ProgressEntry = { bookId, paragraphIndex, charOffset, updatedAt: new Date().toISOString() };
+    if (idx >= 0) all[idx] = entry;
+    else all.push(entry);
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
+  } catch {
+    // silently fail
+  }
+}
+
+type AiCacheEntry = {
+  key: string;
+  value: AiAnalysis;
+  updatedAt: string;
+};
+
+export function getLocalAiAnalysis(key: string): AiAnalysis | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const all = JSON.parse(localStorage.getItem(AI_CACHE_KEY) ?? "[]") as AiCacheEntry[];
+    return all.find((entry) => entry.key === key)?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalAiAnalysis(key: string, value: AiAnalysis): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(AI_CACHE_KEY) ?? "[]") as AiCacheEntry[];
+    const idx = all.findIndex((entry) => entry.key === key);
+    const entry: AiCacheEntry = { key, value, updatedAt: new Date().toISOString() };
+    if (idx >= 0) all[idx] = entry;
+    else all.push(entry);
+    localStorage.setItem(AI_CACHE_KEY, JSON.stringify(all.slice(-250)));
+  } catch {
+    // silently fail
+  }
+}
+
+type DiscussCacheEntry = {
+  key: string;
+  messages: DiscussMessage[];
+  updatedAt: string;
+};
+
+export function getLocalDiscussHistory(key: string): DiscussMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const all = JSON.parse(localStorage.getItem(DISCUSS_CACHE_KEY) ?? "[]") as DiscussCacheEntry[];
+    return all.find((entry) => entry.key === key)?.messages ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLocalDiscussHistory(key: string, messages: DiscussMessage[]): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(DISCUSS_CACHE_KEY) ?? "[]") as DiscussCacheEntry[];
+    const idx = all.findIndex((entry) => entry.key === key);
+    const entry: DiscussCacheEntry = { key, messages, updatedAt: new Date().toISOString() };
+    if (idx >= 0) all[idx] = entry;
+    else all.push(entry);
+    localStorage.setItem(DISCUSS_CACHE_KEY, JSON.stringify(all.slice(-120)));
   } catch {
     // silently fail
   }

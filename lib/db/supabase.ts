@@ -45,6 +45,7 @@ export type DbReadingProgress = {
   book_id: string;
   chapter_index: number;
   paragraph_index: number;
+  char_offset?: number;
   scroll_pos: number;
   percentage: number;
   last_read_at: string;
@@ -154,6 +155,14 @@ export async function sbUpsertProgress(entry: Omit<DbReadingProgress, "id">): Pr
   const { error } = await supabase
     .from("reading_progress")
     .upsert(entry, { onConflict: "user_id,book_id" });
+  if (error?.message.includes("char_offset")) {
+    const { char_offset: _charOffset, ...legacyEntry } = entry;
+    const { error: retryError } = await supabase
+      .from("reading_progress")
+      .upsert(legacyEntry, { onConflict: "user_id,book_id" });
+    if (retryError) console.error("sbUpsertProgress:", retryError.message);
+    return;
+  }
   if (error) console.error("sbUpsertProgress:", error.message);
 }
 
@@ -204,7 +213,7 @@ export async function sbUpsertSettings(settings: DbUserSettings): Promise<void> 
 
 // ─── AI Dictionary Cache ──────────────────────────────────────────────────────
 
-import { AiAnalysis } from "../types";
+import type { AiAnalysis } from "../types";
 
 export async function sbGetCachedWord(
   word: string,
@@ -246,6 +255,42 @@ export async function sbSaveCachedWord(
     }, { onConflict: "word_lower,target_language,native_language" });
 
   if (error) return false;
+  return true;
+}
+
+export async function sbGetCachedAnalysis(cacheKey: string): Promise<AiAnalysis | null> {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from("ai_selection_cache")
+    .select("response")
+    .eq("cache_key", cacheKey)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return data.response as AiAnalysis;
+}
+
+export async function sbSaveCachedAnalysis(cacheKey: string, selectionType: string, response: AiAnalysis): Promise<boolean> {
+  if (!supabase) return false;
+
+  const { error } = await supabase
+    .from("ai_selection_cache")
+    .upsert({
+      cache_key: cacheKey,
+      selection_type: selectionType,
+      response,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "cache_key" });
+
+  if (error?.message.includes("ai_selection_cache") || error?.code === "PGRST205") {
+    return false;
+  }
+
+  if (error) {
+    console.error("sbSaveCachedAnalysis:", error.message);
+    return false;
+  }
   return true;
 }
 

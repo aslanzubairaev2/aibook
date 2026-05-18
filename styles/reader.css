@@ -107,6 +107,25 @@
 }
 .text-token:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+.reader-token-wrap {
+  position: relative;
+}
+
+.reader-anchor-marker {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  transform: translateY(3px);
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(212, 168, 71, 0.45);
+  border-radius: 50%;
+  background: rgba(18, 15, 10, 0.92);
+  color: var(--accent);
+  vertical-align: baseline;
+}
+
 /* ─── Three-level Highlights ─────────────────────────────────────────────── */
 
 /* Level 3 — Sentence: applied per-token inside active sentence, very faint */
