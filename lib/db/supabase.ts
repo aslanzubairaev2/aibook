@@ -12,6 +12,8 @@ export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl as string, supabaseAnonKey as string)
   : null;
 
+const ENABLE_REMOTE_SELECTION_CACHE = false;
+
 // ─── Types mirroring DB schema ────────────────────────────────────────────────
 
 export type DbBook = {
@@ -283,6 +285,7 @@ export async function sbSaveCachedWord(
 }
 
 export async function sbGetCachedAnalysis(cacheKey: string): Promise<AiAnalysis | null> {
+  if (!ENABLE_REMOTE_SELECTION_CACHE) return null;
   if (!supabase) return null;
 
   const { data, error } = await supabase
@@ -296,6 +299,7 @@ export async function sbGetCachedAnalysis(cacheKey: string): Promise<AiAnalysis 
 }
 
 export async function sbSaveCachedAnalysis(cacheKey: string, selectionType: string, response: AiAnalysis): Promise<boolean> {
+  if (!ENABLE_REMOTE_SELECTION_CACHE) return false;
   if (!supabase) return false;
 
   const { error } = await supabase

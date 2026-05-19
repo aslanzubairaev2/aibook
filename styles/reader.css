@@ -148,8 +148,10 @@
 
 /* Level 3 — Sentence: applied per-token inside active sentence, very faint */
 .text-token.hl-sentence-tok {
-  background: rgba(212, 168, 71, 0.17);
-  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(240, 192, 96, 0.28), rgba(212, 168, 71, 0.2));
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(212, 168, 71, 0.08);
+  color: var(--surface);
 }
 
 /* Level 2 — Phrase: comma-segment, medium amber */

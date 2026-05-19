@@ -101,6 +101,15 @@ export type ReaderSelectionSnapshot = {
   updatedAt: string;
 };
 
+export type ReaderProgressSnapshot = {
+  bookId: string;
+  paragraphIndex: number;
+  charOffset: number;
+  percentage: number;
+  lastReadAt: string;
+  selectionState: ReaderSelectionSnapshot | null;
+};
+
 export type Flashcard = {
   id: string;
   type: SelectionType;

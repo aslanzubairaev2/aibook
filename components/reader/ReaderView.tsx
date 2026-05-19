@@ -21,10 +21,10 @@ import {
   saveLocalProgressAnchor,
   saveLocalReaderSelection,
 } from "@/lib/db/local";
-import { sbGetCachedAnalysis, sbGetProgress, sbInsertFlashcard, sbSaveCachedAnalysis, sbUpsertProgress, sbUpsertSettings } from "@/lib/db/supabase";
+import { sbGetCachedAnalysis, sbInsertFlashcard, sbSaveCachedAnalysis, sbUpsertProgress, sbUpsertSettings } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
-import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
+import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, ReaderProgressSnapshot, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
 
 const PAGE_TARGET_CHARS = 7200;
 const PAGE_MAX_PARAGRAPHS = 28;
@@ -36,6 +36,8 @@ type Props = {
   onAddCard: (card: Flashcard) => void;
   onProgressUpdate: (book: Book) => void;
   onProfileChange: (profile: UserProfile) => void;
+  initialProgress?: ReaderProgressSnapshot | null;
+  onReaderProgressSync?: (progress: ReaderProgressSnapshot) => void;
 };
 
 type ActiveToken = {
@@ -104,12 +106,23 @@ function findPageIndex(pages: ReaderPage[], paraIndex: number) {
   return Math.max(0, idx);
 }
 
-export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate, onProfileChange }: Props) {
+export function ReaderView({
+  book,
+  profile,
+  onBack,
+  onAddCard,
+  onProgressUpdate,
+  onProfileChange,
+  initialProgress,
+  onReaderProgressSync,
+}: Props) {
   const { user } = useAuth();
-  const [active, setActive] = useState<ActiveToken | null>(null);
+  const [active, setActive] = useState<ActiveToken | null>(() => (
+    initialProgress?.selectionState ? snapshotToActive(initialProgress.selectionState) : null
+  ));
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<AiMode>("word");
+  const [activeTab, setActiveTab] = useState<AiMode>(initialProgress?.selectionState?.mode ?? "word");
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
   const [wordModalSelection, setWordModalSelection] = useState("");
   const [wordModalAnalysis, setWordModalAnalysis] = useState<AiAnalysis | null>(null);
@@ -117,26 +130,41 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
   const [isDiscussOpen, setIsDiscussOpen] = useState(false);
   const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
   const [discussKey, setDiscussKey] = useState("");
-  const [readingAnchor, setReadingAnchor] = useState(() => getLocalProgressAnchor(book.id));
+  const [readingAnchor, setReadingAnchor] = useState(() => (
+    initialProgress
+      ? { paragraphIndex: initialProgress.paragraphIndex, charOffset: initialProgress.charOffset }
+      : getLocalProgressAnchor(book.id)
+  ));
   const [toast, setToast] = useState<string | null>(null);
   const [tts, setTts] = useState<TTSState>(getTTSState());
   const [dragSelection, setDragSelection] = useState<DragSelection | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const lastAutoScrollRef = useRef(0);
   const dragMovedRef = useRef(false);
+  const restoredProgressKeyRef = useRef<string | null>(null);
   const pages = useMemo(() => buildReaderPages(book.paragraphs), [book.paragraphs]);
-  const [pageIndex, setPageIndex] = useState(() => findPageIndex(pages, book.paragraphIndex));
+  const initialParaIndex = initialProgress?.selectionState?.paraIndex ?? initialProgress?.paragraphIndex ?? book.paragraphIndex;
+  const [pageIndex, setPageIndex] = useState(() => findPageIndex(pages, initialParaIndex));
   const currentPage = pages[Math.min(pageIndex, pages.length - 1)] ?? pages[0];
   const visibleParagraphs = book.paragraphs.slice(currentPage.start, currentPage.end);
   const isReaderAudioActive = tts.status === "playing" || tts.status === "paused";
 
-  useEffect(() => {
-    setPageIndex(findPageIndex(pages, book.paragraphIndex));
-  }, [book.id, book.paragraphIndex, pages]);
+  function makeProgressRestoreKey(progress: ReaderProgressSnapshot) {
+    return `${progress.bookId}:${progress.lastReadAt}:${progress.selectionState?.updatedAt ?? "anchor"}`;
+  }
 
   useEffect(() => {
+    if (initialProgress?.selectionState) return;
+    setPageIndex(findPageIndex(pages, initialProgress?.paragraphIndex ?? book.paragraphIndex));
+  }, [book.id, book.paragraphIndex, initialProgress?.paragraphIndex, initialProgress?.selectionState, pages]);
+
+  useEffect(() => {
+    if (initialProgress) {
+      setReadingAnchor({ paragraphIndex: initialProgress.paragraphIndex, charOffset: initialProgress.charOffset });
+      return;
+    }
     setReadingAnchor(getLocalProgressAnchor(book.id));
-  }, [book.id]);
+  }, [book.id, initialProgress]);
 
   useEffect(() => {
     let unmounted = false;
@@ -162,12 +190,16 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
   }, []);
 
   function focusToken(paraIndex: number, tokIdxInPara: number, behavior: ScrollBehavior = "smooth") {
-    window.setTimeout(() => {
+    const scrollToToken = () => {
       const target = contentRef.current?.querySelector(
         `[data-token-id="${paraIndex}-${tokIdxInPara}"]`,
       ) as HTMLElement | null;
       scrollElementIntoReaderFocus(target, behavior);
-    }, 40);
+    };
+
+    requestAnimationFrame(scrollToToken);
+    window.setTimeout(scrollToToken, 80);
+    window.setTimeout(scrollToToken, 340);
   }
 
   function scrollElementIntoReaderFocus(target: HTMLElement | null, behavior: ScrollBehavior = "smooth") {
@@ -192,6 +224,55 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     if (targetPage !== pageIndex) setPageIndex(targetPage);
   }
 
+  function createTokenSelectionFromPosition(paraIndex: number, preferredCharOffset = 0): ActiveToken | null {
+    const clampedParaIndex = Math.max(0, Math.min(book.paragraphs.length - 1, paraIndex));
+    const para = book.paragraphs[clampedParaIndex] ?? "";
+    const tokens = splitIntoTokens(para);
+    const offsets: number[] = [];
+    let off = 0;
+
+    for (const token of tokens) {
+      offsets.push(off);
+      off += token.length;
+    }
+
+    let tokIdxInPara = tokens.findIndex((token, index) => normalizeToken(token) && offsets[index] >= preferredCharOffset);
+    if (tokIdxInPara < 0) tokIdxInPara = tokens.findIndex((token) => normalizeToken(token));
+    if (tokIdxInPara < 0) return null;
+
+    const token = tokens[tokIdxInPara];
+    const targetChar = offsets[tokIdxInPara];
+    const sentRanges = splitSentencesWithRanges(para);
+    let sentStart = 0;
+    let sentEnd = para.length;
+    let sentText = para;
+    let sentIdx = 0;
+
+    for (let i = 0; i < sentRanges.length; i++) {
+      if (targetChar >= sentRanges[i].start && targetChar < sentRanges[i].end) {
+        ({ start: sentStart, end: sentEnd, text: sentText } = sentRanges[i]);
+        sentIdx = i;
+        break;
+      }
+    }
+
+    const [phraseStart, phraseEnd] = findPhraseOffsets(para, sentStart, sentEnd, targetChar);
+    return {
+      token,
+      isCustomSentence: false,
+      paraIndex: clampedParaIndex,
+      tokIdxInPara,
+      sentStart,
+      sentEnd,
+      phraseStart,
+      phraseEnd,
+      sentence: sentText.trim(),
+      phraseText: para.slice(phraseStart, phraseEnd).trim(),
+      sentenceBefore: sentRanges[sentIdx - 1]?.text.trim() ?? book.paragraphs[clampedParaIndex - 1] ?? "",
+      sentenceAfter: sentRanges[sentIdx + 1]?.text.trim() ?? book.paragraphs[clampedParaIndex + 1] ?? "",
+    };
+  }
+
   const restoreSelectionSnapshot = useCallback((savedSelection: ReaderSelectionSnapshot, behavior: ScrollBehavior = "instant") => {
     const restoredActive = snapshotToActive(savedSelection);
     setActive(restoredActive);
@@ -203,8 +284,31 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pages]);
 
-  // Scroll to last read paragraph on mount
   useEffect(() => {
+    const progressKey = initialProgress ? makeProgressRestoreKey(initialProgress) : `local:${book.id}`;
+    if (restoredProgressKeyRef.current === progressKey) return;
+    restoredProgressKeyRef.current = progressKey;
+
+    if (initialProgress) {
+      saveLocalProgressAnchor(book.id, initialProgress.paragraphIndex, initialProgress.charOffset);
+      setReadingAnchor({ paragraphIndex: initialProgress.paragraphIndex, charOffset: initialProgress.charOffset });
+      if (initialProgress.selectionState) {
+        saveLocalReaderSelection(book.id, initialProgress.selectionState);
+        restoreSelectionSnapshot(initialProgress.selectionState, "instant");
+        return;
+      }
+
+      const fallback = createTokenSelectionFromPosition(initialProgress.paragraphIndex, initialProgress.charOffset);
+      if (fallback) {
+        setActive(fallback);
+        setActiveTab("sentence");
+        setAnalysis({});
+        setPageIndex(findPageIndex(pages, fallback.paraIndex));
+        focusToken(fallback.paraIndex, fallback.tokIdxInPara, "instant");
+        return;
+      }
+    }
+
     const savedSelection = getLocalReaderSelection(book.id);
     if (savedSelection) {
       restoreSelectionSnapshot(savedSelection, "instant");
@@ -212,42 +316,13 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     }
 
     if (book.paragraphIndex <= 0) return;
-    const t = setTimeout(() => {
-      const el = contentRef.current?.querySelector(`p[data-idx="${book.paragraphIndex}"]`);
-      el?.scrollIntoView({ behavior: "instant", block: "start" });
-    }, 200);
-    return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book.id, restoreSelectionSnapshot]);
-
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    const userId = user.id;
-
-    async function restoreRemoteProgress() {
-      const progress = (await sbGetProgress(userId)).find((entry) => entry.book_id === book.id);
-      if (cancelled || !progress) return;
-
-      saveLocalProgressAnchor(book.id, progress.paragraph_index, progress.char_offset ?? 0);
-      setReadingAnchor({ paragraphIndex: progress.paragraph_index, charOffset: progress.char_offset ?? 0 });
-
-      if (progress.selection_state) {
-        saveLocalReaderSelection(book.id, progress.selection_state);
-        restoreSelectionSnapshot(progress.selection_state, "instant");
-        return;
-      }
-
-      setPageIndex(findPageIndex(pages, progress.paragraph_index));
-      window.setTimeout(() => {
-        const el = contentRef.current?.querySelector(`p[data-idx="${progress.paragraph_index}"]`);
-        el?.scrollIntoView({ behavior: "instant", block: "start" });
-      }, 180);
+    const fallback = createTokenSelectionFromPosition(book.paragraphIndex, 0);
+    if (fallback) {
+      setPageIndex(findPageIndex(pages, fallback.paraIndex));
+      focusToken(fallback.paraIndex, fallback.tokIdxInPara, "instant");
     }
-
-    void restoreRemoteProgress();
-    return () => { cancelled = true; };
-  }, [book.id, pages, restoreSelectionSnapshot, user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book.id, initialProgress, pages, restoreSelectionSnapshot]);
 
   useEffect(() => {
     if (tts.status !== "playing") return;
@@ -288,6 +363,16 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     setReadingAnchor({ paragraphIndex: token.paraIndex, charOffset });
     saveLocalBook(updated);
     onProgressUpdate(updated);
+    const progressSnapshot = {
+      bookId: book.id,
+      paragraphIndex: token.paraIndex,
+      charOffset,
+      percentage: progress,
+      lastReadAt: selection.updatedAt,
+      selectionState: selection,
+    };
+    restoredProgressKeyRef.current = makeProgressRestoreKey(progressSnapshot);
+    onReaderProgressSync?.(progressSnapshot);
 
     if (user) {
       void sbUpsertProgress({
@@ -303,7 +388,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
         total_time_ms: 0,
       });
     }
-  }, [activeTab, book, user, onProgressUpdate]);
+  }, [activeTab, book, user, onProgressUpdate, onReaderProgressSync]);
 
   function getTextForMode(token: ActiveToken, mode: AiMode) {
     if (mode === "word") return token.token;
@@ -316,6 +401,17 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     if (!active) return;
     const selection = activeToSnapshot(active, mode);
     saveLocalReaderSelection(book.id, selection);
+    const percentage = Math.round((active.paraIndex / Math.max(book.paragraphs.length - 1, 1)) * 100);
+    const progressSnapshot = {
+      bookId: book.id,
+      paragraphIndex: active.paraIndex,
+      charOffset: active.sentEnd,
+      percentage,
+      lastReadAt: selection.updatedAt,
+      selectionState: selection,
+    };
+    restoredProgressKeyRef.current = makeProgressRestoreKey(progressSnapshot);
+    onReaderProgressSync?.(progressSnapshot);
     if (user) {
       void sbUpsertProgress({
         user_id: user.id,
@@ -325,7 +421,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
         char_offset: active.sentEnd,
         selection_state: selection,
         scroll_pos: Math.round(window.scrollY),
-        percentage: Math.round((active.paraIndex / Math.max(book.paragraphs.length - 1, 1)) * 100),
+        percentage,
         last_read_at: new Date().toISOString(),
         total_time_ms: 0,
       });
@@ -679,31 +775,26 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
   function goToPage(nextIndex: number) {
     const clamped = Math.max(0, Math.min(pages.length - 1, nextIndex));
     const target = pages[clamped];
-    setPageIndex(clamped);
-    setActive(null);
-    setAnalysis(null);
     stopTTS();
 
     const best = target.start;
-    const progress = Math.round((best / Math.max(book.paragraphs.length - 1, 1)) * 100);
+    const fallback = createTokenSelectionFromPosition(best, 0);
+    const anchorParaIndex = fallback?.paraIndex ?? best;
+    const anchorCharOffset = fallback?.sentEnd ?? 0;
+    const progress = Math.round((anchorParaIndex / Math.max(book.paragraphs.length - 1, 1)) * 100);
     const updated = { ...book, paragraphIndex: best, progress };
-    saveLocalProgressAnchor(book.id, best, 0);
+    setPageIndex(clamped);
+    setAnalysis({});
+    saveLocalProgressAnchor(book.id, anchorParaIndex, anchorCharOffset);
     saveLocalBook(updated);
     onProgressUpdate(updated);
 
-    if (user) {
-      void sbUpsertProgress({
-        user_id: user.id,
-        book_id: book.id,
-        chapter_index: 0,
-        paragraph_index: best,
-        char_offset: 0,
-        selection_state: null,
-        scroll_pos: 0,
-        percentage: progress,
-        last_read_at: new Date().toISOString(),
-        total_time_ms: 0,
-      });
+    if (fallback) {
+      setActive(fallback);
+      setActiveTab("sentence");
+      saveReadingAnchor(fallback, anchorCharOffset, "sentence");
+      focusToken(fallback.paraIndex, fallback.tokIdxInPara, "smooth");
+      return;
     }
 
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 40);
@@ -763,20 +854,13 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
       return;
     }
 
-    const fallback: ActiveToken = {
-      token: "",
-      paraIndex: currentPage.start,
-      tokIdxInPara: 0,
-      sentStart: 0,
-      sentEnd: 0,
-      phraseStart: 0,
-      phraseEnd: 0,
-      sentence: "",
-      phraseText: "",
-      sentenceBefore: "",
-      sentenceAfter: "",
-    };
-    saveReadingAnchor(fallback, 0);
+    const fallback = createTokenSelectionFromPosition(currentPage.start, 0);
+    if (!fallback) return;
+    setActive(fallback);
+    setActiveTab("sentence");
+    setAnalysis({});
+    saveReadingAnchor(fallback, fallback.sentEnd, "sentence");
+    focusToken(fallback.paraIndex, fallback.tokIdxInPara);
     showToast("✓ Якорь сохранен");
   }
 

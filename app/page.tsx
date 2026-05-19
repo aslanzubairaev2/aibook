@@ -18,7 +18,7 @@ import {
 } from "@/lib/db/supabase";
 import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection, saveLocalProgressAnchor } from "@/lib/db/local";
 import { parseBook } from "@/lib/parser/index";
-import type { AppSection, Book, Flashcard, UserProfile } from "@/lib/types";
+import type { AppSection, Book, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
 
 // ─── Inner app (needs auth context) ─────────────────────────────────────────
 
@@ -79,6 +79,17 @@ function getLatestProgress(progress: DbReadingProgress[]): DbReadingProgress | n
   })[0] ?? null;
 }
 
+function dbProgressToSnapshot(progress: DbReadingProgress): ReaderProgressSnapshot {
+  return {
+    bookId: progress.book_id,
+    paragraphIndex: progress.paragraph_index,
+    charOffset: progress.char_offset ?? 0,
+    percentage: Number(progress.percentage ?? 0),
+    lastReadAt: progress.last_read_at,
+    selectionState: progress.selection_state ?? null,
+  };
+}
+
 function AppInner() {
   const { user, isLoading: authLoading } = useAuth();
   const [section, setSection] = useState<AppSection>("home");
@@ -96,6 +107,7 @@ function AppInner() {
   const [activeBook, setActiveBook] = useState<Book | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
   const [isRemoteSyncReady, setIsRemoteSyncReady] = useState(false);
+  const [readerProgressByBook, setReaderProgressByBook] = useState<Record<string, ReaderProgressSnapshot>>({});
   const [downloadTasks, setDownloadTasks] = useState<Record<number, DownloadTask>>({});
 
   useEffect(() => {
@@ -170,6 +182,10 @@ function AppInner() {
       sbGetSettings(userId),
       sbGetProgress(userId),
     ]);
+    setReaderProgressByBook(Object.fromEntries(dbProgress.map((progress) => [
+      progress.book_id,
+      dbProgressToSnapshot(progress),
+    ])));
 
     // Build Book objects from Supabase data
     if (dbBooks.length > 0) {
@@ -269,6 +285,10 @@ function AppInner() {
   function handleProgressUpdate(updated: Book) {
     setBooks((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
     if (activeBook?.id === updated.id) setActiveBook(updated);
+  }
+
+  function handleReaderProgressSync(progress: ReaderProgressSnapshot) {
+    setReaderProgressByBook((prev) => ({ ...prev, [progress.bookId]: progress }));
   }
 
   function handleBooksChange(updated: Book[]) {
@@ -492,6 +512,8 @@ function AppInner() {
           onAddCard={handleAddCard}
           onProgressUpdate={handleProgressUpdate}
           onProfileChange={handleProfileChange}
+          initialProgress={readerProgressByBook[lastBook.id] ?? null}
+          onReaderProgressSync={handleReaderProgressSync}
         />
       ) : section === "reader" ? (
         <>{setSection("books")}</>
