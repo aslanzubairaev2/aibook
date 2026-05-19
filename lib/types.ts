@@ -1,6 +1,7 @@
 export type AppSection = "home" | "discover" | "books" | "reader" | "cards" | "settings";
 
 export type SelectionType = "word" | "phrase" | "sentence";
+export type TtsProvider = "local" | "gemini" | "deepgram";
 
 export type Book = {
   id: string;
@@ -25,7 +26,7 @@ export type UserProfile = {
   booksStarted: number;
   booksFinished: number;
   savedItems: number;
-  ttsProvider?: "local" | "gemini";
+  ttsProvider?: TtsProvider;
 };
 
 export type WordAnalysis = {

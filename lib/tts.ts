@@ -1,4 +1,5 @@
 import { getLocalProfile } from "./db/local";
+import { DEEPGRAM_TTS_SAMPLE_RATE, getDeepgramTtsModel, isDeepgramTtsSupported, normalizeLanguageCode } from "./ttsProviders";
 
 const LANG_MAP: Record<string, string> = {
   de: "de-DE", en: "en-US", fr: "fr-FR", es: "es-ES", ru: "ru-RU",
@@ -77,7 +78,7 @@ export function toggleAutoNext() {
   updateState({ autoNext: !state.autoNext });
 }
 
-function stopGeminiAudio(silent = false) {
+function stopRemoteAudio(silent = false) {
   if (currentSource) {
     currentSource.onended = null;
     try { currentSource.stop(); } catch(e) {}
@@ -102,7 +103,7 @@ let playSegmentFn: ((offset: number) => void) | null = null;
 export function pauseTTS() {
   if (state.status !== "playing") return;
   const profile = getLocalProfile();
-  if (profile.ttsProvider === "gemini") {
+  if (profile.ttsProvider === "gemini" || profile.ttsProvider === "deepgram") {
     if (!isPaused && currentSource && currentAudioCtx) {
       isPaused = true;
       const elapsed = currentAudioCtx.currentTime - startTime;
@@ -121,7 +122,7 @@ export function pauseTTS() {
 export function resumeTTS() {
   if (state.status !== "paused") return;
   const profile = getLocalProfile();
-  if (profile.ttsProvider === "gemini") {
+  if (profile.ttsProvider === "gemini" || profile.ttsProvider === "deepgram") {
     if (isPaused && currentAudioCtx) {
       isPaused = false;
       if (playSegmentFn) playSegmentFn(startOffset);
@@ -135,8 +136,8 @@ export function resumeTTS() {
 export function stopTTS() {
   if (state.status === "idle") return;
   const profile = getLocalProfile();
-  if (profile.ttsProvider === "gemini") {
-    stopGeminiAudio();
+  if (profile.ttsProvider === "gemini" || profile.ttsProvider === "deepgram") {
+    stopRemoteAudio();
   } else if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
     updateState({ status: "idle" });
@@ -151,7 +152,7 @@ export function seekTTS(time: number) {
   const activeCharIndex = state.duration > 0 ? Math.floor((targetTime / state.duration) * state.text.length) : 0;
   
   if (state.status === "playing") {
-    stopGeminiAudio(true);
+    stopRemoteAudio(true);
     startOffset = targetTime;
     if (playSegmentFn) playSegmentFn(startOffset);
   } else if (state.status === "paused") {
@@ -167,19 +168,23 @@ export async function speak(
   onEnd?: () => void
 ): Promise<PlaybackController | null> {
   const profile = getLocalProfile();
+  const requestedProvider = profile.ttsProvider ?? "local";
+  const provider = requestedProvider === "deepgram" && !isDeepgramTtsSupported(lang) ? "local" : requestedProvider;
   
   updateState({ status: "loading", text, currentTime: 0, duration: 0 });
   
-  if (profile.ttsProvider === "gemini") {
-    stopGeminiAudio(true); // silent stop
+  if (provider === "gemini" || provider === "deepgram") {
+    stopRemoteAudio(true); // silent stop
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
     
     let audioBase64: string | null = null;
+    const voiceKey = provider === "deepgram" ? getDeepgramTtsModel(lang) : "Algenib";
+    const cacheLang = normalizeLanguageCode(lang);
     
     // Check local Browser Cache API
-    const cacheKey = `tts-${lang}-${encodeURIComponent(text)}`;
+    const cacheKey = `tts-${provider}-${voiceKey ?? "default"}-${cacheLang}-${encodeURIComponent(text)}`;
     try {
       const cache = await caches.open("aibook-tts-cache");
       const cachedResponse = await cache.match(cacheKey);
@@ -193,7 +198,7 @@ export async function speak(
         const res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, lang })
+          body: JSON.stringify({ text, lang, provider })
         });
         
         if (res.ok) {
@@ -205,7 +210,7 @@ export async function speak(
           } catch(e) {}
         }
       } catch (e) {
-        console.error("Gemini TTS API failed", e);
+        console.error(`${provider} TTS API failed`, e);
       }
     }
 
@@ -225,7 +230,7 @@ export async function speak(
         floatArray[i] = int16 / (int16 < 0 ? 32768 : 32767);
       }
       
-      currentBuffer = currentAudioCtx.createBuffer(1, floatArray.length, 24000);
+      currentBuffer = currentAudioCtx.createBuffer(1, floatArray.length, DEEPGRAM_TTS_SAMPLE_RATE);
       currentBuffer.copyToChannel(floatArray, 0);
       
       updateState({ duration: currentBuffer.duration });
@@ -245,7 +250,7 @@ export async function speak(
               startOffset = 0;
               if (playSegmentFn) playSegmentFn(0);
             } else {
-              stopGeminiAudio();
+              stopRemoteAudio();
               if (onEnd) onEnd();
             }
           }
@@ -278,7 +283,7 @@ export async function speak(
           }
         },
         stop: () => {
-          stopGeminiAudio();
+          stopRemoteAudio();
         },
         isPlaying: () => !isPaused && !!currentSource
       };
@@ -296,7 +301,7 @@ export async function speak(
     return null;
   }
   
-  stopGeminiAudio(true);
+  stopRemoteAudio(true);
   window.speechSynthesis.cancel();
   
   const startSpeech = () => {
@@ -364,7 +369,7 @@ export async function speak(
       // Ignore interrupted/canceled as they are often intentional (e.g. seeking or new speech)
       if (e.error === 'interrupted' || e.error === 'canceled') return;
       
-      console.error("SpeechSynthesis error", e);
+      console.warn("SpeechSynthesis warning", e);
       updateState({ status: "idle", activeCharIndex: 0 });
       if (onEnd) onEnd(); 
     };

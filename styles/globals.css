@@ -1124,6 +1124,10 @@ textarea,
   text-align: left;
 }
 
+.book-of-day-meta {
+  min-width: 0;
+}
+
 .book-of-day-cover {
   display: grid;
   place-items: end center;
@@ -1146,6 +1150,14 @@ textarea,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.book-of-day strong {
+  display: -webkit-box;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .book-of-day small {

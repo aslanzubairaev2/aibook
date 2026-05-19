@@ -230,7 +230,7 @@ function AppInner() {
         nativeLanguage: dbSettings.native_language,
         targetLanguage: dbSettings.active_target_lang,
         uiLanguage: dbSettings.ui_language,
-        ttsProvider: (dbSettings.tts_provider as "local" | "gemini") ?? "local",
+        ttsProvider: (dbSettings.tts_provider as UserProfile["ttsProvider"]) ?? "local",
         readingMinutes: dbSettings.reading_minutes ?? 0,
         booksStarted: dbSettings.books_started ?? 0,
         booksFinished: dbSettings.books_finished ?? 0,

@@ -177,7 +177,7 @@ export function HomeDashboard({
     <section className="screen home-screen">
       <header className="home-header">
         <div>
-          <h1 className="home-title">Твой учебный день</h1>
+          <h1 className="home-title">AIBook</h1>
         </div>
         <div className="home-header-right">
           <button className="icon-btn" onClick={onOpenBooks} type="button" aria-label="Библиотека">
@@ -254,7 +254,7 @@ export function HomeDashboard({
           >
             {!getCoverUrl(bookOfDay) && (bookOfDay.languages?.[0] || "en").toUpperCase()}
           </span>
-          <span>
+          <span className="book-of-day-meta">
             <small>Книга дня</small>
             <strong>{bookOfDay.title}</strong>
             <em>{bookOfDay.authors?.[0]?.name || "Неизвестен"}</em>

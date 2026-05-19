@@ -4,7 +4,8 @@ import { SUPPORTED_LANGUAGES } from "@/lib/config";
 import { saveLocalProfile } from "@/lib/db/local";
 import { sbUpsertSettings } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
-import type { UserProfile } from "@/lib/types";
+import { getTtsProviderLabel, isDeepgramTtsSupported } from "@/lib/ttsProviders";
+import type { TtsProvider, UserProfile } from "@/lib/types";
 
 type Props = {
   profile: UserProfile;
@@ -15,7 +16,10 @@ export function SettingsView({ profile, onProfileChange }: Props) {
   const { user, signOut } = useAuth();
 
   async function setLang(field: "nativeLanguage" | "targetLanguage" | "ttsProvider" | "uiLanguage", value: string) {
-    const updated = { ...profile, [field]: value };
+    const updated: UserProfile = { ...profile, [field]: value };
+    if (field === "targetLanguage" && updated.ttsProvider === "deepgram" && !isDeepgramTtsSupported(value)) {
+      updated.ttsProvider = "local";
+    }
     saveLocalProfile(updated);
     onProfileChange(updated);
 
@@ -109,16 +113,19 @@ export function SettingsView({ profile, onProfileChange }: Props) {
           <div>
             <div className="setting-row-label">Голосовой движок</div>
             <div className="setting-row-value">
-              {profile.ttsProvider === "gemini" ? "Gemini TTS (Preview)" : "Локальный (Браузер)"}
+              {getTtsProviderLabel(profile.ttsProvider ?? "local")}
             </div>
           </div>
           <select
             className="lang-select"
-            value={profile.ttsProvider || "local"}
-            onChange={(e) => void setLang("ttsProvider" as any, e.target.value)}
+            value={profile.ttsProvider === "deepgram" && !isDeepgramTtsSupported(profile.targetLanguage) ? "local" : profile.ttsProvider || "local"}
+            onChange={(e) => void setLang("ttsProvider", e.target.value as TtsProvider)}
           >
             <option value="local">Локальный</option>
             <option value="gemini">Gemini TTS</option>
+            {isDeepgramTtsSupported(profile.targetLanguage) && (
+              <option value="deepgram">Deepgram Aura</option>
+            )}
           </select>
         </div>
       </div>

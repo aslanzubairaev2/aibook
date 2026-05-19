@@ -1,9 +1,63 @@
 import { NextResponse } from "next/server";
 import { sbGetCachedTts, sbSaveCachedTts } from "@/lib/db/supabase";
+import { DEEPGRAM_TTS_SAMPLE_RATE, getDeepgramTtsModel, normalizeLanguageCode } from "@/lib/ttsProviders";
 
 export async function POST(req: Request) {
   try {
-    const { text, lang } = await req.json();
+    const { text, lang, provider = "gemini" } = await req.json() as {
+      text: string;
+      lang: string;
+      provider?: "gemini" | "deepgram";
+    };
+
+    if (provider === "deepgram") {
+      const apiKey = process.env.DEEPGRAM_API_KEY;
+      const model = getDeepgramTtsModel(lang);
+
+      if (!model) {
+        return NextResponse.json({ error: "Deepgram TTS does not support this language" }, { status: 400 });
+      }
+
+      if (!apiKey) {
+        return NextResponse.json({ error: "Missing Deepgram API key" }, { status: 500 });
+      }
+
+      if (text.length > 2000) {
+        return NextResponse.json({ error: "Deepgram TTS text exceeds 2000 character limit" }, { status: 413 });
+      }
+
+      const language = normalizeLanguageCode(lang);
+      const cachedAudio = await sbGetCachedTts(text, language, model);
+      if (cachedAudio) {
+        return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider, model });
+      }
+
+      const url = new URL("https://api.deepgram.com/v1/speak");
+      url.searchParams.set("model", model);
+      url.searchParams.set("encoding", "linear16");
+      url.searchParams.set("sample_rate", String(DEEPGRAM_TTS_SAMPLE_RATE));
+      url.searchParams.set("container", "none");
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Token ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        console.error("Deepgram TTS API error:", err);
+        return NextResponse.json({ error: "Deepgram TTS failed" }, { status: response.status });
+      }
+
+      const audioBase64 = Buffer.from(await response.arrayBuffer()).toString("base64");
+      await sbSaveCachedTts(text, language, model, audioBase64);
+      return NextResponse.json({ audioBase64, source: "api", provider, model });
+    }
+
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {

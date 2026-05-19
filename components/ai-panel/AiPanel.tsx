@@ -5,6 +5,7 @@ import { ChevronDown, MessageCircle, Plus, ChevronLeft, ChevronRight, Volume2, Z
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { normalizeToken } from "@/lib/selector/text";
 import { subscribeTTS, getTTSState, TTSState, toggleAutoNext, speak } from "@/lib/tts";
+import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
 import type { AiAnalysis, Flashcard, UserProfile } from "@/lib/types";
 
 type Tab = "word" | "phrase" | "sentence";
@@ -76,6 +77,9 @@ export function AiPanel({
     { id: "sentence", label: "Предложение" },
   ];
   const provider = ttsProvider || "local";
+  const availableProviders = getAvailableTtsProviders(lang);
+  const activeProvider = availableProviders.includes(provider) ? provider : "local";
+  const nextProvider = availableProviders[(availableProviders.indexOf(activeProvider) + 1) % availableProviders.length];
   const hasActiveAnalysis =
     activeTab === "word" ? Boolean(analysis?.word?.translation)
       : activeTab === "phrase" ? Boolean(analysis?.phrase?.translation)
@@ -102,14 +106,14 @@ export function AiPanel({
               <Zap size={16} fill={tts.autoNext ? "currentColor" : "none"} />
             </button>
             <button
-              className={`tts-toggle ${provider === "gemini" ? "gemini" : "local"}`}
+              className={`tts-toggle ${activeProvider}`}
               type="button"
-              aria-label={provider === "gemini" ? "Переключить TTS на локальный" : "Переключить TTS на Gemini"}
-              title={provider === "gemini" ? "Gemini TTS" : "Local TTS"}
-              onClick={() => onTtsProviderChange(provider === "gemini" ? "local" : "gemini")}
+              aria-label={`Переключить TTS на ${getTtsProviderLabel(nextProvider)}`}
+              title={getTtsProviderLabel(activeProvider)}
+              onClick={() => onTtsProviderChange(nextProvider)}
             >
               <span className="tts-toggle-thumb">
-                {provider === "gemini" ? <span className="gemini-mark" aria-hidden>✦</span> : <Volume2 size={14} />}
+                {activeProvider === "local" ? <Volume2 size={14} /> : <span className="gemini-mark" aria-hidden>{activeProvider === "deepgram" ? "DG" : "✦"}</span>}
               </span>
             </button>
             {onPrev && (

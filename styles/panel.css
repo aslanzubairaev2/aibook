@@ -112,8 +112,15 @@
   color: var(--text-dark);
 }
 
+.tts-toggle.deepgram .tts-toggle-thumb {
+  transform: translateX(24px);
+  background: var(--green);
+  color: var(--text-dark);
+}
+
 .gemini-mark {
-  font-size: 14px;
+  font-size: 10px;
+  font-weight: 900;
   line-height: 1;
 }
 
