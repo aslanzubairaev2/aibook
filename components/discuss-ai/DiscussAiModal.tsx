@@ -23,16 +23,29 @@ type Props = {
 };
 
 const MODE_LABEL: Record<AiMode, string> = {
-  word: "слово",
-  phrase: "фразу",
-  sentence: "предложение",
+  word: "\u0441\u043b\u043e\u0432\u043e",
+  phrase: "\u0444\u0440\u0430\u0437\u0430",
+  sentence: "\u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0435",
 };
 
 const QUICK_PROMPTS: Record<AiMode, string[]> = {
-  word: ["Дай примеры", "Чем отличается?", "Как запомнить?"],
-  phrase: ["Когда так говорят?", "Дай 3 примера", "Разбери слова"],
-  sentence: ["Разбери структуру", "Проще объясни", "Дай похожее"],
+  word: ["\u041f\u0440\u0438\u043c\u0435\u0440\u044b", "\u041e\u0442\u043b\u0438\u0447\u0438\u044f", "\u041a\u0430\u043a \u0437\u0430\u043f\u043e\u043c\u043d\u0438\u0442\u044c"],
+  phrase: ["\u041a\u043e\u0433\u0434\u0430 \u0433\u043e\u0432\u043e\u0440\u044f\u0442", "3 \u043f\u0440\u0438\u043c\u0435\u0440\u0430", "\u0420\u0430\u0437\u0431\u043e\u0440 \u0441\u043b\u043e\u0432"],
+  sentence: ["\u0421\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0430", "\u041f\u0440\u043e\u0449\u0435", "\u041f\u043e\u0445\u043e\u0436\u0435\u0435"],
 };
+
+const DISCUSS_LABEL = "\u041e\u0431\u0441\u0443\u0434\u0438\u0442\u044c \u0441 AI";
+const CLOSE_LABEL = "\u0417\u0430\u043a\u0440\u044b\u0442\u044c";
+const LISTENING_PLACEHOLDER = "\u0421\u043b\u0443\u0448\u0430\u044e...";
+const QUESTION_PLACEHOLDER = "\u041a\u043e\u0440\u043e\u0442\u043a\u0438\u0439 \u0432\u043e\u043f\u0440\u043e\u0441";
+const VOICE_INPUT_LABEL = "\u0413\u043e\u043b\u043e\u0441\u043e\u0432\u043e\u0439 \u0432\u0432\u043e\u0434";
+const SEND_LABEL = "\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c";
+const EMPTY_TEXT = "AI \u0441\u0435\u0439\u0447\u0430\u0441 \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u0442 \u043a\u043e\u0440\u043e\u0442\u043a\u0438\u0439 \u0440\u0430\u0437\u0431\u043e\u0440. \u041c\u043e\u0436\u043d\u043e \u0441\u0440\u0430\u0437\u0443 \u0441\u043f\u0440\u043e\u0441\u0438\u0442\u044c \u043e \u043f\u0440\u0438\u043c\u0435\u0440\u0430\u0445, \u043e\u0442\u043b\u0438\u0447\u0438\u044f\u0445 \u0438\u043b\u0438 \u0433\u0440\u0430\u043c\u043c\u0430\u0442\u0438\u043a\u0435.";
+const TYPING_TEXT = "AI \u043f\u0435\u0447\u0430\u0442\u0430\u0435\u0442...";
+const ERROR_TEXT = "\u041d\u0435 \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c \u0441\u0432\u044f\u0437\u0430\u0442\u044c\u0441\u044f \u0441 AI. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0435 \u0440\u0430\u0437.";
+
+const INITIAL_ANALYSIS_PROMPT =
+  "Give a short general analysis and summary for the selected text. If you use examples in the target language, add translations to the native language.";
 
 export function DiscussAiModal({
   isOpen,
@@ -89,7 +102,7 @@ export function DiscussAiModal({
     const initialKey = `${mode}:${selectedText}:${sentence}`;
     if (messages.length > 0 || initialSentRef.current === initialKey) return;
     initialSentRef.current = initialKey;
-    void sendMessage("Дай короткий общий анализ и сводку по выбранному тексту.");
+    void sendMessage(INITIAL_ANALYSIS_PROMPT);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, mode, selectedText, sentence]);
 
@@ -121,7 +134,7 @@ export function DiscussAiModal({
         ...history,
         {
           role: "model",
-          contentParts: [{ type: "text", text: "Не получилось связаться с AI. Попробуйте еще раз." }],
+          contentParts: [{ type: "text", text: ERROR_TEXT }],
         },
       ]);
     } finally {
@@ -139,13 +152,13 @@ export function DiscussAiModal({
 
   return (
     <div className="modal-backdrop discuss-backdrop" onClick={onClose}>
-      <section className="discuss-modal" role="dialog" aria-modal aria-label="Обсудить с AI" onClick={(e) => e.stopPropagation()}>
+      <section className="discuss-modal" role="dialog" aria-modal aria-label={DISCUSS_LABEL} onClick={(e) => e.stopPropagation()}>
         <header className="discuss-header">
           <div>
-            <span>Обсудить с AI</span>
+            <span>{DISCUSS_LABEL}</span>
             <strong>{MODE_LABEL[mode]}: {selectedText}</strong>
           </div>
-          <button className="icon-btn" type="button" onClick={onClose} aria-label="Закрыть">
+          <button className="icon-btn" type="button" onClick={onClose} aria-label={CLOSE_LABEL}>
             <X size={19} />
           </button>
         </header>
@@ -153,7 +166,7 @@ export function DiscussAiModal({
         <div className="discuss-messages">
           {messages.length === 0 && (
             <div className="discuss-empty">
-              Спросите, как это употребляется, чем отличается от похожих вариантов или попросите примеры.
+              {EMPTY_TEXT}
             </div>
           )}
           {messages.map((message, index) => (
@@ -171,7 +184,7 @@ export function DiscussAiModal({
             <div className="discuss-row model">
               <div className="discuss-bubble typing">
                 <Loader2 size={14} className="spin" />
-                AI печатает...
+                {TYPING_TEXT}
               </div>
             </div>
           )}
@@ -200,15 +213,15 @@ export function DiscussAiModal({
           <input
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder={isListening ? "Слушаю..." : "Короткий вопрос"}
+            placeholder={isListening ? LISTENING_PLACEHOLDER : QUESTION_PLACEHOLDER}
             disabled={isSending}
           />
           {speechSupported && (
-            <button type="button" className={isListening ? "listening" : ""} onClick={toggleListening} disabled={isSending} aria-label="Голосовой ввод">
+            <button type="button" className={isListening ? "listening" : ""} onClick={toggleListening} disabled={isSending} aria-label={VOICE_INPUT_LABEL}>
               <Mic size={17} />
             </button>
           )}
-          <button type="submit" disabled={!input.trim() || isSending} aria-label="Отправить">
+          <button type="submit" disabled={!input.trim() || isSending} aria-label={SEND_LABEL}>
             <Send size={17} />
           </button>
         </form>
@@ -252,26 +265,29 @@ function Part({
 
   return (
     <span className="discuss-learning-part">
-      <span>
-        {splitIntoTokens(part.text).map((token, index) => {
-          if (!normalizeToken(token)) return <span key={index}>{token}</span>;
-          return (
-            <span
-              key={index}
-              role="button"
-              tabIndex={0}
-              className="discuss-clickable-word"
-              onClick={() => onWordTap(token, part.text)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") onWordTap(token, part.text);
-              }}
-            >
-              {token}
-            </span>
-          );
-        })}
+      <span className="discuss-learning-main">
+        <span className="discuss-learning-text">
+          {splitIntoTokens(part.text).map((token, index) => {
+            if (!normalizeToken(token)) return <span key={index}>{token}</span>;
+            return (
+              <span
+                key={index}
+                role="button"
+                tabIndex={0}
+                className="discuss-clickable-word"
+                onClick={() => onWordTap(token, part.text)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") onWordTap(token, part.text);
+                }}
+              >
+                {token}
+              </span>
+            );
+          })}
+        </span>
+        <SpeakButton text={part.text} lang={lang} size={12} />
       </span>
-      <SpeakButton text={part.text} lang={lang} size={12} />
+      {part.translation && <span className="discuss-learning-translation">{part.translation}</span>}
     </span>
   );
 }

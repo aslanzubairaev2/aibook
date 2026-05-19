@@ -7,6 +7,7 @@ const PROGRESS_KEY = "aibook_progress";
 const AI_CACHE_KEY = "aibook_ai_selection_cache";
 const DISCUSS_CACHE_KEY = "aibook_discuss_cache";
 const READER_SELECTION_KEY = "aibook_reader_selection";
+const LAST_VIEW_KEY = "aibook_last_view";
 
 // --- Books ---
 
@@ -221,6 +222,23 @@ export function saveLocalDiscussHistory(key: string, messages: DiscussMessage[])
     if (idx >= 0) all[idx] = entry;
     else all.push(entry);
     localStorage.setItem(DISCUSS_CACHE_KEY, JSON.stringify(all.slice(-120)));
+  } catch {
+    // silently fail
+  }
+}
+
+export function getLocalLastView(): { section: string; bookId?: string | null } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return JSON.parse(localStorage.getItem(LAST_VIEW_KEY) ?? "null") as { section: string; bookId?: string | null } | null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalLastView(section: string, bookId?: string | null): void {
+  try {
+    localStorage.setItem(LAST_VIEW_KEY, JSON.stringify({ section, bookId: bookId ?? null }));
   } catch {
     // silently fail
   }

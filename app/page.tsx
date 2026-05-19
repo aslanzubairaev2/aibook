@@ -16,7 +16,7 @@ import {
   sbUpsertBook, sbUpsertChapter,
   type DbBook,
 } from "@/lib/db/supabase";
-import { getLocalBooks, getLocalCards, getLocalProfile, saveLocalBook, saveLocalCard, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection } from "@/lib/db/local";
+import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection } from "@/lib/db/local";
 import { parseBook } from "@/lib/parser/index";
 import type { AppSection, Book, Flashcard, UserProfile } from "@/lib/types";
 
@@ -48,6 +48,20 @@ const COVER_COLORS = [
   "linear-gradient(160deg, #8a5a2a 0%, #4a2a0a 100%)",
 ];
 
+const DOWNLOAD_START_MESSAGE = "\u041d\u0430\u0447\u0438\u043d\u0430\u0435\u043c \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0443";
+const BOOK_TEXT_UNAVAILABLE_ERROR = "\u0422\u0435\u043a\u0441\u0442 \u043a\u043d\u0438\u0433\u0438 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d";
+const BOOK_TEXT_DOWNLOAD_ERROR = "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043a\u0430\u0447\u0430\u0442\u044c \u0442\u0435\u043a\u0441\u0442 \u043a\u043d\u0438\u0433\u0438";
+const DOWNLOADED_MESSAGE = "\u0417\u0430\u0433\u0440\u0443\u0436\u0435\u043d\u043e";
+const DOWNLOADING_TEXT_MESSAGE = "\u0417\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u043c \u0442\u0435\u043a\u0441\u0442";
+const PARSING_TEXT_MESSAGE = "\u0420\u0430\u0437\u0431\u0438\u0440\u0430\u0435\u043c \u0442\u0435\u043a\u0441\u0442";
+const EMPTY_BOOK_ERROR = "\u0424\u0430\u0439\u043b \u043f\u0443\u0441\u0442\u043e\u0439 \u0438\u043b\u0438 \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0440\u0430\u0437\u043e\u0431\u0440\u0430\u0442\u044c \u0442\u0435\u043a\u0441\u0442";
+const UNKNOWN_AUTHOR = "\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043d";
+const START_CHAPTER = "\u041d\u0430\u0447\u0430\u043b\u043e";
+const SAVING_TO_LIBRARY_MESSAGE = "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u043c \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0443";
+const BOOK_IN_LIBRARY_MESSAGE = "\u041a\u043d\u0438\u0433\u0430 \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435";
+const DOWNLOAD_ERROR_MESSAGE = "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438";
+const DEFAULT_CHAPTER_TITLE = "\u0413\u043b\u0430\u0432\u0430 1";
+
 function pickColor(title: string) {
   let hash = 0;
   for (const ch of title) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffff;
@@ -72,12 +86,28 @@ function AppInner() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [downloadTasks, setDownloadTasks] = useState<Record<number, DownloadTask>>({});
 
+  useEffect(() => {
+    if (!isHydrated) return;
+    saveLocalLastView(section, activeBook?.id ?? null);
+  }, [section, activeBook?.id, isHydrated]);
+
   // ─── Data loading ─────────────────────────────────────────────────────────
   const loadData = useCallback(async (userId: string) => {
     // Load from cache immediately for instant UI
-    setBooks(getLocalBooks());
+    const localBooks = getLocalBooks();
+    const lastView = getLocalLastView();
+    setBooks(localBooks);
     setCards(getLocalCards());
     setProfile(getLocalProfile());
+    if (lastView?.section === "reader" && lastView.bookId) {
+      const lastBook = localBooks.find((book) => book.id === lastView.bookId);
+      if (lastBook) {
+        setActiveBook(lastBook);
+        setSection("reader");
+      }
+    } else if (lastView?.section && ["home", "discover", "books", "cards", "settings"].includes(lastView.section)) {
+      setSection(lastView.section as AppSection);
+    }
     setIsHydrated(true);
 
     // Then fetch fresh data from Supabase in background
@@ -104,6 +134,14 @@ function AppInner() {
       );
       setBooks(fullBooks);
       saveLocalBooks(fullBooks);
+      const lastView = getLocalLastView();
+      if (lastView?.section === "reader" && lastView.bookId) {
+        const lastBook = fullBooks.find((book) => book.id === lastView.bookId);
+        if (lastBook) {
+          setActiveBook(lastBook);
+          setSection("reader");
+        }
+      }
     }
 
     // Flashcards
@@ -147,6 +185,14 @@ function AppInner() {
       setBooks(getLocalBooks());
       setCards(getLocalCards());
       setProfile(getLocalProfile());
+      const lastView = getLocalLastView();
+      if (lastView?.section === "reader" && lastView.bookId) {
+        const lastBook = getLocalBooks().find((book) => book.id === lastView.bookId);
+        if (lastBook) {
+          setActiveBook(lastBook);
+          setSection("reader");
+        }
+      }
       setIsHydrated(true);
     }
   }, [user, authLoading, loadData]);
@@ -211,16 +257,16 @@ function AppInner() {
       title: bookInfo.title,
       progress: 2,
       status: "downloading",
-      message: "Начинаем загрузку",
+      message: DOWNLOAD_START_MESSAGE,
     });
 
     try {
       const textKey = Object.keys(bookInfo.formats).find((key) => key.startsWith("text/plain"));
-      if (!textKey) throw new Error("Текст книги недоступен");
+      if (!textKey) throw new Error(BOOK_TEXT_UNAVAILABLE_ERROR);
 
       const textUrl = bookInfo.formats[textKey].replace("http://", "https://");
       const res = await fetch(`/api/books/proxy?url=${encodeURIComponent(textUrl)}`);
-      if (!res.ok) throw new Error("Не удалось скачать текст книги");
+      if (!res.ok) throw new Error(BOOK_TEXT_DOWNLOAD_ERROR);
 
       const total = Number(res.headers.get("content-length") ?? 0);
       const reader = res.body?.getReader();
@@ -238,7 +284,7 @@ function AppInner() {
             setDownloadTask(bookInfo.id, {
               progress,
               status: "downloading",
-              message: total > 0 ? `Загружено ${Math.min(100, Math.round((received / total) * 100))}%` : "Загружаем текст",
+              message: total > 0 ? `${DOWNLOADED_MESSAGE} ${Math.min(100, Math.round((received / total) * 100))}%` : DOWNLOADING_TEXT_MESSAGE,
             });
           }
         }
@@ -246,11 +292,11 @@ function AppInner() {
         chunks.push(new Uint8Array(await res.arrayBuffer()));
       }
 
-      setDownloadTask(bookInfo.id, { progress: 72, status: "parsing", message: "Разбираем текст" });
+      setDownloadTask(bookInfo.id, { progress: 72, status: "parsing", message: PARSING_TEXT_MESSAGE });
       const blob = new Blob(chunks.map((chunk) => chunk.slice().buffer), { type: "text/plain" });
       const file = new File([blob], `${bookInfo.title}.txt`, { type: "text/plain" });
       const paragraphs = await parseBook(file);
-      if (paragraphs.length === 0) throw new Error("Файл пустой или не удалось разобрать текст");
+      if (paragraphs.length === 0) throw new Error(EMPTY_BOOK_ERROR);
 
       const langMap: Record<string, string> = {
         deu: "de",
@@ -262,7 +308,7 @@ function AppInner() {
       };
       const detectedLang = langMap[franc(paragraphs.slice(0, 50).join(" "))] || bookInfo.languages?.[0] || "en";
       const bookId = crypto.randomUUID();
-      const author = bookInfo.authors?.[0]?.name || "Неизвестен";
+      const author = bookInfo.authors?.[0]?.name || UNKNOWN_AUTHOR;
       const coverKey = Object.keys(bookInfo.formats).find((key) => key.startsWith("image/jpeg"));
       const coverUrl = coverKey ? bookInfo.formats[coverKey].replace("http://", "https://") : null;
       const coverColor = pickColor(bookInfo.title);
@@ -275,14 +321,14 @@ function AppInner() {
         format: "txt",
         progress: 0,
         paragraphIndex: 0,
-        chapterTitle: "Начало",
+        chapterTitle: START_CHAPTER,
         lastReadAt: new Date().toLocaleDateString("ru"),
         coverColor,
         coverUrl,
         paragraphs,
       };
 
-      setDownloadTask(bookInfo.id, { progress: 88, status: "saving", message: "Сохраняем в библиотеку" });
+      setDownloadTask(bookInfo.id, { progress: 88, status: "saving", message: SAVING_TO_LIBRARY_MESSAGE });
       saveLocalBook(newBook);
       setBooks((prev) => [newBook, ...prev]);
 
@@ -306,7 +352,7 @@ function AppInner() {
             user_id: user.id,
             book_id: savedId,
             chapter_index: 0,
-            title: "Начало",
+            title: START_CHAPTER,
             paragraphs,
             plain_text: paragraphs.join("\n"),
             char_count: paragraphs.join("").length,
@@ -317,14 +363,14 @@ function AppInner() {
       setDownloadTask(bookInfo.id, {
         progress: 100,
         status: "done",
-        message: "Книга в библиотеке",
+        message: BOOK_IN_LIBRARY_MESSAGE,
         bookLocalId: newBook.id,
       });
     } catch (err) {
       setDownloadTask(bookInfo.id, {
         progress: 0,
         status: "error",
-        message: err instanceof Error ? err.message : "Ошибка загрузки",
+        message: err instanceof Error ? err.message : DOWNLOAD_ERROR_MESSAGE,
       });
     }
   }
@@ -434,12 +480,12 @@ function dbBookToBook(db: DbBook, paragraphs: string[], paragraphIndex: number, 
   return {
     id: db.id,
     title: db.title,
-    author: db.author ?? "Неизвестен",
+    author: db.author ?? UNKNOWN_AUTHOR,
     language: db.language,
     format: db.format,
     progress: Number(progress),
     paragraphIndex,
-    chapterTitle: "Глава 1",
+    chapterTitle: DEFAULT_CHAPTER_TITLE,
     lastReadAt: new Date(db.created_at).toLocaleDateString("ru"),
     coverColor: db.cover_color,
     coverUrl: db.cover_url,

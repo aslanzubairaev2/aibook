@@ -61,6 +61,7 @@ Return ONLY valid JSON with this exact shape:
 }
 
 Use "learning" parts for any ${body.targetLanguage} words, phrases, examples, or sentences so the app can make them clickable and speakable.
+Every "learning" part MUST include a clear "translation" in ${body.nativeLanguage}. If you give examples, each example must be a learning part with translation.
 Do not suggest replacing source text. Do not include markdown.`;
 
   try {
