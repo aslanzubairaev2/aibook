@@ -396,16 +396,28 @@ export function ReaderView({
     return token.sentence;
   }
 
+  function getRegularSelectionForMode(token: ActiveToken, mode: AiMode) {
+    if (!token.isCustomSentence || mode === "sentence") return token;
+    return createTokenSelectionFromPosition(token.paraIndex, token.sentStart) ?? token;
+  }
+
   function handleTabChange(mode: AiMode) {
+    if (activeTab === mode && (!active?.isCustomSentence || mode === "sentence")) return;
+    const nextActive = active ? getRegularSelectionForMode(active, mode) : null;
     setActiveTab(mode);
-    if (!active) return;
-    const selection = activeToSnapshot(active, mode);
+    if (!nextActive) return;
+    if (nextActive !== active) {
+      setActive(nextActive);
+      setAnalysis({});
+      focusToken(nextActive.paraIndex, nextActive.tokIdxInPara);
+    }
+    const selection = activeToSnapshot(nextActive, mode);
     saveLocalReaderSelection(book.id, selection);
-    const percentage = Math.round((active.paraIndex / Math.max(book.paragraphs.length - 1, 1)) * 100);
+    const percentage = Math.round((nextActive.paraIndex / Math.max(book.paragraphs.length - 1, 1)) * 100);
     const progressSnapshot = {
       bookId: book.id,
-      paragraphIndex: active.paraIndex,
-      charOffset: active.sentEnd,
+      paragraphIndex: nextActive.paraIndex,
+      charOffset: nextActive.sentEnd,
       percentage,
       lastReadAt: selection.updatedAt,
       selectionState: selection,
@@ -417,8 +429,8 @@ export function ReaderView({
         user_id: user.id,
         book_id: book.id,
         chapter_index: 0,
-        paragraph_index: active.paraIndex,
-        char_offset: active.sentEnd,
+        paragraph_index: nextActive.paraIndex,
+        char_offset: nextActive.sentEnd,
         selection_state: selection,
         scroll_pos: Math.round(window.scrollY),
         percentage,
@@ -444,7 +456,7 @@ export function ReaderView({
     const localCached = getLocalAiAnalysis(cacheKey);
     if (localCached) {
       setAnalysis((prev) => mergeAnalysis(prev, localCached));
-      saveReadingAnchor(token);
+      saveReadingAnchor(token, token.sentEnd, mode);
       return;
     }
 
@@ -454,7 +466,7 @@ export function ReaderView({
       if (remoteCached) {
         saveLocalAiAnalysis(cacheKey, remoteCached);
         setAnalysis((prev) => mergeAnalysis(prev, remoteCached));
-        saveReadingAnchor(token);
+        saveReadingAnchor(token, token.sentEnd, mode);
         return;
       }
 
@@ -472,7 +484,7 @@ export function ReaderView({
       saveLocalAiAnalysis(cacheKey, result);
       void sbSaveCachedAnalysis(cacheKey, mode, result);
       setAnalysis((prev) => mergeAnalysis(prev, result));
-      saveReadingAnchor(token);
+      saveReadingAnchor(token, token.sentEnd, mode);
     } catch (err) {
       console.error("AI analysis failed:", err);
     } finally {

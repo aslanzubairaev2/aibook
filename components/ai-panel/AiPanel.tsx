@@ -52,10 +52,6 @@ export function AiPanel({
     return subscribeTTS((s) => setTts(s));
   }, []);
 
-  useEffect(() => {
-    if (selection.isCustomSentence) onTabChange("sentence");
-  }, [selection.isCustomSentence, selection.sentence, onTabChange]);
-
   // Logic to auto-advance to next sentence
   useEffect(() => {
     if (tts.autoNext && !tts.repeat && tts.status === "idle" && wasPlayingRef.current) {
