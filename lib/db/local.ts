@@ -1,4 +1,4 @@
-import type { AiAnalysis, Book, DiscussMessage, Flashcard, UserProfile } from "@/lib/types";
+import type { AiAnalysis, Book, DiscussMessage, Flashcard, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
 
 const BOOKS_KEY = "aibook_books";
 const CARDS_KEY = "aibook_cards";
@@ -6,6 +6,7 @@ const PROFILE_KEY = "aibook_profile";
 const PROGRESS_KEY = "aibook_progress";
 const AI_CACHE_KEY = "aibook_ai_selection_cache";
 const DISCUSS_CACHE_KEY = "aibook_discuss_cache";
+const READER_SELECTION_KEY = "aibook_reader_selection";
 
 // --- Books ---
 
@@ -134,6 +135,34 @@ export function saveLocalProgressAnchor(bookId: string, paragraphIndex: number, 
     if (idx >= 0) all[idx] = entry;
     else all.push(entry);
     localStorage.setItem(PROGRESS_KEY, JSON.stringify(all));
+  } catch {
+    // silently fail
+  }
+}
+
+type SelectionEntry = {
+  bookId: string;
+  selection: ReaderSelectionSnapshot;
+};
+
+export function getLocalReaderSelection(bookId: string): ReaderSelectionSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const all = JSON.parse(localStorage.getItem(READER_SELECTION_KEY) ?? "[]") as SelectionEntry[];
+    return all.find((entry) => entry.bookId === bookId)?.selection ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalReaderSelection(bookId: string, selection: ReaderSelectionSnapshot): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(READER_SELECTION_KEY) ?? "[]") as SelectionEntry[];
+    const idx = all.findIndex((entry) => entry.bookId === bookId);
+    const entry: SelectionEntry = { bookId, selection };
+    if (idx >= 0) all[idx] = entry;
+    else all.push(entry);
+    localStorage.setItem(READER_SELECTION_KEY, JSON.stringify(all));
   } catch {
     // silently fail
   }

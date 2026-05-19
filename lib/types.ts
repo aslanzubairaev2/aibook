@@ -84,6 +84,23 @@ export type DiscussMessage = {
   contentParts?: DiscussContentPart[];
 };
 
+export type ReaderSelectionSnapshot = {
+  mode: AiMode;
+  token: string;
+  isCustomSentence?: boolean;
+  paraIndex: number;
+  tokIdxInPara: number;
+  sentStart: number;
+  sentEnd: number;
+  phraseStart: number;
+  phraseEnd: number;
+  sentence: string;
+  phraseText: string;
+  sentenceBefore: string;
+  sentenceAfter: string;
+  updatedAt: string;
+};
+
 export type Flashcard = {
   id: string;
   type: SelectionType;

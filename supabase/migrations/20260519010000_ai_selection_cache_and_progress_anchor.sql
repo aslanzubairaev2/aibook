@@ -1,5 +1,6 @@
 alter table public.reading_progress add column if not exists paragraph_index integer not null default 0;
 alter table public.reading_progress add column if not exists char_offset integer not null default 0;
+alter table public.reading_progress add column if not exists selection_state jsonb;
 
 create table if not exists public.ai_selection_cache (
   id uuid primary key default gen_random_uuid(),

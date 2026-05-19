@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import type { ReaderSelectionSnapshot } from "@/lib/types";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -46,6 +47,7 @@ export type DbReadingProgress = {
   chapter_index: number;
   paragraph_index: number;
   char_offset?: number;
+  selection_state?: ReaderSelectionSnapshot | null;
   scroll_pos: number;
   percentage: number;
   last_read_at: string;
@@ -155,8 +157,8 @@ export async function sbUpsertProgress(entry: Omit<DbReadingProgress, "id">): Pr
   const { error } = await supabase
     .from("reading_progress")
     .upsert(entry, { onConflict: "user_id,book_id" });
-  if (error?.message.includes("char_offset")) {
-    const { char_offset: _charOffset, ...legacyEntry } = entry;
+  if (error?.message.includes("char_offset") || error?.message.includes("selection_state")) {
+    const { char_offset: _charOffset, selection_state: _selectionState, ...legacyEntry } = entry;
     const { error: retryError } = await supabase
       .from("reading_progress")
       .upsert(legacyEntry, { onConflict: "user_id,book_id" });

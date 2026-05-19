@@ -13,16 +13,18 @@ import {
   getLocalAiAnalysis,
   getLocalDiscussHistory,
   getLocalProgressAnchor,
+  getLocalReaderSelection,
   saveLocalAiAnalysis,
   saveLocalBook,
   saveLocalDiscussHistory,
   saveLocalProfile,
   saveLocalProgressAnchor,
+  saveLocalReaderSelection,
 } from "@/lib/db/local";
 import { sbGetCachedAnalysis, sbInsertFlashcard, sbSaveCachedAnalysis, sbUpsertProgress, sbUpsertSettings } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
-import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, UserProfile } from "@/lib/types";
+import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
 
 const PAGE_TARGET_CHARS = 7200;
 const PAGE_MAX_PARAGRAPHS = 28;
@@ -50,6 +52,19 @@ type ActiveToken = {
   sentenceBefore: string;
   sentenceAfter: string;
 };
+
+function snapshotToActive(snapshot: ReaderSelectionSnapshot): ActiveToken {
+  const { mode: _mode, updatedAt: _updatedAt, ...activeToken } = snapshot;
+  return activeToken;
+}
+
+function activeToSnapshot(activeToken: ActiveToken, mode: AiMode): ReaderSelectionSnapshot {
+  return {
+    ...activeToken,
+    mode,
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 type DragSelection = {
   paraIndex: number;
@@ -179,6 +194,18 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
 
   // Scroll to last read paragraph on mount
   useEffect(() => {
+    const savedSelection = getLocalReaderSelection(book.id);
+    if (savedSelection) {
+      const restoredActive = snapshotToActive(savedSelection);
+      setActive(restoredActive);
+      setActiveTab(savedSelection.mode);
+      setAnalysis({});
+      setReadingAnchor({ paragraphIndex: restoredActive.paraIndex, charOffset: restoredActive.sentEnd });
+      setPageIndex(findPageIndex(pages, restoredActive.paraIndex));
+      window.setTimeout(() => focusToken(restoredActive.paraIndex, restoredActive.tokIdxInPara, "instant"), 180);
+      return;
+    }
+
     if (book.paragraphIndex <= 0) return;
     const t = setTimeout(() => {
       const el = contentRef.current?.querySelector(`p[data-idx="${book.paragraphIndex}"]`);
@@ -186,7 +213,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     }, 200);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [book.id]);
 
   useEffect(() => {
     if (tts.status !== "playing") return;
@@ -217,11 +244,13 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     };
   }, [dragSelection]);
 
-  const saveReadingAnchor = useCallback((token: ActiveToken, charOffset = token.sentEnd) => {
+  const saveReadingAnchor = useCallback((token: ActiveToken, charOffset = token.sentEnd, mode: AiMode = activeTab) => {
     const progress = Math.round((token.paraIndex / Math.max(book.paragraphs.length - 1, 1)) * 100);
     const updated = { ...book, paragraphIndex: token.paraIndex, progress };
+    const selection = activeToSnapshot(token, mode);
 
     saveLocalProgressAnchor(book.id, token.paraIndex, charOffset);
+    saveLocalReaderSelection(book.id, selection);
     setReadingAnchor({ paragraphIndex: token.paraIndex, charOffset });
     saveLocalBook(updated);
     onProgressUpdate(updated);
@@ -233,18 +262,40 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
         chapter_index: 0,
         paragraph_index: token.paraIndex,
         char_offset: charOffset,
+        selection_state: selection,
         scroll_pos: Math.round(window.scrollY),
         percentage: progress,
         last_read_at: new Date().toISOString(),
         total_time_ms: 0,
       });
     }
-  }, [book, user, onProgressUpdate]);
+  }, [activeTab, book, user, onProgressUpdate]);
 
   function getTextForMode(token: ActiveToken, mode: AiMode) {
     if (mode === "word") return token.token;
     if (mode === "phrase") return token.phraseText;
     return token.sentence;
+  }
+
+  function handleTabChange(mode: AiMode) {
+    setActiveTab(mode);
+    if (!active) return;
+    const selection = activeToSnapshot(active, mode);
+    saveLocalReaderSelection(book.id, selection);
+    if (user) {
+      void sbUpsertProgress({
+        user_id: user.id,
+        book_id: book.id,
+        chapter_index: 0,
+        paragraph_index: active.paraIndex,
+        char_offset: active.sentEnd,
+        selection_state: selection,
+        scroll_pos: Math.round(window.scrollY),
+        percentage: Math.round((active.paraIndex / Math.max(book.paragraphs.length - 1, 1)) * 100),
+        last_read_at: new Date().toISOString(),
+        total_time_ms: 0,
+      });
+    }
   }
 
   function mergeAnalysis(prev: AiAnalysis | null, next: AiAnalysis): AiAnalysis {
@@ -406,6 +457,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     setActive(newActive);
     focusToken(paraIndex, tokIdxInPara);
     setAnalysis({});
+    saveReadingAnchor(newActive, newActive.sentEnd, activeTab);
     void loadAnalysisForMode(newActive, activeTab);
   }
 
@@ -448,6 +500,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     setActiveTab("sentence");
     setAnalysis({});
     focusToken(paraIndex, start);
+    saveReadingAnchor(newActive, newActive.sentEnd, "sentence");
     void loadAnalysisForMode(newActive, "sentence");
   }
 
@@ -917,7 +970,7 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
           onDiscuss={openDiscuss}
           onAddCard={(type) => void handleAddCard(type)}
           onWordTap={handleWordTapInPanel}
-          onTabChange={setActiveTab}
+          onTabChange={handleTabChange}
           onTtsProviderChange={(provider) => void handleTtsProviderChange(provider)}
           onNext={handleNextToken}
           onPrev={handlePrevToken}

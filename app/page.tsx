@@ -16,7 +16,7 @@ import {
   sbUpsertBook, sbUpsertChapter,
   type DbBook,
 } from "@/lib/db/supabase";
-import { getLocalBooks, getLocalCards, getLocalProfile, saveLocalBook, saveLocalCard, saveLocalProfile, saveLocalBooks } from "@/lib/db/local";
+import { getLocalBooks, getLocalCards, getLocalProfile, saveLocalBook, saveLocalCard, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection } from "@/lib/db/local";
 import { parseBook } from "@/lib/parser/index";
 import type { AppSection, Book, Flashcard, UserProfile } from "@/lib/types";
 
@@ -91,6 +91,9 @@ function AppInner() {
     // Build Book objects from Supabase data
     if (dbBooks.length > 0) {
       const progressMap = new Map(dbProgress.map((p) => [p.book_id, p]));
+      dbProgress.forEach((progress) => {
+        if (progress.selection_state) saveLocalReaderSelection(progress.book_id, progress.selection_state);
+      });
       const fullBooks: Book[] = await Promise.all(
         dbBooks.map(async (db) => {
           const prog = progressMap.get(db.id);
