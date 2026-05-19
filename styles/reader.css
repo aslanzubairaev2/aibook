@@ -112,18 +112,36 @@
 }
 
 .reader-anchor-marker {
-  display: inline-flex;
-  width: 18px;
-  height: 18px;
-  margin-left: 4px;
-  transform: translateY(3px);
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  margin-left: 3px;
+  transform: translateY(2px);
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(212, 168, 71, 0.45);
+  border: 1px solid rgba(240, 192, 96, 0.48);
   border-radius: 50%;
-  background: rgba(18, 15, 10, 0.92);
-  color: var(--accent);
+  background:
+    radial-gradient(circle at 50% 38%, rgba(240, 192, 96, 0.34), transparent 56%),
+    rgba(20, 18, 16, 0.86);
+  color: var(--accent-bright);
+  box-shadow: 0 0 0 3px rgba(212, 168, 71, 0.08), 0 4px 12px rgba(0, 0, 0, 0.24);
   vertical-align: baseline;
+}
+
+.reader-anchor-marker svg {
+  width: 10px;
+  height: 10px;
+  stroke-width: 2.4;
+}
+
+.reader-anchor-marker::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: inherit;
+  border: 1px solid rgba(212, 168, 71, 0.16);
+  pointer-events: none;
 }
 
 /* ─── Three-level Highlights ─────────────────────────────────────────────── */

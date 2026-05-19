@@ -21,7 +21,7 @@ import {
   saveLocalProgressAnchor,
   saveLocalReaderSelection,
 } from "@/lib/db/local";
-import { sbGetCachedAnalysis, sbInsertFlashcard, sbSaveCachedAnalysis, sbUpsertProgress, sbUpsertSettings } from "@/lib/db/supabase";
+import { sbGetCachedAnalysis, sbGetProgress, sbInsertFlashcard, sbSaveCachedAnalysis, sbUpsertProgress, sbUpsertSettings } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
 import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
@@ -192,17 +192,22 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     if (targetPage !== pageIndex) setPageIndex(targetPage);
   }
 
+  const restoreSelectionSnapshot = useCallback((savedSelection: ReaderSelectionSnapshot, behavior: ScrollBehavior = "instant") => {
+    const restoredActive = snapshotToActive(savedSelection);
+    setActive(restoredActive);
+    setActiveTab(savedSelection.mode);
+    setAnalysis({});
+    setReadingAnchor({ paragraphIndex: restoredActive.paraIndex, charOffset: restoredActive.sentEnd });
+    setPageIndex(findPageIndex(pages, restoredActive.paraIndex));
+    window.setTimeout(() => focusToken(restoredActive.paraIndex, restoredActive.tokIdxInPara, behavior), 180);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pages]);
+
   // Scroll to last read paragraph on mount
   useEffect(() => {
     const savedSelection = getLocalReaderSelection(book.id);
     if (savedSelection) {
-      const restoredActive = snapshotToActive(savedSelection);
-      setActive(restoredActive);
-      setActiveTab(savedSelection.mode);
-      setAnalysis({});
-      setReadingAnchor({ paragraphIndex: restoredActive.paraIndex, charOffset: restoredActive.sentEnd });
-      setPageIndex(findPageIndex(pages, restoredActive.paraIndex));
-      window.setTimeout(() => focusToken(restoredActive.paraIndex, restoredActive.tokIdxInPara, "instant"), 180);
+      restoreSelectionSnapshot(savedSelection, "instant");
       return;
     }
 
@@ -213,7 +218,36 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     }, 200);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book.id]);
+  }, [book.id, restoreSelectionSnapshot]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const userId = user.id;
+
+    async function restoreRemoteProgress() {
+      const progress = (await sbGetProgress(userId)).find((entry) => entry.book_id === book.id);
+      if (cancelled || !progress) return;
+
+      saveLocalProgressAnchor(book.id, progress.paragraph_index, progress.char_offset ?? 0);
+      setReadingAnchor({ paragraphIndex: progress.paragraph_index, charOffset: progress.char_offset ?? 0 });
+
+      if (progress.selection_state) {
+        saveLocalReaderSelection(book.id, progress.selection_state);
+        restoreSelectionSnapshot(progress.selection_state, "instant");
+        return;
+      }
+
+      setPageIndex(findPageIndex(pages, progress.paragraph_index));
+      window.setTimeout(() => {
+        const el = contentRef.current?.querySelector(`p[data-idx="${progress.paragraph_index}"]`);
+        el?.scrollIntoView({ behavior: "instant", block: "start" });
+      }, 180);
+    }
+
+    void restoreRemoteProgress();
+    return () => { cancelled = true; };
+  }, [book.id, pages, restoreSelectionSnapshot, user]);
 
   useEffect(() => {
     if (tts.status !== "playing") return;
@@ -656,6 +690,21 @@ export function ReaderView({ book, profile, onBack, onAddCard, onProgressUpdate,
     saveLocalProgressAnchor(book.id, best, 0);
     saveLocalBook(updated);
     onProgressUpdate(updated);
+
+    if (user) {
+      void sbUpsertProgress({
+        user_id: user.id,
+        book_id: book.id,
+        chapter_index: 0,
+        paragraph_index: best,
+        char_offset: 0,
+        selection_state: null,
+        scroll_pos: 0,
+        percentage: progress,
+        last_read_at: new Date().toISOString(),
+        total_time_ms: 0,
+      });
+    }
 
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 40);
   }

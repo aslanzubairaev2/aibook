@@ -91,6 +91,12 @@ interface ProgressEntry {
   updatedAt: string;
 }
 
+export type LocalLastView = {
+  section: string;
+  bookId?: string | null;
+  updatedAt?: string;
+};
+
 export function getLocalProgress(bookId: string): number {
   if (typeof window === "undefined") return 0;
   try {
@@ -227,10 +233,10 @@ export function saveLocalDiscussHistory(key: string, messages: DiscussMessage[])
   }
 }
 
-export function getLocalLastView(): { section: string; bookId?: string | null } | null {
+export function getLocalLastView(): LocalLastView | null {
   if (typeof window === "undefined") return null;
   try {
-    return JSON.parse(localStorage.getItem(LAST_VIEW_KEY) ?? "null") as { section: string; bookId?: string | null } | null;
+    return JSON.parse(localStorage.getItem(LAST_VIEW_KEY) ?? "null") as LocalLastView | null;
   } catch {
     return null;
   }
@@ -238,7 +244,11 @@ export function getLocalLastView(): { section: string; bookId?: string | null } 
 
 export function saveLocalLastView(section: string, bookId?: string | null): void {
   try {
-    localStorage.setItem(LAST_VIEW_KEY, JSON.stringify({ section, bookId: bookId ?? null }));
+    localStorage.setItem(LAST_VIEW_KEY, JSON.stringify({
+      section,
+      bookId: bookId ?? null,
+      updatedAt: new Date().toISOString(),
+    }));
   } catch {
     // silently fail
   }

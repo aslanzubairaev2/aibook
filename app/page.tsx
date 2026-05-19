@@ -13,10 +13,10 @@ import { AuthScreen } from "@/components/auth/AuthScreen";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import {
   sbGetBooks, sbGetChapters, sbGetFlashcards, sbGetSettings, sbGetProgress,
-  sbUpsertBook, sbUpsertChapter,
-  type DbBook,
+  sbUpsertBook, sbUpsertChapter, sbUpsertLastView,
+  type DbBook, type DbReadingProgress, type DbUserSettings,
 } from "@/lib/db/supabase";
-import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection } from "@/lib/db/local";
+import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection, saveLocalProgressAnchor } from "@/lib/db/local";
 import { parseBook } from "@/lib/parser/index";
 import type { AppSection, Book, Flashcard, UserProfile } from "@/lib/types";
 
@@ -61,11 +61,22 @@ const SAVING_TO_LIBRARY_MESSAGE = "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0
 const BOOK_IN_LIBRARY_MESSAGE = "\u041a\u043d\u0438\u0433\u0430 \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435";
 const DOWNLOAD_ERROR_MESSAGE = "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438";
 const DEFAULT_CHAPTER_TITLE = "\u0413\u043b\u0430\u0432\u0430 1";
+const APP_SECTIONS: AppSection[] = ["home", "discover", "books", "reader", "cards", "settings"];
 
 function pickColor(title: string) {
   let hash = 0;
   for (const ch of title) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffff;
   return COVER_COLORS[hash % COVER_COLORS.length];
+}
+
+function isAppSection(value: string | null | undefined): value is AppSection {
+  return Boolean(value && APP_SECTIONS.includes(value as AppSection));
+}
+
+function getLatestProgress(progress: DbReadingProgress[]): DbReadingProgress | null {
+  return [...progress].sort((a, b) => {
+    return new Date(b.last_read_at).getTime() - new Date(a.last_read_at).getTime();
+  })[0] ?? null;
 }
 
 function AppInner() {
@@ -84,15 +95,57 @@ function AppInner() {
   });
   const [activeBook, setActiveBook] = useState<Book | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [isRemoteSyncReady, setIsRemoteSyncReady] = useState(false);
   const [downloadTasks, setDownloadTasks] = useState<Record<number, DownloadTask>>({});
 
   useEffect(() => {
     if (!isHydrated) return;
     saveLocalLastView(section, activeBook?.id ?? null);
-  }, [section, activeBook?.id, isHydrated]);
+    if (user && isRemoteSyncReady) {
+      void sbUpsertLastView(user.id, section, activeBook?.id ?? null);
+    }
+  }, [section, activeBook?.id, isHydrated, isRemoteSyncReady, user]);
 
   // ─── Data loading ─────────────────────────────────────────────────────────
+  function applySyncedLastView(settings: DbUserSettings | null, progress: DbReadingProgress[], availableBooks: Book[]) {
+    const latestProgress = getLatestProgress(progress);
+    const remoteSection = isAppSection(settings?.last_section) ? settings.last_section : null;
+    const remoteBookId = settings?.last_book_id ?? latestProgress?.book_id ?? null;
+
+    if (remoteSection === "reader") {
+      const book = availableBooks.find((item) => item.id === remoteBookId) ??
+        availableBooks.find((item) => item.id === latestProgress?.book_id);
+      if (book) {
+        setActiveBook(book);
+        setSection("reader");
+        saveLocalLastView("reader", book.id);
+        return;
+      }
+      setSection("books");
+      saveLocalLastView("books", null);
+      return;
+    }
+
+    if (remoteSection) {
+      const book = remoteBookId ? availableBooks.find((item) => item.id === remoteBookId) : null;
+      if (book) setActiveBook(book);
+      setSection(remoteSection);
+      saveLocalLastView(remoteSection, book?.id ?? null);
+      return;
+    }
+
+    if (latestProgress) {
+      const book = availableBooks.find((item) => item.id === latestProgress.book_id);
+      if (book) {
+        setActiveBook(book);
+        setSection("reader");
+        saveLocalLastView("reader", book.id);
+      }
+    }
+  }
+
   const loadData = useCallback(async (userId: string) => {
+    setIsRemoteSyncReady(false);
     // Load from cache immediately for instant UI
     const localBooks = getLocalBooks();
     const lastView = getLocalLastView();
@@ -122,6 +175,7 @@ function AppInner() {
     if (dbBooks.length > 0) {
       const progressMap = new Map(dbProgress.map((p) => [p.book_id, p]));
       dbProgress.forEach((progress) => {
+        saveLocalProgressAnchor(progress.book_id, progress.paragraph_index, progress.char_offset ?? 0);
         if (progress.selection_state) saveLocalReaderSelection(progress.book_id, progress.selection_state);
       });
       const fullBooks: Book[] = await Promise.all(
@@ -134,14 +188,9 @@ function AppInner() {
       );
       setBooks(fullBooks);
       saveLocalBooks(fullBooks);
-      const lastView = getLocalLastView();
-      if (lastView?.section === "reader" && lastView.bookId) {
-        const lastBook = fullBooks.find((book) => book.id === lastView.bookId);
-        if (lastBook) {
-          setActiveBook(lastBook);
-          setSection("reader");
-        }
-      }
+      applySyncedLastView(dbSettings, dbProgress, fullBooks);
+    } else {
+      applySyncedLastView(dbSettings, dbProgress, localBooks);
     }
 
     // Flashcards
@@ -174,6 +223,7 @@ function AppInner() {
       setProfile(updated);
       saveLocalProfile(updated);
     }
+    setIsRemoteSyncReady(true);
   }, []);
 
   useEffect(() => {

@@ -80,6 +80,9 @@ export type DbUserSettings = {
   books_started: number;
   books_finished: number;
   updated_at: string;
+  last_section?: string | null;
+  last_book_id?: string | null;
+  last_view_updated_at?: string | null;
 };
 
 // ─── Books ────────────────────────────────────────────────────────────────────
@@ -211,6 +214,25 @@ export async function sbUpsertSettings(settings: DbUserSettings): Promise<void> 
     .from("user_settings")
     .upsert(settings, { onConflict: "user_id" });
   if (error) console.error("sbUpsertSettings:", error.message);
+}
+
+export async function sbUpsertLastView(userId: string, section: string, bookId?: string | null): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("user_settings")
+    .upsert({
+      user_id: userId,
+      last_section: section,
+      last_book_id: bookId ?? null,
+      last_view_updated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+
+  if (error?.message.includes("last_section") || error?.message.includes("last_book_id")) {
+    console.warn("Skipping sbUpsertLastView: last view columns are not available yet.");
+    return;
+  }
+  if (error) console.error("sbUpsertLastView:", error.message);
 }
 
 // ─── AI Dictionary Cache ──────────────────────────────────────────────────────
