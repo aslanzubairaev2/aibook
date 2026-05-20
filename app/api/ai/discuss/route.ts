@@ -82,12 +82,22 @@ Do not suggest replacing source text. Do not include markdown.`;
         { role: "user", parts: [{ text: body.message }] },
       ],
     });
-    const parsed = JSON.parse(result.response.text());
+    const rawText = result.response.text();
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      // AI returned invalid JSON — wrap raw text as a plain message
+      return NextResponse.json({
+        role: "model",
+        contentParts: [{ type: "text", text: rawText || "No response." }],
+      });
+    }
 
     if (!Array.isArray(parsed.contentParts)) {
       return NextResponse.json({
         role: "model",
-        contentParts: [{ type: "text", text: result.response.text() || "No response." }],
+        contentParts: [{ type: "text", text: rawText || "No response." }],
       });
     }
 

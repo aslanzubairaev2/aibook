@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Loader2, Mic, Send, X } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { Loader2, Mic, Send, X, Quote } from "lucide-react";
 import { discussWithAi } from "@/lib/ai/discuss";
 import { normalizeToken, splitIntoTokens } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
@@ -20,29 +20,39 @@ type Props = {
   onMessagesChange: (messages: DiscussMessage[]) => void;
   onClose: () => void;
   onWordTap: (word: string, contextSentence: string) => void;
+  isHistoryLoading?: boolean;
 };
 
 const MODE_LABEL: Record<AiMode, string> = {
-  word: "\u0441\u043b\u043e\u0432\u043e",
-  phrase: "\u0444\u0440\u0430\u0437\u0430",
-  sentence: "\u043f\u0440\u0435\u0434\u043b\u043e\u0436\u0435\u043d\u0438\u0435",
+  word: "слово",
+  phrase: "фраза",
+  sentence: "предложение",
 };
 
-const QUICK_PROMPTS: Record<AiMode, string[]> = {
-  word: ["\u041f\u0440\u0438\u043c\u0435\u0440\u044b", "\u041e\u0442\u043b\u0438\u0447\u0438\u044f", "\u041a\u0430\u043a \u0437\u0430\u043f\u043e\u043c\u043d\u0438\u0442\u044c"],
-  phrase: ["\u041a\u043e\u0433\u0434\u0430 \u0433\u043e\u0432\u043e\u0440\u044f\u0442", "3 \u043f\u0440\u0438\u043c\u0435\u0440\u0430", "\u0420\u0430\u0437\u0431\u043e\u0440 \u0441\u043b\u043e\u0432"],
-  sentence: ["\u0421\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0430", "\u041f\u0440\u043e\u0449\u0435", "\u041f\u043e\u0445\u043e\u0436\u0435\u0435"],
+const BASE_QUICK_PROMPTS: Record<AiMode, string[]> = {
+  word: ["Примеры", "Отличия", "Как запомнить"],
+  phrase: ["Когда говорят", "3 примера", "Разбор слов"],
+  sentence: ["Структура", "Проще", "Похожее"],
 };
 
-const DISCUSS_LABEL = "\u041e\u0431\u0441\u0443\u0434\u0438\u0442\u044c \u0441 AI";
-const CLOSE_LABEL = "\u0417\u0430\u043a\u0440\u044b\u0442\u044c";
-const LISTENING_PLACEHOLDER = "\u0421\u043b\u0443\u0448\u0430\u044e...";
-const QUESTION_PLACEHOLDER = "\u041a\u043e\u0440\u043e\u0442\u043a\u0438\u0439 \u0432\u043e\u043f\u0440\u043e\u0441";
-const VOICE_INPUT_LABEL = "\u0413\u043e\u043b\u043e\u0441\u043e\u0432\u043e\u0439 \u0432\u0432\u043e\u0434";
-const SEND_LABEL = "\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c";
-const EMPTY_TEXT = "AI \u0441\u0435\u0439\u0447\u0430\u0441 \u043f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u0438\u0442 \u043a\u043e\u0440\u043e\u0442\u043a\u0438\u0439 \u0440\u0430\u0437\u0431\u043e\u0440. \u041c\u043e\u0436\u043d\u043e \u0441\u0440\u0430\u0437\u0443 \u0441\u043f\u0440\u043e\u0441\u0438\u0442\u044c \u043e \u043f\u0440\u0438\u043c\u0435\u0440\u0430\u0445, \u043e\u0442\u043b\u0438\u0447\u0438\u044f\u0445 \u0438\u043b\u0438 \u0433\u0440\u0430\u043c\u043c\u0430\u0442\u0438\u043a\u0435.";
-const TYPING_TEXT = "AI \u043f\u0435\u0447\u0430\u0442\u0430\u0435\u0442...";
-const ERROR_TEXT = "\u041d\u0435 \u043f\u043e\u043b\u0443\u0447\u0438\u043b\u043e\u0441\u044c \u0441\u0432\u044f\u0437\u0430\u0442\u044c\u0441\u044f \u0441 AI. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0435 \u0440\u0430\u0437.";
+const FOLLOW_UP_PROMPTS = [
+  "Ещё примеры",
+  "А синонимы?",
+  "Подробнее",
+  "Когда используют?",
+  "Антонимы",
+];
+
+const DISCUSS_LABEL = "Обсудить с AI";
+const CLOSE_LABEL = "Закрыть";
+const LISTENING_PLACEHOLDER = "Слушаю...";
+const QUESTION_PLACEHOLDER = "Короткий вопрос";
+const VOICE_INPUT_LABEL = "Голосовой ввод";
+const SEND_LABEL = "Отправить";
+const EMPTY_TEXT = "AI сейчас подготовит короткий разбор. Можно сразу спросить о примерах, отличиях или грамматике.";
+const TYPING_TEXT = "AI печатает...";
+const ERROR_TEXT = "Не получилось связаться с AI. Попробуйте еще раз.";
+const QUOTE_LABEL = "Цитировать";
 
 const INITIAL_ANALYSIS_PROMPT =
   "Give a short general analysis and summary for the selected text. If you use examples in the target language, add translations to the native language.";
@@ -60,55 +70,219 @@ export function DiscussAiModal({
   onMessagesChange,
   onClose,
   onWordTap,
+  isHistoryLoading = false,
 }: Props) {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [quotedText, setQuotedText] = useState<string | null>(null);
+  const [dynamicPrompts, setDynamicPrompts] = useState<string[] | null>(null);
+  const [placeholderOverride, setPlaceholderOverride] = useState<string | null>(null);
   const initialSentRef = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const interimRef = useRef("");
+  const latestSelectionRef = useRef("");
+  const placeholderTimerRef = useRef<any>(null);
+  const latestMessagesRef = useRef(messages);
+
+  useEffect(() => {
+    latestMessagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      if (placeholderTimerRef.current) {
+        clearTimeout(placeholderTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isOpen]);
 
+  // Document selection change listener to preserve mobile/desktop highlight selections before click clears them
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleSelectionChange = () => {
+      const selection = window.getSelection();
+      const text = selection?.toString().trim();
+      if (text) {
+        let node = selection?.anchorNode;
+        let isModelBubble = false;
+        while (node) {
+          if (node instanceof HTMLElement && node.classList.contains("model-selectable")) {
+            isModelBubble = true;
+            break;
+          }
+          node = node.parentNode;
+        }
+        if (isModelBubble) {
+          latestSelectionRef.current = text;
+          return;
+        }
+      }
+      // Don't immediately clear on click/touch to give click handler time to read it
+    };
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [isOpen]);
+
+  const sendInitialPromptRef = useRef<() => void>(() => {});
+  const sendMessageRef = useRef<(text: string) => Promise<void>>(async () => {});
+
+  // Speech recognition setup with ref-based callbacks to completely avoid stale state closures
   useEffect(() => {
     if (!isOpen) return;
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     setSpeechSupported(Boolean(SpeechRecognition));
     if (!SpeechRecognition) return;
+
     const recognition = new SpeechRecognition();
     recognition.lang = nativeLanguage === "ru" ? "ru-RU" : nativeLanguage;
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => setIsListening(false);
-    recognition.onresult = (event: any) => {
-      const transcript = event.results?.[0]?.[0]?.transcript ?? "";
-      if (transcript.trim()) setInput((prev) => (prev ? `${prev} ${transcript.trim()}` : transcript.trim()));
+    recognition.continuous = false; // continuous: false is critical for iOS and Android webview stability
+    recognition.interimResults = true;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      interimRef.current = "";
     };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      const finalText = interimRef.current.trim();
+      if (finalText) {
+        void sendMessageRef.current(finalText);
+        interimRef.current = "";
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.warn("Speech recognition error:", event.error);
+      setIsListening(false);
+      interimRef.current = "";
+
+      let errorMsg = "";
+      if (event.error === "not-allowed") {
+        errorMsg = "Требуется HTTPS и доступ к микрофону";
+      } else if (event.error === "no-speech") {
+        errorMsg = "Речь не услышана";
+      } else if (event.error === "audio-capture") {
+        errorMsg = "Микрофон не найден";
+      } else if (event.error === "network") {
+        errorMsg = "Ошибка сети";
+      } else {
+        errorMsg = `Ошибка ввода: ${event.error}`;
+      }
+
+      setPlaceholderOverride(errorMsg);
+      if (placeholderTimerRef.current) {
+        clearTimeout(placeholderTimerRef.current);
+      }
+      placeholderTimerRef.current = setTimeout(() => {
+        setPlaceholderOverride(null);
+      }, 4000);
+    };
+
+    recognition.onresult = (event: any) => {
+      let finalTranscript = "";
+      let interimTranscript = "";
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript;
+        } else {
+          interimTranscript += result[0].transcript;
+        }
+      }
+
+      if (finalTranscript.trim()) {
+        interimRef.current = finalTranscript.trim();
+        setInput("");
+        recognition.stop();
+      } else if (interimTranscript.trim()) {
+        setInput(interimTranscript.trim());
+      }
+    };
+
     recognitionRef.current = recognition;
     return () => {
-      recognition.abort();
+      try { recognition.abort(); } catch { /* ignore */ }
       recognitionRef.current = null;
     };
   }, [isOpen, nativeLanguage]);
 
+  // Auto-send initial analysis prompt (hidden from user)
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || isHistoryLoading) return;
     const initialKey = `${mode}:${selectedText}:${sentence}`;
     if (messages.length > 0 || initialSentRef.current === initialKey) return;
     initialSentRef.current = initialKey;
-    void sendMessage(INITIAL_ANALYSIS_PROMPT);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, mode, selectedText, sentence]);
+    void sendInitialPromptRef.current();
+  }, [isOpen, mode, selectedText, sentence, messages.length, isHistoryLoading]);
 
-  async function sendMessage(messageText: string) {
+  // Update dynamic prompts after AI responds
+  useEffect(() => {
+    if (messages.length < 2) {
+      setDynamicPrompts(null);
+      return;
+    }
+    const shuffled = [...FOLLOW_UP_PROMPTS].sort(() => Math.random() - 0.5);
+    setDynamicPrompts(shuffled.slice(0, 3));
+  }, [messages.length]);
+
+  // Send the initial prompt WITHOUT showing it in the chat
+  async function sendInitialPrompt() {
+    if (isSending) return;
+    setIsSending(true);
+
+    try {
+      const response = await discussWithAi({
+        mode,
+        selectedText,
+        sentence,
+        sentenceBefore,
+        sentenceAfter,
+        nativeLanguage,
+        targetLanguage,
+        history: [],
+        message: INITIAL_ANALYSIS_PROMPT,
+      });
+      if (latestMessagesRef.current.length === 0) {
+        onMessagesChange([response]);
+      }
+    } catch {
+      if (latestMessagesRef.current.length === 0) {
+        onMessagesChange([
+          {
+            role: "model",
+            contentParts: [{ type: "text", text: ERROR_TEXT }],
+          },
+        ]);
+      }
+    } finally {
+      setIsSending(false);
+    }
+  }
+  sendInitialPromptRef.current = sendInitialPrompt;
+
+  const sendMessage = useCallback(async function sendMessage(messageText: string) {
     const text = messageText.trim();
     if (!text || isSending) return;
+
+    let fullText = text;
+    if (quotedText) {
+      fullText = `[Цитата: "${quotedText}"] ${text}`;
+      setQuotedText(null);
+    }
 
     const userMessage: DiscussMessage = { role: "user", text };
     const history = [...messages, userMessage];
@@ -126,7 +300,7 @@ export function DiscussAiModal({
         nativeLanguage,
         targetLanguage,
         history: messages,
-        message: text,
+        message: fullText,
       });
       onMessagesChange([...history, response]);
     } catch {
@@ -140,15 +314,37 @@ export function DiscussAiModal({
     } finally {
       setIsSending(false);
     }
-  }
+  }, [isSending, quotedText, messages, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage]);
+
+  // Keep ref updated to prevent SpeechRecognition from getting stale values
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
 
   function toggleListening() {
     if (!recognitionRef.current || isSending) return;
-    if (isListening) recognitionRef.current.stop();
-    else recognitionRef.current.start();
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      setInput("");
+      interimRef.current = "";
+      recognitionRef.current.start();
+    }
+  }
+
+  function handleQuoteFromBubble(text: string) {
+    if (latestSelectionRef.current) {
+      setQuotedText(latestSelectionRef.current);
+      // Clear the ref once consumed
+      latestSelectionRef.current = "";
+    } else {
+      setQuotedText(text);
+    }
   }
 
   if (!isOpen) return null;
+
+  const currentPrompts = dynamicPrompts || BASE_QUICK_PROMPTS[mode];
 
   return (
     <div className="modal-backdrop discuss-backdrop" onClick={onClose}>
@@ -166,21 +362,35 @@ export function DiscussAiModal({
         <div className="discuss-messages">
           {messages.length === 0 && (
             <div className="discuss-empty">
-              {EMPTY_TEXT}
+              {isSending ? TYPING_TEXT : EMPTY_TEXT}
             </div>
           )}
           {messages.map((message, index) => (
             <div key={index} className={`discuss-row ${message.role === "user" ? "user" : "model"}`}>
-              <div className="discuss-bubble">
+              <div className={`discuss-bubble${message.role === "model" ? " model-selectable" : ""}`}>
                 <DiscussMessageContent
                   message={message}
                   lang={targetLanguage}
                   onWordTap={onWordTap}
                 />
+                {message.role === "model" && (
+                  <button
+                    type="button"
+                    className="discuss-bubble-quote-btn"
+                    onClick={() => {
+                      const text = message.contentParts?.map(p => p.text).join(" ") || message.text || "";
+                      handleQuoteFromBubble(text);
+                    }}
+                    aria-label={QUOTE_LABEL}
+                    title={QUOTE_LABEL}
+                  >
+                    <Quote size={12} />
+                  </button>
+                )}
               </div>
             </div>
           ))}
-          {isSending && (
+          {isSending && messages.length > 0 && (
             <div className="discuss-row model">
               <div className="discuss-bubble typing">
                 <Loader2 size={14} className="spin" />
@@ -198,8 +408,16 @@ export function DiscussAiModal({
             void sendMessage(input);
           }}
         >
+          {quotedText && (
+            <div className="discuss-quote-bar">
+              <span>«{quotedText}»</span>
+              <button type="button" onClick={() => setQuotedText(null)} aria-label="Убрать цитату">
+                <X size={12} />
+              </button>
+            </div>
+          )}
           <div className="discuss-quick-prompts">
-            {QUICK_PROMPTS[mode].map((prompt) => (
+            {currentPrompts.map((prompt) => (
               <button
                 key={prompt}
                 type="button"
@@ -213,7 +431,7 @@ export function DiscussAiModal({
           <input
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder={isListening ? LISTENING_PLACEHOLDER : QUESTION_PLACEHOLDER}
+            placeholder={placeholderOverride || (isListening ? LISTENING_PLACEHOLDER : QUESTION_PLACEHOLDER)}
             disabled={isSending}
           />
           {speechSupported && (

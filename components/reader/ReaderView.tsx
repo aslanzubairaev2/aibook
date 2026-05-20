@@ -21,7 +21,15 @@ import {
   saveLocalProgressAnchor,
   saveLocalReaderSelection,
 } from "@/lib/db/local";
-import { sbGetCachedAnalysis, sbInsertFlashcard, sbSaveCachedAnalysis, sbUpsertProgress, sbUpsertSettings } from "@/lib/db/supabase";
+import {
+  sbGetCachedAnalysis,
+  sbInsertFlashcard,
+  sbSaveCachedAnalysis,
+  sbUpsertProgress,
+  sbUpsertSettings,
+  sbGetDiscussHistory,
+  sbSaveDiscussHistory,
+} from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
 import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, ReaderProgressSnapshot, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
@@ -130,6 +138,7 @@ export function ReaderView({
   const [isDiscussOpen, setIsDiscussOpen] = useState(false);
   const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
   const [discussKey, setDiscussKey] = useState("");
+  const [isDiscussHistoryLoading, setIsDiscussHistoryLoading] = useState(false);
   const [readingAnchor, setReadingAnchor] = useState(() => (
     initialProgress
       ? { paragraphIndex: initialProgress.paragraphIndex, charOffset: initialProgress.charOffset }
@@ -896,7 +905,7 @@ export function ReaderView({
     }
   }
 
-  function openDiscuss() {
+  async function openDiscuss() {
     if (!active) return;
     const selectedText = getTextForMode(active, activeTab);
     const key = makeDiscussCacheKey(activeTab, selectedText, book.language, profile.nativeLanguage);
@@ -904,11 +913,33 @@ export function ReaderView({
     setDiscussKey(key);
     setDiscussMessages(history);
     setIsDiscussOpen(true);
+
+    if (user) {
+      setIsDiscussHistoryLoading(true);
+      try {
+        const remoteHistory = await sbGetDiscussHistory(user.id, key);
+        if (remoteHistory && remoteHistory.length > 0) {
+          saveLocalDiscussHistory(key, remoteHistory);
+          setDiscussMessages(remoteHistory);
+        }
+      } catch (err) {
+        console.error("Failed to sync discuss history from Supabase:", err);
+      } finally {
+        setIsDiscussHistoryLoading(false);
+      }
+    } else {
+      setIsDiscussHistoryLoading(false);
+    }
   }
 
   function handleDiscussMessagesChange(messages: DiscussMessage[]) {
     setDiscussMessages(messages);
-    if (discussKey) saveLocalDiscussHistory(discussKey, messages);
+    if (discussKey) {
+      saveLocalDiscussHistory(discussKey, messages);
+      if (user) {
+        void sbSaveDiscussHistory(user.id, discussKey, messages);
+      }
+    }
   }
 
   function getTokenKaraokeClass(paraIndex: number, tokenStart: number, tokenEnd: number, tokIdx: number) {
@@ -1125,6 +1156,7 @@ export function ReaderView({
       {active && (
         <DiscussAiModal
           isOpen={isDiscussOpen}
+          isHistoryLoading={isDiscussHistoryLoading}
           mode={activeTab}
           selectedText={getTextForMode(active, activeTab)}
           sentence={active.sentence}

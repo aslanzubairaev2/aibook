@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { ReaderSelectionSnapshot } from "@/lib/types";
+import type { ReaderSelectionSnapshot, DiscussMessage } from "@/lib/types";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -353,3 +353,37 @@ export async function sbSaveCachedTts(text: string, lang: string, voiceName: str
     console.error("sbSaveCachedTts error:", error.message);
   }
 }
+
+// ─── AI Discuss History Sync ──────────────────────────────────────────────────
+
+export async function sbGetDiscussHistory(userId: string, cacheKey: string): Promise<DiscussMessage[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("ai_discuss_history")
+    .select("messages")
+    .eq("user_id", userId)
+    .eq("cache_key", cacheKey)
+    .maybeSingle();
+
+  if (error || !data) return [];
+  return (data.messages ?? []) as DiscussMessage[];
+}
+
+export async function sbSaveDiscussHistory(userId: string, cacheKey: string, messages: DiscussMessage[]): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from("ai_discuss_history")
+    .upsert({
+      user_id: userId,
+      cache_key: cacheKey,
+      messages,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id,cache_key" });
+
+  if (error) {
+    console.error("sbSaveDiscussHistory error:", error.message);
+    return false;
+  }
+  return true;
+}
+
