@@ -28,6 +28,8 @@ export type DbBook = {
   total_chars: number;
   cover_color: string;
   created_at: string;
+  cefr_level?: "A1" | "A2" | "B1" | "B2" | "C1" | "C2" | null;
+  source_type?: "upload" | "gutenberg" | "standard_ebooks" | "wikibooks" | "oersi" | "universal_cefr";
 };
 
 export type DbBookChapter = {
@@ -253,6 +255,94 @@ export async function sbUpsertLastView(userId: string, section: string, bookId?:
     return;
   }
   if (error) console.error("sbUpsertLastView:", error.message);
+}
+
+// ─── Shared Books (system content) ───────────────────────────────────────────
+
+export type DbSharedBook = {
+  id: string;
+  title: string;
+  author: string | null;
+  language: string;
+  cefr_level: string | null;
+  source_type: string;
+  source_id: string | null;
+  course_id: string | null;
+  course_title: string | null;
+  lesson_order: number | null;
+  cover_url: string | null;
+  total_chars: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type DbSharedBookChapter = {
+  id: string;
+  shared_book_id: string;
+  chapter_index: number;
+  title: string | null;
+  paragraphs: string[];
+  plain_text: string;
+  char_count: number;
+};
+
+export async function sbGetSharedBooks(
+  sourceType?: string,
+  language?: string,
+  cefrLevel?: string,
+): Promise<DbSharedBook[]> {
+  if (!supabase) return [];
+  let query = supabase.from("shared_books").select("*").order("lesson_order", { ascending: true, nullsFirst: false });
+  if (sourceType) query = query.eq("source_type", sourceType);
+  if (language) query = query.eq("language", language);
+  if (cefrLevel) query = query.eq("cefr_level", cefrLevel);
+  const { data, error } = await query;
+  if (error) { console.error("sbGetSharedBooks:", error.message); return []; }
+  return (data ?? []) as DbSharedBook[];
+}
+
+export async function sbGetSharedBookChapters(sharedBookId: string): Promise<DbSharedBookChapter[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("shared_book_chapters")
+    .select("*")
+    .eq("shared_book_id", sharedBookId)
+    .order("chapter_index", { ascending: true });
+  if (error) { console.error("sbGetSharedBookChapters:", error.message); return []; }
+  return (data ?? []) as DbSharedBookChapter[];
+}
+
+// ─── User Lesson Progress ─────────────────────────────────────────────────────
+
+export type DbUserLessonProgress = {
+  id?: string;
+  user_id: string;
+  shared_book_id: string;
+  status: "not_started" | "in_progress" | "completed";
+  paragraph_index: number;
+  char_offset: number;
+  percentage: number;
+  words_analyzed: number;
+  last_read_at: string | null;
+  completed_at: string | null;
+};
+
+export async function sbGetLessonProgress(userId: string): Promise<DbUserLessonProgress[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("user_lesson_progress")
+    .select("*")
+    .eq("user_id", userId);
+  if (error) { console.error("sbGetLessonProgress:", error.message); return []; }
+  return (data ?? []) as DbUserLessonProgress[];
+}
+
+export async function sbUpsertLessonProgress(entry: DbUserLessonProgress): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("user_lesson_progress")
+    .upsert(entry, { onConflict: "user_id,shared_book_id" });
+  if (error) console.error("sbUpsertLessonProgress:", error.message);
 }
 
 // ─── AI Dictionary Cache ──────────────────────────────────────────────────────

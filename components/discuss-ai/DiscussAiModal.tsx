@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Loader2, Mic, Send, X, Quote } from "lucide-react";
+import { Loader2, Mic, Send, X, Quote, Plus } from "lucide-react";
 import { discussWithAi } from "@/lib/ai/discuss";
 import { normalizeToken, splitIntoTokens } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
@@ -20,6 +20,7 @@ type Props = {
   onMessagesChange: (messages: DiscussMessage[]) => void;
   onClose: () => void;
   onWordTap: (word: string, contextSentence: string) => void;
+  onAddExample?: (text: string, translation: string) => void;
   isHistoryLoading?: boolean;
 };
 
@@ -70,6 +71,7 @@ export function DiscussAiModal({
   onMessagesChange,
   onClose,
   onWordTap,
+  onAddExample,
   isHistoryLoading = false,
 }: Props) {
   const [input, setInput] = useState("");
@@ -372,6 +374,7 @@ export function DiscussAiModal({
                   message={message}
                   lang={targetLanguage}
                   onWordTap={onWordTap}
+                  onAddExample={onAddExample}
                 />
                 {message.role === "model" && (
                   <button
@@ -452,16 +455,18 @@ function DiscussMessageContent({
   message,
   lang,
   onWordTap,
+  onAddExample,
 }: {
   message: DiscussMessage;
   lang: string;
   onWordTap: (word: string, contextSentence: string) => void;
+  onAddExample?: (text: string, translation: string) => void;
 }) {
   if (message.contentParts?.length) {
     return (
       <div className="discuss-content-parts">
         {message.contentParts.map((part, index) => (
-          <Part key={`${part.text}-${index}`} part={part} lang={lang} onWordTap={onWordTap} />
+          <Part key={`${part.text}-${index}`} part={part} lang={lang} onWordTap={onWordTap} onAddExample={onAddExample} />
         ))}
       </div>
     );
@@ -474,10 +479,12 @@ function Part({
   part,
   lang,
   onWordTap,
+  onAddExample,
 }: {
   part: DiscussContentPart;
   lang: string;
   onWordTap: (word: string, contextSentence: string) => void;
+  onAddExample?: (text: string, translation: string) => void;
 }) {
   if (part.type !== "learning") return <span>{part.text}</span>;
 
@@ -504,6 +511,17 @@ function Part({
           })}
         </span>
         <SpeakButton text={part.text} lang={lang} size={12} />
+        {onAddExample && part.translation && (
+          <button
+            type="button"
+            className="discuss-add-example-btn"
+            aria-label="Добавить в карточки"
+            title="Добавить в карточки"
+            onClick={() => onAddExample(part.text, part.translation ?? "")}
+          >
+            <Plus size={12} />
+          </button>
+        )}
       </span>
       {part.translation && <span className="discuss-learning-translation">{part.translation}</span>}
     </span>

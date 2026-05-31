@@ -106,6 +106,7 @@ function AppInner() {
     savedItems: 0,
   });
   const [activeBook, setActiveBook] = useState<Book | null>(null);
+  const [readerOrigin, setReaderOrigin] = useState<AppSection>("home");
   const [isHydrated, setIsHydrated] = useState(false);
   const [isRemoteSyncReady, setIsRemoteSyncReady] = useState(false);
   const [readerProgressByBook, setReaderProgressByBook] = useState<Record<string, ReaderProgressSnapshot>>({});
@@ -304,6 +305,7 @@ function AppInner() {
   // ─── Handlers ─────────────────────────────────────────────────────────────
 
   function handleOpenBook(book: Book) {
+    setReaderOrigin(section === "reader" ? readerOrigin : section);
     setActiveBook(book);
     setSection("reader");
   }
@@ -472,6 +474,7 @@ function AppInner() {
         coverColor,
         coverUrl,
         paragraphs,
+        sourceType: "gutenberg",
       };
 
       setDownloadTask(bookInfo.id, { progress: 88, status: "saving", message: SAVING_TO_LIBRARY_MESSAGE });
@@ -490,6 +493,7 @@ function AppInner() {
           cover_url: coverUrl,
           total_chars: paragraphs.join("").length,
           cover_color: coverColor,
+          source_type: "gutenberg",
         });
 
         if (savedId) {
@@ -518,6 +522,71 @@ function AppInner() {
         status: "error",
         message: err instanceof Error ? err.message : DOWNLOAD_ERROR_MESSAGE,
       });
+    }
+  }
+
+  async function handleNavigateLesson(sharedBookId: string) {
+    try {
+      const book = activeBook;
+      const lessonCtx = book?.lessonContext;
+      if (!lessonCtx) return;
+
+      // Find neighbor lesson in the same course context
+      const targetLesson = lessonCtx.prevLesson?.sharedBookId === sharedBookId
+        ? lessonCtx.prevLesson
+        : lessonCtx.nextLesson?.sharedBookId === sharedBookId
+        ? lessonCtx.nextLesson
+        : null;
+
+      if (!targetLesson) return;
+
+      // Fetch paragraphs for the target lesson
+      const res = await fetch(`/api/shared-books/${sharedBookId}/chapters`);
+      const data = await res.json() as { paragraphs?: string[] };
+      const paragraphs = data.paragraphs ?? [];
+      if (paragraphs.length === 0) return;
+
+      // Fetch the book metadata
+      const metaRes = await fetch(`/api/shared-books?course_id=${lessonCtx.courseId}`);
+      const metaData = await metaRes.json() as { books?: Array<{ id: string; title: string; author: string | null; language: string; cefr_level: string | null; source_type: string; course_id: string | null; course_title: string | null; lesson_order: number | null; cover_url: string | null; metadata: Record<string, unknown> }> };
+      const courseBooks = metaData.books ?? [];
+      const targetMeta = courseBooks.find((b) => b.id === sharedBookId);
+      if (!targetMeta) return;
+
+      const courseIdx = courseBooks.findIndex((b) => b.id === sharedBookId);
+      const prevBook = courseIdx > 0 ? courseBooks[courseIdx - 1] : undefined;
+      const nextBook = courseIdx < courseBooks.length - 1 ? courseBooks[courseIdx + 1] : undefined;
+
+      const newBook: Book = {
+        id: sharedBookId,
+        title: targetMeta.title,
+        author: targetMeta.author ?? "Wikibooks",
+        language: targetMeta.language,
+        format: "txt",
+        progress: 0,
+        paragraphIndex: 0,
+        chapterTitle: targetMeta.title,
+        lastReadAt: new Date().toLocaleDateString("ru"),
+        coverColor: (targetMeta.metadata?.cover_color as string) ?? "#3a5c8a",
+        coverUrl: targetMeta.cover_url,
+        paragraphs,
+        cefrLevel: (targetMeta.cefr_level as Book["cefrLevel"]) ?? null,
+        sourceType: targetMeta.source_type as Book["sourceType"],
+        sharedBookId,
+        lessonContext: {
+          courseId: targetMeta.course_id ?? "standalone",
+          courseTitle: targetMeta.course_title ?? "Учебные материалы",
+          sharedBookId,
+          lessonOrder: targetMeta.lesson_order ?? courseIdx,
+          totalLessons: courseBooks.length,
+          prevLesson: prevBook ? { sharedBookId: prevBook.id, title: prevBook.title } : undefined,
+          nextLesson: nextBook ? { sharedBookId: nextBook.id, title: nextBook.title } : undefined,
+        },
+      };
+
+      setActiveBook(newBook);
+    } catch (err) {
+      console.error("handleNavigateLesson:", err);
     }
   }
 
@@ -582,12 +651,13 @@ function AppInner() {
         <ReaderView
           book={lastBook}
           profile={profile}
-          onBack={() => setSection("home")}
+          onBack={() => setSection(readerOrigin)}
           onAddCard={handleAddCard}
           onProgressUpdate={handleProgressUpdate}
           onProfileChange={handleProfileChange}
           initialProgress={readerProgressByBook[lastBook.id] ?? null}
           onReaderProgressSync={handleReaderProgressSync}
+          onNavigateLesson={lastBook.lessonContext ? handleNavigateLesson : undefined}
         />
       ) : section === "reader" ? (
         <>{setSection("books")}</>
@@ -646,5 +716,7 @@ function dbBookToBook(db: DbBook, paragraphs: string[], paragraphIndex: number, 
     coverColor: db.cover_color,
     coverUrl: db.cover_url,
     paragraphs,
+    cefrLevel: db.cefr_level,
+    sourceType: db.source_type,
   };
 }

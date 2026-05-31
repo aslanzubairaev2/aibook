@@ -28,6 +28,7 @@ import {
   sbInsertFlashcard,
   sbSaveCachedAnalysis,
   sbUpsertProgress,
+  sbUpsertLessonProgress,
   sbUpsertSettings,
   sbGetDiscussHistory,
   sbSaveDiscussHistory,
@@ -35,7 +36,7 @@ import {
 import { useAuth } from "@/lib/auth/useAuth";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
-import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, ReaderProgressSnapshot, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
+import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, LessonContext, ReaderProgressSnapshot, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
 
 const PAGE_TARGET_CHARS = 7200;
 const PAGE_MAX_PARAGRAPHS = 28;
@@ -49,6 +50,7 @@ type Props = {
   onProfileChange: (profile: UserProfile) => void;
   initialProgress?: ReaderProgressSnapshot | null;
   onReaderProgressSync?: (progress: ReaderProgressSnapshot) => void;
+  onNavigateLesson?: (sharedBookId: string) => void;
 };
 
 type ActiveToken = {
@@ -117,6 +119,21 @@ function findPageIndex(pages: ReaderPage[], paraIndex: number) {
   return Math.max(0, idx);
 }
 
+const LESSON_HEADING_KEYWORDS = /^(dialog(ue)?|gespräch|conversation|vocabulary|wortschatz|vokabeln|grammar|grammatik|übung(en)?|exercise|aufgabe|beispiel(e)?|example|lektion|kapitel|chapter|lesson|text|hören|lesen|sprechen|schreiben|hörverstehen|leseverstehen|notes?|hinweis|merke)\b/i;
+
+// Detects heading-like lesson lines (section titles) so the reader can style
+// them as headings. Paragraph-level only — token interactivity is unaffected.
+function isLessonHeading(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0 || t.length > 70) return false;
+  const words = t.split(/\s+/);
+  if (words.length > 9) return false;
+  if (LESSON_HEADING_KEYWORDS.test(t)) return true;
+  // Short line ending with a colon, e.g. "Dialogue (Диалог):"
+  if (/[:：]\s*$/.test(t) && words.length <= 8) return true;
+  return false;
+}
+
 export function ReaderView({
   book,
   profile,
@@ -126,6 +143,7 @@ export function ReaderView({
   onProfileChange,
   initialProgress,
   onReaderProgressSync,
+  onNavigateLesson,
 }: Props) {
   const { user } = useAuth();
   const [hasServerAiAccess, setHasServerAiAccess] = useState(false);
@@ -174,6 +192,7 @@ export function ReaderView({
   const pages = useMemo(() => buildReaderPages(book.paragraphs), [book.paragraphs]);
   const initialParaIndex = initialProgress?.selectionState?.paraIndex ?? initialProgress?.paragraphIndex ?? book.paragraphIndex;
   const [pageIndex, setPageIndex] = useState(() => findPageIndex(pages, initialParaIndex));
+  const [lessonCompleted, setLessonCompleted] = useState(false);
   const currentPage = pages[Math.min(pageIndex, pages.length - 1)] ?? pages[0];
   const visibleParagraphs = book.paragraphs.slice(currentPage.start, currentPage.end);
   const isReaderAudioActive = tts.status === "playing" || tts.status === "paused";
@@ -412,18 +431,35 @@ export function ReaderView({
     onReaderProgressSync?.(progressSnapshot);
 
     if (user) {
-      void sbUpsertProgress({
-        user_id: user.id,
-        book_id: book.id,
-        chapter_index: 0,
-        paragraph_index: token.paraIndex,
-        char_offset: charOffset,
-        selection_state: selection,
-        scroll_pos: Math.round(window.scrollY),
-        percentage: progress,
-        last_read_at: new Date().toISOString(),
-        total_time_ms: 0,
-      });
+      if (book.sharedBookId) {
+        // Shared content → write to user_lesson_progress (no FK to books table)
+        const isCompleted = progress >= 90;
+        void sbUpsertLessonProgress({
+          user_id: user.id,
+          shared_book_id: book.sharedBookId,
+          status: isCompleted ? "completed" : "in_progress",
+          paragraph_index: token.paraIndex,
+          char_offset: charOffset,
+          percentage: progress,
+          words_analyzed: 0,
+          last_read_at: new Date().toISOString(),
+          completed_at: isCompleted ? new Date().toISOString() : null,
+        });
+      } else if (!book.sourceType || book.sourceType === "upload" || book.sourceType === "gutenberg" || book.sourceType === "standard_ebooks") {
+        // Only write to reading_progress for user-uploaded books that exist in the books table
+        void sbUpsertProgress({
+          user_id: user.id,
+          book_id: book.id,
+          chapter_index: 0,
+          paragraph_index: token.paraIndex,
+          char_offset: charOffset,
+          selection_state: selection,
+          scroll_pos: Math.round(window.scrollY),
+          percentage: progress,
+          last_read_at: new Date().toISOString(),
+          total_time_ms: 0,
+        });
+      }
     }
   }, [activeTab, book, user, onProgressUpdate, onReaderProgressSync]);
 
@@ -462,18 +498,32 @@ export function ReaderView({
     restoredProgressKeyRef.current = makeProgressRestoreKey(progressSnapshot);
     onReaderProgressSync?.(progressSnapshot);
     if (user) {
-      void sbUpsertProgress({
-        user_id: user.id,
-        book_id: book.id,
-        chapter_index: 0,
-        paragraph_index: nextActive.paraIndex,
-        char_offset: nextActive.sentEnd,
-        selection_state: selection,
-        scroll_pos: Math.round(window.scrollY),
-        percentage,
-        last_read_at: new Date().toISOString(),
-        total_time_ms: 0,
-      });
+      if (book.sharedBookId) {
+        void sbUpsertLessonProgress({
+          user_id: user.id,
+          shared_book_id: book.sharedBookId,
+          status: percentage >= 90 ? "completed" : "in_progress",
+          paragraph_index: nextActive.paraIndex,
+          char_offset: nextActive.sentEnd,
+          percentage,
+          words_analyzed: 0,
+          last_read_at: new Date().toISOString(),
+          completed_at: percentage >= 90 ? new Date().toISOString() : null,
+        });
+      } else if (!book.sourceType || book.sourceType === "upload" || book.sourceType === "gutenberg" || book.sourceType === "standard_ebooks") {
+        void sbUpsertProgress({
+          user_id: user.id,
+          book_id: book.id,
+          chapter_index: 0,
+          paragraph_index: nextActive.paraIndex,
+          char_offset: nextActive.sentEnd,
+          selection_state: selection,
+          scroll_pos: Math.round(window.scrollY),
+          percentage,
+          last_read_at: new Date().toISOString(),
+          total_time_ms: 0,
+        });
+      }
     }
   }
 
@@ -857,14 +907,8 @@ export function ReaderView({
     window.setTimeout(() => window.scrollTo({ top: 0, behavior: "smooth" }), 40);
   }
 
-  async function handleAddCard(type: Flashcard["type"]) {
-    if (!analysis || !active) return;
-    const map = {
-      word:     { front: active.token,         back: analysis.word?.translation ?? "" },
-      phrase:   { front: active.phraseText,    back: analysis.phrase?.translation ?? "" },
-      sentence: { front: active.sentence,      back: analysis.sentence?.translation ?? "" },
-    };
-    if (!map[type].back) return;
+  async function addFlashcard(front: string, back: string, type: Flashcard["type"]) {
+    if (!front.trim() || !back.trim()) return;
 
     const srsFields = createDefaultSrsFields(book.id, book.title);
     const localCard: Flashcard = {
@@ -873,7 +917,8 @@ export function ReaderView({
       source: book.title,
       addedAt: new Date().toISOString(),
       ...srsFields,
-      ...map[type],
+      front,
+      back,
     };
     // Sync to Supabase in background
     if (user) {
@@ -893,15 +938,21 @@ export function ReaderView({
         source_book_id: book.id,
         status: srsFields.status,
       });
-      if (dbId) {
-        // Update local card id to match DB
-        localCard.id = dbId;
-      }
+      if (dbId) localCard.id = dbId;
     }
 
     onAddCard(localCard);
-
     showToast("✓ Карточка добавлена");
+  }
+
+  async function handleAddCard(type: Flashcard["type"]) {
+    if (!analysis || !active) return;
+    const map = {
+      word:     { front: active.token,         back: analysis.word?.translation ?? "" },
+      phrase:   { front: active.phraseText,    back: analysis.phrase?.translation ?? "" },
+      sentence: { front: active.sentence,      back: analysis.sentence?.translation ?? "" },
+    };
+    await addFlashcard(map[type].front, map[type].back, type);
   }
 
   function showToast(msg: string) {
@@ -1029,6 +1080,28 @@ export function ReaderView({
         <div className="reading-progress-fill" style={{ width: `${book.progress}%` }} />
       </div>
 
+      {book.lessonContext && onNavigateLesson && (
+        <LessonNavBar
+          lessonContext={book.lessonContext}
+          onNavigate={onNavigateLesson}
+          isCompleted={lessonCompleted || book.progress >= 90}
+          onComplete={book.sharedBookId && user ? () => {
+            setLessonCompleted(true);
+            void sbUpsertLessonProgress({
+              user_id: user.id,
+              shared_book_id: book.sharedBookId!,
+              status: "completed",
+              paragraph_index: currentPage.end,
+              char_offset: 0,
+              percentage: 100,
+              words_analyzed: 0,
+              last_read_at: new Date().toISOString(),
+              completed_at: new Date().toISOString(),
+            });
+          } : undefined}
+        />
+      )}
+
       <div className="reader-content" ref={contentRef}>
         <article className="reader-text">
           {pageIndex === 0 && (
@@ -1083,8 +1156,10 @@ export function ReaderView({
                 ), -1)
               : -1;
 
+            const isHeading = isLessonHeading(para);
+
             return (
-              <p key={paraIndex} data-idx={paraIndex}>
+              <p key={paraIndex} data-idx={paraIndex} className={isHeading ? "reader-lesson-heading" : undefined}>
                 {tokens.map((token, tokIdx) => {
                   const norm = normalizeToken(token);
                   if (!norm) return <span key={tokIdx}>{token}</span>;
@@ -1212,6 +1287,7 @@ export function ReaderView({
           onMessagesChange={handleDiscussMessagesChange}
           onClose={() => setIsDiscussOpen(false)}
           onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
+          onAddExample={(text, translation) => void addFlashcard(text, translation, "phrase")}
         />
       )}
 
@@ -1228,9 +1304,122 @@ export function ReaderView({
         }}
         onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
         onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
+        onAddExample={(text, translation) => void addFlashcard(text, translation, "phrase")}
       />
 
       {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+// ── Lesson navigation bar ─────────────────────────────────────────────────────
+
+function LessonNavBar({
+  lessonContext,
+  onNavigate,
+  onComplete,
+  isCompleted,
+}: {
+  lessonContext: LessonContext;
+  onNavigate: (sharedBookId: string) => void;
+  onComplete?: () => void;
+  isCompleted?: boolean;
+}) {
+  const { prevLesson, nextLesson, courseTitle, lessonOrder, totalLessons } = lessonContext;
+  return (
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: "8px 16px",
+      background: "rgba(39,35,25,0.7)",
+      borderBottom: "1px solid var(--border)",
+      gap: 8,
+      fontSize: 12,
+    }}>
+      <button
+        type="button"
+        disabled={!prevLesson}
+        onClick={() => prevLesson && onNavigate(prevLesson.sharedBookId)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          background: "transparent",
+          border: "none",
+          color: prevLesson ? "var(--accent)" : "var(--text-muted)",
+          cursor: prevLesson ? "pointer" : "default",
+          fontSize: 12,
+          fontWeight: 700,
+          padding: "4px 8px",
+          borderRadius: 6,
+          minWidth: 80,
+          opacity: prevLesson ? 1 : 0.35,
+        }}
+      >
+        <ChevronLeft size={14} />
+        <span style={{ maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {prevLesson ? prevLesson.title.split(":")[0] : "Нет"}
+        </span>
+      </button>
+
+      <div style={{ textAlign: "center", flex: 1, color: "var(--text-muted)", fontSize: 11 }}>
+        <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 2 }}>
+          {courseTitle}
+        </div>
+        <div>{lessonOrder + 1} из {totalLessons}</div>
+        {onComplete && (
+          <button
+            type="button"
+            onClick={onComplete}
+            disabled={isCompleted}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              marginTop: 4,
+              padding: "3px 10px",
+              borderRadius: 12,
+              border: "none",
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: isCompleted ? "default" : "pointer",
+              background: isCompleted ? "rgba(110,180,110,0.18)" : "var(--accent)",
+              color: isCompleted ? "#7bc77b" : "var(--text-dark)",
+            }}
+          >
+            <BookmarkCheck size={12} />
+            {isCompleted ? "Пройдено" : "Завершить урок"}
+          </button>
+        )}
+      </div>
+
+      <button
+        type="button"
+        disabled={!nextLesson}
+        onClick={() => nextLesson && onNavigate(nextLesson.sharedBookId)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          background: "transparent",
+          border: "none",
+          color: nextLesson ? "var(--accent)" : "var(--text-muted)",
+          cursor: nextLesson ? "pointer" : "default",
+          fontSize: 12,
+          fontWeight: 700,
+          padding: "4px 8px",
+          borderRadius: 6,
+          minWidth: 80,
+          justifyContent: "flex-end",
+          opacity: nextLesson ? 1 : 0.35,
+        }}
+      >
+        <span style={{ maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {nextLesson ? nextLesson.title.split(":")[0] : "Нет"}
+        </span>
+        <ChevronRight size={14} />
+      </button>
     </div>
   );
 }

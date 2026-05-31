@@ -14,6 +14,7 @@ type Props = {
   onClose: () => void;
   onAddCard: () => void;
   onWordTap?: (word: string, contextSentence: string) => void;
+  onAddExample?: (text: string, translation: string) => void;
 };
 
 const WORD_MODAL_LABEL = "\u0420\u0430\u0437\u0431\u043e\u0440 \u0441\u043b\u043e\u0432\u0430";
@@ -27,7 +28,7 @@ const PLURAL_LABEL = "\u041c\u043d. \u0447\u0438\u0441\u043b\u043e";
 const INFINITIVE_LABEL = "\u0418\u043d\u0444\u0438\u043d\u0438\u0442\u0438\u0432";
 const FORM_LABEL = "\u0424\u043e\u0440\u043c\u0430";
 
-export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onClose, onAddCard, onWordTap }: Props) {
+export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onClose, onAddCard, onWordTap, onAddExample }: Props) {
   if (!isOpen) return null;
   const word = analysis?.word;
   const displayWord = selectedWord || word?.text || word?.lemma || "";
@@ -135,6 +136,18 @@ export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onC
                       })}
                     </span>
                     <SpeakButton text={text} lang={lang} size={14} />
+                    {onAddExample && translation && (
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        aria-label="Добавить пример в карточки"
+                        title="Добавить пример в карточки"
+                        onClick={() => onAddExample(text, translation)}
+                        style={{ flexShrink: 0 }}
+                      >
+                        <Plus size={14} />
+                      </button>
+                    )}
                   </div>
                   {translation && (
                     <div style={{ 
