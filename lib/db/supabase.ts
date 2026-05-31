@@ -65,10 +65,13 @@ export type DbFlashcard = {
   source_book_title: string | null;
   selection_type: "word" | "phrase" | "sentence";
   repetitions: number;
+  lapses: number;
   easiness_factor: number;
   interval_days: number;
   next_review_at: string | null;
   last_reviewed_at: string | null;
+  source_book_id: string | null;
+  status: string;
   created_at: string;
 };
 
@@ -196,6 +199,21 @@ export async function sbInsertFlashcard(card: Omit<DbFlashcard, "id" | "created_
   if (error) { console.error("sbInsertFlashcard:", error.message); return null; }
   return (data as { id: string }).id;
 }
+
+export async function sbUpsertFlashcard(card: DbFlashcard): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("flashcards")
+    .upsert(card, { onConflict: "id" });
+  if (error) console.error("sbUpsertFlashcard:", error.message);
+}
+
+export async function sbDeleteFlashcard(cardId: string): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase.from("flashcards").delete().eq("id", cardId);
+  if (error) console.error("sbDeleteFlashcard:", error.message);
+}
+
 
 // ─── User Settings ────────────────────────────────────────────────────────────
 

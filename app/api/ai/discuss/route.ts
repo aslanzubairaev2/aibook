@@ -2,22 +2,19 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 import { AI_CONFIG } from "@/lib/config";
 import type { DiscussMessage } from "@/lib/types";
-
-const serverApiKey = process.env.GEMINI_API_KEY ?? "";
+import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 
 function messageText(message: DiscussMessage) {
   return message.text || message.contentParts?.map((part) => part.text).join("") || "";
 }
 
 export async function POST(req: Request) {
-  const clientKey = req.headers.get("x-gemini-key") ?? "";
-  const apiKey = serverApiKey || clientKey;
-
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "Gemini API key not configured. Add it in Settings." },
-      { status: 500 },
-    );
+  let apiKey: string;
+  try {
+    apiKey = await getApiKeyForRequest(req);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Access Denied";
+    return NextResponse.json({ error: msg }, { status: 403 });
   }
 
   const body = await req.json() as {

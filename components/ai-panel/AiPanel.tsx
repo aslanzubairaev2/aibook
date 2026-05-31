@@ -17,6 +17,9 @@ type Props = {
   activeTab: Tab;
   lang: string;
   ttsProvider: UserProfile["ttsProvider"];
+  isAiDisabled?: boolean;
+  noAiAccess?: boolean;
+  isGuest?: boolean;
   onClose: () => void;
   onOpenWordModal: () => void;
   onDiscuss: () => void;
@@ -35,6 +38,9 @@ export function AiPanel({
   activeTab,
   lang,
   ttsProvider,
+  isAiDisabled = false,
+  noAiAccess = false,
+  isGuest = false,
   onClose,
   onOpenWordModal,
   onDiscuss,
@@ -142,75 +148,122 @@ export function AiPanel({
       </div>
 
       <div className="panel-tab-content">
-        {activeTab === "word" && (
-          <div className="tab-body">
-            <div className="tab-row-main">
-              <div>
-                <span className="tab-main-word">{selection.token}</span>
-                {analysis?.word?.partOfSpeech && (
-                  <span className="tab-pos">{analysis.word.partOfSpeech}{analysis.word.gender ? ` · ${analysis.word.gender}` : ""}</span>
-                )}
-                {analysis?.word?.lemma && analysis.word.lemma.toLowerCase() !== selection.token.toLowerCase() && (
-                  <span className="tab-lemma-row">
-                    Инфинитив / форма: <b>{analysis.word.lemma}</b>
-                    <SpeakButton text={analysis.word.lemma} lang={lang} size={13} />
-                  </span>
+        {!hasActiveAnalysis && !isLoading && (isAiDisabled || noAiAccess) ? (
+          <div className="tab-body ai-locked-container" style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            padding: "24px 16px",
+            background: "rgba(255,255,255,0.02)",
+            borderRadius: "12px",
+            border: "1px solid rgba(255,255,255,0.05)",
+            margin: "12px 16px"
+          }}>
+            <div style={{
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
+              background: "rgba(239, 68, 68, 0.1)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--red, #ef4444)",
+              marginBottom: 12
+            }}>
+              <Zap size={20} />
+            </div>
+            <h4 style={{ fontSize: 14, fontWeight: 600, color: "#fff", marginBottom: 6 }}>
+              {isAiDisabled ? "AI-разбор выключен" : "ИИ-анализ недоступен"}
+            </h4>
+            <p style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", lineHeight: "1.4", margin: "0 0 12px 0" }}>
+              {isAiDisabled 
+                ? "Включите искусственный интеллект в Настройках приложения."
+                : isGuest 
+                  ? "ИИ-разбор доступен только зарегистрированным пользователям с личным API-ключом."
+                  : "Подключите ваш API-ключ Gemini в Настройках, чтобы использовать AI-разбор."
+              }
+            </p>
+          </div>
+        ) : (
+          <>
+            {activeTab === "word" && (
+              <div className="tab-body">
+                <div className="tab-row-main">
+                  <div>
+                    <span className="tab-main-word">{selection.token}</span>
+                    {analysis?.word?.partOfSpeech && (
+                      <span className="tab-pos">{analysis.word.partOfSpeech}{analysis.word.gender ? ` · ${analysis.word.gender}` : ""}</span>
+                    )}
+                    {analysis?.word?.lemma && analysis.word.lemma.toLowerCase() !== selection.token.toLowerCase() && (
+                      <span className="tab-lemma-row">
+                        Инфинитив / форма: <b>{analysis.word.lemma}</b>
+                        <SpeakButton text={analysis.word.lemma} lang={lang} size={13} />
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <SpeakButton key={selection.token} text={selection.token} lang={lang} />
+                    <button className="mini-btn" type="button" disabled={!analysis} onClick={onOpenWordModal}>подробнее</button>
+                  </div>
+                </div>
+                {analysis?.word?.translation ? (
+                  <>
+                    <p className="tab-translation word-translation">{analysis.word.translation}</p>
+                  </>
+                ) : (
+                  <>{isLoading && <><div className="shimmer-line" /><div className="shimmer-line medium" /></>}</>
                 )}
               </div>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <SpeakButton key={selection.token} text={selection.token} lang={lang} />
-                <button className="mini-btn" type="button" disabled={!analysis} onClick={onOpenWordModal}>подробнее</button>
+            )}
+
+            {activeTab === "phrase" && (
+              <div className="tab-body">
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <ClickableText text={selection.phraseText} lang={lang} onWordTap={onWordTap} className="tab-phrase-text karaoke-mode-fill" />
+                  <SpeakButton key={selection.phraseText} text={selection.phraseText} lang={lang} />
+                </div>
+                {analysis?.phrase?.translation ? (
+                  <>
+                    <KaraokeTranslation text={analysis.phrase.translation} sourceText={selection.phraseText} />
+                    {analysis.phrase.explanation && <p className="tab-note">{analysis.phrase.explanation}</p>}
+                  </>
+                ) : (
+                  <>{isLoading && <><div className="shimmer-line" style={{ marginTop: 8 }} /><div className="shimmer-line medium" /></>}</>
+                )}
               </div>
-            </div>
-            {analysis?.word?.translation ? (
-              <>
-                <p className="tab-translation word-translation">{analysis.word.translation}</p>
-              </>
-            ) : (
-              <>{isLoading && <><div className="shimmer-line" /><div className="shimmer-line medium" /></>}</>
             )}
-          </div>
-        )}
 
-        {activeTab === "phrase" && (
-          <div className="tab-body">
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <ClickableText text={selection.phraseText} lang={lang} onWordTap={onWordTap} className="tab-phrase-text karaoke-mode-fill" />
-              <SpeakButton key={selection.phraseText} text={selection.phraseText} lang={lang} />
-            </div>
-            {analysis?.phrase?.translation ? (
-              <>
-                <KaraokeTranslation text={analysis.phrase.translation} sourceText={selection.phraseText} />
-                {analysis.phrase.explanation && <p className="tab-note">{analysis.phrase.explanation}</p>}
-              </>
-            ) : (
-              <>{isLoading && <><div className="shimmer-line" style={{ marginTop: 8 }} /><div className="shimmer-line medium" /></>}</>
+            {activeTab === "sentence" && (
+              <div className="tab-body">
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <ClickableText text={selection.sentence} lang={lang} onWordTap={onWordTap} className="tab-sentence-text" />
+                  <SpeakButton key={selection.sentence} text={selection.sentence} lang={lang} />
+                </div>
+                {analysis?.sentence?.translation ? (
+                  <>
+                    <KaraokeTranslation text={analysis.sentence.translation} sourceText={selection.sentence} />
+                    {analysis.sentence.grammarNote && <p className="tab-note">{analysis.sentence.grammarNote}</p>}
+                  </>
+                ) : (
+                  <>{isLoading && <><div className="shimmer-line" style={{ marginTop: 8 }} /><div className="shimmer-line medium" /><div className="shimmer-line short" /></>}</>
+                )}
+              </div>
             )}
-          </div>
-        )}
-
-        {activeTab === "sentence" && (
-          <div className="tab-body">
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <ClickableText text={selection.sentence} lang={lang} onWordTap={onWordTap} className="tab-sentence-text" />
-              <SpeakButton key={selection.sentence} text={selection.sentence} lang={lang} />
-            </div>
-            {analysis?.sentence?.translation ? (
-              <>
-                <KaraokeTranslation text={analysis.sentence.translation} sourceText={selection.sentence} />
-                {analysis.sentence.grammarNote && <p className="tab-note">{analysis.sentence.grammarNote}</p>}
-              </>
-            ) : (
-              <>{isLoading && <><div className="shimmer-line" style={{ marginTop: 8 }} /><div className="shimmer-line medium" /><div className="shimmer-line short" /></>}</>
-            )}
-          </div>
+          </>
         )}
       </div>
 
       <div className="panel-actions">
-        <button className="secondary-btn panel-action-btn" type="button" onClick={onDiscuss}>
+        <button
+          className="secondary-btn panel-action-btn"
+          type="button"
+          disabled={isAiDisabled || noAiAccess}
+          onClick={onDiscuss}
+        >
           <MessageCircle size={17} />
-          Обсудить с AI
+          Обсудить
         </button>
         <button
           className="primary-btn panel-action-btn"

@@ -6,7 +6,7 @@ import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
-import { analyzeSelection } from "@/lib/ai/analyze";
+import { analyzeSelection, checkServerAiAccess } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
 import { splitIntoTokens, normalizeToken, splitSentencesWithRanges, findPhraseOffsets } from "@/lib/selector/text";
 import {
@@ -20,6 +20,8 @@ import {
   saveLocalProfile,
   saveLocalProgressAnchor,
   saveLocalReaderSelection,
+  getLocalAiProvider,
+  getLocalGeminiKey,
 } from "@/lib/db/local";
 import {
   sbGetCachedAnalysis,
@@ -31,6 +33,7 @@ import {
   sbSaveDiscussHistory,
 } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
+import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
 import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, ReaderProgressSnapshot, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
 
@@ -125,6 +128,23 @@ export function ReaderView({
   onReaderProgressSync,
 }: Props) {
   const { user } = useAuth();
+  const [hasServerAiAccess, setHasServerAiAccess] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      checkServerAiAccess().then(setHasServerAiAccess).catch(() => setHasServerAiAccess(false));
+    } else {
+      setHasServerAiAccess(false);
+    }
+  }, [user]);
+
+  const isGuest = !user;
+  const aiProvider = getLocalAiProvider();
+  const localKey = getLocalGeminiKey();
+  
+  const isAiDisabled = aiProvider === "off";
+  const noAiAccess = isGuest || (!hasServerAiAccess && localKey === "");
+
   const [active, setActive] = useState<ActiveToken | null>(() => (
     initialProgress?.selectionState ? snapshotToActive(initialProgress.selectionState) : null
   ));
@@ -286,12 +306,20 @@ export function ReaderView({
     const restoredActive = snapshotToActive(savedSelection);
     setActive(restoredActive);
     setActiveTab(savedSelection.mode);
-    setAnalysis({});
+
+    // Restore analysis from local cache immediately — avoids unnecessary AI requests on reload
+    const restoredText = savedSelection.mode === "word" ? restoredActive.token
+      : savedSelection.mode === "phrase" ? restoredActive.phraseText
+      : restoredActive.sentence;
+    const restoredCacheKey = makeAiCacheKey(savedSelection.mode, restoredText, book.language, profile.nativeLanguage);
+    const cachedAnalysis = getLocalAiAnalysis(restoredCacheKey);
+    setAnalysis(cachedAnalysis ?? {});
+
     setReadingAnchor({ paragraphIndex: restoredActive.paraIndex, charOffset: restoredActive.sentEnd });
     setPageIndex(findPageIndex(pages, restoredActive.paraIndex));
     window.setTimeout(() => focusToken(restoredActive.paraIndex, restoredActive.tokIdxInPara, behavior), 180);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pages]);
+  }, [pages, book.language, profile.nativeLanguage]);
 
   useEffect(() => {
     const progressKey = initialProgress ? makeProgressRestoreKey(initialProgress) : `local:${book.id}`;
@@ -469,6 +497,10 @@ export function ReaderView({
       return;
     }
 
+    if (isAiDisabled || noAiAccess) {
+      return;
+    }
+
     setIsLoading(true);
     try {
       const remoteCached = await sbGetCachedAnalysis(cacheKey);
@@ -519,6 +551,10 @@ export function ReaderView({
       const localCached = getLocalAiAnalysis(cacheKey);
       if (localCached?.word) {
         setWordModalAnalysis(localCached);
+        return;
+      }
+
+      if (isAiDisabled || noAiAccess) {
         return;
       }
 
@@ -829,16 +865,16 @@ export function ReaderView({
       sentence: { front: active.sentence,      back: analysis.sentence?.translation ?? "" },
     };
     if (!map[type].back) return;
+
+    const srsFields = createDefaultSrsFields(book.id, book.title);
     const localCard: Flashcard = {
       id: `card-${Date.now()}`,
       type,
       source: book.title,
       addedAt: new Date().toISOString(),
-      status: "new",
+      ...srsFields,
       ...map[type],
     };
-    onAddCard(localCard);
-
     // Sync to Supabase in background
     if (user) {
       const dbId = await sbInsertFlashcard({
@@ -848,17 +884,22 @@ export function ReaderView({
         back: localCard.back,
         source_book_title: book.title,
         selection_type: type,
-        repetitions: 0,
-        easiness_factor: 2.5,
-        interval_days: 1,
-        next_review_at: null,
-        last_reviewed_at: null,
+        repetitions: srsFields.repetitions,
+        lapses: srsFields.lapses,
+        easiness_factor: srsFields.easeFactor,
+        interval_days: srsFields.intervalDays,
+        next_review_at: srsFields.dueAt,
+        last_reviewed_at: srsFields.lastReviewedAt,
+        source_book_id: book.id,
+        status: srsFields.status,
       });
       if (dbId) {
         // Update local card id to match DB
         localCard.id = dbId;
       }
     }
+
+    onAddCard(localCard);
 
     showToast("✓ Карточка добавлена");
   }
@@ -1137,6 +1178,9 @@ export function ReaderView({
           activeTab={activeTab}
           lang={book.language}
           ttsProvider={profile.ttsProvider}
+          isAiDisabled={isAiDisabled}
+          noAiAccess={noAiAccess}
+          isGuest={isGuest}
           onClose={() => { setActive(null); setAnalysis(null); }}
           onOpenWordModal={() => {
             setWordModalSelection(active.token);
@@ -1185,8 +1229,6 @@ export function ReaderView({
         onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
         onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
       />
-
-      <AudioScrubber />
 
       {toast && <div className="toast">{toast}</div>}
     </div>

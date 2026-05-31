@@ -1,4 +1,4 @@
-export type AppSection = "home" | "discover" | "books" | "reader" | "cards" | "settings";
+export type AppSection = "home" | "discover" | "books" | "reader" | "cards" | "settings" | "auth";
 
 export type SelectionType = "word" | "phrase" | "sentence";
 export type TtsProvider = "local" | "gemini" | "deepgram";
@@ -118,5 +118,13 @@ export type Flashcard = {
   back: string;
   source: string;
   addedAt: string;
-  status: "new" | "due" | "learning";
+  status: "new" | "learning" | "review" | "relearning";
+  repetitions: number;
+  lapses: number;
+  intervalDays: number;
+  easeFactor: number;
+  dueAt: string; // ISO 8601 string
+  lastReviewedAt?: string | null;
+  sourceBookId?: string | null;
+  sourceBookTitle?: string | null;
 };

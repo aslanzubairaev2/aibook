@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, ChevronRight, Library } from "lucide-react";
+import { BookOpen, ChevronRight, Library, Flame } from "lucide-react";
 import { BookDetailModal } from "@/components/discover/BookDetailModal";
 import type { Book, Flashcard, UserProfile } from "@/lib/types";
+import { useAuth } from "@/lib/auth/useAuth";
 
 type Props = {
   book: Book | null;
@@ -103,6 +104,7 @@ export function HomeDashboard({
   onOpenBooks,
   onOpenDiscover,
 }: Props) {
+  const { user } = useAuth();
   const [recommendations, setRecommendations] = useState<GutendexBook[]>([]);
   const [topBooks, setTopBooks] = useState<GutendexBook[]>([]);
   const [isLoadingShelves, setIsLoadingShelves] = useState(true);
@@ -112,6 +114,17 @@ export function HomeDashboard({
   const totalCards = cards.length;
   const activeLanguage = book?.language || profile.targetLanguage || "de";
   const libraryTitles = useMemo(() => new Set(books.map((item) => item.title.toLowerCase())), [books]);
+
+  // SM-2 Due cards calculation
+  const dueCardsCount = useMemo(() => {
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+    const todayEndTime = todayEnd.getTime();
+    
+    return cards.filter((c) => {
+      return c.status === "new" || new Date(c.dueAt).getTime() <= todayEndTime;
+    }).length;
+  }, [cards]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -175,6 +188,9 @@ export function HomeDashboard({
 
   return (
     <section className="screen home-screen">
+      <style>{`
+        .action-card.study .action-card-arrow { color: var(--green); }
+      `}</style>
       <header className="home-header">
         <div>
           <h1 className="home-title">AIBook</h1>
@@ -185,6 +201,32 @@ export function HomeDashboard({
           </button>
         </div>
       </header>
+
+      {!user && (
+        <div 
+          style={{
+            padding: "14px 18px",
+            background: "linear-gradient(135deg, rgba(212, 168, 71, 0.08) 0%, rgba(20, 18, 16, 0.2) 100%)",
+            border: "1px solid rgba(212, 168, 71, 0.2)",
+            borderRadius: "var(--radius-lg)",
+            color: "var(--text-primary)",
+            fontSize: "13px",
+            lineHeight: "1.5",
+            display: "flex",
+            flexDirection: "column",
+            gap: "4px",
+            marginBottom: "20px",
+            boxShadow: "var(--shadow-sm)"
+          }}
+        >
+          <span style={{ fontWeight: 800, color: "var(--accent)", display: "flex", alignItems: "center", gap: "6px" }}>
+            ☁️ Локальный офлайн-режим
+          </span>
+          <span style={{ color: "var(--text-muted)", fontWeight: 500 }}>
+            Вы вошли как гость. Ваш прогресс чтения и карточки хранятся только в браузере. Зарегистрируйтесь, чтобы сохранять данные в облаке.
+          </span>
+        </div>
+      )}
 
       {book ? (
         <div className="book-hero-card glass-card">
@@ -213,12 +255,35 @@ export function HomeDashboard({
           </button>
         </div>
       ) : (
-        <button className="action-card reading glass-card" onClick={onOpenBooks} type="button">
+        <button className="action-card reading glass-card" onClick={onOpenBooks} type="button" style={{ marginBottom: 16 }}>
           <span className="action-card-icon"><BookOpen size={24} /></span>
           <span>
             <span className="action-card-label">Начать читать</span>
             <strong className="action-card-title">Загрузите первую книгу</strong>
             <span className="action-card-sub">TXT, EPUB или FB2</span>
+          </span>
+          <ChevronRight size={20} className="action-card-arrow" />
+        </button>
+      )}
+
+      {/* Spaced Repetition action card */}
+      {cards.length > 0 && (
+        <button className="action-card study glass-card" onClick={onOpenCards} type="button" style={{ marginBottom: 16 }}>
+          <span className="action-card-icon">
+            <Flame size={24} fill={dueCardsCount > 0 ? "var(--green)" : "none"} style={{ color: dueCardsCount > 0 ? "var(--green)" : "var(--text-muted)" }} />
+          </span>
+          <span>
+            <span className="action-card-label" style={{ color: dueCardsCount > 0 ? "var(--green)" : "var(--text-muted)" }}>
+              {dueCardsCount > 0 ? "Есть карточки для повторения" : "Все карточки повторены"}
+            </span>
+            <strong className="action-card-title">
+              {dueCardsCount > 0 ? `Повторить сегодня: ${dueCardsCount}` : "Интервальное повторение"}
+            </strong>
+            <span className="action-card-sub">
+              {dueCardsCount > 0 
+                ? "Укрепите нейронные связи прямо сейчас" 
+                : `Всего изучено: ${cards.filter(c => c.repetitions > 0).length} из ${cards.length}`}
+            </span>
           </span>
           <ChevronRight size={20} className="action-card-arrow" />
         </button>

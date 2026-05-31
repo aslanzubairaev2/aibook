@@ -2,8 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 import { buildAnalysisPrompt } from "@/lib/ai/buildAnalysisPrompt";
 import { AI_CONFIG } from "@/lib/config";
-
-const serverApiKey = process.env.GEMINI_API_KEY ?? "";
+import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 
 function parseJsonObject(text: string) {
   const cleaned = text.replace(/```json|```/g, "").trim();
@@ -18,15 +17,12 @@ function parseJsonObject(text: string) {
 }
 
 export async function POST(req: Request) {
-  // Use server env key; fall back to client-provided key in header
-  const clientKey = req.headers.get("x-gemini-key") ?? "";
-  const apiKey = serverApiKey || clientKey;
-
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "Gemini API key not configured. Add it in Settings." },
-      { status: 500 }
-    );
+  let apiKey: string;
+  try {
+    apiKey = await getApiKeyForRequest(req);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Access Denied";
+    return NextResponse.json({ error: msg }, { status: 403 });
   }
 
   const body = await req.json() as {

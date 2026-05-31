@@ -4,7 +4,7 @@ import { useState } from "react";
 import { BookOpen, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth/useAuth";
 
-export function AuthScreen() {
+export function AuthScreen({ onBack }: { onBack?: () => void }) {
   const { signIn, signUp } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
@@ -42,7 +42,27 @@ export function AuthScreen() {
 
   return (
     <div className="auth-screen">
-      <div className="auth-card">
+      <div className="auth-card" style={{ position: "relative" }}>
+        {onBack && (
+          <button
+            type="button"
+            className="auth-back-btn"
+            onClick={onBack}
+            style={{
+              position: "absolute",
+              top: 16,
+              right: 16,
+              background: "none",
+              border: "none",
+              color: "var(--text-secondary)",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 500,
+            }}
+          >
+            Закрыть
+          </button>
+        )}
         {/* Logo */}
         <div className="auth-logo">
           <BookOpen size={32} />

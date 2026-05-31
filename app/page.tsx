@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { franc } from "franc-min";
 import { AppShell } from "@/components/ui/AppShell";
+import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
 import { LibraryView } from "@/components/library/LibraryView";
 import { DiscoverView } from "@/components/discover/DiscoverView";
@@ -13,10 +14,10 @@ import { AuthScreen } from "@/components/auth/AuthScreen";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import {
   sbGetBooks, sbGetChapters, sbGetFlashcards, sbGetSettings, sbGetProgress,
-  sbUpsertBook, sbUpsertChapter, sbUpsertLastView,
-  type DbBook, type DbReadingProgress, type DbUserSettings,
+  sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbUpsertFlashcard, sbDeleteFlashcard, supabase,
+  type DbBook, type DbReadingProgress, type DbUserSettings, type DbFlashcard,
 } from "@/lib/db/supabase";
-import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection, saveLocalProgressAnchor } from "@/lib/db/local";
+import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace } from "@/lib/db/local";
 import { parseBook } from "@/lib/parser/index";
 import type { AppSection, Book, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
 
@@ -61,7 +62,7 @@ const SAVING_TO_LIBRARY_MESSAGE = "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0
 const BOOK_IN_LIBRARY_MESSAGE = "\u041a\u043d\u0438\u0433\u0430 \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435";
 const DOWNLOAD_ERROR_MESSAGE = "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438";
 const DEFAULT_CHAPTER_TITLE = "\u0413\u043b\u0430\u0432\u0430 1";
-const APP_SECTIONS: AppSection[] = ["home", "discover", "books", "reader", "cards", "settings"];
+const APP_SECTIONS: AppSection[] = ["home", "discover", "books", "reader", "cards", "settings", "auth"];
 
 function pickColor(title: string) {
   let hash = 0;
@@ -158,20 +159,33 @@ function AppInner() {
 
   const loadData = useCallback(async (userId: string) => {
     setIsRemoteSyncReady(false);
+    
+    // Set dynamic namespace for the specific user before loading from cache
+    setLocalNamespace(`user:${userId}`);
+    
     // Load from cache immediately for instant UI
-    const localBooks = getLocalBooks();
+    const localBooks = await getLocalBooks();
     const lastView = getLocalLastView();
     setBooks(localBooks);
     setCards(getLocalCards());
     setProfile(getLocalProfile());
+    
     if (lastView?.section === "reader" && lastView.bookId) {
       const lastBook = localBooks.find((book) => book.id === lastView.bookId);
       if (lastBook) {
         setActiveBook(lastBook);
         setSection("reader");
+      } else {
+        setActiveBook(null);
+        setSection("books");
       }
     } else if (lastView?.section && ["home", "discover", "books", "cards", "settings"].includes(lastView.section)) {
+      const lastBook = lastView.bookId ? localBooks.find((b) => b.id === lastView.bookId) : null;
+      setActiveBook(lastBook ?? null);
       setSection(lastView.section as AppSection);
+    } else {
+      setActiveBook(null);
+      setSection("home");
     }
     setIsHydrated(true);
 
@@ -203,7 +217,7 @@ function AppInner() {
         })
       );
       setBooks(fullBooks);
-      saveLocalBooks(fullBooks);
+      await saveLocalBooks(fullBooks);
       applySyncedLastView(dbSettings, dbProgress, fullBooks);
     } else {
       applySyncedLastView(dbSettings, dbProgress, localBooks);
@@ -218,7 +232,15 @@ function AppInner() {
         back: c.back,
         source: c.source_book_title ?? "",
         addedAt: c.created_at,
-        status: "new" as const,
+        status: (c.status as Flashcard["status"]) || "new",
+        repetitions: c.repetitions ?? 0,
+        lapses: c.lapses ?? 0,
+        intervalDays: c.interval_days ?? 0,
+        easeFactor: c.easiness_factor ?? 2.5,
+        dueAt: c.next_review_at || c.created_at || new Date().toISOString(),
+        lastReviewedAt: c.last_reviewed_at || null,
+        sourceBookId: c.source_book_id || null,
+        sourceBookTitle: c.source_book_title || null,
       }));
       setCards(localCards);
     }
@@ -247,19 +269,35 @@ function AppInner() {
     if (user) {
       void loadData(user.id);
     } else {
-      // Not logged in → show cached data or empty state
-      setBooks(getLocalBooks());
-      setCards(getLocalCards());
-      setProfile(getLocalProfile());
-      const lastView = getLocalLastView();
-      if (lastView?.section === "reader" && lastView.bookId) {
-        const lastBook = getLocalBooks().find((book) => book.id === lastView.bookId);
-        if (lastBook) {
-          setActiveBook(lastBook);
-          setSection("reader");
+      // Not logged in → switch namespace to guest
+      setLocalNamespace("guest");
+      
+      void (async () => {
+        const guestBooks = await getLocalBooks();
+        const lastView = getLocalLastView();
+        setBooks(guestBooks);
+        setCards(getLocalCards());
+        setProfile(getLocalProfile());
+        
+        if (lastView?.section === "reader" && lastView.bookId) {
+          const lastBook = guestBooks.find((book) => book.id === lastView.bookId);
+          if (lastBook) {
+            setActiveBook(lastBook);
+            setSection("reader");
+          } else {
+            setActiveBook(null);
+            setSection("books");
+          }
+        } else if (lastView?.section && ["home", "discover", "books", "cards", "settings"].includes(lastView.section)) {
+          const lastBook = lastView.bookId ? guestBooks.find((b) => b.id === lastView.bookId) : null;
+          setActiveBook(lastBook ?? null);
+          setSection(lastView.section as AppSection);
+        } else {
+          setActiveBook(null);
+          setSection("home");
         }
-      }
-      setIsHydrated(true);
+        setIsHydrated(true);
+      })();
     }
   }, [user, authLoading, loadData]);
 
@@ -276,6 +314,44 @@ function AppInner() {
     const updatedProfile = { ...profile, savedItems: profile.savedItems + 1 };
     saveLocalProfile(updatedProfile);
     setProfile(updatedProfile);
+  }
+
+  function handleUpdateCard(card: Flashcard) {
+    saveLocalCard(card);
+    setCards((prev) => prev.map((c) => (c.id === card.id ? card : c)));
+    if (user) {
+      const dbCard: DbFlashcard = {
+        id: card.id,
+        user_id: user.id,
+        vocabulary_item_id: null,
+        front: card.front,
+        back: card.back,
+        source_book_title: card.sourceBookTitle || card.source || null,
+        selection_type: card.type,
+        repetitions: card.repetitions,
+        lapses: card.lapses,
+        easiness_factor: card.easeFactor,
+        interval_days: card.intervalDays,
+        next_review_at: card.dueAt,
+        last_reviewed_at: card.lastReviewedAt || null,
+        source_book_id: card.sourceBookId || null,
+        status: card.status,
+        created_at: card.addedAt || new Date().toISOString(),
+      };
+      void sbUpsertFlashcard(dbCard);
+    }
+  }
+
+  function handleDeleteCard(id: string) {
+    deleteLocalCard(id);
+    setCards((prev) => prev.filter((c) => c.id !== id));
+    const newCount = Math.max(0, profile.savedItems - 1);
+    const updatedProfile = { ...profile, savedItems: newCount };
+    saveLocalProfile(updatedProfile);
+    setProfile(updatedProfile);
+    if (user) {
+      void sbDeleteFlashcard(id);
+    }
   }
 
   function handleProfileChange(updated: UserProfile) {
@@ -456,9 +532,7 @@ function AppInner() {
       </div>
     );
   }
-
-  if (!user) return <AuthScreen />;
-
+  
   const lastBook = activeBook ?? books[0] ?? null;
 
   return (
@@ -523,6 +597,8 @@ function AppInner() {
         <CardsView
           cards={cards}
           onBack={() => setSection("home")}
+          onUpdateCard={handleUpdateCard}
+          onDeleteCard={handleDeleteCard}
         />
       )}
 
@@ -530,8 +606,16 @@ function AppInner() {
         <SettingsView
           profile={profile}
           onProfileChange={handleProfileChange}
+          onNavigate={setSection}
         />
       )}
+
+      {section === "auth" && (
+        <AuthScreen
+          onBack={() => setSection("settings")}
+        />
+      )}
+      <AudioScrubber />
     </AppShell>
   );
 }

@@ -119,16 +119,21 @@ export function DiscoverView({ books, onOpenBook, downloadTasks, onDownloadBook 
       const url = buildCatalogUrl(submittedQuery, language, page);
       const cacheKey = `aibook:catalog:${url}`;
 
+      let hasCachedData = false;
       try {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
           const cachedData = JSON.parse(cached) as GutendexResponse;
           setResults(cachedData.results.filter(hasText).slice(0, PAGE_SIZE));
           setCount(cachedData.count);
+          hasCachedData = true;
         }
       } catch {
         localStorage.removeItem(cacheKey);
       }
+
+      // No cache — clear stale results so skeleton renders immediately
+      if (!hasCachedData) setResults([]);
 
       try {
         const res = await fetch(url, {

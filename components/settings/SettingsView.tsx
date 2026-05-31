@@ -1,7 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { SUPPORTED_LANGUAGES } from "@/lib/config";
-import { saveLocalProfile } from "@/lib/db/local";
+import { 
+  saveLocalProfile, 
+  getLocalAiProvider, 
+  saveLocalAiProvider, 
+  getLocalGeminiKey, 
+  saveLocalGeminiKey 
+} from "@/lib/db/local";
 import { sbUpsertSettings } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { getTtsProviderLabel, isDeepgramTtsSupported } from "@/lib/ttsProviders";
@@ -10,10 +17,25 @@ import type { TtsProvider, UserProfile } from "@/lib/types";
 type Props = {
   profile: UserProfile;
   onProfileChange: (p: UserProfile) => void;
+  onNavigate?: (section: any) => void;
 };
 
-export function SettingsView({ profile, onProfileChange }: Props) {
+export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
   const { user, signOut } = useAuth();
+  
+  const [aiProvider, setAiProvider] = useState<"off" | "custom">(() => getLocalAiProvider());
+  const [geminiKey, setGeminiKey] = useState<string>(() => getLocalGeminiKey());
+  const [showKey, setShowKey] = useState(false);
+
+  function handleAiProviderChange(val: "off" | "custom") {
+    setAiProvider(val);
+    saveLocalAiProvider(val);
+  }
+
+  function handleGeminiKeyChange(val: string) {
+    setGeminiKey(val);
+    saveLocalGeminiKey(val);
+  }
 
   async function setLang(field: "nativeLanguage" | "targetLanguage" | "ttsProvider" | "uiLanguage", value: string) {
     const updated: UserProfile = { ...profile, [field]: value };
@@ -66,6 +88,60 @@ export function SettingsView({ profile, onProfileChange }: Props) {
                 <span style={{ fontSize: 12, color: "var(--green)", fontWeight: 700 }}>Supabase</span>
               </div>
             </div>
+          </div>
+
+          <p className="setting-section-title">Интеграция AI</p>
+          <div className="settings-list" style={{ marginBottom: 20 }}>
+            <div className="setting-row">
+              <div>
+                <div className="setting-row-label">Использовать AI</div>
+                <div className="setting-row-value">
+                  {aiProvider === "off" ? "Выключен" : "Свой ключ Gemini"}
+                </div>
+              </div>
+              <select
+                className="lang-select"
+                value={aiProvider}
+                onChange={(e) => handleAiProviderChange(e.target.value as "off" | "custom")}
+              >
+                <option value="off">Выключен</option>
+                <option value="custom">Свой ключ Gemini API</option>
+              </select>
+            </div>
+
+            {aiProvider === "custom" && (
+              <div className="setting-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 8, padding: "12px 16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div className="setting-row-label">Gemini API Key</div>
+                  <button
+                    type="button"
+                    onClick={() => setShowKey(!showKey)}
+                    style={{ background: "none", border: "none", color: "var(--color-primary, #6366f1)", fontSize: 12, cursor: "pointer", fontWeight: 600 }}
+                  >
+                    {showKey ? "Скрыть" : "Показать"}
+                  </button>
+                </div>
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={geminiKey}
+                  onChange={(e) => handleGeminiKeyChange(e.target.value)}
+                  placeholder="AIzaSy..."
+                  style={{
+                    width: "100%",
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "8px",
+                    padding: "8px 12px",
+                    color: "#fff",
+                    fontSize: 13,
+                    fontFamily: "monospace"
+                  }}
+                />
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: "1.4", margin: 0 }}>
+                  Ключ сохраняется исключительно на вашем устройстве в локальном хранилище и никогда не отправляется на сервер или в базу данных.
+                </p>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -146,8 +222,8 @@ export function SettingsView({ profile, onProfileChange }: Props) {
         ))}
       </div>
 
-      {/* Sign out */}
-      {user && (
+      {/* Sign out / Sign in */}
+      {user ? (
         <button
           type="button"
           className="primary-btn"
@@ -156,6 +232,22 @@ export function SettingsView({ profile, onProfileChange }: Props) {
         >
           Выйти из аккаунта
         </button>
+      ) : (
+        <div style={{ marginTop: 24 }}>
+          <p className="setting-section-title">Синхронизация данных</p>
+          <div style={{ padding: "16px", background: "rgba(255,255,255,0.03)", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.05)", marginBottom: 16 }}>
+            <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: "1.5", marginBottom: 12 }}>
+              Данные сохраняются только на этом устройстве. Войдите, чтобы синхронизировать.
+            </p>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() => onNavigate?.("auth")}
+            >
+              Войти или зарегистрироваться
+            </button>
+          </div>
+        </div>
       )}
     </section>
   );
