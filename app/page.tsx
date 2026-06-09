@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { franc } from "franc-min";
 import { AppShell } from "@/components/ui/AppShell";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
@@ -91,6 +91,94 @@ function dbProgressToSnapshot(progress: DbReadingProgress): ReaderProgressSnapsh
   };
 }
 
+type SharedBookMeta = {
+  id: string;
+  title: string;
+  author: string | null;
+  language: string;
+  cefr_level: string | null;
+  source_type: string;
+  course_id: string | null;
+  course_title: string | null;
+  lesson_order: number | null;
+  cover_url: string | null;
+  metadata: Record<string, unknown>;
+};
+
+type LessonProgressInfo = { paragraph_index: number; percentage: number };
+
+async function fetchLessonProgress(userId: string): Promise<Record<string, LessonProgressInfo>> {
+  try {
+    const res = await fetch(`/api/lesson-progress?user_id=${userId}`);
+    if (!res.ok) return {};
+    const data = await res.json() as { progress?: Array<{ shared_book_id: string; paragraph_index: number; percentage: number }> };
+    const map: Record<string, LessonProgressInfo> = {};
+    for (const p of data.progress ?? []) {
+      map[p.shared_book_id] = { paragraph_index: p.paragraph_index ?? 0, percentage: Number(p.percentage ?? 0) };
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/** Rebuild a shared lesson (Wikibooks/CEFR) into a Book so reading can resume on app load. */
+async function loadLessonBook(sharedBookId: string, paragraphIndex: number, percentage: number): Promise<Book | null> {
+  try {
+    const [metaRes, chRes] = await Promise.all([
+      fetch(`/api/shared-books?id=${sharedBookId}`),
+      fetch(`/api/shared-books/${sharedBookId}/chapters`),
+    ]);
+    const metaData = await metaRes.json() as { books?: SharedBookMeta[] };
+    const meta = metaData.books?.[0];
+    if (!meta) return null;
+
+    const chData = await chRes.json() as { paragraphs?: string[] };
+    const paragraphs = chData.paragraphs ?? [];
+    if (paragraphs.length === 0) return null;
+
+    let courseBooks: SharedBookMeta[] = [meta];
+    if (meta.course_id) {
+      const courseRes = await fetch(`/api/shared-books?course_id=${meta.course_id}`);
+      const courseData = await courseRes.json() as { books?: SharedBookMeta[] };
+      if (courseData.books && courseData.books.length > 0) courseBooks = courseData.books;
+    }
+    const courseIdx = courseBooks.findIndex((b) => b.id === sharedBookId);
+    const prevBook = courseIdx > 0 ? courseBooks[courseIdx - 1] : undefined;
+    const nextBook = courseIdx >= 0 && courseIdx < courseBooks.length - 1 ? courseBooks[courseIdx + 1] : undefined;
+
+    return {
+      id: sharedBookId,
+      title: meta.title,
+      author: meta.author ?? "Wikibooks",
+      language: meta.language,
+      format: "txt",
+      progress: percentage,
+      paragraphIndex,
+      chapterTitle: meta.title,
+      lastReadAt: new Date().toLocaleDateString("ru"),
+      coverColor: (meta.metadata?.cover_color as string) ?? "#3a5c8a",
+      coverUrl: meta.cover_url,
+      paragraphs,
+      cefrLevel: (meta.cefr_level as Book["cefrLevel"]) ?? null,
+      sourceType: meta.source_type as Book["sourceType"],
+      sharedBookId,
+      lessonContext: {
+        courseId: meta.course_id ?? "standalone",
+        courseTitle: meta.course_title ?? "Учебные материалы",
+        sharedBookId,
+        lessonOrder: meta.lesson_order ?? (courseIdx >= 0 ? courseIdx : 0),
+        totalLessons: courseBooks.length,
+        prevLesson: prevBook ? { sharedBookId: prevBook.id, title: prevBook.title } : undefined,
+        nextLesson: nextBook ? { sharedBookId: nextBook.id, title: nextBook.title } : undefined,
+      },
+    };
+  } catch (err) {
+    console.error("loadLessonBook:", err);
+    return null;
+  }
+}
+
 function AppInner() {
   const { user, isLoading: authLoading } = useAuth();
   const [section, setSection] = useState<AppSection>("home");
@@ -111,6 +199,10 @@ function AppInner() {
   const [isRemoteSyncReady, setIsRemoteSyncReady] = useState(false);
   const [readerProgressByBook, setReaderProgressByBook] = useState<Record<string, ReaderProgressSnapshot>>({});
   const [downloadTasks, setDownloadTasks] = useState<Record<number, DownloadTask>>({});
+  // Identity we've already loaded data for ("user:<id>" | "guest"). Guards against
+  // re-running loadData on every onAuthStateChange (token refresh, tab focus / app
+  // resume), which would re-apply the synced last view and yank the reader back.
+  const loadedIdentityRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -121,7 +213,12 @@ function AppInner() {
   }, [section, activeBook?.id, isHydrated, isRemoteSyncReady, user]);
 
   // ─── Data loading ─────────────────────────────────────────────────────────
-  function applySyncedLastView(settings: DbUserSettings | null, progress: DbReadingProgress[], availableBooks: Book[]) {
+  function applySyncedLastView(
+    settings: DbUserSettings | null,
+    progress: DbReadingProgress[],
+    availableBooks: Book[],
+    lessonProgress: Record<string, LessonProgressInfo> = {},
+  ) {
     const latestProgress = getLatestProgress(progress);
     const remoteSection = isAppSection(settings?.last_section) ? settings.last_section : null;
     const remoteBookId = settings?.last_book_id ?? latestProgress?.book_id ?? null;
@@ -135,6 +232,24 @@ function AppInner() {
         saveLocalLastView("reader", book.id);
         return;
       }
+
+      // Not one of the user's own books — it may be a shared lesson (Wikibooks/CEFR),
+      // whose progress lives in user_lesson_progress. Rebuild it and resume.
+      if (remoteBookId && lessonProgress[remoteBookId]) {
+        const lp = lessonProgress[remoteBookId];
+        void loadLessonBook(remoteBookId, lp.paragraph_index, lp.percentage).then((lessonBook) => {
+          if (lessonBook) {
+            setActiveBook(lessonBook);
+            setSection("reader");
+            saveLocalLastView("reader", lessonBook.id);
+          } else {
+            setSection("books");
+            saveLocalLastView("books", null);
+          }
+        });
+        return;
+      }
+
       setSection("books");
       saveLocalLastView("books", null);
       return;
@@ -191,11 +306,12 @@ function AppInner() {
     setIsHydrated(true);
 
     // Then fetch fresh data from Supabase in background
-    const [dbBooks, dbCards, dbSettings, dbProgress] = await Promise.all([
+    const [dbBooks, dbCards, dbSettings, dbProgress, lessonProgress] = await Promise.all([
       sbGetBooks(userId),
       sbGetFlashcards(userId),
       sbGetSettings(userId),
       sbGetProgress(userId),
+      fetchLessonProgress(userId),
     ]);
     setReaderProgressByBook(Object.fromEntries(dbProgress.map((progress) => [
       progress.book_id,
@@ -219,9 +335,9 @@ function AppInner() {
       );
       setBooks(fullBooks);
       await saveLocalBooks(fullBooks);
-      applySyncedLastView(dbSettings, dbProgress, fullBooks);
+      applySyncedLastView(dbSettings, dbProgress, fullBooks, lessonProgress);
     } else {
-      applySyncedLastView(dbSettings, dbProgress, localBooks);
+      applySyncedLastView(dbSettings, dbProgress, localBooks, lessonProgress);
     }
 
     // Flashcards
@@ -267,12 +383,20 @@ function AppInner() {
 
   useEffect(() => {
     if (authLoading) return;
+
+    // Only (re)load when the *identity* actually changes. onAuthStateChange emits a
+    // fresh `user` object on token refresh / tab focus with the same id; reloading
+    // then would re-run applySyncedLastView and snap the reader to the saved position.
+    const identity = user ? `user:${user.id}` : "guest";
+    if (loadedIdentityRef.current === identity) return;
+    loadedIdentityRef.current = identity;
+
     if (user) {
       void loadData(user.id);
     } else {
       // Not logged in → switch namespace to guest
       setLocalNamespace("guest");
-      
+
       void (async () => {
         const guestBooks = await getLocalBooks();
         const lastView = getLocalLastView();

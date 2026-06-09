@@ -8,7 +8,14 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const userId = searchParams.get("user_id");
 
-  if (!supabaseAdmin || !userId) {
+  if (!supabaseAdmin) {
+    // Misconfiguration (e.g. SUPABASE_SERVICE_ROLE_KEY missing) — fail loudly
+    // instead of returning empty progress that looks like "no lessons done".
+    console.error("lesson-progress GET: supabaseAdmin not configured (missing SUPABASE_SERVICE_ROLE_KEY)");
+    return NextResponse.json({ error: "Service role not configured" }, { status: 503 });
+  }
+
+  if (!userId) {
     return NextResponse.json({ progress: [] });
   }
 

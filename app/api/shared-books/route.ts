@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id") ?? "";
   const sourceType = searchParams.get("source_type") ?? "";
   const language = searchParams.get("language") ?? "";
   const cefrLevel = searchParams.get("cefr_level") ?? "";
@@ -20,6 +21,7 @@ export async function GET(req: NextRequest) {
     .order("lesson_order", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true });
 
+  if (id) query = query.eq("id", id);
   if (sourceType) query = query.eq("source_type", sourceType);
   if (language) query = query.eq("language", language);
   if (cefrLevel) query = query.eq("cefr_level", cefrLevel);
