@@ -14,10 +14,11 @@ import { AuthScreen } from "@/components/auth/AuthScreen";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import {
   sbGetBooks, sbGetChapters, sbGetFlashcards, sbGetSettings, sbGetProgress,
-  sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbUpsertFlashcard, sbDeleteFlashcard, supabase,
+  sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbUpsertFlashcard, sbDeleteFlashcard, sbAuthHeaders, supabase,
   type DbBook, type DbReadingProgress, type DbUserSettings, type DbFlashcard,
 } from "@/lib/db/supabase";
 import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace } from "@/lib/db/local";
+import { freshFetch } from "@/lib/net/freshFetch";
 import { parseBook } from "@/lib/parser/index";
 import type { AppSection, Book, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
 
@@ -107,9 +108,9 @@ type SharedBookMeta = {
 
 type LessonProgressInfo = { paragraph_index: number; percentage: number };
 
-async function fetchLessonProgress(userId: string): Promise<Record<string, LessonProgressInfo>> {
+async function fetchLessonProgress(): Promise<Record<string, LessonProgressInfo>> {
   try {
-    const res = await fetch(`/api/lesson-progress?user_id=${userId}`);
+    const res = await freshFetch("/api/lesson-progress", { headers: await sbAuthHeaders() });
     if (!res.ok) return {};
     const data = await res.json() as { progress?: Array<{ shared_book_id: string; paragraph_index: number; percentage: number }> };
     const map: Record<string, LessonProgressInfo> = {};
@@ -126,8 +127,8 @@ async function fetchLessonProgress(userId: string): Promise<Record<string, Lesso
 async function loadLessonBook(sharedBookId: string, paragraphIndex: number, percentage: number): Promise<Book | null> {
   try {
     const [metaRes, chRes] = await Promise.all([
-      fetch(`/api/shared-books?id=${sharedBookId}`),
-      fetch(`/api/shared-books/${sharedBookId}/chapters`),
+      freshFetch(`/api/shared-books?id=${sharedBookId}`),
+      freshFetch(`/api/shared-books/${sharedBookId}/chapters`),
     ]);
     const metaData = await metaRes.json() as { books?: SharedBookMeta[] };
     const meta = metaData.books?.[0];
@@ -139,7 +140,7 @@ async function loadLessonBook(sharedBookId: string, paragraphIndex: number, perc
 
     let courseBooks: SharedBookMeta[] = [meta];
     if (meta.course_id) {
-      const courseRes = await fetch(`/api/shared-books?course_id=${meta.course_id}`);
+      const courseRes = await freshFetch(`/api/shared-books?course_id=${meta.course_id}`);
       const courseData = await courseRes.json() as { books?: SharedBookMeta[] };
       if (courseData.books && courseData.books.length > 0) courseBooks = courseData.books;
     }
@@ -311,7 +312,7 @@ function AppInner() {
       sbGetFlashcards(userId),
       sbGetSettings(userId),
       sbGetProgress(userId),
-      fetchLessonProgress(userId),
+      fetchLessonProgress(),
     ]);
     setReaderProgressByBook(Object.fromEntries(dbProgress.map((progress) => [
       progress.book_id,
@@ -665,13 +666,13 @@ function AppInner() {
       if (!targetLesson) return;
 
       // Fetch paragraphs for the target lesson
-      const res = await fetch(`/api/shared-books/${sharedBookId}/chapters`);
+      const res = await freshFetch(`/api/shared-books/${sharedBookId}/chapters`);
       const data = await res.json() as { paragraphs?: string[] };
       const paragraphs = data.paragraphs ?? [];
       if (paragraphs.length === 0) return;
 
       // Fetch the book metadata
-      const metaRes = await fetch(`/api/shared-books?course_id=${lessonCtx.courseId}`);
+      const metaRes = await freshFetch(`/api/shared-books?course_id=${lessonCtx.courseId}`);
       const metaData = await metaRes.json() as { books?: Array<{ id: string; title: string; author: string | null; language: string; cefr_level: string | null; source_type: string; course_id: string | null; course_title: string | null; lesson_order: number | null; cover_url: string | null; metadata: Record<string, unknown> }> };
       const courseBooks = metaData.books ?? [];
       const targetMeta = courseBooks.find((b) => b.id === sharedBookId);

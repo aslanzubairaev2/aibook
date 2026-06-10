@@ -10,6 +10,8 @@ import {
 import type { Book, LessonContext } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
 import { useAuth } from "@/lib/auth/useAuth";
+import { sbAuthHeaders } from "@/lib/db/supabase";
+import { freshFetch } from "@/lib/net/freshFetch";
 
 type Props = {
   books: Book[];
@@ -125,6 +127,13 @@ function groupByCefr(books: SharedBook[]): Array<{ level: string; levelTitle: st
     if (!map.has(lvl)) map.set(lvl, []);
     map.get(lvl)!.push(b);
   }
+  // Within a level: group by language, then natural title order ("текст 2" < "текст 10")
+  const byTitle = new Intl.Collator("ru", { numeric: true, sensitivity: "base" });
+  for (const list of map.values()) {
+    list.sort((a, b) =>
+      (a.language ?? "").localeCompare(b.language ?? "") || byTitle.compare(a.title, b.title)
+    );
+  }
   return order
     .filter((lvl) => map.has(lvl))
     .map((lvl) => ({
@@ -215,8 +224,8 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
     setIsSharedLoading(true);
     try {
       const [wikiRes, cefrRes] = await Promise.all([
-        fetch("/api/shared-books?source_type=wikibooks"),
-        fetch("/api/shared-books?source_type=universal_cefr"),
+        freshFetch("/api/shared-books?source_type=wikibooks"),
+        freshFetch("/api/shared-books?source_type=universal_cefr"),
       ]);
       if (wikiRes.ok) {
         const data = await wikiRes.json() as { books: SharedBook[] };
@@ -237,7 +246,7 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
   const loadLessonProgress = useCallback(async () => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/lesson-progress?user_id=${user.id}`);
+      const res = await freshFetch("/api/lesson-progress", { headers: await sbAuthHeaders() });
       if (res.ok) {
         const data = await res.json() as { progress: Array<{ shared_book_id: string; status: string; percentage: number; paragraph_index: number }> };
         const map: LessonProgressMap = {};
@@ -325,7 +334,7 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
   const openSharedLesson = useCallback(async (sharedBook: SharedBook, courseBooks: SharedBook[]) => {
     setOpeningLesson(sharedBook.id);
     try {
-      const res = await fetch(`/api/shared-books/${sharedBook.id}/chapters`);
+      const res = await freshFetch(`/api/shared-books/${sharedBook.id}/chapters`);
       const data = await res.json() as { paragraphs: string[] };
       const paragraphs = data.paragraphs ?? [];
       if (paragraphs.length === 0) {
@@ -386,7 +395,11 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
     setSeedMessage("Инициализация импорта...");
     setSeedError(null);
     try {
-      const res = await fetch(`/api/books/seed?type=${type}`);
+      const res = await fetch(`/api/books/seed?type=${type}`, { headers: await sbAuthHeaders() });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null;
+        throw new Error(data?.error ?? `Ошибка импорта (${res.status})`);
+      }
       if (!res.body) throw new Error("Поток пуст");
 
       const reader = res.body.getReader();

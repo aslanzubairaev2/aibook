@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import { ConnectivityBanner } from "@/components/pwa/ConnectivityBanner";
+import { DevSwCleanup } from "@/components/pwa/DevSwCleanup";
 import "../styles/globals.css";
 import "../styles/reader.css";
 import "../styles/panel.css";
@@ -23,7 +25,11 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ru">
-      <body>{children}</body>
+      <body>
+        <DevSwCleanup />
+        <ConnectivityBanner />
+        {children}
+      </body>
     </html>
   );
 }

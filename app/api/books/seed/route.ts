@@ -1,6 +1,7 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, isAdminConfigured } from "@/lib/db/supabase-admin";
 import { LEVELED_TEXTS_SEED } from "@/lib/db/leveledTextsData";
+import { getUserFromRequest, isOwnerUser } from "@/lib/auth/serverUser";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,16 @@ const CEFR_DATASETS: { dataset: string; lang: string; label: string }[] = [
 const CEFR_PER_LEVEL_CAP = 40;
 
 type CefrRow = { title?: string; lang?: string; cefr_level?: string; text?: string };
+
+// Dataset "title" is often a filename ("041a47a8-….txt", "text_0.txt") or "na" —
+// only keep it when it looks like a human-written name.
+function cleanCefrTitle(raw?: string): string | null {
+  const title = (raw ?? "").trim();
+  if (!title || title.toLowerCase() === "na") return null;
+  if (/\.(txt|csv|json|tsv)$/i.test(title)) return null;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(title)) return null;
+  return title;
+}
 
 function normalizeCefrLevel(raw?: string): string | null {
   if (!raw) return null;
@@ -225,6 +236,15 @@ async function scrapeWikibooksPage(page: string): Promise<string[]> {
 }
 
 export async function GET(req: NextRequest) {
+  // Seeding writes to shared tables via the service-role client — owners only.
+  const user = await getUserFromRequest(req);
+  if (!user || !isOwnerUser(user)) {
+    return NextResponse.json(
+      { error: "Импорт каталога доступен только владельцу приложения." },
+      { status: 403 },
+    );
+  }
+
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") ?? "all";
 
@@ -323,9 +343,8 @@ export async function GET(req: NextRequest) {
 
                 perLevel[cefr] = (perLevel[cefr] ?? 0) + 1;
                 const globalIdx = offset + i;
-                const title = row.title && row.title !== "na"
-                  ? row.title
-                  : `${ds.label} ${cefr} · текст ${perLevel[cefr]}`;
+                const title = cleanCefrTitle(row.title)
+                  ?? `${ds.label} ${cefr} · текст ${perLevel[cefr]}`;
                 const sourceId = `universal_cefr_${ds.lang}_${ds.dataset.split("/")[1]}_${globalIdx}`;
 
                 const { data: bookData } = await supabaseAdmin

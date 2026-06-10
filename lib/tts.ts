@@ -1,4 +1,5 @@
 import { getLocalProfile } from "./db/local";
+import { sbAuthHeaders } from "./db/supabase";
 import { DEEPGRAM_TTS_SAMPLE_RATE, getDeepgramTtsModel, isDeepgramTtsSupported, normalizeLanguageCode } from "./ttsProviders";
 
 const LANG_MAP: Record<string, string> = {
@@ -197,7 +198,7 @@ export async function speak(
       try {
         const res = await fetch("/api/tts", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
           body: JSON.stringify({ text, lang, provider })
         });
         

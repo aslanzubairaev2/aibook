@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
+import { getUserFromRequest } from "@/lib/auth/serverUser";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/lesson-progress?user_id=...
+// GET /api/lesson-progress
+// Identity comes from the verified Supabase JWT (Authorization: Bearer <token>),
+// never from query params — the admin client bypasses RLS, so trusting a
+// client-supplied user_id would let anyone read other users' progress.
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const userId = searchParams.get("user_id");
-
   if (!supabaseAdmin) {
     // Misconfiguration (e.g. SUPABASE_SERVICE_ROLE_KEY missing) — fail loudly
     // instead of returning empty progress that looks like "no lessons done".
@@ -15,15 +16,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Service role not configured" }, { status: 503 });
   }
 
-  if (!userId) {
-    return NextResponse.json({ progress: [] });
+  const user = await getUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Admin client bypasses RLS; we still scope strictly by the requested user_id.
   const { data, error } = await supabaseAdmin
     .from("user_lesson_progress")
     .select("*")
-    .eq("user_id", userId);
+    .eq("user_id", user.id);
 
   if (error) {
     console.error("lesson-progress GET:", error.message);
@@ -34,14 +35,19 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/lesson-progress
-// Body: { user_id, shared_book_id, status, paragraph_index, char_offset, percentage, words_analyzed }
+// Body: { shared_book_id, status, paragraph_index, char_offset, percentage, words_analyzed }
+// user_id is always taken from the verified JWT.
 export async function POST(req: NextRequest) {
   if (!supabaseAdmin) {
     return NextResponse.json({ error: "Supabase not configured" }, { status: 503 });
   }
 
+  const user = await getUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json() as {
-    user_id: string;
     shared_book_id: string;
     status: string;
     paragraph_index?: number;
@@ -51,15 +57,15 @@ export async function POST(req: NextRequest) {
     completed_at?: string | null;
   };
 
-  const { user_id, shared_book_id, status } = body;
-  if (!user_id || !shared_book_id) {
-    return NextResponse.json({ error: "user_id and shared_book_id are required" }, { status: 400 });
+  const { shared_book_id, status } = body;
+  if (!shared_book_id) {
+    return NextResponse.json({ error: "shared_book_id is required" }, { status: 400 });
   }
 
   const { error } = await supabaseAdmin
     .from("user_lesson_progress")
     .upsert({
-      user_id,
+      user_id: user.id,
       shared_book_id,
       status,
       paragraph_index: body.paragraph_index ?? 0,

@@ -1,14 +1,30 @@
 import { NextResponse } from "next/server";
 import { sbGetCachedTts, sbSaveCachedTts } from "@/lib/db/supabase";
 import { DEEPGRAM_TTS_SAMPLE_RATE, getDeepgramTtsModel, normalizeLanguageCode } from "@/lib/ttsProviders";
+import { getUserFromRequest } from "@/lib/auth/serverUser";
+
+const MAX_TTS_TEXT_LENGTH = 2000;
 
 export async function POST(req: Request) {
   try {
+    // Server-side TTS burns our Gemini/Deepgram API keys — require a logged-in user.
+    const user = await getUserFromRequest(req);
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { text, lang, provider = "gemini" } = await req.json() as {
       text: string;
       lang: string;
       provider?: "gemini" | "deepgram";
     };
+
+    if (!text || typeof text !== "string") {
+      return NextResponse.json({ error: "Missing text" }, { status: 400 });
+    }
+    if (text.length > MAX_TTS_TEXT_LENGTH) {
+      return NextResponse.json({ error: `TTS text exceeds ${MAX_TTS_TEXT_LENGTH} character limit` }, { status: 413 });
+    }
 
     if (provider === "deepgram") {
       const apiKey = process.env.DEEPGRAM_API_KEY;

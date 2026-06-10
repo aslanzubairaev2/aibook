@@ -14,6 +14,19 @@ export const supabase = isSupabaseConfigured
 
 const ENABLE_REMOTE_SELECTION_CACHE = false;
 
+/** Access token of the current session, for Authorization headers on API routes. */
+export async function sbGetAccessToken(): Promise<string | null> {
+  if (!supabase) return null;
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
+}
+
+/** Authorization header (if a session exists) for calls to our own API routes. */
+export async function sbAuthHeaders(): Promise<Record<string, string>> {
+  const token = await sbGetAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 // ─── Types mirroring DB schema ────────────────────────────────────────────────
 
 export type DbBook = {
