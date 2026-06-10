@@ -36,15 +36,39 @@ function normalizeCefrLevel(raw?: string): string | null {
   return m ? m[0] : null;
 }
 
+// HF texts are hard-wrapped mid-sentence ("…mit Greta\nins Kino."). A line
+// break is a real paragraph boundary only when the line ends a sentence;
+// otherwise the wrap is typographic and the lines must be rejoined.
+const SENTENCE_END_RE = /[.!?…:][)"“”„«»'"]*$/u;
+
+function unwrapHardLineBreaks(text: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  for (const rawLine of text.split(/\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      // Blank line: always a paragraph boundary.
+      if (current) { out.push(current); current = ""; }
+      continue;
+    }
+    current = current ? `${current} ${line}` : line;
+    if (SENTENCE_END_RE.test(line)) {
+      out.push(current);
+      current = "";
+    }
+  }
+  if (current) out.push(current);
+  return out;
+}
+
 // Split a document-level text into reader paragraphs.
 function splitCefrText(text: string): string[] {
-  const byNewline = text.split(/\n+/).map((p) => p.trim()).filter((p) => p.length > 0);
-  const source = byNewline.length > 1 ? byNewline : [text.trim()];
+  const source = unwrapHardLineBreaks(text);
   const paragraphs: string[] = [];
   for (const block of source) {
     if (block.length <= 320) { paragraphs.push(block); continue; }
     // Group sentences into ~320-char paragraphs for readability
-    const sentences = block.match(/[^.!?]+[.!?]+|\S+$/g) ?? [block];
+    const sentences = block.match(/[^.!?]+[.!?]+[)"“”„«»'"]*|[^.!?]+$/gu) ?? [block];
     let current = "";
     for (const s of sentences) {
       if ((current + s).length > 320 && current) { paragraphs.push(current.trim()); current = ""; }
