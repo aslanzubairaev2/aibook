@@ -106,21 +106,55 @@ type SharedBookMeta = {
   metadata: Record<string, unknown>;
 };
 
-type LessonProgressInfo = { paragraph_index: number; percentage: number };
+type LessonProgressInfo = {
+  paragraph_index: number;
+  char_offset: number;
+  percentage: number;
+  last_read_at: string | null;
+};
 
 async function fetchLessonProgress(): Promise<Record<string, LessonProgressInfo>> {
   try {
     const res = await freshFetch("/api/lesson-progress", { headers: await sbAuthHeaders() });
     if (!res.ok) return {};
-    const data = await res.json() as { progress?: Array<{ shared_book_id: string; paragraph_index: number; percentage: number }> };
+    const data = await res.json() as { progress?: Array<{ shared_book_id: string; paragraph_index: number; char_offset?: number; percentage: number; last_read_at?: string | null }> };
     const map: Record<string, LessonProgressInfo> = {};
     for (const p of data.progress ?? []) {
-      map[p.shared_book_id] = { paragraph_index: p.paragraph_index ?? 0, percentage: Number(p.percentage ?? 0) };
+      map[p.shared_book_id] = {
+        paragraph_index: p.paragraph_index ?? 0,
+        char_offset: p.char_offset ?? 0,
+        percentage: Number(p.percentage ?? 0),
+        last_read_at: p.last_read_at ?? null,
+      };
     }
     return map;
   } catch {
     return {};
   }
+}
+
+function lessonProgressToSnapshot(sharedBookId: string, lp: LessonProgressInfo): ReaderProgressSnapshot {
+  return {
+    bookId: sharedBookId,
+    paragraphIndex: lp.paragraph_index,
+    charOffset: lp.char_offset,
+    percentage: lp.percentage,
+    lastReadAt: lp.last_read_at ?? "",
+    selectionState: null,
+  };
+}
+
+function getLatestLessonProgress(
+  lessonProgress: Record<string, LessonProgressInfo>,
+): { sharedBookId: string; info: LessonProgressInfo } | null {
+  let best: { sharedBookId: string; info: LessonProgressInfo } | null = null;
+  for (const [sharedBookId, info] of Object.entries(lessonProgress)) {
+    if (!info.last_read_at) continue;
+    if (!best || new Date(info.last_read_at).getTime() > new Date(best.info.last_read_at!).getTime()) {
+      best = { sharedBookId, info };
+    }
+  }
+  return best;
 }
 
 /** Rebuild a shared lesson (Wikibooks/CEFR) into a Book so reading can resume on app load. */
@@ -221,35 +255,64 @@ function AppInner() {
     lessonProgress: Record<string, LessonProgressInfo> = {},
   ) {
     const latestProgress = getLatestProgress(progress);
+    const latestLesson = getLatestLessonProgress(lessonProgress);
     const remoteSection = isAppSection(settings?.last_section) ? settings.last_section : null;
     const remoteBookId = settings?.last_book_id ?? latestProgress?.book_id ?? null;
 
-    if (remoteSection === "reader") {
-      const book = availableBooks.find((item) => item.id === remoteBookId) ??
-        availableBooks.find((item) => item.id === latestProgress?.book_id);
+    const openOwnBook = (book: Book) => {
+      setActiveBook(book);
+      setSection("reader");
+      saveLocalLastView("reader", book.id);
+    };
+
+    const openLesson = (sharedBookId: string, lp: LessonProgressInfo) => {
+      void loadLessonBook(sharedBookId, lp.paragraph_index, lp.percentage).then((lessonBook) => {
+        if (lessonBook) {
+          setActiveBook(lessonBook);
+          setSection("reader");
+          saveLocalLastView("reader", lessonBook.id);
+        } else {
+          setSection("books");
+          saveLocalLastView("books", null);
+        }
+      });
+    };
+
+    // Whatever was read most recently across own books and shared lessons.
+    const ownTime = latestProgress ? new Date(latestProgress.last_read_at).getTime() : -1;
+    const lessonTime = latestLesson?.info.last_read_at ? new Date(latestLesson.info.last_read_at).getTime() : -1;
+    const openMostRecentlyRead = (): boolean => {
+      if (lessonTime > ownTime && latestLesson) {
+        openLesson(latestLesson.sharedBookId, latestLesson.info);
+        return true;
+      }
+      const book = availableBooks.find((item) => item.id === latestProgress?.book_id);
       if (book) {
-        setActiveBook(book);
-        setSection("reader");
-        saveLocalLastView("reader", book.id);
+        openOwnBook(book);
+        return true;
+      }
+      return false;
+    };
+
+    if (remoteSection === "reader") {
+      // The exact book that was open on the other device: an own book…
+      const book = availableBooks.find((item) => item.id === remoteBookId);
+      if (book) {
+        openOwnBook(book);
         return;
       }
 
-      // Not one of the user's own books — it may be a shared lesson (Wikibooks/CEFR),
-      // whose progress lives in user_lesson_progress. Rebuild it and resume.
+      // …or a shared lesson (Wikibooks/CEFR), whose progress lives in
+      // user_lesson_progress. Rebuild it and resume. This must be checked
+      // before any "latest own book" fallback, otherwise reading a lesson
+      // last would reopen an older own book on the next device.
       if (remoteBookId && lessonProgress[remoteBookId]) {
-        const lp = lessonProgress[remoteBookId];
-        void loadLessonBook(remoteBookId, lp.paragraph_index, lp.percentage).then((lessonBook) => {
-          if (lessonBook) {
-            setActiveBook(lessonBook);
-            setSection("reader");
-            saveLocalLastView("reader", lessonBook.id);
-          } else {
-            setSection("books");
-            saveLocalLastView("books", null);
-          }
-        });
+        openLesson(remoteBookId, lessonProgress[remoteBookId]);
         return;
       }
+
+      // Stale last_book_id → resume whatever has the freshest progress.
+      if (openMostRecentlyRead()) return;
 
       setSection("books");
       saveLocalLastView("books", null);
@@ -264,14 +327,7 @@ function AppInner() {
       return;
     }
 
-    if (latestProgress) {
-      const book = availableBooks.find((item) => item.id === latestProgress.book_id);
-      if (book) {
-        setActiveBook(book);
-        setSection("reader");
-        saveLocalLastView("reader", book.id);
-      }
-    }
+    openMostRecentlyRead();
   }
 
   const loadData = useCallback(async (userId: string) => {
@@ -283,7 +339,9 @@ function AppInner() {
     // Load from cache immediately for instant UI
     const localBooks = await getLocalBooks();
     const lastView = getLocalLastView();
-    setBooks(localBooks);
+    // Shared lessons are cached alongside own books for instant resume,
+    // but they don't belong in the library list.
+    setBooks(localBooks.filter((b) => !b.sharedBookId));
     setCards(getLocalCards());
     setProfile(getLocalProfile());
     
@@ -314,10 +372,18 @@ function AppInner() {
       sbGetProgress(userId),
       fetchLessonProgress(),
     ]);
-    setReaderProgressByBook(Object.fromEntries(dbProgress.map((progress) => [
-      progress.book_id,
-      dbProgressToSnapshot(progress),
-    ])));
+    // Lesson (shared book) snapshots restore the exact sentence via char_offset;
+    // own-book snapshots win on a (theoretically impossible) id collision.
+    setReaderProgressByBook({
+      ...Object.fromEntries(Object.entries(lessonProgress).map(([sharedBookId, lp]) => [
+        sharedBookId,
+        lessonProgressToSnapshot(sharedBookId, lp),
+      ])),
+      ...Object.fromEntries(dbProgress.map((progress) => [
+        progress.book_id,
+        dbProgressToSnapshot(progress),
+      ])),
+    });
 
     // Build Book objects from Supabase data
     if (dbBooks.length > 0) {
@@ -335,7 +401,8 @@ function AppInner() {
         })
       );
       setBooks(fullBooks);
-      await saveLocalBooks(fullBooks);
+      // Keep cached shared lessons so "continue reading" works instantly and offline.
+      await saveLocalBooks([...fullBooks, ...localBooks.filter((b) => b.sharedBookId)]);
       applySyncedLastView(dbSettings, dbProgress, fullBooks, lessonProgress);
     } else {
       applySyncedLastView(dbSettings, dbProgress, localBooks, lessonProgress);
@@ -401,7 +468,7 @@ function AppInner() {
       void (async () => {
         const guestBooks = await getLocalBooks();
         const lastView = getLocalLastView();
-        setBooks(guestBooks);
+        setBooks(guestBooks.filter((b) => !b.sharedBookId));
         setCards(getLocalCards());
         setProfile(getLocalProfile());
         
