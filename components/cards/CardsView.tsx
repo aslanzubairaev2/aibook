@@ -1,19 +1,24 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown } from "lucide-react";
-import type { AiAnalysis, Flashcard, TtsProvider } from "@/lib/types";
-import { calculateSM2 } from "@/lib/srs/sm2";
+import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, MessageCircle } from "lucide-react";
+import type { AiAnalysis, DiscussMessage, Flashcard, TtsProvider } from "@/lib/types";
+import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
+import { findDuplicateCard } from "@/lib/cards";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { analyzeSelection } from "@/lib/ai/analyze";
-import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
-import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession } from "@/lib/db/local";
+import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
+import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory } from "@/lib/db/local";
+import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory } from "@/lib/db/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
+import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 
 type Props = {
   cards: Flashcard[];
   onBack: () => void;
+  onAddCard: (card: Flashcard) => void;
   onUpdateCard: (card: Flashcard) => void;
   onDeleteCard: (id: string) => void;
 };
@@ -30,7 +35,8 @@ const TTS_PROVIDERS: { value: TtsProvider; label: string }[] = [
   { value: "deepgram", label: "Deepgram" },
 ];
 
-export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) {
+export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard }: Props) {
+  const { user } = useAuth();
   const [profile, setProfile] = useState(getLocalProfile);
   const targetLanguage = profile.targetLanguage;
   const nativeLanguage = profile.nativeLanguage;
@@ -43,11 +49,22 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
   const [sortOrder, setSortOrder] = useState<SortOrder>("added");
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showTtsMenu, setShowTtsMenu] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   // Training state
   const [currentTrainIndex, setCurrentTrainIndex] = useState(0);
   const [reviewedIds, setReviewedIds] = useState<string[]>([]);
   const [isFlipped, setIsFlipped] = useState(false);
+  const [trainFilter, setTrainFilter] = useState<FilterType>("all");
+
+  // Discuss-with-AI state (chat about a specific card)
+  const [discuss, setDiscuss] = useState<{
+    open: boolean;
+    card: Flashcard | null;
+    cacheKey: string;
+    messages: DiscussMessage[];
+    historyLoading: boolean;
+  }>({ open: false, card: null, cacheKey: "", messages: [], historyLoading: false });
 
   // Word modal state
   const [wordModal, setWordModal] = useState<{
@@ -130,10 +147,61 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
     return () => document.removeEventListener("click", handler);
   }, []);
 
-  // --- Training ---
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2000);
+  }
+
+  // --- Add card (from WordModal / Discuss chat) with duplicate control ---
+  async function addCard(front: string, back: string, type: Flashcard["type"], sourceCard?: Flashcard | null) {
+    if (!front.trim() || !back.trim()) return;
+
+    if (findDuplicateCard(front, cards)) {
+      showToast("Такая карточка уже добавлена");
+      return;
+    }
+
+    const sourceTitle = sourceCard?.sourceBookTitle ?? sourceCard?.source ?? "Тренажёр";
+    const srsFields = createDefaultSrsFields(sourceCard?.sourceBookId ?? null, sourceTitle);
+    const localCard: Flashcard = {
+      id: `card-${Date.now()}`,
+      type,
+      source: sourceTitle,
+      addedAt: new Date().toISOString(),
+      ...srsFields,
+      front,
+      back,
+    };
+    if (user) {
+      const dbId = await sbInsertFlashcard({
+        user_id: user.id,
+        vocabulary_item_id: null,
+        front: localCard.front,
+        back: localCard.back,
+        source_book_title: sourceTitle,
+        selection_type: type,
+        repetitions: srsFields.repetitions,
+        lapses: srsFields.lapses,
+        easiness_factor: srsFields.easeFactor,
+        interval_days: srsFields.intervalDays,
+        next_review_at: srsFields.dueAt,
+        last_reviewed_at: srsFields.lastReviewedAt,
+        source_book_id: srsFields.sourceBookId,
+        status: srsFields.status,
+      });
+      if (dbId) localCard.id = dbId;
+    }
+
+    onAddCard(localCard);
+    showToast("✓ Карточка добавлена");
+  }
+
+  // --- Training (cards filtered by selected type) ---
+  const trainingCards = trainFilter === "all" ? dueCards : dueCards.filter((c) => c.type === trainFilter);
+
   const handleGrade = (score: 1 | 2 | 3 | 4) => {
-    if (dueCards.length === 0 || currentTrainIndex >= dueCards.length) return;
-    const card = dueCards[currentTrainIndex];
+    if (trainingCards.length === 0 || currentTrainIndex >= trainingCards.length) return;
+    const card = trainingCards[currentTrainIndex];
     const srsUpdate = calculateSM2(score, card.repetitions, card.lapses, card.intervalDays, card.easeFactor);
     const updatedCard: Flashcard = { ...card, ...srsUpdate, lastReviewedAt: new Date().toISOString() };
     onUpdateCard(updatedCard);
@@ -172,9 +240,36 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
     if (longPressRef.current) clearTimeout(longPressRef.current);
   };
 
+  // --- Discuss with AI about a card ---
+  async function openDiscussForCard(card: Flashcard) {
+    const cacheKey = makeDiscussCacheKey(card.type, card.front, targetLanguage, nativeLanguage);
+    const history = getLocalDiscussHistory(cacheKey);
+    setDiscuss({ open: true, card, cacheKey, messages: history, historyLoading: Boolean(user) });
+
+    if (!user) return;
+    try {
+      const remoteHistory = await sbGetDiscussHistory(user.id, cacheKey);
+      if (remoteHistory && remoteHistory.length > 0) {
+        saveLocalDiscussHistory(cacheKey, remoteHistory);
+        setDiscuss((prev) => (prev.cacheKey === cacheKey ? { ...prev, messages: remoteHistory, historyLoading: false } : prev));
+      } else {
+        setDiscuss((prev) => (prev.cacheKey === cacheKey ? { ...prev, historyLoading: false } : prev));
+      }
+    } catch {
+      setDiscuss((prev) => (prev.cacheKey === cacheKey ? { ...prev, historyLoading: false } : prev));
+    }
+  }
+
+  function handleDiscussMessagesChange(messages: DiscussMessage[]) {
+    setDiscuss((prev) => ({ ...prev, messages }));
+    if (discuss.cacheKey) {
+      saveLocalDiscussHistory(discuss.cacheKey, messages);
+      if (user) void sbSaveDiscussHistory(user.id, discuss.cacheKey, messages);
+    }
+  }
+
   // --- Word tap → WordModal ---
-  const handleWordTap = useCallback(async (word: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const openWordModalFor = useCallback(async (word: string) => {
     const norm = normalizeToken(word);
     if (!norm) return;
 
@@ -205,6 +300,11 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
       setWordModal({ open: true, word: norm, analysis: null, loading: false });
     }
   }, [targetLanguage, nativeLanguage]);
+
+  const handleWordTap = useCallback((word: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    void openWordModalFor(word);
+  }, [openWordModalFor]);
 
   // --- Tokenized card text ---
   const TokenizedText = ({ text, style }: { text: string; style?: React.CSSProperties }) => {
@@ -272,7 +372,7 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
     relearning: "Переучивание",
   };
 
-  const currentCard = dueCards[currentTrainIndex];
+  const currentCard = trainingCards[currentTrainIndex];
 
   return (
     <section className="screen" onClick={() => { setShowSortMenu(false); setShowTtsMenu(false); }}>
@@ -343,8 +443,29 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
         lang={targetLanguage}
         selectedWord={wordModal.word}
         onClose={() => setWordModal((s) => ({ ...s, open: false }))}
-        onAddCard={() => {}}
+        onAddCard={() => void addCard(wordModal.word, wordModal.analysis?.word?.translation ?? "", "word")}
+        onAddLemma={(lemma) => void addCard(lemma, wordModal.analysis?.word?.translation ?? "", "word")}
+        onWordTap={(word) => void openWordModalFor(word)}
+        onAddExample={(text, translation) => void addCard(text, translation, "phrase")}
       />
+
+      {/* Discuss with AI about a card */}
+      {discuss.card && (
+        <DiscussAiModal
+          isOpen={discuss.open}
+          isHistoryLoading={discuss.historyLoading}
+          mode={discuss.card.type}
+          selectedText={discuss.card.front}
+          sentence={discuss.card.front}
+          nativeLanguage={nativeLanguage}
+          targetLanguage={targetLanguage}
+          messages={discuss.messages}
+          onMessagesChange={handleDiscussMessagesChange}
+          onClose={() => setDiscuss((prev) => ({ ...prev, open: false }))}
+          onWordTap={(word) => void openWordModalFor(word)}
+          onAddExample={(text, translation) => void addCard(text, translation, "phrase", discuss.card)}
+        />
+      )}
 
       {/* Screen Header */}
       <header className="screen-header">
@@ -389,7 +510,7 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
           className={`srs-tab ${activeTab === "train" ? "active" : ""}`}
           onClick={() => {
             setActiveTab("train");
-            if (currentTrainIndex >= dueCards.length) restartTraining();
+            if (currentTrainIndex >= trainingCards.length) restartTraining();
           }}
           type="button"
         >
@@ -450,17 +571,46 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
       {/* TAB: TRAINING */}
       {activeTab === "train" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Type filter: train only words / phrases / sentences */}
+          <div className="filter-chips" style={{ justifyContent: "center" }}>
+            {(["all", "word", "phrase", "sentence"] as FilterType[]).map((t) => (
+              <button
+                key={t}
+                className={`filter-chip ${trainFilter === t ? "active" : ""}`}
+                onClick={() => {
+                  setTrainFilter(t);
+                  setCurrentTrainIndex(0);
+                  setIsFlipped(false);
+                }}
+                type="button"
+              >
+                {t === "all" ? "Все типы" : TYPE_LABELS[t]}
+                {t !== "all" && (
+                  <span style={{ marginLeft: 4, opacity: 0.7 }}>
+                    {dueCards.filter((c) => c.type === t).length}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
           {dueCards.length === 0 ? (
             <div className="empty-state">
               <CheckCircle2 size={44} style={{ color: "var(--green)" }} />
               <strong>Нечего повторять!</strong>
               <p>Нет карточек для тренировки. Добавьте новые слова во время чтения.</p>
             </div>
-          ) : currentTrainIndex >= dueCards.length ? (
+          ) : trainingCards.length === 0 ? (
+            <div className="empty-state">
+              <AlertCircle size={40} />
+              <strong>Нет карточек этого типа</strong>
+              <p>На сегодня нет карточек выбранного типа. Выберите другой фильтр.</p>
+            </div>
+          ) : currentTrainIndex >= trainingCards.length ? (
             <div className="empty-state" style={{ background: "linear-gradient(135deg, rgba(122, 171, 106, 0.08) 0%, var(--bg-elevated) 100%)", borderColor: "rgba(122, 171, 106, 0.2)" }}>
               <CheckCircle2 size={48} style={{ color: "var(--green)" }} />
               <strong>Тренировка завершена!</strong>
-              <p>Вы повторили все {dueCards.length} карточек. Отличная работа!</p>
+              <p>Вы повторили все {trainingCards.length} карточек. Отличная работа!</p>
               <button className="secondary-btn" style={{ marginTop: 12 }} onClick={restartTraining} type="button">
                 <RotateCcw size={14} /> Начать заново
               </button>
@@ -469,8 +619,8 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
               {/* Progress */}
               <div style={{ width: "100%", maxWidth: 420, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, fontSize: 13, color: "var(--text-muted)", fontWeight: 700 }}>
-                <span>Карточка {currentTrainIndex + 1} из {dueCards.length}</span>
-                <span style={{ color: "var(--accent)" }}>{Math.round((currentTrainIndex / dueCards.length) * 100)}% пройдено</span>
+                <span>Карточка {currentTrainIndex + 1} из {trainingCards.length}</span>
+                <span style={{ color: "var(--accent)" }}>{Math.round((currentTrainIndex / trainingCards.length) * 100)}% пройдено</span>
               </div>
 
               {/* Flipper card — height adapts to content */}
@@ -480,6 +630,16 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
                   <div className="flipper-face flipper-face-front" onClick={() => setIsFlipped((f) => !f)}>
                     <div className="card-face-row">
                       <span className={`flash-card-type ${currentCard.type}`}>{TYPE_LABELS[currentCard.type]}</span>
+                      <button
+                        className="icon-btn"
+                        style={{ width: 32, height: 32, marginLeft: "auto", marginRight: 4 }}
+                        type="button"
+                        aria-label="Обсудить с AI"
+                        title="Обсудить с AI"
+                        onClick={(e) => { e.stopPropagation(); void openDiscussForCard(currentCard); }}
+                      >
+                        <MessageCircle size={16} />
+                      </button>
                       {/* TTS button — long press or right-click to change provider */}
                       <div
                         className="card-tts-wrap"
@@ -646,14 +806,26 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
                     <div className="flash-card-back" style={{ fontSize: 13, color: "var(--text-muted)" }}>{card.back}</div>
                     <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
                   </div>
-                  <button
-                    className="card-row-delete-btn"
-                    onClick={() => { if (confirm("Удалить карточку?")) onDeleteCard(card.id); }}
-                    type="button"
-                    aria-label="Удалить"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+                    <button
+                      className="card-row-delete-btn"
+                      style={{ color: "var(--text-muted)" }}
+                      onClick={() => void openDiscussForCard(card)}
+                      type="button"
+                      aria-label="Обсудить с AI"
+                      title="Обсудить с AI"
+                    >
+                      <MessageCircle size={16} />
+                    </button>
+                    <button
+                      className="card-row-delete-btn"
+                      onClick={() => { if (confirm("Удалить карточку?")) onDeleteCard(card.id); }}
+                      type="button"
+                      aria-label="Удалить"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
               ))}
               {visibleCount < filteredAllCards.length && (
@@ -663,6 +835,8 @@ export function CardsView({ cards, onBack, onUpdateCard, onDeleteCard }: Props) 
           )}
         </div>
       )}
+
+      {toast && <div className="toast">{toast}</div>}
     </section>
   );
 }

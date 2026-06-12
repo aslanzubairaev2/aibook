@@ -13,6 +13,7 @@ type Props = {
   selectedWord: string;
   onClose: () => void;
   onAddCard: () => void;
+  onAddLemma?: (lemma: string) => void;
   onWordTap?: (word: string, contextSentence: string) => void;
   onAddExample?: (text: string, translation: string) => void;
 };
@@ -28,7 +29,7 @@ const PLURAL_LABEL = "\u041c\u043d. \u0447\u0438\u0441\u043b\u043e";
 const INFINITIVE_LABEL = "\u0418\u043d\u0444\u0438\u043d\u0438\u0442\u0438\u0432";
 const FORM_LABEL = "\u0424\u043e\u0440\u043c\u0430";
 
-export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onClose, onAddCard, onWordTap, onAddExample }: Props) {
+export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onAddExample }: Props) {
   if (!isOpen) return null;
   const word = analysis?.word;
   const displayWord = selectedWord || word?.text || word?.lemma || "";
@@ -86,6 +87,17 @@ export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onC
               <span>{LEMMA_LABEL}</span>
               <strong>{word.lemma}</strong>
               <SpeakButton text={word.lemma} lang={lang} size={13} />
+              {onAddLemma && word.translation && (
+                <button
+                  type="button"
+                  className="lemma-add-btn"
+                  aria-label="Добавить инфинитив в карточки"
+                  title="Добавить инфинитив в карточки"
+                  onClick={() => onAddLemma(word.lemma)}
+                >
+                  <Plus size={13} />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -99,7 +111,23 @@ export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onC
             <div className="word-details-grid">
               {word.nounDetails?.article && <span>{ARTICLE_LABEL} <b>{word.nounDetails.article}</b></span>}
               {word.nounDetails?.plural && <span>{PLURAL_LABEL} <b>{word.nounDetails.plural}</b></span>}
-              {word.verbDetails?.infinitive && <span>{INFINITIVE_LABEL} <b>{word.verbDetails.infinitive}</b></span>}
+              {word.verbDetails?.infinitive && (
+                <span style={{ position: "relative" }}>
+                  {INFINITIVE_LABEL} <b>{word.verbDetails.infinitive}</b>
+                  {onAddLemma && word.translation && (
+                    <button
+                      type="button"
+                      className="lemma-add-btn"
+                      style={{ position: "absolute", top: 6, right: 6 }}
+                      aria-label="Добавить инфинитив в карточки"
+                      title="Добавить инфинитив в карточки"
+                      onClick={() => onAddLemma(word.verbDetails!.infinitive!)}
+                    >
+                      <Plus size={13} />
+                    </button>
+                  )}
+                </span>
+              )}
               {word.verbDetails?.person && <span>{FORM_LABEL} <b>{word.verbDetails.person}</b></span>}
             </div>
           )}

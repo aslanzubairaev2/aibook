@@ -490,40 +490,42 @@ function Part({
 
   return (
     <span className="discuss-learning-part">
-      <span className="discuss-learning-main">
-        <span className="discuss-learning-text">
-          {splitIntoTokens(part.text).map((token, index) => {
-            if (!normalizeToken(token)) return <span key={index}>{token}</span>;
-            return (
-              <span
-                key={index}
-                role="button"
-                tabIndex={0}
-                className="discuss-clickable-word"
-                onClick={() => onWordTap(token, part.text)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") onWordTap(token, part.text);
-                }}
-              >
-                {token}
-              </span>
-            );
-          })}
+      <span className="discuss-learning-content">
+        <span className="discuss-learning-main">
+          <span className="discuss-learning-text">
+            {splitIntoTokens(part.text).map((token, index) => {
+              if (!normalizeToken(token)) return <span key={index}>{token}</span>;
+              return (
+                <span
+                  key={index}
+                  role="button"
+                  tabIndex={0}
+                  className="discuss-clickable-word"
+                  onClick={() => onWordTap(token, part.text)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") onWordTap(token, part.text);
+                  }}
+                >
+                  {token}
+                </span>
+              );
+            })}
+          </span>
+          <SpeakButton text={part.text} lang={lang} size={12} />
         </span>
-        <SpeakButton text={part.text} lang={lang} size={12} />
-        {onAddExample && part.translation && (
-          <button
-            type="button"
-            className="discuss-add-example-btn"
-            aria-label="Добавить в карточки"
-            title="Добавить в карточки"
-            onClick={() => onAddExample(part.text, part.translation ?? "")}
-          >
-            <Plus size={12} />
-          </button>
-        )}
+        {part.translation && <span className="discuss-learning-translation">{part.translation}</span>}
       </span>
-      {part.translation && <span className="discuss-learning-translation">{part.translation}</span>}
+      {onAddExample && part.translation && (
+        <button
+          type="button"
+          className="discuss-add-example-btn"
+          aria-label="Добавить в карточки"
+          title="Добавить в карточки"
+          onClick={() => onAddExample(part.text, part.translation ?? "")}
+        >
+          <Plus size={18} />
+        </button>
+      )}
     </span>
   );
 }

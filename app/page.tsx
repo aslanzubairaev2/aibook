@@ -843,6 +843,7 @@ function AppInner() {
         <ReaderView
           book={lastBook}
           profile={profile}
+          cards={cards}
           onBack={() => setSection(readerOrigin)}
           onAddCard={handleAddCard}
           onProgressUpdate={handleProgressUpdate}
@@ -859,6 +860,7 @@ function AppInner() {
         <CardsView
           cards={cards}
           onBack={() => setSection("home")}
+          onAddCard={handleAddCard}
           onUpdateCard={handleUpdateCard}
           onDeleteCard={handleDeleteCard}
         />

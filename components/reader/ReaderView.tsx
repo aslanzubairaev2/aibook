@@ -34,6 +34,7 @@ import {
   sbSaveDiscussHistory,
 } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
+import { findDuplicateCard } from "@/lib/cards";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
 import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, LessonContext, ReaderProgressSnapshot, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
@@ -44,6 +45,7 @@ const PAGE_MAX_PARAGRAPHS = 28;
 type Props = {
   book: Book;
   profile: UserProfile;
+  cards: Flashcard[];
   onBack: () => void;
   onAddCard: (card: Flashcard) => void;
   onProgressUpdate: (book: Book) => void;
@@ -137,6 +139,7 @@ function isLessonHeading(text: string): boolean {
 export function ReaderView({
   book,
   profile,
+  cards,
   onBack,
   onAddCard,
   onProgressUpdate,
@@ -910,6 +913,11 @@ export function ReaderView({
   async function addFlashcard(front: string, back: string, type: Flashcard["type"]) {
     if (!front.trim() || !back.trim()) return;
 
+    if (findDuplicateCard(front, cards)) {
+      showToast("Такая карточка уже добавлена");
+      return;
+    }
+
     const srsFields = createDefaultSrsFields(book.id, book.title);
     const localCard: Flashcard = {
       id: `card-${Date.now()}`,
@@ -1302,7 +1310,12 @@ export function ReaderView({
           setWordModalAnalysis(null);
           setWordModalSelection("");
         }}
-        onAddCard={() => { void handleAddCard("word"); setIsWordModalOpen(false); }}
+        onAddCard={() => {
+          const front = wordModalSelection || active?.token || "";
+          const back = wordModalAnalysis?.word?.translation ?? "";
+          void addFlashcard(front, back, "word");
+        }}
+        onAddLemma={(lemma) => void addFlashcard(lemma, wordModalAnalysis?.word?.translation ?? "", "word")}
         onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
         onAddExample={(text, translation) => void addFlashcard(text, translation, "phrase")}
       />
