@@ -25,9 +25,24 @@ type Props = {
 
 type FilterStatus = "all" | "new" | "learning" | "review" | "relearning";
 type FilterType = "all" | "word" | "phrase" | "sentence";
+type TrainStatus = "all" | "new" | "learning" | "review" | "relearning" | "hard";
 type SortOrder = "added" | "due" | "ease";
 
 const TYPE_LABELS = { word: "Слово", phrase: "Фраза", sentence: "Предложение" } as const;
+
+const TRAIN_STATUS_LABELS: Record<Exclude<TrainStatus, "all">, string> = {
+  new: "Новые",
+  learning: "Обучение",
+  review: "Повторение",
+  relearning: "Переучивание",
+  hard: "Сложные",
+};
+
+// "Hard" cards: repeatedly forgotten (lapses) or with a low ease factor —
+// the ones the user struggles to memorize. Trained regardless of due date.
+function isHardCard(c: Flashcard): boolean {
+  return c.lapses >= 2 || (c.repetitions > 0 && c.easeFactor <= 2.2);
+}
 
 const TTS_PROVIDERS: { value: TtsProvider; label: string }[] = [
   { value: "local", label: "Браузер" },
@@ -56,6 +71,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   const [reviewedIds, setReviewedIds] = useState<string[]>([]);
   const [isFlipped, setIsFlipped] = useState(false);
   const [trainFilter, setTrainFilter] = useState<FilterType>("all");
+  const [trainStatus, setTrainStatus] = useState<TrainStatus>("all");
 
   // Discuss-with-AI state (chat about a specific card)
   const [discuss, setDiscuss] = useState<{
@@ -196,8 +212,16 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
     showToast("✓ Карточка добавлена");
   }
 
-  // --- Training (cards filtered by selected type) ---
-  const trainingCards = trainFilter === "all" ? dueCards : dueCards.filter((c) => c.type === trainFilter);
+  // --- Training (cards filtered by status and type) ---
+  // "hard" draws from ALL cards (not just due today) so problem cards can be
+  // drilled any time; the rest filter today's due queue by SRS status.
+  const trainPool =
+    trainStatus === "hard"
+      ? cards.filter(isHardCard).sort((a, b) => a.easeFactor - b.easeFactor)
+      : trainStatus === "all"
+        ? dueCards
+        : dueCards.filter((c) => c.status === trainStatus);
+  const trainingCards = trainFilter === "all" ? trainPool : trainPool.filter((c) => c.type === trainFilter);
 
   const handleGrade = (score: 1 | 2 | 3 | 4) => {
     if (trainingCards.length === 0 || currentTrainIndex >= trainingCards.length) return;
@@ -377,6 +401,8 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   return (
     <section className="screen" onClick={() => { setShowSortMenu(false); setShowTtsMenu(false); }}>
       <style>{`
+        .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; background: var(--bg-primary); border-bottom: 1px solid var(--border); }
+        @media (min-width: 640px) { .srs-sticky-header { margin: -28px -24px 16px; padding: 24px 24px 10px; } }
         .srs-tabs-container { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 20px; gap: 12px; }
         .srs-tab { padding: 10px 4px 12px; background: transparent; border: none; border-bottom: 2px solid transparent; font-weight: 700; font-size: 14px; color: var(--text-muted); transition: all 0.2s; cursor: pointer; }
         .srs-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
@@ -467,8 +493,8 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
         />
       )}
 
-      {/* Screen Header */}
-      <header className="screen-header">
+      {/* Screen Header — stays pinned while the card lists scroll */}
+      <header className="screen-header srs-sticky-header">
         <button className="icon-btn" onClick={onBack} type="button" aria-label="Назад">
           <ArrowLeft size={20} />
         </button>
@@ -587,25 +613,58 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                 {t === "all" ? "Все типы" : TYPE_LABELS[t]}
                 {t !== "all" && (
                   <span style={{ marginLeft: 4, opacity: 0.7 }}>
-                    {dueCards.filter((c) => c.type === t).length}
+                    {trainPool.filter((c) => c.type === t).length}
                   </span>
                 )}
               </button>
             ))}
           </div>
 
-          {dueCards.length === 0 ? (
-            <div className="empty-state">
-              <CheckCircle2 size={44} style={{ color: "var(--green)" }} />
-              <strong>Нечего повторять!</strong>
-              <p>Нет карточек для тренировки. Добавьте новые слова во время чтения.</p>
+          {/* Status filter: new / learning / review / relearning / hard-to-memorize */}
+          <div className="filter-chips" style={{ justifyContent: "center", marginTop: -8 }}>
+            {(["all", "new", "learning", "review", "relearning", "hard"] as TrainStatus[]).map((s) => {
+              const count =
+                s === "all" ? dueCards.length
+                : s === "hard" ? cards.filter(isHardCard).length
+                : dueCards.filter((c) => c.status === s).length;
+              return (
+                <button
+                  key={s}
+                  className={`filter-chip ${trainStatus === s ? "active" : ""}`}
+                  onClick={() => {
+                    setTrainStatus(s);
+                    setCurrentTrainIndex(0);
+                    setIsFlipped(false);
+                  }}
+                  type="button"
+                >
+                  {s === "all" ? "Все статусы" : TRAIN_STATUS_LABELS[s]}
+                  {s !== "all" && <span style={{ marginLeft: 4, opacity: 0.7 }}>{count}</span>}
+                </button>
+              );
+            })}
+          </div>
+
+          {trainStatus === "hard" && (
+            <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginTop: -8 }}>
+              Карточки с частыми ошибками — включая не назначенные на сегодня
             </div>
-          ) : trainingCards.length === 0 ? (
-            <div className="empty-state">
-              <AlertCircle size={40} />
-              <strong>Нет карточек этого типа</strong>
-              <p>На сегодня нет карточек выбранного типа. Выберите другой фильтр.</p>
-            </div>
+          )}
+
+          {trainingCards.length === 0 ? (
+            dueCards.length === 0 && trainStatus !== "hard" ? (
+              <div className="empty-state">
+                <CheckCircle2 size={44} style={{ color: "var(--green)" }} />
+                <strong>Нечего повторять!</strong>
+                <p>Нет карточек для тренировки. Добавьте новые слова во время чтения.</p>
+              </div>
+            ) : (
+              <div className="empty-state">
+                <AlertCircle size={40} />
+                <strong>Нет карточек по выбранным фильтрам</strong>
+                <p>{trainStatus === "hard" ? "Отлично — сложных карточек нет!" : "Попробуйте другой тип или статус."}</p>
+              </div>
+            )
           ) : currentTrainIndex >= trainingCards.length ? (
             <div className="empty-state" style={{ background: "linear-gradient(135deg, rgba(122, 171, 106, 0.08) 0%, var(--bg-elevated) 100%)", borderColor: "rgba(122, 171, 106, 0.2)" }}>
               <CheckCircle2 size={48} style={{ color: "var(--green)" }} />
