@@ -1,10 +1,12 @@
-import type { AiAnalysis, Book, DiscussMessage, Flashcard, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
+import type { AiAnalysis, Book, CardSkillState, DiscussMessage, Flashcard, GrammarTable, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, UserProfile } from "@/lib/types";
 
 const BOOKS_KEY = "aibook_books";
 const CARDS_KEY = "aibook_cards";
 const PROFILE_KEY = "aibook_profile";
 const PROGRESS_KEY = "aibook_progress";
 const AI_CACHE_KEY = "aibook_ai_selection_cache";
+const GRAMMAR_CACHE_KEY = "aibook_grammar_cache";
+const SKILL_PROGRESS_KEY = "aibook_skill_progress";
 const DISCUSS_CACHE_KEY = "aibook_discuss_cache";
 const READER_SELECTION_KEY = "aibook_reader_selection";
 const LAST_VIEW_KEY = "aibook_last_view";
@@ -408,6 +410,63 @@ export function saveLocalAiAnalysis(key: string, value: AiAnalysis): void {
     if (idx >= 0) all[idx] = entry;
     else all.push(entry);
     localStorage.setItem(getNsKey(AI_CACHE_KEY), JSON.stringify(all.slice(-250)));
+  } catch {
+    // silently fail
+  }
+}
+
+type GrammarCacheEntry = {
+  key: string;
+  value: GrammarTable;
+  updatedAt: string;
+};
+
+export function getLocalGrammar(key: string): GrammarTable | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const all = JSON.parse(localStorage.getItem(getNsKey(GRAMMAR_CACHE_KEY)) ?? "[]") as GrammarCacheEntry[];
+    return all.find((entry) => entry.key === key)?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalGrammar(key: string, value: GrammarTable): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(getNsKey(GRAMMAR_CACHE_KEY)) ?? "[]") as GrammarCacheEntry[];
+    const idx = all.findIndex((entry) => entry.key === key);
+    const entry: GrammarCacheEntry = { key, value, updatedAt: new Date().toISOString() };
+    if (idx >= 0) all[idx] = entry;
+    else all.push(entry);
+    localStorage.setItem(getNsKey(GRAMMAR_CACHE_KEY), JSON.stringify(all.slice(-150)));
+  } catch {
+    // silently fail
+  }
+}
+
+// Productive-recall progress, keyed by card id → per-skill SRS state.
+// Stored locally only (the remote flashcards table has no columns for it).
+type SkillProgressMap = Record<string, CardSkillState>;
+
+function readSkillProgressMap(): SkillProgressMap {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(getNsKey(SKILL_PROGRESS_KEY)) ?? "{}") as SkillProgressMap;
+  } catch {
+    return {};
+  }
+}
+
+export function getCardSkillState(cardId: string): CardSkillState {
+  return readSkillProgressMap()[cardId] ?? {};
+}
+
+export function saveCardSkillProgress(cardId: string, skill: ProductiveSkill, progress: SkillProgress): void {
+  if (typeof window === "undefined") return;
+  try {
+    const all = readSkillProgressMap();
+    all[cardId] = { ...all[cardId], [skill]: progress };
+    localStorage.setItem(getNsKey(SKILL_PROGRESS_KEY), JSON.stringify(all));
   } catch {
     // silently fail
   }

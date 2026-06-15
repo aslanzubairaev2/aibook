@@ -11,3 +11,12 @@ export function makeAiCacheKey(mode: AiMode | "discuss", text: string, targetLan
 export function makeDiscussCacheKey(mode: AiMode, text: string, targetLanguage: string, nativeLanguage: string) {
   return `v2:discuss:${mode}:${normalizeAiCacheText(text)}:${targetLanguage}:${nativeLanguage}`;
 }
+
+export function makeGrammarCacheKey(
+  text: string,
+  detail: "brief" | "full",
+  targetLanguage: string,
+  nativeLanguage: string,
+) {
+  return `v2:grammar:${detail}:${normalizeAiCacheText(text)}:${targetLanguage}:${nativeLanguage}`;
+}

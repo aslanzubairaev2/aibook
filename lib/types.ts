@@ -46,10 +46,23 @@ export type UserProfile = {
   ttsProvider?: TtsProvider;
 };
 
+// Normalized, language-agnostic part of speech used to decide which grammar
+// table (conjugation / declension / …) to offer. `partOfSpeech` stays as the
+// human-readable label in the user's native language.
+export type PosTag =
+  | "verb"
+  | "noun"
+  | "adjective"
+  | "adverb"
+  | "pronoun"
+  | "numeral"
+  | "other";
+
 export type WordAnalysis = {
   text: string;
   lemma: string;
   partOfSpeech: string;
+  posTag?: PosTag;
   gender?: string;
   translation: string;
   explanation?: string;
@@ -62,6 +75,46 @@ export type WordAnalysis = {
     tense?: string;
     person?: string;
   };
+};
+
+// ─── Grammar tables (conjugation / declension / comparison) ─────────────────
+export type GrammarKind = "conjugation" | "declension" | "comparison" | "forms";
+
+export type GrammarCell = {
+  label: string;     // label in the native language, e.g. "я", "он/она"
+  pronoun?: string;  // target-language marker shown with the form, e.g. "ich", "der/die/das"
+  form: string;      // inflected form in the target language — this is what gets spoken
+  note?: string;     // optional short note in the native language
+};
+
+export type GrammarSection = {
+  title: string;     // section heading in the native language, e.g. "Настоящее время"
+  caption?: string;  // optional helper text in the native language
+  cells: GrammarCell[];
+};
+
+export type GrammarGender = "m" | "f" | "n" | "pl" | "";
+
+// Petrov-style verb matrix: 3 tenses (rows) × 3 polarities (columns), each cell
+// holding the conjugation for the person set. Used for the full verb view.
+export type GrammarMatrixRow = { form: string; native: string };
+export type GrammarMatrix = {
+  rowLabels: string[];            // tenses, top → bottom (future, present, past)
+  colLabels: string[];           // polarities, left → right (negation, affirmation, question)
+  cells: GrammarMatrixRow[][][]; // [rowIndex][colIndex] → person rows
+};
+
+export type GrammarTable = {
+  word: string;
+  lemma: string;
+  language: string;          // resolved target language code the forms are in
+  partOfSpeech: PosTag;
+  kind: GrammarKind;
+  detail: "brief" | "full";
+  gender?: GrammarGender;    // for nouns — drives the colored gender badge
+  sections: GrammarSection[];
+  matrix?: GrammarMatrix;    // for verbs on the full view — Petrov-style grid
+  languageWarning?: string;  // set when the word looks like it belongs to another language
 };
 
 export type PhraseAnalysis = {
@@ -128,6 +181,8 @@ export type ReaderProgressSnapshot = {
   selectionState: ReaderSelectionSnapshot | null;
 };
 
+export type CardStatus = "new" | "learning" | "review" | "relearning";
+
 export type Flashcard = {
   id: string;
   type: SelectionType;
@@ -135,7 +190,7 @@ export type Flashcard = {
   back: string;
   source: string;
   addedAt: string;
-  status: "new" | "learning" | "review" | "relearning";
+  status: CardStatus;
   repetitions: number;
   lapses: number;
   intervalDays: number;
@@ -145,3 +200,21 @@ export type Flashcard = {
   sourceBookId?: string | null;
   sourceBookTitle?: string | null;
 };
+
+// ─── Productive recall ──────────────────────────────────────────────────────
+// The base Flashcard SRS tracks *recognition* (foreign → meaning). Productive
+// practice needs its own per-skill schedule so "узнаю / вспоминаю / произношу"
+// progress independently. Stored locally, keyed by card id.
+export type ProductiveSkill = "recall" | "listen" | "produce";
+
+export type SkillProgress = {
+  status: CardStatus;
+  repetitions: number;
+  lapses: number;
+  intervalDays: number;
+  easeFactor: number;
+  dueAt: string;
+  lastReviewedAt: string | null;
+};
+
+export type CardSkillState = Partial<Record<ProductiveSkill, SkillProgress>>;

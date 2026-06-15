@@ -1,4 +1,4 @@
-import type { Flashcard } from "@/lib/types";
+import type { Flashcard, SkillProgress } from "@/lib/types";
 
 export type SrsScore = 1 | 2 | 3 | 4; // 1 = Forgot, 2 = Hard, 3 = Good, 4 = Easy
 
@@ -110,5 +110,23 @@ export function createDefaultSrsFields(sourceBookId?: string | null, sourceBookT
     lastReviewedAt: null,
     sourceBookId: sourceBookId ?? null,
     sourceBookTitle: sourceBookTitle ?? null,
+  };
+}
+
+/**
+ * Initial SRS state for a productive skill track (recall / listen / produce).
+ * New skills are due immediately so they enter the first session.
+ */
+export function createDefaultSkillProgress(): SkillProgress {
+  const due = new Date();
+  due.setHours(23, 59, 59, 999);
+  return {
+    status: "new",
+    repetitions: 0,
+    lapses: 0,
+    intervalDays: 0,
+    easeFactor: 2.5,
+    dueAt: due.toISOString(),
+    lastReviewedAt: null,
   };
 }

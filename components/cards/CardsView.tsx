@@ -14,6 +14,8 @@ import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory } from "@/
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
+import { ProductiveTrainer } from "@/components/cards/ProductiveTrainer";
+import { SkillBadges } from "@/components/cards/SkillBadges";
 
 type Props = {
   cards: Flashcard[];
@@ -72,6 +74,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   const [isFlipped, setIsFlipped] = useState(false);
   const [trainFilter, setTrainFilter] = useState<FilterType>("all");
   const [trainStatus, setTrainStatus] = useState<TrainStatus>("all");
+  const [trainMode, setTrainMode] = useState<"recognize" | "active">("recognize");
 
   // Discuss-with-AI state (chat about a specific card)
   const [discuss, setDiscuss] = useState<{
@@ -467,6 +470,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
         isOpen={wordModal.open}
         isLoading={wordModal.loading}
         lang={targetLanguage}
+        nativeLang={nativeLanguage}
         selectedWord={wordModal.word}
         onClose={() => setWordModal((s) => ({ ...s, open: false }))}
         onAddCard={() => void addCard(wordModal.word, wordModal.analysis?.word?.translation ?? "", "word")}
@@ -572,9 +576,12 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                   <div key={card.id} className="flash-card" style={{ borderLeft: `4px solid ${STATUS_COLORS[card.status] ?? "var(--accent)"}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
                       <span className={`flash-card-type ${card.type}`}>{TYPE_LABELS[card.type]}</span>
-                      <span style={{ fontSize: 10, background: `${STATUS_COLORS[card.status] ?? "var(--accent)"}18`, color: STATUS_COLORS[card.status] ?? "var(--accent)", padding: "2px 6px", borderRadius: 4, fontWeight: 800, textTransform: "uppercase" }}>
-                        {STATUS_LABELS[card.status] ?? card.status}
-                      </span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <SkillBadges cardId={card.id} />
+                        <span style={{ fontSize: 10, background: `${STATUS_COLORS[card.status] ?? "var(--accent)"}18`, color: STATUS_COLORS[card.status] ?? "var(--accent)", padding: "2px 6px", borderRadius: 4, fontWeight: 800, textTransform: "uppercase" }}>
+                          {STATUS_LABELS[card.status] ?? card.status}
+                        </span>
+                      </div>
                     </div>
                     <div className="flash-card-front" style={{ fontSize: 16 }}>{card.front}</div>
                     <div className="flash-card-back" style={{ fontSize: 13, color: "var(--text-muted)" }}>{card.back}</div>
@@ -597,6 +604,20 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
       {/* TAB: TRAINING */}
       {activeTab === "train" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Mode: passive recognition (flip card) vs active production */}
+          <div className="filter-chips" style={{ justifyContent: "center" }}>
+            <button className={`filter-chip ${trainMode === "recognize" ? "active" : ""}`} onClick={() => setTrainMode("recognize")} type="button">Узнавание</button>
+            <button className={`filter-chip ${trainMode === "active" ? "active" : ""}`} onClick={() => setTrainMode("active")} type="button">Активно</button>
+          </div>
+
+          {trainMode === "active" ? (
+            <ProductiveTrainer
+              cards={cards}
+              targetLanguage={targetLanguage}
+              onReviewed={(card) => onUpdateCard({ ...card, lastReviewedAt: new Date().toISOString() })}
+            />
+          ) : (
+          <>
           {/* Type filter: train only words / phrases / sentences */}
           <div className="filter-chips" style={{ justifyContent: "center" }}>
             {(["all", "word", "phrase", "sentence"] as FilterType[]).map((t) => (
@@ -779,6 +800,8 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                 </button>
               </div>
             </div>
+          )}
+          </>
           )}
         </div>
       )}

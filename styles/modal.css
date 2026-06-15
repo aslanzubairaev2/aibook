@@ -222,6 +222,302 @@
   color: var(--surface);
 }
 
+/* ─── Grammar: open button in the Word modal ─────────────────────────────── */
+.grammar-open-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid rgba(212, 168, 71, 0.4);
+  border-radius: var(--radius-md);
+  background: rgba(212, 168, 71, 0.08);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.grammar-open-btn:hover { background: rgba(212, 168, 71, 0.16); }
+.grammar-open-btn:active { transform: scale(0.99); }
+
+/* ─── Grammar modal (separate sheet over the Word modal) ─────────────────── */
+.grammar-modal-backdrop { z-index: 84; align-items: flex-end; }
+
+.grammar-modal {
+  width: min(100%, 580px);
+  max-height: 92svh;
+  overflow-y: auto;
+  padding: 0 18px 40px;
+  border-top: 1px solid var(--border-strong);
+  border-radius: 20px 20px 0 0;
+  background: var(--bg-secondary);
+  animation: modal-slide-up 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.grammar-modal-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 -18px 4px;
+  padding: 12px 18px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+.grammar-modal-title { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.grammar-modal-title strong { font-size: 16px; color: var(--surface); overflow-wrap: anywhere; }
+.grammar-modal-eyebrow { font-size: 10px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+.grammar-modal-bar .speak-btn { margin-left: auto; flex-shrink: 0; }
+
+.grammar-body { padding: 14px 0 0; }
+
+.grammar-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+/* brief / full segmented control */
+.grammar-segment {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--bg-card);
+}
+
+.grammar-segment-btn {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 99px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.grammar-segment-btn:disabled { cursor: default; }
+.grammar-segment-btn.active {
+  color: var(--accent);
+  background: rgba(212, 168, 71, 0.16);
+}
+
+/* collapsed language picker */
+.grammar-lang-globe {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+.grammar-lang-globe:hover { color: var(--surface); }
+
+.grammar-lang-chips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* der/die/das gender signal */
+.grammar-gender-badge {
+  display: inline-block;
+  margin-bottom: 12px;
+  padding: 4px 14px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 800;
+  border: 1px solid;
+}
+.grammar-gender-badge.g-m { color: #6ea8fe; border-color: rgba(110, 168, 254, 0.5); background: rgba(110, 168, 254, 0.12); }
+.grammar-gender-badge.g-f { color: #f08aa6; border-color: rgba(240, 138, 166, 0.5); background: rgba(240, 138, 166, 0.12); }
+.grammar-gender-badge.g-n { color: #6bd6a6; border-color: rgba(107, 214, 166, 0.5); background: rgba(107, 214, 166, 0.12); }
+.grammar-gender-badge.g-pl { color: var(--text-muted); border-color: var(--border); background: var(--bg-card); }
+
+.grammar-cell-pronoun.art-m { color: #6ea8fe; }
+.grammar-cell-pronoun.art-f { color: #f08aa6; }
+.grammar-cell-pronoun.art-n { color: #6bd6a6; }
+
+.grammar-lang-chip {
+  padding: 5px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.grammar-lang-chip:hover { color: var(--surface); }
+.grammar-lang-chip.active {
+  color: var(--accent);
+  border-color: rgba(212, 168, 71, 0.5);
+  background: rgba(212, 168, 71, 0.12);
+}
+
+.grammar-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(212, 168, 71, 0.4);
+  border-radius: var(--radius-sm);
+  background: rgba(212, 168, 71, 0.08);
+  color: var(--accent);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.grammar-warning svg { flex-shrink: 0; margin-top: 1px; }
+
+.grammar-loading,
+.grammar-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.grammar-error { justify-content: space-between; color: var(--surface-dim); }
+
+.grammar-retry {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.grammar-section { margin-top: 14px; }
+.grammar-section:first-of-type { margin-top: 0; }
+
+.grammar-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.grammar-section-head .speak-btn { margin-left: auto; flex-shrink: 0; }
+
+.grammar-section-title {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.grammar-section-caption { font-size: 12px; color: var(--text-muted); }
+
+.grammar-cells {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.grammar-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(240, 230, 211, 0.03);
+}
+.grammar-cell:first-child { border-top: 0; }
+
+.grammar-cell-label {
+  flex: 0 0 auto;
+  min-width: 64px;
+  max-width: 46%;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.grammar-cell-form {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  color: var(--surface);
+  font-family: var(--font-reading);
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.grammar-cell-form b { color: var(--surface); font-weight: 700; }
+.grammar-cell-pronoun { color: var(--text-muted); font-weight: 400; }
+.grammar-cell .speak-btn { flex-shrink: 0; }
+
+/* ─── Conjugation lines (target phrase + native gloss beneath) ────────────── */
+.petrov-line { display: flex; align-items: center; gap: 8px; }
+.petrov-text { flex: 1; min-width: 0; line-height: 1.2; }
+.petrov-form { font-size: 15px; color: var(--surface); font-family: var(--font-reading); overflow-wrap: normal; }
+.petrov-native { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.petrov-line .speak-btn { flex-shrink: 0; }
+
+/* brief verb list — bordered rows inside .grammar-cells */
+.grammar-cells .petrov-line { border-top: 1px solid var(--border); padding: 9px 12px; }
+.grammar-cells .petrov-line:first-child { border-top: 0; }
+
+/* ─── Petrov verb matrix (tenses × polarities, horizontal scroll) ─────────── */
+.petrov-scroll {
+  overflow-x: auto;
+  margin: 4px -2px 0;
+  padding-bottom: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.petrov-grid { display: grid; gap: 6px; min-width: 700px; }
+.petrov-col-head {
+  align-self: center;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 4px;
+}
+.petrov-row-head {
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--accent);
+  line-height: 1.2;
+}
+.petrov-cell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(240, 230, 211, 0.03);
+  padding: 2px 8px;
+  display: flex;
+  flex-direction: column;
+}
+.petrov-cell .petrov-line { border-top: 1px solid var(--border); padding: 7px 0; }
+.petrov-cell .petrov-line:first-child { border-top: 0; }
+.petrov-cell .petrov-form { font-size: 14px; }
+
 .discuss-backdrop {
   z-index: 55;
   background: rgba(0, 0, 0, 0.78);

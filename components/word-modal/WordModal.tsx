@@ -1,8 +1,10 @@
 "use client";
 
-import { Plus, X } from "lucide-react";
+import { useState } from "react";
+import { Plus, X, ChevronRight } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
-import type { AiAnalysis } from "@/lib/types";
+import { GrammarModal, POS_GRAMMAR_LABEL } from "@/components/word-modal/GrammarModal";
+import type { AiAnalysis, PosTag, WordAnalysis } from "@/lib/types";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 
 type Props = {
@@ -10,6 +12,7 @@ type Props = {
   isOpen: boolean;
   isLoading?: boolean;
   lang: string;
+  nativeLang: string;
   selectedWord: string;
   onClose: () => void;
   onAddCard: () => void;
@@ -17,6 +20,16 @@ type Props = {
   onWordTap?: (word: string, contextSentence: string) => void;
   onAddExample?: (text: string, translation: string) => void;
 };
+
+// Map the human-readable / AI-provided part of speech onto a normalized tag so
+// we can decide which grammar table to offer. Falls back to the detail fields
+// for analyses cached before `posTag` existed.
+function resolvePos(word: WordAnalysis): PosTag {
+  if (word.posTag) return word.posTag;
+  if (word.verbDetails?.infinitive) return "verb";
+  if (word.nounDetails?.article || word.nounDetails?.plural) return "noun";
+  return "other";
+}
 
 const WORD_MODAL_LABEL = "\u0420\u0430\u0437\u0431\u043e\u0440 \u0441\u043b\u043e\u0432\u0430";
 const CLOSE_LABEL = "\u0417\u0430\u043a\u0440\u044b\u0442\u044c";
@@ -29,7 +42,8 @@ const PLURAL_LABEL = "\u041c\u043d. \u0447\u0438\u0441\u043b\u043e";
 const INFINITIVE_LABEL = "\u0418\u043d\u0444\u0438\u043d\u0438\u0442\u0438\u0432";
 const FORM_LABEL = "\u0424\u043e\u0440\u043c\u0430";
 
-export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onAddExample }: Props) {
+export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onAddExample }: Props) {
+  const [grammarOpen, setGrammarOpen] = useState(false);
   if (!isOpen) return null;
   const word = analysis?.word;
   const displayWord = selectedWord || word?.text || word?.lemma || "";
@@ -194,10 +208,32 @@ export function WordModal({ analysis, isOpen, isLoading, lang, selectedWord, onC
             })}
           </div>
         </div>
+
+        {/* Grammar — opens a dedicated modal; button label depends on part of speech */}
+        <button
+          type="button"
+          className="grammar-open-btn"
+          onClick={() => setGrammarOpen(true)}
+        >
+          <span>{POS_GRAMMAR_LABEL[resolvePos(word)]}</span>
+          <ChevronRight size={18} />
+        </button>
         </>
         )}
 
       </section>
+
+      {grammarOpen && word && (
+        <GrammarModal
+          key={displayWord}
+          word={displayWord}
+          lemma={word.lemma}
+          posTag={resolvePos(word)}
+          defaultLang={lang}
+          nativeLang={nativeLang}
+          onClose={() => setGrammarOpen(false)}
+        />
+      )}
     </div>
   );
 }

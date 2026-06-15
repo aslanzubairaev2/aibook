@@ -15,7 +15,7 @@ interface AnalyzeParams {
   skipSentence?: boolean;
 }
 
-async function getAiHeaders() {
+export async function getAiHeaders() {
   const provider = getLocalAiProvider();
   if (provider === "off") {
     throw new Error("AI выключен в настройках. Включите его, чтобы использовать эту функцию.");

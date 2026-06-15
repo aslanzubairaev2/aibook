@@ -19,6 +19,7 @@ export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
       text: p.word,
       lemma: "dictionary/base form or infinitive",
       partOfSpeech: `part of speech in ${p.nativeLanguage}`,
+      posTag: "one of: verb | noun | adjective | adverb | pronoun | numeral | other",
       gender: "grammatical gender/article if applicable, otherwise empty string",
       translation: `short primary translation in ${p.nativeLanguage}`,
       explanation: `short dictionary-style note in ${p.nativeLanguage}`,

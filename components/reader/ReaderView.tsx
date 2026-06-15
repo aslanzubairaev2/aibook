@@ -1304,6 +1304,7 @@ export function ReaderView({
         isOpen={isWordModalOpen}
         isLoading={isWordModalLoading}
         lang={book.language}
+        nativeLang={profile.nativeLanguage}
         selectedWord={wordModalSelection || active?.token || ""}
         onClose={() => {
           setIsWordModalOpen(false);
