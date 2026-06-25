@@ -893,6 +893,8 @@ function AppInner() {
         nativeLanguage={profile.nativeLanguage}
         targetLanguage={profile.targetLanguage}
         textContext={liveChatTextContext}
+        cards={cards}
+        onAddCard={handleAddCard}
         onClose={() => { setIsLiveChatOpen(false); setLiveChatTextContext(null); }}
         onOpenSettings={() => { setIsLiveChatOpen(false); setLiveChatTextContext(null); setSection("settings"); }}
       />

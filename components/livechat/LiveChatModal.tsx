@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Mic, MicOff, PhoneOff, Shuffle, X } from "lucide-react";
-import { getLocalGeminiKey } from "@/lib/db/local";
-import { sbAuthHeaders } from "@/lib/db/supabase";
-import { LiveChatSession, type LiveChatMode, type LiveChatStatus } from "@/lib/ai/liveChat";
+import { Loader2, Mic, MicOff, PhoneOff, Shuffle, Volume2, X, Gauge } from "lucide-react";
+import { getLocalGeminiKey, getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
+import { sbAuthHeaders, sbGetCachedAnalysis, sbSaveCachedAnalysis, sbInsertFlashcard } from "@/lib/db/supabase";
+import { LiveChatSession, base64Pcm16ToFloat32, OUTPUT_SAMPLE_RATE, type LiveChatMode, type LiveChatStatus } from "@/lib/ai/liveChat";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 import {
   fetchLiveScenarios,
@@ -13,7 +13,14 @@ import {
   type LiveScenario,
   type LiveSuggestion,
 } from "@/lib/ai/liveChatExtras";
-import type { CefrLevel } from "@/lib/types";
+import { analyzeSelection } from "@/lib/ai/analyze";
+import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
+import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
+import { useAuth } from "@/lib/auth/useAuth";
+import { findDuplicateCard } from "@/lib/cards";
+import { createDefaultSrsFields } from "@/lib/srs/sm2";
+import { WordModal } from "@/components/word-modal/WordModal";
+import type { AiAnalysis, CefrLevel, Flashcard } from "@/lib/types";
 
 type Props = {
   isOpen: boolean;
@@ -21,11 +28,13 @@ type Props = {
   targetLanguage: string;
   /** Set when the call was started from a specific text passage (the phone icon on a CEFR text) — adds a scenario-picker step and grounds the conversation in that text. */
   textContext?: { text: string } | null;
+  cards: Flashcard[];
+  onAddCard: (card: Flashcard) => void;
   onClose: () => void;
   onOpenSettings: () => void;
 };
 
-type TranscriptLine = { role: "user" | "model"; text: string };
+type TranscriptLine = { role: "user" | "model"; text: string; audioChunks?: string[] };
 
 const STATUS_LABEL: Record<LiveChatStatus, string> = {
   idle: "Подготовка...",
@@ -72,7 +81,8 @@ async function resolveGeminiKey(): Promise<string | null> {
   return getLocalGeminiKey();
 }
 
-export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textContext, onClose, onOpenSettings }: Props) {
+export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textContext, cards, onAddCard, onClose, onOpenSettings }: Props) {
+  const { user } = useAuth();
   const [status, setStatus] = useState<LiveChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
@@ -93,14 +103,58 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [suggestionsVisible, setSuggestionsVisible] = useState(true);
 
+  const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+
+  const [wmOpen, setWmOpen] = useState(false);
+  const [wmWord, setWmWord] = useState("");
+  const [wmAnalysis, setWmAnalysis] = useState<AiAnalysis | null>(null);
+  const [wmLoading, setWmLoading] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
   const sessionRef = useRef<LiveChatSession | null>(null);
-  const prevStatusRef = useRef<LiveChatStatus>("idle");
   const liveUserRef = useRef("");
   const liveModelRef = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
+  const replayCtxRef = useRef<AudioContext | null>(null);
+  const replaySourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
   const contextText = textContext?.text ?? null;
   const needsScenario = !!contextText;
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2000);
+  }
+
+  // Full reset the moment the modal is closed, so a future reopen always
+  // starts from clean state instead of racing the scenario-fetch effect's
+  // (deferred) reset against the connect effect's (immediate) read of the
+  // still-stale `selectedScenario` from the previous call.
+  useEffect(() => {
+    if (isOpen) return;
+    sessionRef.current?.close();
+    sessionRef.current = null;
+    stopReplay();
+    setStatus("idle");
+    setError(null);
+    setHistory([]);
+    setLiveUser("");
+    setLiveModel("");
+    liveUserRef.current = "";
+    liveModelRef.current = "";
+    setScenarios(null);
+    setScenarioError(null);
+    setSelectedScenario(null);
+    setRevealed(new Set());
+    setTranslations({});
+    setTranslating(new Set());
+    setSuggestions([]);
+    setSuggestionsLoading(false);
+    setPlayingIndex(null);
+    setWmOpen(false);
+    setWmAnalysis(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // Fetch the text-grounded scenarios as soon as the modal opens for a
   // specific passage, before any session connects.
@@ -140,7 +194,6 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     setTranslations({});
     liveUserRef.current = "";
     liveModelRef.current = "";
-    prevStatusRef.current = "idle";
     setStatus("connecting");
 
     (async () => {
@@ -165,6 +218,28 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
         onModelTranscript: (text) => {
           liveModelRef.current += text;
           setLiveModel(liveModelRef.current);
+        },
+        onUserTurnEnd: () => {
+          const text = cleanText(liveUserRef.current);
+          if (text) setHistory((h) => [...h, { role: "user", text }]);
+          liveUserRef.current = "";
+          setLiveUser("");
+          setSuggestions([]);
+        },
+        onModelTurnEnd: (audioChunks) => {
+          const text = cleanText(liveModelRef.current);
+          if (text) {
+            setHistory((h) => [...h, { role: "model", text, audioChunks }]);
+            fetchSuggestionsFor(text);
+          }
+          liveModelRef.current = "";
+          setLiveModel("");
+        },
+        onInterrupted: () => {
+          // The model's partial turn was cut short by the user barging in —
+          // discard it instead of finalizing a truncated message into history.
+          liveModelRef.current = "";
+          setLiveModel("");
         },
         onError: (message) => setError(message),
       });
@@ -201,32 +276,14 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     [nativeLanguage, targetLanguage, selectedScenario]
   );
 
-  // Turn user speech / model speech into finalized transcript lines as the
-  // call progresses, and fetch quick-reply suggestions after each AI turn.
-  useEffect(() => {
-    const prev = prevStatusRef.current;
-    if (prev === "listening" && status === "speaking") {
-      const text = cleanText(liveUserRef.current);
-      if (text) setHistory((h) => [...h, { role: "user", text }]);
-      liveUserRef.current = "";
-      setLiveUser("");
-      setSuggestions([]);
-    }
-    if (prev === "speaking" && status === "listening") {
-      const text = cleanText(liveModelRef.current);
-      if (text) {
-        setHistory((h) => [...h, { role: "model", text }]);
-        fetchSuggestionsFor(text);
-      }
-      liveModelRef.current = "";
-      setLiveModel("");
-    }
-    prevStatusRef.current = status;
-  }, [status, fetchSuggestionsFor]);
-
+  // Only auto-scroll on discrete events (a finalized line, a suggestion
+  // batch) rather than on every streaming transcript delta — scrolling
+  // several times a second while the model is mid-sentence was shifting
+  // the layout out from under the user's finger, making taps on the
+  // translation/word/replay targets land on the wrong element.
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history, liveUser, liveModel, suggestions]);
+  }, [history, suggestions]);
 
   function handleClose() {
     sessionRef.current?.close();
@@ -268,6 +325,162 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
         return next;
       });
     }
+  }
+
+  function stopReplay() {
+    for (const node of replaySourcesRef.current) {
+      try {
+        node.onended = null;
+        node.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    replaySourcesRef.current = [];
+    setPlayingIndex(null);
+  }
+
+  /** Replays an already-received AI turn straight from its cached PCM chunks — no network call, no tokens spent. */
+  function playCachedAudio(index: number, audioChunks: string[]) {
+    if (playingIndex === index) {
+      stopReplay();
+      return;
+    }
+    stopReplay();
+    if (!replayCtxRef.current) {
+      replayCtxRef.current = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
+    }
+    const ctx = replayCtxRef.current;
+    if (ctx.state === "suspended") void ctx.resume();
+    setPlayingIndex(index);
+
+    let playTime = ctx.currentTime;
+    let remaining = audioChunks.length;
+    for (const chunk of audioChunks) {
+      const floats = base64Pcm16ToFloat32(chunk);
+      if (floats.length === 0) {
+        remaining -= 1;
+        continue;
+      }
+      const buffer = ctx.createBuffer(1, floats.length, OUTPUT_SAMPLE_RATE);
+      buffer.copyToChannel(floats, 0);
+      const node = ctx.createBufferSource();
+      node.buffer = buffer;
+      node.connect(ctx.destination);
+      node.start(playTime);
+      playTime += buffer.duration;
+      node.onended = () => {
+        remaining -= 1;
+        if (remaining <= 0) setPlayingIndex((cur) => (cur === index ? null : cur));
+      };
+      replaySourcesRef.current.push(node);
+    }
+    if (remaining === 0) setPlayingIndex(null);
+  }
+
+  async function loadWordModalAnalysis(word: string, contextSentence: string) {
+    const cacheKey = makeAiCacheKey("word", word, targetLanguage, nativeLanguage);
+    setWmLoading(true);
+    setWmAnalysis(null);
+    try {
+      const localCached = getLocalAiAnalysis(cacheKey);
+      if (localCached?.word) {
+        setWmAnalysis(localCached);
+        return;
+      }
+      const remoteCached = await sbGetCachedAnalysis(cacheKey);
+      if (remoteCached?.word) {
+        saveLocalAiAnalysis(cacheKey, remoteCached);
+        setWmAnalysis(remoteCached);
+        return;
+      }
+      const result = await analyzeSelection({
+        mode: "word",
+        word,
+        text: word,
+        sentence: contextSentence,
+        sentenceBefore: "",
+        sentenceAfter: "",
+        nativeLanguage,
+        targetLanguage,
+      });
+      saveLocalAiAnalysis(cacheKey, result);
+      void sbSaveCachedAnalysis(cacheKey, "word", result);
+      setWmAnalysis(result);
+    } catch (err) {
+      console.error("Word modal analysis failed:", err);
+    } finally {
+      setWmLoading(false);
+    }
+  }
+
+  function handleWordTap(word: string, contextSentence: string) {
+    const norm = normalizeToken(word);
+    if (!norm) return;
+    setWmWord(word);
+    setWmOpen(true);
+    void loadWordModalAnalysis(word, contextSentence);
+  }
+
+  async function handleAddCardFromWordModal() {
+    const translation = wmAnalysis?.word?.translation;
+    if (!translation) return;
+    const front = wmWord;
+    if (findDuplicateCard(front, cards)) {
+      showToast("Такая карточка уже добавлена");
+      return;
+    }
+    const srsFields = createDefaultSrsFields(null, "Голосовой чат");
+    const localCard: Flashcard = {
+      id: `card-${Date.now()}`,
+      type: "word",
+      source: "Голосовой чат",
+      addedAt: new Date().toISOString(),
+      ...srsFields,
+      front,
+      back: translation,
+    };
+    if (user) {
+      const dbId = await sbInsertFlashcard({
+        user_id: user.id,
+        vocabulary_item_id: null,
+        front: localCard.front,
+        back: localCard.back,
+        source_book_title: "Голосовой чат",
+        selection_type: "word",
+        repetitions: srsFields.repetitions,
+        lapses: srsFields.lapses,
+        easiness_factor: srsFields.easeFactor,
+        interval_days: srsFields.intervalDays,
+        next_review_at: srsFields.dueAt,
+        last_reviewed_at: srsFields.lastReviewedAt,
+        source_book_id: null,
+        status: srsFields.status,
+      });
+      if (dbId) localCard.id = dbId;
+    }
+    onAddCard(localCard);
+    showToast("✓ Карточка добавлена");
+  }
+
+  function renderWords(text: string) {
+    const tokens = splitIntoTokens(text);
+    return tokens.map((token, i) => {
+      const norm = normalizeToken(token);
+      if (!norm) return <span key={i}>{token}</span>;
+      return (
+        <span
+          key={i}
+          className="livechat-clickable-word"
+          role="button"
+          tabIndex={0}
+          onClick={() => handleWordTap(token, text)}
+          onKeyDown={(e) => { if (e.key === "Enter") handleWordTap(token, text); }}
+        >
+          {token}
+        </span>
+      );
+    });
   }
 
   if (!isOpen) return null;
@@ -370,13 +583,31 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                 )}
                 {history.map((line, index) => (
                   <div key={index} className={`livechat-line-wrap ${line.role}`}>
-                    <p className={`livechat-line ${line.role}`}>{line.text}</p>
+                    <div className={`livechat-line ${line.role}`}>
+                      {line.role === "model" ? (
+                        <>
+                          <span className="livechat-line-text">{renderWords(line.text)}</span>
+                          {line.audioChunks && line.audioChunks.length > 0 && (
+                            <button
+                              type="button"
+                              className={`livechat-replay-btn${playingIndex === index ? " active" : ""}`}
+                              onClick={() => playCachedAudio(index, line.audioChunks!)}
+                              aria-label="Прослушать ещё раз"
+                              title="Прослушать ещё раз (из кэша, без затрат)"
+                            >
+                              <Volume2 size={14} />
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        line.text
+                      )}
+                    </div>
                     {line.role === "model" && (
-                      <div
+                      <button
+                        type="button"
                         className="livechat-translation"
                         onClick={() => revealTranslation(index, line.text)}
-                        role="button"
-                        tabIndex={0}
                         title={revealed.has(index) ? undefined : "Нажмите, чтобы увидеть перевод"}
                       >
                         <span className={revealed.has(index) ? "revealed" : "blurred"}>
@@ -384,7 +615,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                             ? (translating.has(index) ? <Loader2 size={12} className="spin" /> : translations[index])
                             : line.text}
                         </span>
-                      </div>
+                      </button>
                     )}
                   </div>
                 ))}
@@ -438,6 +669,16 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
             <div className="livechat-controls">
               <button
                 type="button"
+                className="livechat-slower-btn"
+                onClick={() => sessionRef.current?.requestSlower()}
+                disabled={!isLive}
+                aria-label="Сказать медленнее"
+                title="Попросить AI повторить медленнее"
+              >
+                <Gauge size={18} />
+              </button>
+              <button
+                type="button"
                 className={`livechat-mute-btn${muted ? " active" : ""}`}
                 onClick={toggleMute}
                 disabled={!isLive}
@@ -452,6 +693,20 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
           </>
         )}
       </section>
+
+      <WordModal
+        analysis={wmAnalysis}
+        isOpen={wmOpen}
+        isLoading={wmLoading}
+        lang={targetLanguage}
+        nativeLang={nativeLanguage}
+        selectedWord={wmWord}
+        onClose={() => setWmOpen(false)}
+        onAddCard={() => void handleAddCardFromWordModal()}
+        onWordTap={(word, context) => handleWordTap(word, context)}
+      />
+
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }

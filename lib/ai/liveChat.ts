@@ -10,7 +10,7 @@ import type { LiveScenario } from "./liveChatExtras";
 export const LIVE_CHAT_MODEL = "gemini-3.1-flash-live-preview";
 
 const INPUT_SAMPLE_RATE = 16000;
-const OUTPUT_SAMPLE_RATE = 24000;
+export const OUTPUT_SAMPLE_RATE = 24000;
 const CAPTURE_BUFFER_SIZE = 4096;
 
 export type LiveChatStatus = "idle" | "connecting" | "listening" | "speaking" | "error" | "closed";
@@ -30,6 +30,12 @@ export type LiveChatCallbacks = {
   onStatusChange: (status: LiveChatStatus) => void;
   onUserTranscript: (text: string) => void;
   onModelTranscript: (text: string) => void;
+  /** Fires once, right as the model starts responding — a reliable signal that the user's turn just ended (the Live API only starts generating after detecting the end of the user's utterance server-side). */
+  onUserTurnEnd: () => void;
+  /** Fires once per completed model turn, driven by serverContent.turnComplete rather than by audio playback finishing, carrying every raw audio chunk so the turn can be replayed later without spending tokens on a fresh TTS call. */
+  onModelTurnEnd: (audioChunks: string[]) => void;
+  /** The model's turn was cut short by the user barging in — discard whatever partial transcript/audio was collected for it instead of merging it into the next turn. */
+  onInterrupted: () => void;
   onError: (message: string) => void;
 };
 
@@ -111,7 +117,7 @@ function floatToBase64Pcm16(samples: Float32Array): string {
   return btoa(binary);
 }
 
-function base64Pcm16ToFloat32(base64: string): Float32Array<ArrayBuffer> {
+export function base64Pcm16ToFloat32(base64: string): Float32Array<ArrayBuffer> {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -146,6 +152,13 @@ export class LiveChatSession {
   private playbackCtx: AudioContext | null = null;
   private nextPlayTime = 0;
   private activeSources: AudioBufferSourceNode[] = [];
+
+  // Tracks whether the model is mid-turn, independent of audio playback —
+  // turnComplete (and the first chunk of a new turn) are the authoritative
+  // boundaries; playback-driven "speaking"/"listening" status is for the
+  // orb animation only.
+  private modelTurnActive = false;
+  private currentTurnAudio: string[] = [];
 
   constructor(apiKey: string, callbacks: LiveChatCallbacks) {
     this.ai = new GoogleGenAI({ apiKey });
@@ -223,9 +236,19 @@ export class LiveChatSession {
 
     if (serverContent.interrupted) {
       this.stopPlayback();
+      this.modelTurnActive = false;
+      this.currentTurnAudio = [];
+      this.cb.onInterrupted();
+    }
+
+    const turnStarting = !this.modelTurnActive && (!!message.data || !!serverContent.outputTranscription?.text);
+    if (turnStarting) {
+      this.modelTurnActive = true;
+      this.cb.onUserTurnEnd();
     }
 
     if (message.data) {
+      this.currentTurnAudio.push(message.data);
       this.playChunk(message.data);
     }
 
@@ -235,8 +258,14 @@ export class LiveChatSession {
     if (serverContent.outputTranscription?.text) {
       this.cb.onModelTranscript(stripInvisible(serverContent.outputTranscription.text));
     }
-    if (serverContent.turnComplete && this.activeSources.length === 0) {
-      this.cb.onStatusChange("listening");
+    if (serverContent.turnComplete) {
+      this.modelTurnActive = false;
+      const audio = this.currentTurnAudio;
+      this.currentTurnAudio = [];
+      this.cb.onModelTurnEnd(audio);
+      if (this.activeSources.length === 0) {
+        this.cb.onStatusChange("listening");
+      }
     }
   }
 
@@ -318,6 +347,13 @@ export class LiveChatSession {
     } catch {
       // Session may have just closed mid-flight — ignore.
     }
+  }
+
+  /** Asks the AI to repeat its last line again, slower — for when natural speed is too fast to follow. */
+  requestSlower() {
+    this.sendText(
+      "[Instruction, not part of the conversation: repeat your previous message again, in the same language and with the same meaning, but noticeably slower and more clearly so a language learner can follow every word. Don't acknowledge this instruction or mention it.]"
+    );
   }
 
   setMuted(muted: boolean) {

@@ -1199,10 +1199,52 @@
 }
 
 .livechat-line.model {
+  position: relative;
   align-self: flex-start;
   border-bottom-left-radius: 6px;
   background: rgba(240, 230, 211, 0.07);
   color: var(--surface);
+  padding-right: 30px;
+}
+
+.livechat-line-text {
+  display: inline;
+}
+
+.livechat-clickable-word {
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background var(--transition-fast);
+}
+.livechat-clickable-word:hover,
+.livechat-clickable-word:focus-visible {
+  background: rgba(212, 168, 71, 0.25);
+  outline: none;
+}
+
+.livechat-replay-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.livechat-replay-btn:hover {
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text-primary);
+}
+.livechat-replay-btn.active {
+  background: var(--accent);
+  color: var(--text-dark);
 }
 
 .livechat-line.pending {
@@ -1226,13 +1268,20 @@
 }
 
 .livechat-translation {
+  display: block;
   align-self: flex-start;
+  width: 100%;
   max-width: 100%;
   padding: 7px 10px;
+  border: 0;
   border-radius: 10px;
   background: rgba(240, 230, 211, 0.04);
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .livechat-translation span {
@@ -1354,6 +1403,7 @@
   border-top: 1px solid var(--border);
 }
 
+.livechat-slower-btn,
 .livechat-mute-btn,
 .livechat-end-btn {
   display: inline-flex;
@@ -1367,6 +1417,15 @@
   cursor: pointer;
   transition: background var(--transition-fast), transform var(--transition-fast);
 }
+
+.livechat-slower-btn {
+  width: 44px;
+  height: 44px;
+  background: rgba(240, 230, 211, 0.08);
+  color: var(--text-primary);
+}
+.livechat-slower-btn:hover:not(:disabled) { background: rgba(240, 230, 211, 0.14); }
+.livechat-slower-btn:disabled { opacity: 0.4; cursor: default; }
 
 .livechat-mute-btn {
   background: rgba(240, 230, 211, 0.08);
