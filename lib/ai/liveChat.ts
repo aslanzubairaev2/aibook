@@ -118,11 +118,20 @@ export class LiveChatSession {
     this.cb.onStatusChange("connecting");
 
     // Ask for the mic up front so connection errors and permission errors surface separately.
-    this.micStream = await navigator.mediaDevices.getUserMedia({
+    const micStream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
+    // close() may have run while we were awaiting the mic prompt (e.g. the
+    // modal was closed mid-connect) — don't resurrect a stream/session on a
+    // session that's already considered closed, or it leaks and blocks the
+    // next connection attempt.
+    if (this.closed) {
+      for (const track of micStream.getTracks()) track.stop();
+      return;
+    }
+    this.micStream = micStream;
 
-    this.session = await this.ai.live.connect({
+    const session = await this.ai.live.connect({
       model: LIVE_CHAT_MODEL,
       config: {
         responseModalities: [Modality.AUDIO],
@@ -154,6 +163,15 @@ export class LiveChatSession {
         },
       },
     });
+    // Same race, one step later: the Gemini Live handshake resolved after
+    // close() already ran. Close this orphaned session instead of keeping
+    // it open — Gemini Live caps concurrent sessions per key, so a leaked
+    // one silently blocks every future reconnect.
+    if (this.closed) {
+      try { session.close(); } catch { /* already gone */ }
+      return;
+    }
+    this.session = session;
   }
 
   private handleMessage(message: LiveServerMessage) {

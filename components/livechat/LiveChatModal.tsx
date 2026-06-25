@@ -76,8 +76,11 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
     if (!isOpen) return;
     let cancelled = false;
 
+    // Note: `history` is intentionally NOT cleared here — closing and
+    // reopening the call starts a fresh Gemini Live session (audio can't be
+    // resumed), but the visible transcript carries over so the conversation
+    // isn't lost from the user's point of view.
     setError(null);
-    setHistory([]);
     setLiveUser("");
     setLiveModel("");
     liveUserRef.current = "";
