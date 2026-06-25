@@ -5,6 +5,7 @@
 // the way the other AI requests in this app are.
 
 import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@google/genai";
+import type { LiveScenario } from "./liveChatExtras";
 
 export const LIVE_CHAT_MODEL = "gemini-3.1-flash-live-preview";
 
@@ -21,6 +22,8 @@ export type LiveChatConnectOptions = {
   mode?: LiveChatMode;
   /** Short free-text summary of the learner's current level (vocab size, CEFR estimate, etc.) to calibrate the AI's speech. */
   levelSummary?: string;
+  /** Set when the call was started from a specific text passage, grounding the conversation in a chosen roleplay/discussion scenario. */
+  textContext?: { text: string; scenario: LiveScenario };
 };
 
 export type LiveChatCallbacks = {
@@ -38,12 +41,34 @@ function languageName(code: string) {
   return LANGUAGE_NAMES[code] ?? code;
 }
 
-function buildSystemInstruction(nativeLanguage: string, targetLanguage: string, mode: LiveChatMode, levelSummary?: string) {
+function buildSystemInstruction(
+  nativeLanguage: string,
+  targetLanguage: string,
+  mode: LiveChatMode,
+  levelSummary?: string,
+  textContext?: { text: string; scenario: LiveScenario }
+) {
   const native = languageName(nativeLanguage);
   const target = languageName(targetLanguage);
   const levelLine = levelSummary
     ? `\nWhat we know about the learner's current level in ${target}: ${levelSummary}. Calibrate your vocabulary, grammar complexity, and pace to match this — don't speak above or condescendingly below it.`
     : "";
+
+  if (textContext) {
+    const { text, scenario } = textContext;
+    return `You are a voice conversation partner inside a language-learning reading app called AIBook, helping the learner practice speaking ${target} using a specific text they just read.
+The learner's native language is ${native} and they are learning ${target}.
+
+Source text:
+"""
+${text.slice(0, 6000)}
+"""
+
+Scenario: ${scenario.prompt}
+In this scenario you play: ${scenario.aiRole}. The learner plays: ${scenario.userRole}.
+
+Stay in ${target} for the roleplay itself, switching to ${native} only to explain something the learner seems stuck on. Keep replies short and conversational (one or two sentences) so the learner can respond, and keep the scenario grounded in the specific details of the source text rather than drifting into generic small talk.${levelLine}`;
+  }
 
   if (mode === "discuss") {
     return `You are a knowledgeable, patient language-learning assistant having a voice conversation inside a language-learning reading app called AIBook.
@@ -135,7 +160,7 @@ export class LiveChatSession {
       model: LIVE_CHAT_MODEL,
       config: {
         responseModalities: [Modality.AUDIO],
-        systemInstruction: buildSystemInstruction(nativeLanguage, targetLanguage, options?.mode ?? "call", options?.levelSummary),
+        systemInstruction: buildSystemInstruction(nativeLanguage, targetLanguage, options?.mode ?? "call", options?.levelSummary, options?.textContext),
         inputAudioTranscription: {},
         outputAudioTranscription: {},
       },
@@ -265,6 +290,16 @@ export class LiveChatSession {
     }
     this.activeSources = [];
     if (this.playbackCtx) this.nextPlayTime = this.playbackCtx.currentTime;
+  }
+
+  /** Sends a typed/tapped text turn into the live session, e.g. when the learner taps a suggested reply instead of speaking it. */
+  sendText(text: string) {
+    if (this.closed || !this.session) return;
+    try {
+      this.session.sendClientContent({ turns: text, turnComplete: true });
+    } catch {
+      // Session may have just closed mid-flight — ignore.
+    }
   }
 
   setMuted(muted: boolean) {

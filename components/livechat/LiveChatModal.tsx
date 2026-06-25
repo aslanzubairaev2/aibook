@@ -1,16 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Loader2, Mic, MicOff, PhoneOff, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, Mic, MicOff, PhoneOff, Shuffle, X } from "lucide-react";
 import { getLocalGeminiKey } from "@/lib/db/local";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { LiveChatSession, type LiveChatMode, type LiveChatStatus } from "@/lib/ai/liveChat";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
+import {
+  fetchLiveScenarios,
+  fetchLiveSuggestions,
+  translateText,
+  type LiveScenario,
+  type LiveSuggestion,
+} from "@/lib/ai/liveChatExtras";
+import type { CefrLevel } from "@/lib/types";
 
 type Props = {
   isOpen: boolean;
   nativeLanguage: string;
   targetLanguage: string;
+  /** Set when the call was started from a specific text passage (the phone icon on a CEFR text) — adds a scenario-picker step and grounds the conversation in that text. */
+  textContext?: { text: string } | null;
   onClose: () => void;
   onOpenSettings: () => void;
 };
@@ -18,7 +28,7 @@ type Props = {
 type TranscriptLine = { role: "user" | "model"; text: string };
 
 const STATUS_LABEL: Record<LiveChatStatus, string> = {
-  idle: "Подключение...",
+  idle: "Подготовка...",
   connecting: "Подключение...",
   listening: "Слушаю вас",
   speaking: "AI отвечает",
@@ -33,6 +43,11 @@ const EMPTY_PLACEHOLDER: Record<LiveChatMode, string> = {
   call: "Скажите что-нибудь — AI вас услышит и ответит голосом.",
   discuss: "Спросите что-нибудь о языке — например, про грамматику или слово.",
 };
+
+// Beginners benefit most from a safety net of ready-made replies; show the
+// suggestion buttons by default for them and let more advanced learners opt
+// in instead, so the feature doesn't become a permanent crutch.
+const SUGGESTIONS_DEFAULT_LEVELS: CefrLevel[] = ["A1", "A2", "B1"];
 
 // Gemini's streamed transcription deltas can include zero-width Unicode
 // characters that pass `.trim()` as non-empty but render as a blank bubble.
@@ -57,7 +72,7 @@ async function resolveGeminiKey(): Promise<string | null> {
   return getLocalGeminiKey();
 }
 
-export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose, onOpenSettings }: Props) {
+export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textContext, onClose, onOpenSettings }: Props) {
   const [status, setStatus] = useState<LiveChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
@@ -66,25 +81,63 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
   const [liveModel, setLiveModel] = useState("");
   const [mode, setMode] = useState<LiveChatMode>("call");
 
+  const [scenarios, setScenarios] = useState<LiveScenario[] | null>(null);
+  const [scenarioError, setScenarioError] = useState<string | null>(null);
+  const [selectedScenario, setSelectedScenario] = useState<LiveScenario | null>(null);
+
+  const [revealed, setRevealed] = useState<Set<number>>(new Set());
+  const [translations, setTranslations] = useState<Record<number, string>>({});
+  const [translating, setTranslating] = useState<Set<number>>(new Set());
+
+  const [suggestions, setSuggestions] = useState<LiveSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [suggestionsVisible, setSuggestionsVisible] = useState(true);
+
   const sessionRef = useRef<LiveChatSession | null>(null);
   const prevStatusRef = useRef<LiveChatStatus>("idle");
   const liveUserRef = useRef("");
   const liveModelRef = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
 
+  const contextText = textContext?.text ?? null;
+  const needsScenario = !!contextText;
+
+  // Fetch the text-grounded scenarios as soon as the modal opens for a
+  // specific passage, before any session connects.
+  useEffect(() => {
+    if (!isOpen || !contextText) return;
+    let cancelled = false;
+    setScenarios(null);
+    setScenarioError(null);
+    setSelectedScenario(null);
+
+    fetchLiveScenarios(contextText, nativeLanguage, targetLanguage)
+      .then((list) => {
+        if (!cancelled) setScenarios(list);
+      })
+      .catch((err) => {
+        if (!cancelled) setScenarioError(err instanceof Error ? err.message : "Не удалось придумать сценарии для этого текста");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, contextText, nativeLanguage, targetLanguage]);
+
+  // Connects once we know what to connect with: either immediately (free-form
+  // call/discuss) or as soon as a text-grounded scenario has been picked.
   useEffect(() => {
     if (!isOpen) return;
+    if (needsScenario && !selectedScenario) return;
     let cancelled = false;
 
-    // Each open starts a fresh Gemini Live session with no memory of the
-    // previous one, so carrying old transcript text forward would be
-    // misleading — and worse, a long-lived history that never resets is
-    // exactly the kind of thing that nudges people to paste/resend old
-    // context, costing tokens for content the model already forgot.
     setHistory([]);
     setError(null);
     setLiveUser("");
     setLiveModel("");
+    setSuggestions([]);
+    setRevealed(new Set());
+    setTranslations({});
     liveUserRef.current = "";
     liveModelRef.current = "";
     prevStatusRef.current = "idle";
@@ -101,6 +154,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
         setStatus("error");
         return;
       }
+      setSuggestionsVisible(!levelEstimate || SUGGESTIONS_DEFAULT_LEVELS.includes(levelEstimate.level));
 
       const session = new LiveChatSession(apiKey, {
         onStatusChange: setStatus,
@@ -116,11 +170,17 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
       });
       sessionRef.current = session;
 
-      session.connect(nativeLanguage, targetLanguage, { mode, levelSummary: levelEstimate?.summary }).catch((err) => {
-        const message = err?.name === "NotAllowedError" ? MIC_DENIED_MESSAGE : (err?.message || "Не удалось начать звонок");
-        setError(message);
-        setStatus("error");
-      });
+      session
+        .connect(nativeLanguage, targetLanguage, {
+          mode,
+          levelSummary: levelEstimate?.summary,
+          textContext: contextText && selectedScenario ? { text: contextText, scenario: selectedScenario } : undefined,
+        })
+        .catch((err) => {
+          const message = err?.name === "NotAllowedError" ? MIC_DENIED_MESSAGE : (err?.message || "Не удалось начать звонок");
+          setError(message);
+          setStatus("error");
+        });
     })();
 
     return () => {
@@ -128,9 +188,21 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
       sessionRef.current?.close();
       sessionRef.current = null;
     };
-  }, [isOpen, nativeLanguage, targetLanguage, mode]);
+  }, [isOpen, nativeLanguage, targetLanguage, mode, needsScenario, contextText, selectedScenario]);
 
-  // Turn user speech / model speech into finalized transcript lines as the call progresses.
+  const fetchSuggestionsFor = useCallback(
+    (lastLine: string) => {
+      setSuggestionsLoading(true);
+      fetchLiveSuggestions(lastLine, nativeLanguage, targetLanguage, selectedScenario?.prompt)
+        .then((list) => setSuggestions(list))
+        .catch(() => setSuggestions([]))
+        .finally(() => setSuggestionsLoading(false));
+    },
+    [nativeLanguage, targetLanguage, selectedScenario]
+  );
+
+  // Turn user speech / model speech into finalized transcript lines as the
+  // call progresses, and fetch quick-reply suggestions after each AI turn.
   useEffect(() => {
     const prev = prevStatusRef.current;
     if (prev === "listening" && status === "speaking") {
@@ -138,19 +210,23 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
       if (text) setHistory((h) => [...h, { role: "user", text }]);
       liveUserRef.current = "";
       setLiveUser("");
+      setSuggestions([]);
     }
     if (prev === "speaking" && status === "listening") {
       const text = cleanText(liveModelRef.current);
-      if (text) setHistory((h) => [...h, { role: "model", text }]);
+      if (text) {
+        setHistory((h) => [...h, { role: "model", text }]);
+        fetchSuggestionsFor(text);
+      }
       liveModelRef.current = "";
       setLiveModel("");
     }
     prevStatusRef.current = status;
-  }, [status]);
+  }, [status, fetchSuggestionsFor]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history, liveUser, liveModel]);
+  }, [history, liveUser, liveModel, suggestions]);
 
   function handleClose() {
     sessionRef.current?.close();
@@ -163,89 +239,213 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
     sessionRef.current?.setMuted(next);
   }
 
+  function handleSwitchScenario() {
+    sessionRef.current?.close();
+    sessionRef.current = null;
+    setSelectedScenario(null);
+    setStatus("idle");
+  }
+
+  function handleSuggestionTap(suggestion: LiveSuggestion) {
+    sessionRef.current?.sendText(suggestion.text);
+    setHistory((h) => [...h, { role: "user", text: suggestion.text }]);
+    setSuggestions([]);
+  }
+
+  async function revealTranslation(index: number, text: string) {
+    if (revealed.has(index)) return;
+    setRevealed((prev) => new Set(prev).add(index));
+    setTranslating((prev) => new Set(prev).add(index));
+    try {
+      const translation = await translateText(text, targetLanguage, nativeLanguage);
+      setTranslations((prev) => ({ ...prev, [index]: translation }));
+    } catch {
+      setTranslations((prev) => ({ ...prev, [index]: "Не удалось перевести" }));
+    } finally {
+      setTranslating((prev) => {
+        const next = new Set(prev);
+        next.delete(index);
+        return next;
+      });
+    }
+  }
+
   if (!isOpen) return null;
 
   const isLive = status === "listening" || status === "speaking";
   const pendingUser = cleanText(liveUser);
   const pendingModel = cleanText(liveModel);
+  const showingScenarioPicker = needsScenario && !selectedScenario;
+  const placeholder = needsScenario && selectedScenario
+    ? `Сценарий: ${selectedScenario.label}. Начните говорить!`
+    : EMPTY_PLACEHOLDER[mode];
 
   return (
     <div className="modal-backdrop livechat-backdrop">
       <section className="livechat-modal" role="dialog" aria-modal aria-label="Голосовой чат с AI">
         <header className="livechat-header">
           <span>Голосовой чат</span>
-          <button className="icon-btn" type="button" onClick={handleClose} aria-label="Закрыть">
-            <X size={19} />
-          </button>
+          <div className="livechat-header-actions">
+            {needsScenario && selectedScenario && (
+              <button className="icon-btn" type="button" onClick={handleSwitchScenario} aria-label="Сменить сценарий" title="Сменить сценарий">
+                <Shuffle size={18} />
+              </button>
+            )}
+            <button className="icon-btn" type="button" onClick={handleClose} aria-label="Закрыть">
+              <X size={19} />
+            </button>
+          </div>
         </header>
 
-        <div className="livechat-mode-toggle" role="tablist" aria-label="Режим голосового чата">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "call"}
-            className={`livechat-mode-btn${mode === "call" ? " active" : ""}`}
-            onClick={() => setMode("call")}
-          >
-            Звонок
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "discuss"}
-            className={`livechat-mode-btn${mode === "discuss" ? " active" : ""}`}
-            onClick={() => setMode("discuss")}
-          >
-            Обсуждение языка
-          </button>
-        </div>
-
-        <div className="livechat-body">
-          <div className={`livechat-orb ${status}`}>
-            {status === "connecting" || status === "idle" ? <Loader2 size={28} className="spin" /> : <Mic size={28} />}
+        {showingScenarioPicker ? (
+          <div className="livechat-scenario-picker">
+            <p className="livechat-scenario-intro">Как будем практиковать этот текст?</p>
+            {scenarioError && <div className="livechat-error"><p>{scenarioError}</p></div>}
+            {!scenarios && !scenarioError && (
+              <div className="livechat-scenario-loading">
+                <Loader2 size={20} className="spin" /> Подбираю сценарии...
+              </div>
+            )}
+            {scenarios && (
+              <div className="livechat-scenario-list">
+                {scenarios.map((scenario) => (
+                  <button
+                    key={scenario.id}
+                    type="button"
+                    className="livechat-scenario-btn"
+                    onClick={() => setSelectedScenario(scenario)}
+                  >
+                    <strong>{scenario.label}</strong>
+                    <span>{scenario.aiRole} ↔ {scenario.userRole}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-          <strong className="livechat-status">{STATUS_LABEL[status]}</strong>
-
-          {error && (
-            <div className="livechat-error">
-              <p>{error}</p>
-              {error === NO_KEY_MESSAGE && (
-                <button type="button" className="primary-btn" onClick={onOpenSettings}>
-                  Открыть настройки
+        ) : (
+          <>
+            {!needsScenario && (
+              <div className="livechat-mode-toggle" role="tablist" aria-label="Режим голосового чата">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === "call"}
+                  className={`livechat-mode-btn${mode === "call" ? " active" : ""}`}
+                  onClick={() => setMode("call")}
+                >
+                  Звонок
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === "discuss"}
+                  className={`livechat-mode-btn${mode === "discuss" ? " active" : ""}`}
+                  onClick={() => setMode("discuss")}
+                >
+                  Обсуждение языка
+                </button>
+              </div>
+            )}
+
+            <div className="livechat-body">
+              <div className={`livechat-orb ${status}`}>
+                {status === "connecting" || status === "idle" ? <Loader2 size={28} className="spin" /> : <Mic size={28} />}
+              </div>
+              <strong className="livechat-status">{STATUS_LABEL[status]}</strong>
+
+              {error && (
+                <div className="livechat-error">
+                  <p>{error}</p>
+                  {error === NO_KEY_MESSAGE && (
+                    <button type="button" className="primary-btn" onClick={onOpenSettings}>
+                      Открыть настройки
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="livechat-transcript">
+                {history.length === 0 && !pendingUser && !pendingModel && !error && (
+                  <p className="livechat-empty">{placeholder}</p>
+                )}
+                {history.map((line, index) => (
+                  <div key={index} className={`livechat-line-wrap ${line.role}`}>
+                    <p className={`livechat-line ${line.role}`}>{line.text}</p>
+                    {line.role === "model" && (
+                      <div
+                        className={`livechat-translation${revealed.has(index) ? " revealed" : " blurred"}`}
+                        onClick={() => revealTranslation(index, line.text)}
+                        role="button"
+                        tabIndex={0}
+                        title={revealed.has(index) ? undefined : "Нажмите, чтобы увидеть перевод"}
+                      >
+                        {revealed.has(index)
+                          ? (translating.has(index) ? <Loader2 size={12} className="spin" /> : translations[index])
+                          : line.text}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {pendingUser && <p className="livechat-line user pending">{pendingUser}</p>}
+                {pendingModel && <p className="livechat-line model pending">{pendingModel}</p>}
+                <div ref={endRef} />
+              </div>
+
+              {(suggestions.length > 0 || suggestionsLoading) && (
+                <div className="livechat-suggestions">
+                  {!suggestionsVisible ? (
+                    <button type="button" className="livechat-suggestions-toggle" onClick={() => setSuggestionsVisible(true)}>
+                      Показать варианты ответа
+                    </button>
+                  ) : (
+                    <>
+                      <div className="livechat-suggestions-list">
+                        {suggestionsLoading ? (
+                          <Loader2 size={16} className="spin" />
+                        ) : (
+                          suggestions.map((suggestion, index) => (
+                            <button
+                              key={index}
+                              type="button"
+                              className="livechat-suggestion-btn"
+                              onClick={() => handleSuggestionTap(suggestion)}
+                            >
+                              <span className="livechat-suggestion-text">{suggestion.text}</span>
+                              <span className="livechat-suggestion-translation">{suggestion.translation}</span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="livechat-suggestions-hide"
+                        onClick={() => setSuggestionsVisible(false)}
+                        aria-label="Скрыть варианты ответа"
+                      >
+                        <X size={14} />
+                      </button>
+                    </>
+                  )}
+                </div>
               )}
             </div>
-          )}
 
-          <div className="livechat-transcript">
-            {history.length === 0 && !pendingUser && !pendingModel && !error && (
-              <p className="livechat-empty">{EMPTY_PLACEHOLDER[mode]}</p>
-            )}
-            {history.map((line, index) => (
-              <p key={index} className={`livechat-line ${line.role}`}>
-                {line.text}
-              </p>
-            ))}
-            {pendingUser && <p className="livechat-line user pending">{pendingUser}</p>}
-            {pendingModel && <p className="livechat-line model pending">{pendingModel}</p>}
-            <div ref={endRef} />
-          </div>
-        </div>
-
-        <div className="livechat-controls">
-          <button
-            type="button"
-            className={`livechat-mute-btn${muted ? " active" : ""}`}
-            onClick={toggleMute}
-            disabled={!isLive}
-            aria-label={muted ? "Включить микрофон" : "Выключить микрофон"}
-          >
-            {muted ? <MicOff size={20} /> : <Mic size={20} />}
-          </button>
-          <button type="button" className="livechat-end-btn" onClick={handleClose} aria-label="Завершить звонок">
-            <PhoneOff size={22} />
-          </button>
-        </div>
+            <div className="livechat-controls">
+              <button
+                type="button"
+                className={`livechat-mute-btn${muted ? " active" : ""}`}
+                onClick={toggleMute}
+                disabled={!isLive}
+                aria-label={muted ? "Включить микрофон" : "Выключить микрофон"}
+              >
+                {muted ? <MicOff size={20} /> : <Mic size={20} />}
+              </button>
+              <button type="button" className="livechat-end-btn" onClick={handleClose} aria-label="Завершить звонок">
+                <PhoneOff size={22} />
+              </button>
+            </div>
+          </>
+        )}
       </section>
     </div>
   );

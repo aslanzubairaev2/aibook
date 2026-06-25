@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, BookmarkCheck, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, BookmarkCheck, ChevronLeft, ChevronRight, Phone } from "lucide-react";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { WordModal } from "@/components/word-modal/WordModal";
@@ -53,6 +53,7 @@ type Props = {
   initialProgress?: ReaderProgressSnapshot | null;
   onReaderProgressSync?: (progress: ReaderProgressSnapshot) => void;
   onNavigateLesson?: (sharedBookId: string) => void;
+  onOpenLiveChatForText?: (text: string) => void;
 };
 
 type ActiveToken = {
@@ -147,6 +148,7 @@ export function ReaderView({
   initialProgress,
   onReaderProgressSync,
   onNavigateLesson,
+  onOpenLiveChatForText,
 }: Props) {
   const { user } = useAuth();
   const [hasServerAiAccess, setHasServerAiAccess] = useState(false);
@@ -1081,6 +1083,17 @@ export function ReaderView({
         <button className="icon-btn" onClick={handleSetManualAnchor} type="button" aria-label="Сохранить якорь прочитанного">
           <BookmarkCheck size={18} />
         </button>
+        {book.cefrLevel && onOpenLiveChatForText && (
+          <button
+            className="icon-btn"
+            type="button"
+            aria-label="Обсудить этот текст голосом"
+            title="Обсудить этот текст голосом"
+            onClick={() => onOpenLiveChatForText(visibleParagraphs.join("\n\n"))}
+          >
+            <Phone size={18} />
+          </button>
+        )}
         <span className="reader-pct">{Math.round(book.progress)}%</span>
       </header>
 

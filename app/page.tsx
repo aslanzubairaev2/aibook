@@ -219,6 +219,7 @@ function AppInner() {
   const { user, isLoading: authLoading } = useAuth();
   const [section, setSection] = useState<AppSection>("home");
   const [isLiveChatOpen, setIsLiveChatOpen] = useState(false);
+  const [liveChatTextContext, setLiveChatTextContext] = useState<{ text: string } | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [profile, setProfile] = useState<UserProfile>({
@@ -854,6 +855,10 @@ function AppInner() {
           initialProgress={readerProgressByBook[lastBook.id] ?? null}
           onReaderProgressSync={handleReaderProgressSync}
           onNavigateLesson={lastBook.lessonContext ? handleNavigateLesson : undefined}
+          onOpenLiveChatForText={(text) => {
+            setLiveChatTextContext({ text });
+            setIsLiveChatOpen(true);
+          }}
         />
       ) : section === "reader" ? (
         <>{setSection("books")}</>
@@ -887,8 +892,9 @@ function AppInner() {
         isOpen={isLiveChatOpen}
         nativeLanguage={profile.nativeLanguage}
         targetLanguage={profile.targetLanguage}
-        onClose={() => setIsLiveChatOpen(false)}
-        onOpenSettings={() => { setIsLiveChatOpen(false); setSection("settings"); }}
+        textContext={liveChatTextContext}
+        onClose={() => { setIsLiveChatOpen(false); setLiveChatTextContext(null); }}
+        onOpenSettings={() => { setIsLiveChatOpen(false); setLiveChatTextContext(null); setSection("settings"); }}
       />
     </AppShell>
   );
