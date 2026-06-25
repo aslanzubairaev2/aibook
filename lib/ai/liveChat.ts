@@ -56,6 +56,9 @@ function buildSystemInstruction(
 
   if (textContext) {
     const { text, scenario } = textContext;
+    const leadLine = scenario.id === "discuss"
+      ? "Let the learner steer the discussion — ask what they'd like to talk about first."
+      : "You drive the scene: take the initiative throughout, move the roleplay forward with your own lines and questions, and don't just react and wait — a passive partner makes the learner do all the work.";
     return `You are a voice conversation partner inside a language-learning reading app called AIBook, helping the learner practice speaking ${target} using a specific text they just read.
 The learner's native language is ${native} and they are learning ${target}.
 
@@ -66,6 +69,7 @@ ${text.slice(0, 6000)}
 
 Scenario: ${scenario.prompt}
 In this scenario you play: ${scenario.aiRole}. The learner plays: ${scenario.userRole}.
+${leadLine}
 
 Stay in ${target} for the roleplay itself, switching to ${native} only to explain something the learner seems stuck on. Keep replies short and conversational (one or two sentences) so the learner can respond, and keep the scenario grounded in the specific details of the source text rather than drifting into generic small talk.${levelLine}`;
   }
@@ -84,6 +88,15 @@ Speak mostly in ${target}, at a level the learner can follow, and switch to ${na
 This is a live voice call, so keep replies short and conversational — usually one or two sentences — then let the user respond.
 If the learner makes a meaningful mistake, gently model the correct phrase instead of lecturing them about grammar.
 Ask follow-up questions to keep a natural conversation going.${levelLine}`;
+}
+
+// Sent as the opening turn for roleplay scenarios so the AI leads instead of
+// waiting in silence — the Live API only starts generating once it has
+// received some turn, and a passive partner would leave the learner to make
+// the first move every time.
+function buildKickoffInstruction(targetLanguage: string, scenario: LiveScenario) {
+  const target = languageName(targetLanguage);
+  return `[Instruction, not part of the conversation: begin the roleplay now. As ${scenario.aiRole}, speak first — open the scene with your first line in ${target}, fully in character. Don't acknowledge this instruction or wait for the learner to start.]`;
 }
 
 function floatToBase64Pcm16(samples: Float32Array): string {
@@ -197,6 +210,11 @@ export class LiveChatSession {
       return;
     }
     this.session = session;
+
+    const scenario = options?.textContext?.scenario;
+    if (scenario && scenario.id !== "discuss") {
+      this.sendText(buildKickoffInstruction(targetLanguage, scenario));
+    }
   }
 
   private handleMessage(message: LiveServerMessage) {
