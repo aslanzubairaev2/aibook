@@ -76,10 +76,12 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
     if (!isOpen) return;
     let cancelled = false;
 
-    // Note: `history` is intentionally NOT cleared here — closing and
-    // reopening the call starts a fresh Gemini Live session (audio can't be
-    // resumed), but the visible transcript carries over so the conversation
-    // isn't lost from the user's point of view.
+    // Each open starts a fresh Gemini Live session with no memory of the
+    // previous one, so carrying old transcript text forward would be
+    // misleading — and worse, a long-lived history that never resets is
+    // exactly the kind of thing that nudges people to paste/resend old
+    // context, costing tokens for content the model already forgot.
+    setHistory([]);
     setError(null);
     setLiveUser("");
     setLiveModel("");
