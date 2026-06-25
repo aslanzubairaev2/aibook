@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, PhoneOff, X } from "lucide-react";
 import { getLocalGeminiKey } from "@/lib/db/local";
+import { sbAuthHeaders } from "@/lib/db/supabase";
 import { LiveChatSession, type LiveChatStatus } from "@/lib/ai/liveChat";
 
 type Props = {
@@ -27,6 +28,23 @@ const STATUS_LABEL: Record<LiveChatStatus, string> = {
 const NO_KEY_MESSAGE = "Добавьте свой Gemini API ключ в настройках, чтобы начать голосовой чат.";
 const MIC_DENIED_MESSAGE = "Нет доступа к микрофону. Разрешите доступ в настройках браузера и попробуйте снова.";
 
+/** Owners get the key from the server's env (set on Vercel); everyone else uses their local key. */
+async function resolveGeminiKey(): Promise<string | null> {
+  try {
+    const headers = await sbAuthHeaders();
+    if (headers.Authorization) {
+      const res = await fetch("/api/ai/live-key", { headers });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.apiKey) return data.apiKey as string;
+      }
+    }
+  } catch {
+    // fall through to the local key
+  }
+  return getLocalGeminiKey();
+}
+
 export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose, onOpenSettings }: Props) {
   const [status, setStatus] = useState<LiveChatStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -43,13 +61,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
 
   useEffect(() => {
     if (!isOpen) return;
-
-    const apiKey = getLocalGeminiKey();
-    if (!apiKey) {
-      setError(NO_KEY_MESSAGE);
-      setStatus("error");
-      return;
-    }
+    let cancelled = false;
 
     setError(null);
     setHistory([]);
@@ -58,29 +70,41 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
     liveUserRef.current = "";
     liveModelRef.current = "";
     prevStatusRef.current = "idle";
+    setStatus("connecting");
 
-    const session = new LiveChatSession(apiKey, {
-      onStatusChange: setStatus,
-      onUserTranscript: (text) => {
-        liveUserRef.current += text;
-        setLiveUser(liveUserRef.current);
-      },
-      onModelTranscript: (text) => {
-        liveModelRef.current += text;
-        setLiveModel(liveModelRef.current);
-      },
-      onError: (message) => setError(message),
-    });
-    sessionRef.current = session;
+    (async () => {
+      const apiKey = await resolveGeminiKey();
+      if (cancelled) return;
+      if (!apiKey) {
+        setError(NO_KEY_MESSAGE);
+        setStatus("error");
+        return;
+      }
 
-    session.connect(nativeLanguage, targetLanguage).catch((err) => {
-      const message = err?.name === "NotAllowedError" ? MIC_DENIED_MESSAGE : (err?.message || "Не удалось начать звонок");
-      setError(message);
-      setStatus("error");
-    });
+      const session = new LiveChatSession(apiKey, {
+        onStatusChange: setStatus,
+        onUserTranscript: (text) => {
+          liveUserRef.current += text;
+          setLiveUser(liveUserRef.current);
+        },
+        onModelTranscript: (text) => {
+          liveModelRef.current += text;
+          setLiveModel(liveModelRef.current);
+        },
+        onError: (message) => setError(message),
+      });
+      sessionRef.current = session;
+
+      session.connect(nativeLanguage, targetLanguage).catch((err) => {
+        const message = err?.name === "NotAllowedError" ? MIC_DENIED_MESSAGE : (err?.message || "Не удалось начать звонок");
+        setError(message);
+        setStatus("error");
+      });
+    })();
 
     return () => {
-      session.close();
+      cancelled = true;
+      sessionRef.current?.close();
       sessionRef.current = null;
     };
   }, [isOpen, nativeLanguage, targetLanguage]);

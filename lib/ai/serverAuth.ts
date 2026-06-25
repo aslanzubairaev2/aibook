@@ -13,32 +13,29 @@ const ownerEmails = (process.env.AI_OWNER_EMAILS || "")
   .map(email => email.trim().toLowerCase())
   .filter(Boolean);
 
-export async function getApiKeyForRequest(req: Request): Promise<string> {
+export async function isOwnerRequest(req: Request): Promise<boolean> {
   const authHeader = req.headers.get("Authorization") || "";
-  const clientKey = req.headers.get("x-gemini-key") || "";
+  if (!authHeader.startsWith("Bearer ") || !supabaseUrl || !supabaseAnonKey) return false;
 
-  let isAllowed = false;
+  const token = authHeader.substring(7);
+  try {
+    const supabaseServer = createClient(supabaseUrl, supabaseAnonKey);
+    const { data: { user }, error } = await supabaseServer.auth.getUser(token);
+    if (!user || error) return false;
 
-  if (authHeader.startsWith("Bearer ") && supabaseUrl && supabaseAnonKey) {
-    const token = authHeader.substring(7);
-    try {
-      const supabaseServer = createClient(supabaseUrl, supabaseAnonKey);
-      const { data: { user }, error } = await supabaseServer.auth.getUser(token);
-      if (user && !error) {
-        const userId = user.id;
-        const userEmail = user.email?.trim().toLowerCase() || "";
+    const userId = user.id;
+    const userEmail = user.email?.trim().toLowerCase() || "";
 
-        const isOwnerId = ownerUserIds.includes(userId);
-        const isOwnerEmail = ownerEmails.includes(userEmail);
-
-        if (isOwnerId || isOwnerEmail) {
-          isAllowed = true;
-        }
-      }
-    } catch (e) {
-      console.error("Error verifying Supabase token in API route:", e);
-    }
+    return ownerUserIds.includes(userId) || ownerEmails.includes(userEmail);
+  } catch (e) {
+    console.error("Error verifying Supabase token in API route:", e);
+    return false;
   }
+}
+
+export async function getApiKeyForRequest(req: Request): Promise<string> {
+  const clientKey = req.headers.get("x-gemini-key") || "";
+  const isAllowed = await isOwnerRequest(req);
 
   // If in allowlist, use server-side GEMINI_API_KEY
   if (isAllowed && process.env.GEMINI_API_KEY) {
