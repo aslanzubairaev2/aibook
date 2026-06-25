@@ -6,7 +6,7 @@
 
 import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@google/genai";
 
-export const LIVE_CHAT_MODEL = "gemini-3.1-flash-live-preview";
+export const LIVE_CHAT_MODEL = "gemini-live-2.5-flash-preview";
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
@@ -113,8 +113,16 @@ export class LiveChatSession {
           this.cb.onError(e?.message || "Не удалось подключиться к Gemini Live");
           this.cb.onStatusChange("error");
         },
-        onclose: () => {
-          if (!this.closed) this.cb.onStatusChange("closed");
+        onclose: (e) => {
+          if (this.closed) return;
+          // A non-1000 close code or a server-supplied reason means the call dropped
+          // unexpectedly (bad model/key/quota), not a normal hangup — surface it.
+          if (e && (e.reason || (e.code && e.code !== 1000))) {
+            this.cb.onError(e.reason || `Соединение закрыто (код ${e.code})`);
+            this.cb.onStatusChange("error");
+          } else {
+            this.cb.onStatusChange("closed");
+          }
         },
       },
     });
