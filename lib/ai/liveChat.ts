@@ -14,6 +14,15 @@ const CAPTURE_BUFFER_SIZE = 4096;
 
 export type LiveChatStatus = "idle" | "connecting" | "listening" | "speaking" | "error" | "closed";
 
+/** "call" mimics a free-form spoken conversation; "discuss" is a voice Q&A tutor for questions about the language itself. */
+export type LiveChatMode = "call" | "discuss";
+
+export type LiveChatConnectOptions = {
+  mode?: LiveChatMode;
+  /** Short free-text summary of the learner's current level (vocab size, CEFR estimate, etc.) to calibrate the AI's speech. */
+  levelSummary?: string;
+};
+
 export type LiveChatCallbacks = {
   onStatusChange: (status: LiveChatStatus) => void;
   onUserTranscript: (text: string) => void;
@@ -29,15 +38,27 @@ function languageName(code: string) {
   return LANGUAGE_NAMES[code] ?? code;
 }
 
-function buildSystemInstruction(nativeLanguage: string, targetLanguage: string) {
+function buildSystemInstruction(nativeLanguage: string, targetLanguage: string, mode: LiveChatMode, levelSummary?: string) {
   const native = languageName(nativeLanguage);
   const target = languageName(targetLanguage);
+  const levelLine = levelSummary
+    ? `\nWhat we know about the learner's current level in ${target}: ${levelSummary}. Calibrate your vocabulary, grammar complexity, and pace to match this — don't speak above or condescendingly below it.`
+    : "";
+
+  if (mode === "discuss") {
+    return `You are a knowledgeable, patient language-learning assistant having a voice conversation inside a language-learning reading app called AIBook.
+The user's native language is ${native} and they are learning ${target}.
+This is NOT a roleplay phone call — the learner wants to ask you directly ABOUT the language: grammar rules, word meanings and nuances, how to say something, why a sentence is built a certain way, cultural context, etc.
+Answer clearly and usefully, mixing ${target} examples with ${native} explanations as needed so the learner truly understands — clarity matters more than staying in ${target}.
+Keep answers focused, but don't artificially cut an explanation short if the question needs detail.${levelLine}`;
+  }
+
   return `You are a warm, encouraging voice conversation partner inside a language-learning reading app called AIBook.
 The user's native language is ${native} and they are learning ${target}.
 Speak mostly in ${target}, at a level the learner can follow, and switch to ${native} to explain anything that seems confusing or if the learner gets stuck.
 This is a live voice call, so keep replies short and conversational — usually one or two sentences — then let the user respond.
 If the learner makes a meaningful mistake, gently model the correct phrase instead of lecturing them about grammar.
-Ask follow-up questions to keep a natural conversation going.`;
+Ask follow-up questions to keep a natural conversation going.${levelLine}`;
 }
 
 function floatToBase64Pcm16(samples: Float32Array): string {
@@ -65,6 +86,13 @@ function base64Pcm16ToFloat32(base64: string): Float32Array<ArrayBuffer> {
   return out;
 }
 
+// Gemini's streamed transcription deltas occasionally include zero-width
+// Unicode characters (e.g. U+200B). These pass `.trim()` as non-empty but
+// render as a blank bubble, so strip them at the source.
+function stripInvisible(text: string): string {
+  return text.replace(/[​-‏‪-‮⁠﻿]/g, "");
+}
+
 /** Manages one live voice session: mic capture → Gemini Live API → audio playback. */
 export class LiveChatSession {
   private ai: GoogleGenAI;
@@ -86,7 +114,7 @@ export class LiveChatSession {
     this.cb = callbacks;
   }
 
-  async connect(nativeLanguage: string, targetLanguage: string): Promise<void> {
+  async connect(nativeLanguage: string, targetLanguage: string, options?: LiveChatConnectOptions): Promise<void> {
     this.cb.onStatusChange("connecting");
 
     // Ask for the mic up front so connection errors and permission errors surface separately.
@@ -98,7 +126,7 @@ export class LiveChatSession {
       model: LIVE_CHAT_MODEL,
       config: {
         responseModalities: [Modality.AUDIO],
-        systemInstruction: buildSystemInstruction(nativeLanguage, targetLanguage),
+        systemInstruction: buildSystemInstruction(nativeLanguage, targetLanguage, options?.mode ?? "call", options?.levelSummary),
         inputAudioTranscription: {},
         outputAudioTranscription: {},
       },
@@ -141,10 +169,10 @@ export class LiveChatSession {
     }
 
     if (serverContent.inputTranscription?.text) {
-      this.cb.onUserTranscript(serverContent.inputTranscription.text);
+      this.cb.onUserTranscript(stripInvisible(serverContent.inputTranscription.text));
     }
     if (serverContent.outputTranscription?.text) {
-      this.cb.onModelTranscript(serverContent.outputTranscription.text);
+      this.cb.onModelTranscript(stripInvisible(serverContent.outputTranscription.text));
     }
     if (serverContent.turnComplete && this.activeSources.length === 0) {
       this.cb.onStatusChange("listening");

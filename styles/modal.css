@@ -990,6 +990,31 @@
   font-weight: 700;
 }
 
+.livechat-mode-toggle {
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px 0;
+  flex-shrink: 0;
+}
+
+.livechat-mode-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.livechat-mode-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-dark);
+}
+
 .livechat-body {
   flex: 1;
   display: flex;

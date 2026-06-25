@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, PhoneOff, X } from "lucide-react";
 import { getLocalGeminiKey } from "@/lib/db/local";
 import { sbAuthHeaders } from "@/lib/db/supabase";
-import { LiveChatSession, type LiveChatStatus } from "@/lib/ai/liveChat";
+import { LiveChatSession, type LiveChatMode, type LiveChatStatus } from "@/lib/ai/liveChat";
+import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 
 type Props = {
   isOpen: boolean;
@@ -27,6 +28,17 @@ const STATUS_LABEL: Record<LiveChatStatus, string> = {
 
 const NO_KEY_MESSAGE = "Добавьте свой Gemini API ключ в настройках, чтобы начать голосовой чат.";
 const MIC_DENIED_MESSAGE = "Нет доступа к микрофону. Разрешите доступ в настройках браузера и попробуйте снова.";
+
+const EMPTY_PLACEHOLDER: Record<LiveChatMode, string> = {
+  call: "Скажите что-нибудь — AI вас услышит и ответит голосом.",
+  discuss: "Спросите что-нибудь о языке — например, про грамматику или слово.",
+};
+
+// Gemini's streamed transcription deltas can include zero-width Unicode
+// characters that pass `.trim()` as non-empty but render as a blank bubble.
+function cleanText(text: string): string {
+  return text.replace(/[​-‏‪-‮⁠﻿]/g, "").trim();
+}
 
 /** Owners get the key from the server's env (set on Vercel); everyone else uses their local key. */
 async function resolveGeminiKey(): Promise<string | null> {
@@ -52,6 +64,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
   const [history, setHistory] = useState<TranscriptLine[]>([]);
   const [liveUser, setLiveUser] = useState("");
   const [liveModel, setLiveModel] = useState("");
+  const [mode, setMode] = useState<LiveChatMode>("call");
 
   const sessionRef = useRef<LiveChatSession | null>(null);
   const prevStatusRef = useRef<LiveChatStatus>("idle");
@@ -73,7 +86,10 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
     setStatus("connecting");
 
     (async () => {
-      const apiKey = await resolveGeminiKey();
+      const [apiKey, levelEstimate] = await Promise.all([
+        resolveGeminiKey(),
+        estimateTargetLanguageLevel(targetLanguage).catch(() => null),
+      ]);
       if (cancelled) return;
       if (!apiKey) {
         setError(NO_KEY_MESSAGE);
@@ -95,7 +111,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
       });
       sessionRef.current = session;
 
-      session.connect(nativeLanguage, targetLanguage).catch((err) => {
+      session.connect(nativeLanguage, targetLanguage, { mode, levelSummary: levelEstimate?.summary }).catch((err) => {
         const message = err?.name === "NotAllowedError" ? MIC_DENIED_MESSAGE : (err?.message || "Не удалось начать звонок");
         setError(message);
         setStatus("error");
@@ -107,18 +123,20 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
       sessionRef.current?.close();
       sessionRef.current = null;
     };
-  }, [isOpen, nativeLanguage, targetLanguage]);
+  }, [isOpen, nativeLanguage, targetLanguage, mode]);
 
   // Turn user speech / model speech into finalized transcript lines as the call progresses.
   useEffect(() => {
     const prev = prevStatusRef.current;
-    if (prev === "listening" && status === "speaking" && liveUserRef.current.trim()) {
-      setHistory((h) => [...h, { role: "user", text: liveUserRef.current.trim() }]);
+    if (prev === "listening" && status === "speaking") {
+      const text = cleanText(liveUserRef.current);
+      if (text) setHistory((h) => [...h, { role: "user", text }]);
       liveUserRef.current = "";
       setLiveUser("");
     }
-    if (prev === "speaking" && status === "listening" && liveModelRef.current.trim()) {
-      setHistory((h) => [...h, { role: "model", text: liveModelRef.current.trim() }]);
+    if (prev === "speaking" && status === "listening") {
+      const text = cleanText(liveModelRef.current);
+      if (text) setHistory((h) => [...h, { role: "model", text }]);
       liveModelRef.current = "";
       setLiveModel("");
     }
@@ -143,6 +161,8 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
   if (!isOpen) return null;
 
   const isLive = status === "listening" || status === "speaking";
+  const pendingUser = cleanText(liveUser);
+  const pendingModel = cleanText(liveModel);
 
   return (
     <div className="modal-backdrop livechat-backdrop">
@@ -153,6 +173,27 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
             <X size={19} />
           </button>
         </header>
+
+        <div className="livechat-mode-toggle" role="tablist" aria-label="Режим голосового чата">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "call"}
+            className={`livechat-mode-btn${mode === "call" ? " active" : ""}`}
+            onClick={() => setMode("call")}
+          >
+            Звонок
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "discuss"}
+            className={`livechat-mode-btn${mode === "discuss" ? " active" : ""}`}
+            onClick={() => setMode("discuss")}
+          >
+            Обсуждение языка
+          </button>
+        </div>
 
         <div className="livechat-body">
           <div className={`livechat-orb ${status}`}>
@@ -172,16 +213,16 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, onClose,
           )}
 
           <div className="livechat-transcript">
-            {history.length === 0 && !liveUser && !liveModel && !error && (
-              <p className="livechat-empty">Скажите что-нибудь — AI вас услышит и ответит голосом.</p>
+            {history.length === 0 && !pendingUser && !pendingModel && !error && (
+              <p className="livechat-empty">{EMPTY_PLACEHOLDER[mode]}</p>
             )}
             {history.map((line, index) => (
               <p key={index} className={`livechat-line ${line.role}`}>
                 {line.text}
               </p>
             ))}
-            {liveUser && <p className="livechat-line user pending">{liveUser}</p>}
-            {liveModel && <p className="livechat-line model pending">{liveModel}</p>}
+            {pendingUser && <p className="livechat-line user pending">{pendingUser}</p>}
+            {pendingModel && <p className="livechat-line model pending">{pendingModel}</p>}
             <div ref={endRef} />
           </div>
         </div>
