@@ -6,7 +6,7 @@
 
 import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@google/genai";
 
-export const LIVE_CHAT_MODEL = "gemini-live-2.5-flash-preview";
+export const LIVE_CHAT_MODEL = "gemini-3.1-flash-live-preview";
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
