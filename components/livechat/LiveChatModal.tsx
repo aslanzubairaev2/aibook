@@ -373,15 +373,17 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                     <p className={`livechat-line ${line.role}`}>{line.text}</p>
                     {line.role === "model" && (
                       <div
-                        className={`livechat-translation${revealed.has(index) ? " revealed" : " blurred"}`}
+                        className="livechat-translation"
                         onClick={() => revealTranslation(index, line.text)}
                         role="button"
                         tabIndex={0}
                         title={revealed.has(index) ? undefined : "Нажмите, чтобы увидеть перевод"}
                       >
-                        {revealed.has(index)
-                          ? (translating.has(index) ? <Loader2 size={12} className="spin" /> : translations[index])
-                          : line.text}
+                        <span className={revealed.has(index) ? "revealed" : "blurred"}>
+                          {revealed.has(index)
+                            ? (translating.has(index) ? <Loader2 size={12} className="spin" /> : translations[index])
+                            : line.text}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -399,6 +401,17 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                     </button>
                   ) : (
                     <>
+                      <div className="livechat-suggestions-header">
+                        <span>Варианты ответа</span>
+                        <button
+                          type="button"
+                          className="livechat-suggestions-hide"
+                          onClick={() => setSuggestionsVisible(false)}
+                          aria-label="Скрыть варианты ответа"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
                       <div className="livechat-suggestions-list">
                         {suggestionsLoading ? (
                           <Loader2 size={16} className="spin" />
@@ -416,14 +429,6 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                           ))
                         )}
                       </div>
-                      <button
-                        type="button"
-                        className="livechat-suggestions-hide"
-                        onClick={() => setSuggestionsVisible(false)}
-                        aria-label="Скрыть варианты ответа"
-                      >
-                        <X size={14} />
-                      </button>
                     </>
                   )}
                 </div>
