@@ -5,6 +5,7 @@ import { franc } from "franc-min";
 import { AppShell } from "@/components/ui/AppShell";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
+import { LiveChatModal } from "@/components/livechat/LiveChatModal";
 import { LibraryView } from "@/components/library/LibraryView";
 import { DiscoverView } from "@/components/discover/DiscoverView";
 import { ReaderView } from "@/components/reader/ReaderView";
@@ -217,6 +218,7 @@ async function loadLessonBook(sharedBookId: string, paragraphIndex: number, perc
 function AppInner() {
   const { user, isLoading: authLoading } = useAuth();
   const [section, setSection] = useState<AppSection>("home");
+  const [isLiveChatOpen, setIsLiveChatOpen] = useState(false);
   const [books, setBooks] = useState<Book[]>([]);
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [profile, setProfile] = useState<UserProfile>({
@@ -815,6 +817,7 @@ function AppInner() {
           onOpenCards={() => setSection("cards")}
           onOpenBooks={() => setSection("books")}
           onOpenDiscover={() => setSection("discover")}
+          onOpenLiveChat={() => setIsLiveChatOpen(true)}
         />
       )}
 
@@ -880,6 +883,13 @@ function AppInner() {
         />
       )}
       <AudioScrubber />
+      <LiveChatModal
+        isOpen={isLiveChatOpen}
+        nativeLanguage={profile.nativeLanguage}
+        targetLanguage={profile.targetLanguage}
+        onClose={() => setIsLiveChatOpen(false)}
+        onOpenSettings={() => { setIsLiveChatOpen(false); setSection("settings"); }}
+      />
     </AppShell>
   );
 }

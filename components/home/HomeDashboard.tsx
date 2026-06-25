@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, ChevronRight, Library, Flame } from "lucide-react";
+import { BookOpen, ChevronRight, Library, Flame, Phone } from "lucide-react";
 import { BookDetailModal } from "@/components/discover/BookDetailModal";
 import type { Book, Flashcard, UserProfile } from "@/lib/types";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -19,6 +19,7 @@ type Props = {
   onOpenCards: () => void;
   onOpenBooks: () => void;
   onOpenDiscover: () => void;
+  onOpenLiveChat: () => void;
 };
 
 type GutendexBook = {
@@ -103,6 +104,7 @@ export function HomeDashboard({
   onOpenCards,
   onOpenBooks,
   onOpenDiscover,
+  onOpenLiveChat,
 }: Props) {
   const { user } = useAuth();
   const [recommendations, setRecommendations] = useState<GutendexBook[]>([]);
@@ -196,6 +198,9 @@ export function HomeDashboard({
           <h1 className="home-title">AIBook</h1>
         </div>
         <div className="home-header-right">
+          <button className="icon-btn livechat-fab" onClick={onOpenLiveChat} type="button" aria-label="Голосовой чат с AI">
+            <Phone size={19} />
+          </button>
           <button className="icon-btn" onClick={onOpenBooks} type="button" aria-label="Библиотека">
             <Library size={19} />
           </button>
