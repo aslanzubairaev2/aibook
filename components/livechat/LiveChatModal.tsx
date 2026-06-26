@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Mic, MicOff, PhoneOff, Shuffle, Volume2, X, Gauge } from "lucide-react";
+import { memo, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { Loader2, Mic, MicOff, PhoneOff, Send, Shuffle, Volume2, X, Gauge } from "lucide-react";
 import { getLocalGeminiKey, getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import { sbAuthHeaders, sbGetCachedAnalysis, sbSaveCachedAnalysis, sbInsertFlashcard } from "@/lib/db/supabase";
 import { LiveChatSession, base64Pcm16ToFloat32, OUTPUT_SAMPLE_RATE, type LiveChatMode, type LiveChatStatus } from "@/lib/ai/liveChat";
@@ -190,6 +190,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   const [suggestionsVisible, setSuggestionsVisible] = useState(true);
 
   const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+  const [textInput, setTextInput] = useState("");
 
   const [wmOpen, setWmOpen] = useState(false);
   const [wmWord, setWmWord] = useState("");
@@ -239,6 +240,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     setPlayingIndex(null);
     setWmOpen(false);
     setWmAnalysis(null);
+    setTextInput("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -393,6 +395,16 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     sessionRef.current?.sendText(suggestion.text);
     setHistory((h) => [...h, { role: "user", text: suggestion.text }]);
     setSuggestions([]);
+  }
+
+  function handleTextSubmit(e: FormEvent) {
+    e.preventDefault();
+    const text = textInput.trim();
+    if (!text) return;
+    sessionRef.current?.sendText(text);
+    setHistory((h) => [...h, { role: "user", text }]);
+    setSuggestions([]);
+    setTextInput("");
   }
 
   const revealTranslation = useCallback(
@@ -721,6 +733,26 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                 </div>
               )}
             </div>
+
+            <form className="livechat-text-form" onSubmit={handleTextSubmit}>
+              <input
+                type="text"
+                className="livechat-text-input"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                placeholder="Напишите сообщение вместо голоса..."
+                disabled={!isLive}
+                aria-label="Текстовое сообщение"
+              />
+              <button
+                type="submit"
+                className="livechat-text-send"
+                disabled={!isLive || !textInput.trim()}
+                aria-label="Отправить сообщение"
+              >
+                <Send size={18} />
+              </button>
+            </form>
 
             <div className="livechat-controls">
               <button

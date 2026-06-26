@@ -1399,6 +1399,48 @@
   cursor: pointer;
 }
 
+.livechat-text-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.livechat-text-input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgba(240, 230, 211, 0.06);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+.livechat-text-input:focus { outline: none; border-color: var(--accent); }
+.livechat-text-input:disabled { opacity: 0.4; }
+.livechat-text-input::placeholder { color: var(--text-muted); }
+
+.livechat-text-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #1a1410;
+  cursor: pointer;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+.livechat-text-send:disabled { opacity: 0.35; cursor: default; }
+.livechat-text-send:active:not(:disabled) { transform: scale(0.92); }
+
 .livechat-controls {
   display: flex;
   align-items: center;
