@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, MessageCircle, SlidersHorizontal } from "lucide-react";
-import type { AiAnalysis, DiscussMessage, Flashcard, TtsProvider } from "@/lib/types";
+import type { AiAnalysis, CardFilters, DiscussMessage, Flashcard, TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
 import { findDuplicateCard } from "@/lib/cards";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
@@ -10,7 +10,7 @@ import { SpeakButton } from "@/components/ui/SpeakButton";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory } from "@/lib/db/local";
-import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory } from "@/lib/db/supabase";
+import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertSettings } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
@@ -68,12 +68,14 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   const targetLanguage = profile.targetLanguage;
   const nativeLanguage = profile.nativeLanguage;
 
+  const savedFilters = profile.cardFilters;
+
   const [activeTab, setActiveTab] = useState<"today" | "train" | "all">("today");
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
-  const [filterType, setFilterType] = useState<FilterType>("all");
-  const [filterBook, setFilterBook] = useState<string>("all");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("added");
+  const [filterStatus, setFilterStatus] = useState<FilterStatus>(savedFilters?.filterStatus ?? "all");
+  const [filterType, setFilterType] = useState<FilterType>(savedFilters?.filterType ?? "all");
+  const [filterBook, setFilterBook] = useState<string>(savedFilters?.filterBook ?? "all");
+  const [sortOrder, setSortOrder] = useState<SortOrder>(savedFilters?.sortOrder ?? "added");
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [showTrainFilterPanel, setShowTrainFilterPanel] = useState(false);
   const [showTtsMenu, setShowTtsMenu] = useState(false);
@@ -83,10 +85,10 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   const [currentTrainIndex, setCurrentTrainIndex] = useState(0);
   const [reviewedIds, setReviewedIds] = useState<string[]>([]);
   const [isFlipped, setIsFlipped] = useState(false);
-  const [trainFilter, setTrainFilter] = useState<FilterType>("all");
-  const [trainStatus, setTrainStatus] = useState<TrainStatus>("all");
-  const [trainDirection, setTrainDirection] = useState<TrainDirection>("forward");
-  const [trainMode, setTrainMode] = useState<"recognize" | "active">("recognize");
+  const [trainFilter, setTrainFilter] = useState<FilterType>(savedFilters?.trainFilter ?? "all");
+  const [trainStatus, setTrainStatus] = useState<TrainStatus>(savedFilters?.trainStatus ?? "all");
+  const [trainDirection, setTrainDirection] = useState<TrainDirection>(savedFilters?.trainDirection ?? "forward");
+  const [trainMode, setTrainMode] = useState<"recognize" | "active">(savedFilters?.trainMode ?? "recognize");
   // Snapshot of the cards being trained this session — built once per session
   // start/filter change rather than re-derived from the (mutating) `cards`
   // prop on every render, so grading a card can't shrink the queue out from
@@ -299,6 +301,31 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   };
 
   const restartTraining = () => startTrainingSession(trainStatus, trainFilter, trainDirection);
+
+  // Persists a filter/sort change to the local profile and, for signed-in users,
+  // to user_settings — so selections survive reloads and follow the user across devices.
+  const persistCardFilters = useCallback((patch: Partial<CardFilters>) => {
+    setProfile((prev) => {
+      const updatedFilters = { ...prev.cardFilters, ...patch };
+      const updated = { ...prev, cardFilters: updatedFilters };
+      saveLocalProfile(updated);
+      if (user) {
+        void sbUpsertSettings({
+          user_id: user.id,
+          native_language: updated.nativeLanguage,
+          active_target_lang: updated.targetLanguage,
+          ui_language: updated.uiLanguage,
+          tts_provider: updated.ttsProvider ?? "local",
+          reading_minutes: updated.readingMinutes,
+          books_started: updated.booksStarted,
+          books_finished: updated.booksFinished,
+          updated_at: new Date().toISOString(),
+          card_filters: updatedFilters,
+        });
+      }
+      return updated;
+    });
+  }, [user]);
 
   // --- TTS provider change ---
   const handleTtsProviderChange = (provider: TtsProvider, e: React.MouseEvent) => {
@@ -668,8 +695,8 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {/* Mode: passive recognition (flip card) vs active production */}
           <div className="filter-chips" style={{ justifyContent: "center" }}>
-            <button className={`filter-chip ${trainMode === "recognize" ? "active" : ""}`} onClick={() => setTrainMode("recognize")} type="button">Узнавание</button>
-            <button className={`filter-chip ${trainMode === "active" ? "active" : ""}`} onClick={() => setTrainMode("active")} type="button">Активно</button>
+            <button className={`filter-chip ${trainMode === "recognize" ? "active" : ""}`} onClick={() => { setTrainMode("recognize"); persistCardFilters({ trainMode: "recognize" }); }} type="button">Узнавание</button>
+            <button className={`filter-chip ${trainMode === "active" ? "active" : ""}`} onClick={() => { setTrainMode("active"); persistCardFilters({ trainMode: "active" }); }} type="button">Активно</button>
           </div>
 
           {trainMode === "active" ? (
@@ -703,7 +730,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                     <button
                       key={t}
                       className={`filter-chip ${trainFilter === t ? "active" : ""}`}
-                      onClick={() => { setTrainFilter(t); startTrainingSession(trainStatus, t, trainDirection); }}
+                      onClick={() => { setTrainFilter(t); persistCardFilters({ trainFilter: t }); startTrainingSession(trainStatus, t, trainDirection); }}
                       type="button"
                     >
                       {t === "all" ? "Все типы" : TYPE_LABELS[t]}
@@ -729,7 +756,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                       <button
                         key={s}
                         className={`filter-chip ${trainStatus === s ? "active" : ""}`}
-                        onClick={() => { setTrainStatus(s); startTrainingSession(s, trainFilter, trainDirection); }}
+                        onClick={() => { setTrainStatus(s); persistCardFilters({ trainStatus: s }); startTrainingSession(s, trainFilter, trainDirection); }}
                         type="button"
                       >
                         {s === "all" ? "Все статусы" : TRAIN_STATUS_LABELS[s]}
@@ -752,7 +779,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                     <button
                       key={d}
                       className={`filter-chip ${trainDirection === d ? "active" : ""}`}
-                      onClick={() => { setTrainDirection(d); startTrainingSession(trainStatus, trainFilter, d); }}
+                      onClick={() => { setTrainDirection(d); persistCardFilters({ trainDirection: d }); startTrainingSession(trainStatus, trainFilter, d); }}
                       type="button"
                     >
                       {TRAIN_DIRECTION_LABELS[d]}
@@ -764,7 +791,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
               {activeTrainFilterCount > 0 && (
                 <button
                   className="filter-reset-btn"
-                  onClick={() => { setTrainFilter("all"); setTrainStatus("all"); setTrainDirection("forward"); startTrainingSession("all", "all", "forward"); }}
+                  onClick={() => { setTrainFilter("all"); setTrainStatus("all"); setTrainDirection("forward"); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainDirection: "forward" }); startTrainingSession("all", "all", "forward"); }}
                   type="button"
                 >
                   Сбросить фильтры
@@ -957,7 +984,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                 <div className="filter-group-label">Статус</div>
                 <div className="filter-chips">
                   {(["all", "new", "learning", "review", "relearning"] as FilterStatus[]).map((s) => (
-                    <button key={s} className={`filter-chip ${filterStatus === s ? "active" : ""}`} onClick={() => { setFilterStatus(s); setVisibleCount(50); }} type="button">
+                    <button key={s} className={`filter-chip ${filterStatus === s ? "active" : ""}`} onClick={() => { setFilterStatus(s); persistCardFilters({ filterStatus: s }); setVisibleCount(50); }} type="button">
                       {s === "all" ? "Все" : STATUS_LABELS[s]}
                     </button>
                   ))}
@@ -968,7 +995,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                 <div className="filter-group-label">Тип</div>
                 <div className="filter-chips">
                   {(["all", "word", "phrase", "sentence"] as FilterType[]).map((t) => (
-                    <button key={t} className={`filter-chip ${filterType === t ? "active" : ""}`} onClick={() => { setFilterType(t); setVisibleCount(50); }} type="button">
+                    <button key={t} className={`filter-chip ${filterType === t ? "active" : ""}`} onClick={() => { setFilterType(t); persistCardFilters({ filterType: t }); setVisibleCount(50); }} type="button">
                       {t === "all" ? "Все типы" : TYPE_LABELS[t]}
                     </button>
                   ))}
@@ -978,7 +1005,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
               {allBooks.length > 1 && (
                 <div className="filter-group">
                   <div className="filter-group-label">Книга</div>
-                  <select className="book-select" value={filterBook} onChange={(e) => { setFilterBook(e.target.value); setVisibleCount(50); }}>
+                  <select className="book-select" value={filterBook} onChange={(e) => { setFilterBook(e.target.value); persistCardFilters({ filterBook: e.target.value }); setVisibleCount(50); }}>
                     <option value="all">Все книги</option>
                     {allBooks.map((b) => <option key={b} value={b}>{b.length > 20 ? b.slice(0, 20) + "…" : b}</option>)}
                   </select>
@@ -989,13 +1016,13 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                 <div className="filter-group-label">Сортировка</div>
                 <div className="filter-chips">
                   {([["added", "По дате добавления"], ["due", "По дате повторения"], ["ease", "По лёгкости"]] as [SortOrder, string][]).map(([val, lbl]) => (
-                    <button key={val} className={`filter-chip ${sortOrder === val ? "active" : ""}`} onClick={() => setSortOrder(val)} type="button">{lbl}</button>
+                    <button key={val} className={`filter-chip ${sortOrder === val ? "active" : ""}`} onClick={() => { setSortOrder(val); persistCardFilters({ sortOrder: val }); }} type="button">{lbl}</button>
                   ))}
                 </div>
               </div>
 
               {activeFilterCount > 0 && (
-                <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); setVisibleCount(50); }} type="button">
+                <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); persistCardFilters({ filterStatus: "all", filterType: "all", filterBook: "all" }); setVisibleCount(50); }} type="button">
                   Сбросить фильтры
                 </button>
               )}

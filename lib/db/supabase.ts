@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { ReaderSelectionSnapshot, DiscussMessage } from "@/lib/types";
+import type { ReaderSelectionSnapshot, DiscussMessage, CardFilters } from "@/lib/types";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -103,6 +103,7 @@ export type DbUserSettings = {
   last_section?: string | null;
   last_book_id?: string | null;
   last_view_updated_at?: string | null;
+  card_filters?: CardFilters | null;
 };
 
 // ─── Books ────────────────────────────────────────────────────────────────────

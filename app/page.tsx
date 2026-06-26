@@ -445,6 +445,7 @@ function AppInner() {
         booksStarted: dbSettings.books_started ?? 0,
         booksFinished: dbSettings.books_finished ?? 0,
         savedItems: dbCards.length,
+        cardFilters: dbSettings.card_filters ?? getLocalProfile().cardFilters,
       };
       setProfile(updated);
       saveLocalProfile(updated);

@@ -35,6 +35,18 @@ export type Book = {
   lessonContext?: LessonContext; // navigation context for shared lessons
 };
 
+/** Persisted flashcard filter/sort selections from CardsView, kept in sync via UserProfile so they survive reloads and follow the user across devices. */
+export type CardFilters = {
+  filterStatus?: "all" | "new" | "learning" | "review" | "relearning";
+  filterType?: "all" | "word" | "phrase" | "sentence";
+  filterBook?: string;
+  sortOrder?: "added" | "due" | "ease";
+  trainFilter?: "all" | "word" | "phrase" | "sentence";
+  trainStatus?: "all" | "new" | "learning" | "review" | "relearning" | "hard";
+  trainDirection?: "forward" | "reverse" | "mixed";
+  trainMode?: "recognize" | "active";
+};
+
 export type UserProfile = {
   nativeLanguage: string;   // ISO 639-1 code e.g. 'ru'
   targetLanguage: string;   // ISO 639-1 code e.g. 'de'
@@ -44,6 +56,7 @@ export type UserProfile = {
   booksFinished: number;
   savedItems: number;
   ttsProvider?: TtsProvider;
+  cardFilters?: CardFilters;
 };
 
 // Normalized, language-agnostic part of speech used to decide which grammar
