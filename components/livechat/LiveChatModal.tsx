@@ -561,10 +561,12 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
             )}
 
             <div className="livechat-body">
-              <div className={`livechat-orb ${status}`}>
-                {status === "connecting" || status === "idle" ? <Loader2 size={28} className="spin" /> : <Mic size={28} />}
+              <div className="livechat-status-row">
+                <div className={`livechat-orb ${status}`}>
+                  {status === "connecting" || status === "idle" ? <Loader2 size={16} className="spin" /> : <Mic size={16} />}
+                </div>
+                <strong className="livechat-status">{STATUS_LABEL[status]}</strong>
               </div>
-              <strong className="livechat-status">{STATUS_LABEL[status]}</strong>
 
               {error && (
                 <div className="livechat-error">

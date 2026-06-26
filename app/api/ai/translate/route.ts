@@ -30,7 +30,9 @@ export async function POST(req: Request) {
       model: AI_CONFIG.model,
       systemInstruction,
       generationConfig: {
-        maxOutputTokens: 256,
+        // A live-chat turn can run several sentences long; 256 tokens was
+        // cutting longer translations off mid-sentence, which read as garbled.
+        maxOutputTokens: 1024,
         temperature: 0.1,
       },
     });
