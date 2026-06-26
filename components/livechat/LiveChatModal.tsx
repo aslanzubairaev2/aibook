@@ -176,6 +176,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   const [liveUser, setLiveUser] = useState("");
   const [liveModel, setLiveModel] = useState("");
   const [mode, setMode] = useState<LiveChatMode>("call");
+  const [retryToken, setRetryToken] = useState(0);
 
   const [scenarios, setScenarios] = useState<LiveScenario[] | null>(null);
   const [scenarioError, setScenarioError] = useState<string | null>(null);
@@ -351,7 +352,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
       sessionRef.current?.close();
       sessionRef.current = null;
     };
-  }, [isOpen, nativeLanguage, targetLanguage, mode, needsScenario, contextText, selectedScenario]);
+  }, [isOpen, nativeLanguage, targetLanguage, mode, needsScenario, contextText, selectedScenario, retryToken]);
 
   const fetchSuggestionsFor = useCallback(
     (lastLine: string) => {
@@ -376,6 +377,13 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   function handleClose() {
     sessionRef.current?.close();
     onClose();
+  }
+
+  // Connection drops (e.g. WebSocket code 1006 on a mobile network blip)
+  // land in status "error" with no automatic retry — bumping this token
+  // re-runs the connect effect from scratch without closing the modal.
+  function handleReconnect() {
+    setRetryToken((t) => t + 1);
   }
 
   function toggleMute() {
@@ -661,9 +669,13 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
               {error && (
                 <div className="livechat-error">
                   <p>{error}</p>
-                  {error === NO_KEY_MESSAGE && (
+                  {error === NO_KEY_MESSAGE ? (
                     <button type="button" className="primary-btn" onClick={onOpenSettings}>
                       Открыть настройки
+                    </button>
+                  ) : (
+                    <button type="button" className="primary-btn" onClick={handleReconnect}>
+                      Переподключиться
                     </button>
                   )}
                 </div>

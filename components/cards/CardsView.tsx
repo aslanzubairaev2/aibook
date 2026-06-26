@@ -75,6 +75,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   const [filterBook, setFilterBook] = useState<string>("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("added");
   const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [showTrainFilterPanel, setShowTrainFilterPanel] = useState(false);
   const [showTtsMenu, setShowTtsMenu] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -178,8 +179,21 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   }, [activeTab]);
 
   // --- Close menus on outside click ---
+  // Checks the click target against the toggle/panel itself (rather than
+  // relying on the button's stopPropagation to outrun this document-level
+  // listener) — a plain native listener on `document` still observes clicks
+  // on elements inside React's tree, so an unconditional close-on-any-click
+  // here was undoing the toggle button's own state update on the very same
+  // click that opened it.
   useEffect(() => {
-    const handler = () => { setShowFilterPanel(false); setShowTtsMenu(false); };
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".all-filter-toggle, .all-filter-panel")) {
+        setShowFilterPanel(false);
+        setShowTrainFilterPanel(false);
+      }
+      if (!target.closest(".card-tts-wrap")) setShowTtsMenu(false);
+    };
     document.addEventListener("click", handler);
     return () => document.removeEventListener("click", handler);
   }, []);
@@ -405,6 +419,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   // --- All Cards filtering & sorting ---
   const allBooks = Array.from(new Set(cards.map((c) => c.sourceBookTitle || c.source || "").filter(Boolean)));
   const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all"].filter(Boolean).length;
+  const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", trainDirection !== "forward"].filter(Boolean).length;
 
   const filteredAllCards = cards
     .filter((c) => {
@@ -491,8 +506,8 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
         .grade-btn-2 .grade-score { color: var(--blue); }
         .grade-btn-3 .grade-score { color: var(--green); }
         .grade-btn-4 .grade-score { color: var(--accent); }
-        .all-search-bar { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--bg-card); border-radius: var(--radius-sm); padding: 0 12px; height: 40px; margin-bottom: 12px; }
-        .all-search-input { flex: 1; background: transparent; border: none; color: var(--text-primary); outline: none; font-size: 14px; }
+        .all-search-bar { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--bg-card); border-radius: var(--radius-sm); padding: 0 12px; height: 40px; margin-bottom: 12px; min-width: 0; }
+        .all-search-input { flex: 1; min-width: 0; background: transparent; border: none; color: var(--text-primary); outline: none; font-size: 14px; }
         .card-row-delete-btn { color: var(--text-muted); background: transparent; border: none; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; }
         .card-row-delete-btn:hover { color: #e08888; background: rgba(224, 136, 136, 0.08); }
         .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -665,65 +680,98 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
             />
           ) : (
           <>
-          {/* Type filter: train only words / phrases / sentences */}
-          <div className="filter-chips" style={{ justifyContent: "center" }}>
-            {(["all", "word", "phrase", "sentence"] as FilterType[]).map((t) => (
-              <button
-                key={t}
-                className={`filter-chip ${trainFilter === t ? "active" : ""}`}
-                onClick={() => { setTrainFilter(t); startTrainingSession(trainStatus, t, trainDirection); }}
-                type="button"
-              >
-                {t === "all" ? "Все типы" : TYPE_LABELS[t]}
-                {t !== "all" && (
-                  <span style={{ marginLeft: 4, opacity: 0.7 }}>
-                    {trainPool.filter((c) => c.type === t).length}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          {/* Type / status / direction filters, collapsed into one panel so the
+              card itself stays visible above the fold on mobile (same pattern
+              as the All Cards tab). */}
+          <button
+            className={`all-filter-toggle ${showTrainFilterPanel ? "active" : ""}`}
+            style={{ alignSelf: "center" }}
+            onClick={(e) => { e.stopPropagation(); setShowTrainFilterPanel((v) => !v); }}
+            type="button"
+          >
+            <SlidersHorizontal size={15} /> Фильтры
+            {activeTrainFilterCount > 0 && <span className="all-filter-count">{activeTrainFilterCount}</span>}
+            <ChevronDown size={12} />
+          </button>
 
-          {/* Status filter: new / learning / review / relearning / hard-to-memorize */}
-          <div className="filter-chips" style={{ justifyContent: "center", marginTop: -8 }}>
-            {(["all", "new", "learning", "review", "relearning", "hard"] as TrainStatus[]).map((s) => {
-              const count =
-                s === "all" ? dueCards.length
-                : s === "hard" ? cards.filter(isHardCard).length
-                : dueCards.filter((c) => c.status === s).length;
-              return (
+          {showTrainFilterPanel && (
+            <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="filter-group">
+                <div className="filter-group-label">Тип</div>
+                <div className="filter-chips">
+                  {(["all", "word", "phrase", "sentence"] as FilterType[]).map((t) => (
+                    <button
+                      key={t}
+                      className={`filter-chip ${trainFilter === t ? "active" : ""}`}
+                      onClick={() => { setTrainFilter(t); startTrainingSession(trainStatus, t, trainDirection); }}
+                      type="button"
+                    >
+                      {t === "all" ? "Все типы" : TYPE_LABELS[t]}
+                      {t !== "all" && (
+                        <span style={{ marginLeft: 4, opacity: 0.7 }}>
+                          {trainPool.filter((c) => c.type === t).length}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-group">
+                <div className="filter-group-label">Статус</div>
+                <div className="filter-chips">
+                  {(["all", "new", "learning", "review", "relearning", "hard"] as TrainStatus[]).map((s) => {
+                    const count =
+                      s === "all" ? dueCards.length
+                      : s === "hard" ? cards.filter(isHardCard).length
+                      : dueCards.filter((c) => c.status === s).length;
+                    return (
+                      <button
+                        key={s}
+                        className={`filter-chip ${trainStatus === s ? "active" : ""}`}
+                        onClick={() => { setTrainStatus(s); startTrainingSession(s, trainFilter, trainDirection); }}
+                        type="button"
+                      >
+                        {s === "all" ? "Все статусы" : TRAIN_STATUS_LABELS[s]}
+                        {s !== "all" && <span style={{ marginLeft: 4, opacity: 0.7 }}>{count}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {trainStatus === "hard" && (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                    Карточки с частыми ошибками — включая не назначенные на сегодня
+                  </div>
+                )}
+              </div>
+
+              <div className="filter-group">
+                <div className="filter-group-label">Направление</div>
+                <div className="filter-chips">
+                  {(["forward", "reverse", "mixed"] as TrainDirection[]).map((d) => (
+                    <button
+                      key={d}
+                      className={`filter-chip ${trainDirection === d ? "active" : ""}`}
+                      onClick={() => { setTrainDirection(d); startTrainingSession(trainStatus, trainFilter, d); }}
+                      type="button"
+                    >
+                      {TRAIN_DIRECTION_LABELS[d]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {activeTrainFilterCount > 0 && (
                 <button
-                  key={s}
-                  className={`filter-chip ${trainStatus === s ? "active" : ""}`}
-                  onClick={() => { setTrainStatus(s); startTrainingSession(s, trainFilter, trainDirection); }}
+                  className="filter-reset-btn"
+                  onClick={() => { setTrainFilter("all"); setTrainStatus("all"); setTrainDirection("forward"); startTrainingSession("all", "all", "forward"); }}
                   type="button"
                 >
-                  {s === "all" ? "Все статусы" : TRAIN_STATUS_LABELS[s]}
-                  {s !== "all" && <span style={{ marginLeft: 4, opacity: 0.7 }}>{count}</span>}
+                  Сбросить фильтры
                 </button>
-              );
-            })}
-          </div>
-
-          {trainStatus === "hard" && (
-            <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginTop: -8 }}>
-              Карточки с частыми ошибками — включая не назначенные на сегодня
+              )}
             </div>
           )}
-
-          {/* Direction filter: which side is the question vs the answer */}
-          <div className="filter-chips" style={{ justifyContent: "center", marginTop: -8 }}>
-            {(["forward", "reverse", "mixed"] as TrainDirection[]).map((d) => (
-              <button
-                key={d}
-                className={`filter-chip ${trainDirection === d ? "active" : ""}`}
-                onClick={() => { setTrainDirection(d); startTrainingSession(trainStatus, trainFilter, d); }}
-                type="button"
-              >
-                {TRAIN_DIRECTION_LABELS[d]}
-              </button>
-            ))}
-          </div>
 
           {trainQueue.length === 0 ? (
             dueCards.length === 0 && trainStatus !== "hard" ? (
@@ -823,6 +871,11 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                   <div className="flipper-face flipper-face-back" onClick={() => setIsFlipped((f) => !f)}>
                     <div className="card-face-row">
                       <span className="flash-card-type sentence" style={{ background: "rgba(122, 171, 106, 0.15)", color: "var(--green)" }}>{isReversed ? "Ответ" : "Перевод"}</span>
+                      {isReversed && (
+                        <div className="card-tts-wrap" style={{ marginLeft: "auto" }} onClick={(e) => e.stopPropagation()}>
+                          <SpeakButton text={answerText} lang={targetLanguage} size={15} />
+                        </div>
+                      )}
                     </div>
                     <div className="card-text-area">
                       {isReversed ? (
