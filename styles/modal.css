@@ -1357,32 +1357,42 @@
 .livechat-suggestion-btn {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   flex: 0 0 auto;
-  width: 220px;
-  max-width: 70vw;
-  padding: 10px 12px;
-  border: 1px solid rgba(212, 168, 71, 0.3);
+  width: max-content;
+  max-width: 90vw;
+  padding: 8px 12px;
+  /* ~30% more transparent than before (was 0.3 border / 0.1 bg / 0.2 hover) */
+  border: 1px solid rgba(212, 168, 71, 0.21);
   border-radius: 12px;
-  background: rgba(212, 168, 71, 0.1);
+  background: rgba(212, 168, 71, 0.07);
   color: var(--text-primary);
   text-align: left;
-  white-space: normal;
   cursor: pointer;
   transition: background var(--transition-fast);
 }
 .livechat-suggestion-btn:hover {
-  background: rgba(212, 168, 71, 0.2);
+  background: rgba(212, 168, 71, 0.14);
 }
 .livechat-suggestion-text {
+  display: block;
   font-size: 13px;
   font-weight: 700;
   line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80vw;
 }
 .livechat-suggestion-translation {
+  display: block;
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80vw;
 }
 
 .livechat-suggestions-hide {

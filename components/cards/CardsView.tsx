@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, MessageCircle } from "lucide-react";
+import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, MessageCircle, SlidersHorizontal } from "lucide-react";
 import type { AiAnalysis, DiscussMessage, Flashcard, TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
 import { findDuplicateCard } from "@/lib/cards";
@@ -29,6 +29,10 @@ type FilterStatus = "all" | "new" | "learning" | "review" | "relearning";
 type FilterType = "all" | "word" | "phrase" | "sentence";
 type TrainStatus = "all" | "new" | "learning" | "review" | "relearning" | "hard";
 type SortOrder = "added" | "due" | "ease";
+// "forward" = изучаемый → родной (классическое узнавание), "reverse" = родной → изучаемый
+// (вспомнить, как сказать), "mixed" чередует направление случайно для каждой карточки сессии.
+type TrainDirection = "forward" | "reverse" | "mixed";
+type TrainQueueItem = { card: Flashcard; reversed: boolean };
 
 const TYPE_LABELS = { word: "Слово", phrase: "Фраза", sentence: "Предложение" } as const;
 
@@ -38,6 +42,12 @@ const TRAIN_STATUS_LABELS: Record<Exclude<TrainStatus, "all">, string> = {
   review: "Повторение",
   relearning: "Переучивание",
   hard: "Сложные",
+};
+
+const TRAIN_DIRECTION_LABELS: Record<TrainDirection, string> = {
+  forward: "Изучаемый → Родной",
+  reverse: "Родной → Изучаемый",
+  mixed: "Микс",
 };
 
 // "Hard" cards: repeatedly forgotten (lapses) or with a low ease factor —
@@ -64,7 +74,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [filterBook, setFilterBook] = useState<string>("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("added");
-  const [showSortMenu, setShowSortMenu] = useState(false);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [showTtsMenu, setShowTtsMenu] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -74,7 +84,13 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   const [isFlipped, setIsFlipped] = useState(false);
   const [trainFilter, setTrainFilter] = useState<FilterType>("all");
   const [trainStatus, setTrainStatus] = useState<TrainStatus>("all");
+  const [trainDirection, setTrainDirection] = useState<TrainDirection>("forward");
   const [trainMode, setTrainMode] = useState<"recognize" | "active">("recognize");
+  // Snapshot of the cards being trained this session — built once per session
+  // start/filter change rather than re-derived from the (mutating) `cards`
+  // prop on every render, so grading a card can't shrink the queue out from
+  // under `currentTrainIndex` mid-session.
+  const [trainQueue, setTrainQueue] = useState<TrainQueueItem[]>([]);
 
   // Discuss-with-AI state (chat about a specific card)
   const [discuss, setDiscuss] = useState<{
@@ -142,8 +158,10 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
     const saved = getSrsSession();
     if (saved && saved.reviewedIds.length > 0) {
       sessionRestoredRef.current = true;
+      const queue = buildTrainQueue(trainStatus, trainFilter, trainDirection);
+      setTrainQueue(queue);
       setReviewedIds(saved.reviewedIds);
-      setCurrentTrainIndex(Math.min(saved.currentIndex, dueCards.length));
+      setCurrentTrainIndex(Math.min(saved.currentIndex, queue.length));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dueCards.length]);
@@ -161,7 +179,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
 
   // --- Close menus on outside click ---
   useEffect(() => {
-    const handler = () => { setShowSortMenu(false); setShowTtsMenu(false); };
+    const handler = () => { setShowFilterPanel(false); setShowTtsMenu(false); };
     document.addEventListener("click", handler);
     return () => document.removeEventListener("click", handler);
   }, []);
@@ -218,17 +236,41 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
   // --- Training (cards filtered by status and type) ---
   // "hard" draws from ALL cards (not just due today) so problem cards can be
   // drilled any time; the rest filter today's due queue by SRS status.
+  // This pool is only used to show live counts on the filter chips before a
+  // session starts — the actual training queue is a separate snapshot (see
+  // `buildTrainQueue`/`trainQueue` below) so it doesn't shrink mid-session.
   const trainPool =
     trainStatus === "hard"
       ? cards.filter(isHardCard).sort((a, b) => a.easeFactor - b.easeFactor)
       : trainStatus === "all"
         ? dueCards
         : dueCards.filter((c) => c.status === trainStatus);
-  const trainingCards = trainFilter === "all" ? trainPool : trainPool.filter((c) => c.type === trainFilter);
+
+  function buildTrainQueue(status: TrainStatus, filter: FilterType, direction: TrainDirection): TrainQueueItem[] {
+    const pool =
+      status === "hard"
+        ? cards.filter(isHardCard).sort((a, b) => a.easeFactor - b.easeFactor)
+        : status === "all"
+          ? dueCards
+          : dueCards.filter((c) => c.status === status);
+    const filtered = filter === "all" ? pool : pool.filter((c) => c.type === filter);
+    return filtered.map((card) => ({
+      card,
+      reversed: direction === "mixed" ? Math.random() < 0.5 : direction === "reverse",
+    }));
+  }
+
+  function startTrainingSession(status: TrainStatus, filter: FilterType, direction: TrainDirection) {
+    setTrainQueue(buildTrainQueue(status, filter, direction));
+    setCurrentTrainIndex(0);
+    setReviewedIds([]);
+    setIsFlipped(false);
+    clearSrsSession();
+  }
 
   const handleGrade = (score: 1 | 2 | 3 | 4) => {
-    if (trainingCards.length === 0 || currentTrainIndex >= trainingCards.length) return;
-    const card = trainingCards[currentTrainIndex];
+    if (trainQueue.length === 0 || currentTrainIndex >= trainQueue.length) return;
+    const card = trainQueue[currentTrainIndex].card;
     const srsUpdate = calculateSM2(score, card.repetitions, card.lapses, card.intervalDays, card.easeFactor);
     const updatedCard: Flashcard = { ...card, ...srsUpdate, lastReviewedAt: new Date().toISOString() };
     onUpdateCard(updatedCard);
@@ -242,12 +284,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
     setTimeout(() => setCurrentTrainIndex(nextIndex), 250);
   };
 
-  const restartTraining = () => {
-    setCurrentTrainIndex(0);
-    setReviewedIds([]);
-    setIsFlipped(false);
-    clearSrsSession();
-  };
+  const restartTraining = () => startTrainingSession(trainStatus, trainFilter, trainDirection);
 
   // --- TTS provider change ---
   const handleTtsProviderChange = (provider: TtsProvider, e: React.MouseEvent) => {
@@ -367,6 +404,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
 
   // --- All Cards filtering & sorting ---
   const allBooks = Array.from(new Set(cards.map((c) => c.sourceBookTitle || c.source || "").filter(Boolean)));
+  const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all"].filter(Boolean).length;
 
   const filteredAllCards = cards
     .filter((c) => {
@@ -399,10 +437,15 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
     relearning: "Переучивание",
   };
 
-  const currentCard = trainingCards[currentTrainIndex];
+  const currentItem = trainQueue[currentTrainIndex];
+  const currentCard = currentItem?.card as Flashcard;
+  const isReversed = currentItem?.reversed ?? false;
+  const promptText = isReversed ? currentCard?.back : currentCard?.front;
+  const answerText = isReversed ? currentCard?.front : currentCard?.back;
+  const promptLang = isReversed ? nativeLanguage : targetLanguage;
 
   return (
-    <section className="screen" onClick={() => { setShowSortMenu(false); setShowTtsMenu(false); }}>
+    <section className="screen" onClick={() => { setShowFilterPanel(false); setShowTtsMenu(false); }}>
       <style>{`
         .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; background: var(--bg-primary); border-bottom: 1px solid var(--border); }
         @media (min-width: 640px) { .srs-sticky-header { margin: -28px -24px 16px; padding: 24px 24px 10px; } }
@@ -455,13 +498,17 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
         .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
         .filter-chip { padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-muted); transition: all 0.2s; white-space: nowrap; }
         .filter-chip.active { background: rgba(212, 168, 71, 0.15); border-color: var(--accent); color: var(--accent); }
-        .sort-menu-wrap { position: relative; }
-        .sort-menu { position: absolute; top: calc(100% + 4px); right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 4px; z-index: 100; min-width: 170px; box-shadow: var(--shadow-sm); }
-        .sort-menu-item { padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text-primary); transition: background 0.15s; }
-        .sort-menu-item:hover { background: var(--bg-elevated); }
-        .sort-menu-item.active { color: var(--accent); }
-        .book-select { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 20px; color: var(--text-muted); font-size: 12px; font-weight: 700; padding: 4px 10px; cursor: pointer; outline: none; max-width: 130px; }
+        .book-select { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 20px; color: var(--text-muted); font-size: 12px; font-weight: 700; padding: 4px 10px; cursor: pointer; outline: none; max-width: 220px; }
         .book-select:focus { border-color: var(--accent); color: var(--accent); }
+        .all-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+        .all-toolbar .all-search-bar { flex: 1; margin-bottom: 0; }
+        .all-filter-toggle { display: flex; align-items: center; gap: 6px; padding: 0 14px; height: 40px; flex-shrink: 0; white-space: nowrap; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-muted); font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
+        .all-filter-toggle.active { border-color: var(--accent); color: var(--accent); }
+        .all-filter-count { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--bg-primary); font-size: 10px; font-weight: 800; }
+        .all-filter-panel { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card); padding: 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow-sm); }
+        .filter-group-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 6px; }
+        .filter-reset-btn { align-self: flex-start; font-size: 12px; font-weight: 700; color: var(--text-muted); background: transparent; border: none; cursor: pointer; padding: 4px 0; text-decoration: underline; }
+        .filter-reset-btn:hover { color: var(--accent); }
       `}</style>
 
       {/* Word Modal */}
@@ -540,7 +587,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
           className={`srs-tab ${activeTab === "train" ? "active" : ""}`}
           onClick={() => {
             setActiveTab("train");
-            if (currentTrainIndex >= trainingCards.length) restartTraining();
+            if (trainQueue.length === 0 || currentTrainIndex >= trainQueue.length) restartTraining();
           }}
           type="button"
         >
@@ -624,11 +671,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
               <button
                 key={t}
                 className={`filter-chip ${trainFilter === t ? "active" : ""}`}
-                onClick={() => {
-                  setTrainFilter(t);
-                  setCurrentTrainIndex(0);
-                  setIsFlipped(false);
-                }}
+                onClick={() => { setTrainFilter(t); startTrainingSession(trainStatus, t, trainDirection); }}
                 type="button"
               >
                 {t === "all" ? "Все типы" : TYPE_LABELS[t]}
@@ -652,11 +695,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                 <button
                   key={s}
                   className={`filter-chip ${trainStatus === s ? "active" : ""}`}
-                  onClick={() => {
-                    setTrainStatus(s);
-                    setCurrentTrainIndex(0);
-                    setIsFlipped(false);
-                  }}
+                  onClick={() => { setTrainStatus(s); startTrainingSession(s, trainFilter, trainDirection); }}
                   type="button"
                 >
                   {s === "all" ? "Все статусы" : TRAIN_STATUS_LABELS[s]}
@@ -672,7 +711,21 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
             </div>
           )}
 
-          {trainingCards.length === 0 ? (
+          {/* Direction filter: which side is the question vs the answer */}
+          <div className="filter-chips" style={{ justifyContent: "center", marginTop: -8 }}>
+            {(["forward", "reverse", "mixed"] as TrainDirection[]).map((d) => (
+              <button
+                key={d}
+                className={`filter-chip ${trainDirection === d ? "active" : ""}`}
+                onClick={() => { setTrainDirection(d); startTrainingSession(trainStatus, trainFilter, d); }}
+                type="button"
+              >
+                {TRAIN_DIRECTION_LABELS[d]}
+              </button>
+            ))}
+          </div>
+
+          {trainQueue.length === 0 ? (
             dueCards.length === 0 && trainStatus !== "hard" ? (
               <div className="empty-state">
                 <CheckCircle2 size={44} style={{ color: "var(--green)" }} />
@@ -686,11 +739,11 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                 <p>{trainStatus === "hard" ? "Отлично — сложных карточек нет!" : "Попробуйте другой тип или статус."}</p>
               </div>
             )
-          ) : currentTrainIndex >= trainingCards.length ? (
+          ) : currentTrainIndex >= trainQueue.length ? (
             <div className="empty-state" style={{ background: "linear-gradient(135deg, rgba(122, 171, 106, 0.08) 0%, var(--bg-elevated) 100%)", borderColor: "rgba(122, 171, 106, 0.2)" }}>
               <CheckCircle2 size={48} style={{ color: "var(--green)" }} />
               <strong>Тренировка завершена!</strong>
-              <p>Вы повторили все {trainingCards.length} карточек. Отличная работа!</p>
+              <p>Вы повторили все {trainQueue.length} карточек. Отличная работа!</p>
               <button className="secondary-btn" style={{ marginTop: 12 }} onClick={restartTraining} type="button">
                 <RotateCcw size={14} /> Начать заново
               </button>
@@ -699,8 +752,8 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
               {/* Progress */}
               <div style={{ width: "100%", maxWidth: 420, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, fontSize: 13, color: "var(--text-muted)", fontWeight: 700 }}>
-                <span>Карточка {currentTrainIndex + 1} из {trainingCards.length}</span>
-                <span style={{ color: "var(--accent)" }}>{Math.round((currentTrainIndex / trainingCards.length) * 100)}% пройдено</span>
+                <span>Карточка {currentTrainIndex + 1} из {trainQueue.length}</span>
+                <span style={{ color: "var(--accent)" }}>{Math.round((currentTrainIndex / trainQueue.length) * 100)}% пройдено</span>
               </div>
 
               {/* Flipper card — height adapts to content */}
@@ -729,7 +782,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                         onPointerLeave={() => { if (longPressRef.current) clearTimeout(longPressRef.current); }}
                         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setShowTtsMenu(true); }}
                       >
-                        <SpeakButton text={currentCard.front} lang={targetLanguage} size={15} />
+                        <SpeakButton text={promptText} lang={promptLang} size={15} />
                         {showTtsMenu && (
                           <div className="tts-menu" onClick={(e) => e.stopPropagation()}>
                             {TTS_PROVIDERS.map((p) => (
@@ -748,10 +801,14 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                     </div>
 
                     <div className="card-text-area">
-                      <TokenizedText
-                        text={currentCard.front}
-                        style={{ fontSize: cardFontSize(currentCard.front), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
-                      />
+                      {isReversed ? (
+                        <div style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}>{promptText}</div>
+                      ) : (
+                        <TokenizedText
+                          text={promptText}
+                          style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
+                        />
+                      )}
                     </div>
 
                     <div className="card-footer-row">
@@ -765,12 +822,19 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                   {/* Back */}
                   <div className="flipper-face flipper-face-back" onClick={() => setIsFlipped((f) => !f)}>
                     <div className="card-face-row">
-                      <span className="flash-card-type sentence" style={{ background: "rgba(122, 171, 106, 0.15)", color: "var(--green)" }}>Перевод</span>
+                      <span className="flash-card-type sentence" style={{ background: "rgba(122, 171, 106, 0.15)", color: "var(--green)" }}>{isReversed ? "Ответ" : "Перевод"}</span>
                     </div>
                     <div className="card-text-area">
-                      <div style={{ fontSize: cardFontSize(currentCard.back), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}>
-                        {currentCard.back}
-                      </div>
+                      {isReversed ? (
+                        <TokenizedText
+                          text={answerText}
+                          style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}
+                        />
+                      ) : (
+                        <div style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}>
+                          {answerText}
+                        </div>
+                      )}
                     </div>
                     <div className="card-footer-row">
                       <span>Повторений: {currentCard.repetitions}</span>
@@ -809,58 +873,81 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
       {/* TAB: ALL CARDS */}
       {activeTab === "all" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-          <div className="all-search-bar">
-            <Search size={18} className="text-muted" />
-            <input
-              className="all-search-input"
-              placeholder="Поиск по карточкам..."
-              value={searchQuery}
-              onChange={(e) => { setSearchQuery(e.target.value); setVisibleCount(50); }}
-              type="text"
-            />
-            {searchQuery && (
-              <button style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontWeight: "bold" }} onClick={() => setSearchQuery("")} type="button">✕</button>
-            )}
-          </div>
-
-          {/* Filters */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-            <div className="filter-chips">
-              {(["all", "new", "learning", "review", "relearning"] as FilterStatus[]).map((s) => (
-                <button key={s} className={`filter-chip ${filterStatus === s ? "active" : ""}`} onClick={() => { setFilterStatus(s); setVisibleCount(50); }} type="button">
-                  {s === "all" ? "Все" : STATUS_LABELS[s]}
-                </button>
-              ))}
-            </div>
-            <div className="sort-menu-wrap">
-              <button className="filter-chip" onClick={(e) => { e.stopPropagation(); setShowSortMenu((v) => !v); }} type="button" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                Сортировка <ChevronDown size={11} />
-              </button>
-              {showSortMenu && (
-                <div className="sort-menu" onClick={(e) => e.stopPropagation()}>
-                  {([["added", "По дате добавления"], ["due", "По дате повторения"], ["ease", "По лёгкости"]] as [SortOrder, string][]).map(([val, lbl]) => (
-                    <div key={val} className={`sort-menu-item ${sortOrder === val ? "active" : ""}`} onClick={() => { setSortOrder(val); setShowSortMenu(false); }}>{lbl}</div>
-                  ))}
-                </div>
+          <div className="all-toolbar">
+            <div className="all-search-bar">
+              <Search size={18} className="text-muted" />
+              <input
+                className="all-search-input"
+                placeholder="Поиск по карточкам..."
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setVisibleCount(50); }}
+                type="text"
+              />
+              {searchQuery && (
+                <button style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontWeight: "bold" }} onClick={() => setSearchQuery("")} type="button">✕</button>
               )}
             </div>
+            <button
+              className={`all-filter-toggle ${showFilterPanel ? "active" : ""}`}
+              onClick={(e) => { e.stopPropagation(); setShowFilterPanel((v) => !v); }}
+              type="button"
+            >
+              <SlidersHorizontal size={15} /> Фильтры
+              {activeFilterCount > 0 && <span className="all-filter-count">{activeFilterCount}</span>}
+              <ChevronDown size={12} />
+            </button>
           </div>
 
-          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div className="filter-chips">
-              {(["all", "word", "phrase", "sentence"] as FilterType[]).map((t) => (
-                <button key={t} className={`filter-chip ${filterType === t ? "active" : ""}`} onClick={() => { setFilterType(t); setVisibleCount(50); }} type="button">
-                  {t === "all" ? "Все типы" : TYPE_LABELS[t]}
+          {showFilterPanel && (
+            <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="filter-group">
+                <div className="filter-group-label">Статус</div>
+                <div className="filter-chips">
+                  {(["all", "new", "learning", "review", "relearning"] as FilterStatus[]).map((s) => (
+                    <button key={s} className={`filter-chip ${filterStatus === s ? "active" : ""}`} onClick={() => { setFilterStatus(s); setVisibleCount(50); }} type="button">
+                      {s === "all" ? "Все" : STATUS_LABELS[s]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="filter-group">
+                <div className="filter-group-label">Тип</div>
+                <div className="filter-chips">
+                  {(["all", "word", "phrase", "sentence"] as FilterType[]).map((t) => (
+                    <button key={t} className={`filter-chip ${filterType === t ? "active" : ""}`} onClick={() => { setFilterType(t); setVisibleCount(50); }} type="button">
+                      {t === "all" ? "Все типы" : TYPE_LABELS[t]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {allBooks.length > 1 && (
+                <div className="filter-group">
+                  <div className="filter-group-label">Книга</div>
+                  <select className="book-select" value={filterBook} onChange={(e) => { setFilterBook(e.target.value); setVisibleCount(50); }}>
+                    <option value="all">Все книги</option>
+                    {allBooks.map((b) => <option key={b} value={b}>{b.length > 20 ? b.slice(0, 20) + "…" : b}</option>)}
+                  </select>
+                </div>
+              )}
+
+              <div className="filter-group">
+                <div className="filter-group-label">Сортировка</div>
+                <div className="filter-chips">
+                  {([["added", "По дате добавления"], ["due", "По дате повторения"], ["ease", "По лёгкости"]] as [SortOrder, string][]).map(([val, lbl]) => (
+                    <button key={val} className={`filter-chip ${sortOrder === val ? "active" : ""}`} onClick={() => setSortOrder(val)} type="button">{lbl}</button>
+                  ))}
+                </div>
+              </div>
+
+              {activeFilterCount > 0 && (
+                <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); setVisibleCount(50); }} type="button">
+                  Сбросить фильтры
                 </button>
-              ))}
+              )}
             </div>
-            {allBooks.length > 1 && (
-              <select className="book-select" value={filterBook} onChange={(e) => { setFilterBook(e.target.value); setVisibleCount(50); }}>
-                <option value="all">Все книги</option>
-                {allBooks.map((b) => <option key={b} value={b}>{b.length > 20 ? b.slice(0, 20) + "…" : b}</option>)}
-              </select>
-            )}
-          </div>
+          )}
 
           <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 700, marginBottom: 8 }}>
             {filteredAllCards.length} карточек
