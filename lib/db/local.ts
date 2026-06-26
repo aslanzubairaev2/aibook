@@ -1,4 +1,4 @@
-import type { AiAnalysis, Book, CardSkillState, DiscussMessage, Flashcard, GrammarTable, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, UserProfile } from "@/lib/types";
+import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage, Flashcard, GrammarTable, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, TrainVariant, UserProfile } from "@/lib/types";
 
 const BOOKS_KEY = "aibook_books";
 const CARDS_KEY = "aibook_cards";
@@ -7,6 +7,7 @@ const PROGRESS_KEY = "aibook_progress";
 const AI_CACHE_KEY = "aibook_ai_selection_cache";
 const GRAMMAR_CACHE_KEY = "aibook_grammar_cache";
 const SKILL_PROGRESS_KEY = "aibook_skill_progress";
+const VARIANT_PROGRESS_KEY = "aibook_variant_progress";
 const DISCUSS_CACHE_KEY = "aibook_discuss_cache";
 const READER_SELECTION_KEY = "aibook_reader_selection";
 const LAST_VIEW_KEY = "aibook_last_view";
@@ -467,6 +468,35 @@ export function saveCardSkillProgress(cardId: string, skill: ProductiveSkill, pr
     const all = readSkillProgressMap();
     all[cardId] = { ...all[cardId], [skill]: progress };
     localStorage.setItem(getNsKey(SKILL_PROGRESS_KEY), JSON.stringify(all));
+  } catch {
+    // silently fail
+  }
+}
+
+// Recognize-mode "reverse"/"audio" variant progress, keyed by card id. The
+// "forward" variant lives on the Flashcard itself; these two get their own
+// independent schedule, stored locally only — same pattern as skill progress.
+type VariantProgressMap = Record<string, CardVariantState>;
+
+function readVariantProgressMap(): VariantProgressMap {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(getNsKey(VARIANT_PROGRESS_KEY)) ?? "{}") as VariantProgressMap;
+  } catch {
+    return {};
+  }
+}
+
+export function getCardVariantState(cardId: string): CardVariantState {
+  return readVariantProgressMap()[cardId] ?? {};
+}
+
+export function saveCardVariantProgress(cardId: string, variant: Exclude<TrainVariant, "forward">, progress: SkillProgress): void {
+  if (typeof window === "undefined") return;
+  try {
+    const all = readVariantProgressMap();
+    all[cardId] = { ...all[cardId], [variant]: progress };
+    localStorage.setItem(getNsKey(VARIANT_PROGRESS_KEY), JSON.stringify(all));
   } catch {
     // silently fail
   }

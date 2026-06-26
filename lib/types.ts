@@ -35,6 +35,12 @@ export type Book = {
   lessonContext?: LessonContext; // navigation context for shared lessons
 };
 
+// A "variant" of the recognize/flashcard trainer: which language is shown as
+// the prompt (forward/reverse), or whether the prompt is audio-only. Each
+// variant schedules independently — see CardVariantState below — so grading
+// a card well in one variant does not affect when it resurfaces in another.
+export type TrainVariant = "forward" | "reverse" | "audio";
+
 /** Persisted flashcard filter/sort selections from CardsView, kept in sync via UserProfile so they survive reloads and follow the user across devices. */
 export type CardFilters = {
   filterStatus?: "all" | "new" | "learning" | "review" | "relearning";
@@ -43,7 +49,7 @@ export type CardFilters = {
   sortOrder?: "added" | "due" | "ease";
   trainFilter?: "all" | "word" | "phrase" | "sentence";
   trainStatus?: "all" | "new" | "learning" | "review" | "relearning" | "hard";
-  trainDirection?: "forward" | "reverse" | "mixed";
+  trainVariants?: TrainVariant[];
   trainMode?: "recognize" | "active";
 };
 
@@ -231,3 +237,11 @@ export type SkillProgress = {
 };
 
 export type CardSkillState = Partial<Record<ProductiveSkill, SkillProgress>>;
+
+// ─── Recognize-mode variants ────────────────────────────────────────────────
+// The base Flashcard SM-2 fields track the "forward" variant (target language
+// shown, recall the native meaning). "reverse" (native shown, recall the
+// target form) and "audio" (hear it, recall both) get their own independent
+// schedule here, stored locally and keyed by card id — same pattern as
+// CardSkillState above.
+export type CardVariantState = Partial<Record<Exclude<TrainVariant, "forward">, SkillProgress>>;
