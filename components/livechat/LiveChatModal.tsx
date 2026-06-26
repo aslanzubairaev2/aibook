@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, PhoneOff, Shuffle, Volume2, X, Gauge } from "lucide-react";
 import { getLocalGeminiKey, getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import { sbAuthHeaders, sbGetCachedAnalysis, sbSaveCachedAnalysis, sbInsertFlashcard } from "@/lib/db/supabase";
@@ -63,6 +63,92 @@ const SUGGESTIONS_DEFAULT_LEVELS: CefrLevel[] = ["A1", "A2", "B1"];
 function cleanText(text: string): string {
   return text.replace(/[​-‏‪-‮⁠﻿]/g, "").trim();
 }
+
+function renderWords(text: string, onWordTap: (word: string, contextSentence: string) => void) {
+  const tokens = splitIntoTokens(text);
+  return tokens.map((token, i) => {
+    const norm = normalizeToken(token);
+    if (!norm) return <span key={i}>{token}</span>;
+    return (
+      <span
+        key={i}
+        className="livechat-clickable-word"
+        role="button"
+        tabIndex={0}
+        onClick={() => onWordTap(token, text)}
+        onKeyDown={(e) => { if (e.key === "Enter") onWordTap(token, text); }}
+      >
+        {token}
+      </span>
+    );
+  });
+}
+
+type TranscriptLineProps = {
+  line: TranscriptLine;
+  index: number;
+  isPlaying: boolean;
+  isRevealed: boolean;
+  isTranslating: boolean;
+  translation?: string;
+  onWordTap: (word: string, contextSentence: string) => void;
+  onReplay: (index: number, audioChunks: string[]) => void;
+  onReveal: (index: number, text: string) => void;
+};
+
+// Memoized so a re-render of the parent (e.g. on every streamed transcript
+// delta, which can fire many times a second while the mic is live) doesn't
+// re-tokenize and re-render every word of every prior message — that work
+// was competing with the mic capture's audio callback on the main thread
+// and made the call seem to stop listening on longer conversations.
+const TranscriptLineView = memo(function TranscriptLineView({
+  line,
+  index,
+  isPlaying,
+  isRevealed,
+  isTranslating,
+  translation,
+  onWordTap,
+  onReplay,
+  onReveal,
+}: TranscriptLineProps) {
+  return (
+    <div className={`livechat-line-wrap ${line.role}`}>
+      <div className={`livechat-line ${line.role}`}>
+        {line.role === "model" ? (
+          <>
+            <span className="livechat-line-text">{renderWords(line.text, onWordTap)}</span>
+            {line.audioChunks && line.audioChunks.length > 0 && (
+              <button
+                type="button"
+                className={`livechat-replay-btn${isPlaying ? " active" : ""}`}
+                onClick={() => onReplay(index, line.audioChunks!)}
+                aria-label="Прослушать ещё раз"
+                title="Прослушать ещё раз (из кэша, без затрат)"
+              >
+                <Volume2 size={14} />
+              </button>
+            )}
+          </>
+        ) : (
+          line.text
+        )}
+      </div>
+      {line.role === "model" && (
+        <button
+          type="button"
+          className="livechat-translation"
+          onClick={() => onReveal(index, line.text)}
+          title={isRevealed ? undefined : "Нажмите, чтобы увидеть перевод"}
+        >
+          <span className={isRevealed ? "revealed" : "blurred"}>
+            {isRevealed ? (isTranslating ? <Loader2 size={12} className="spin" /> : translation) : line.text}
+          </span>
+        </button>
+      )}
+    </div>
+  );
+});
 
 /** Owners get the key from the server's env (set on Vercel); everyone else uses their local key. */
 async function resolveGeminiKey(): Promise<string | null> {
@@ -309,25 +395,28 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     setSuggestions([]);
   }
 
-  async function revealTranslation(index: number, text: string) {
-    if (revealed.has(index)) return;
-    setRevealed((prev) => new Set(prev).add(index));
-    setTranslating((prev) => new Set(prev).add(index));
-    try {
-      const translation = await translateText(text, targetLanguage, nativeLanguage);
-      setTranslations((prev) => ({ ...prev, [index]: translation }));
-    } catch {
-      setTranslations((prev) => ({ ...prev, [index]: "Не удалось перевести" }));
-    } finally {
-      setTranslating((prev) => {
-        const next = new Set(prev);
-        next.delete(index);
-        return next;
-      });
-    }
-  }
+  const revealTranslation = useCallback(
+    async (index: number, text: string) => {
+      if (revealed.has(index)) return;
+      setRevealed((prev) => new Set(prev).add(index));
+      setTranslating((prev) => new Set(prev).add(index));
+      try {
+        const translation = await translateText(text, targetLanguage, nativeLanguage);
+        setTranslations((prev) => ({ ...prev, [index]: translation }));
+      } catch {
+        setTranslations((prev) => ({ ...prev, [index]: "Не удалось перевести" }));
+      } finally {
+        setTranslating((prev) => {
+          const next = new Set(prev);
+          next.delete(index);
+          return next;
+        });
+      }
+    },
+    [revealed, targetLanguage, nativeLanguage]
+  );
 
-  function stopReplay() {
+  const stopReplay = useCallback(() => {
     for (const node of replaySourcesRef.current) {
       try {
         node.onended = null;
@@ -338,89 +427,98 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     }
     replaySourcesRef.current = [];
     setPlayingIndex(null);
-  }
+  }, []);
 
   /** Replays an already-received AI turn straight from its cached PCM chunks — no network call, no tokens spent. */
-  function playCachedAudio(index: number, audioChunks: string[]) {
-    if (playingIndex === index) {
+  const playCachedAudio = useCallback(
+    (index: number, audioChunks: string[]) => {
+      if (playingIndex === index) {
+        stopReplay();
+        return;
+      }
       stopReplay();
-      return;
-    }
-    stopReplay();
-    if (!replayCtxRef.current) {
-      replayCtxRef.current = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
-    }
-    const ctx = replayCtxRef.current;
-    if (ctx.state === "suspended") void ctx.resume();
-    setPlayingIndex(index);
-
-    let playTime = ctx.currentTime;
-    let remaining = audioChunks.length;
-    for (const chunk of audioChunks) {
-      const floats = base64Pcm16ToFloat32(chunk);
-      if (floats.length === 0) {
-        remaining -= 1;
-        continue;
+      if (!replayCtxRef.current) {
+        replayCtxRef.current = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
       }
-      const buffer = ctx.createBuffer(1, floats.length, OUTPUT_SAMPLE_RATE);
-      buffer.copyToChannel(floats, 0);
-      const node = ctx.createBufferSource();
-      node.buffer = buffer;
-      node.connect(ctx.destination);
-      node.start(playTime);
-      playTime += buffer.duration;
-      node.onended = () => {
-        remaining -= 1;
-        if (remaining <= 0) setPlayingIndex((cur) => (cur === index ? null : cur));
-      };
-      replaySourcesRef.current.push(node);
-    }
-    if (remaining === 0) setPlayingIndex(null);
-  }
+      const ctx = replayCtxRef.current;
+      if (ctx.state === "suspended") void ctx.resume();
+      setPlayingIndex(index);
 
-  async function loadWordModalAnalysis(word: string, contextSentence: string) {
-    const cacheKey = makeAiCacheKey("word", word, targetLanguage, nativeLanguage);
-    setWmLoading(true);
-    setWmAnalysis(null);
-    try {
-      const localCached = getLocalAiAnalysis(cacheKey);
-      if (localCached?.word) {
-        setWmAnalysis(localCached);
-        return;
+      let playTime = ctx.currentTime;
+      let remaining = audioChunks.length;
+      for (const chunk of audioChunks) {
+        const floats = base64Pcm16ToFloat32(chunk);
+        if (floats.length === 0) {
+          remaining -= 1;
+          continue;
+        }
+        const buffer = ctx.createBuffer(1, floats.length, OUTPUT_SAMPLE_RATE);
+        buffer.copyToChannel(floats, 0);
+        const node = ctx.createBufferSource();
+        node.buffer = buffer;
+        node.connect(ctx.destination);
+        node.start(playTime);
+        playTime += buffer.duration;
+        node.onended = () => {
+          remaining -= 1;
+          if (remaining <= 0) setPlayingIndex((cur) => (cur === index ? null : cur));
+        };
+        replaySourcesRef.current.push(node);
       }
-      const remoteCached = await sbGetCachedAnalysis(cacheKey);
-      if (remoteCached?.word) {
-        saveLocalAiAnalysis(cacheKey, remoteCached);
-        setWmAnalysis(remoteCached);
-        return;
-      }
-      const result = await analyzeSelection({
-        mode: "word",
-        word,
-        text: word,
-        sentence: contextSentence,
-        sentenceBefore: "",
-        sentenceAfter: "",
-        nativeLanguage,
-        targetLanguage,
-      });
-      saveLocalAiAnalysis(cacheKey, result);
-      void sbSaveCachedAnalysis(cacheKey, "word", result);
-      setWmAnalysis(result);
-    } catch (err) {
-      console.error("Word modal analysis failed:", err);
-    } finally {
-      setWmLoading(false);
-    }
-  }
+      if (remaining === 0) setPlayingIndex(null);
+    },
+    [playingIndex, stopReplay]
+  );
 
-  function handleWordTap(word: string, contextSentence: string) {
-    const norm = normalizeToken(word);
-    if (!norm) return;
-    setWmWord(word);
-    setWmOpen(true);
-    void loadWordModalAnalysis(word, contextSentence);
-  }
+  const loadWordModalAnalysis = useCallback(
+    async (word: string, contextSentence: string) => {
+      const cacheKey = makeAiCacheKey("word", word, targetLanguage, nativeLanguage);
+      setWmLoading(true);
+      setWmAnalysis(null);
+      try {
+        const localCached = getLocalAiAnalysis(cacheKey);
+        if (localCached?.word) {
+          setWmAnalysis(localCached);
+          return;
+        }
+        const remoteCached = await sbGetCachedAnalysis(cacheKey);
+        if (remoteCached?.word) {
+          saveLocalAiAnalysis(cacheKey, remoteCached);
+          setWmAnalysis(remoteCached);
+          return;
+        }
+        const result = await analyzeSelection({
+          mode: "word",
+          word,
+          text: word,
+          sentence: contextSentence,
+          sentenceBefore: "",
+          sentenceAfter: "",
+          nativeLanguage,
+          targetLanguage,
+        });
+        saveLocalAiAnalysis(cacheKey, result);
+        void sbSaveCachedAnalysis(cacheKey, "word", result);
+        setWmAnalysis(result);
+      } catch (err) {
+        console.error("Word modal analysis failed:", err);
+      } finally {
+        setWmLoading(false);
+      }
+    },
+    [targetLanguage, nativeLanguage]
+  );
+
+  const handleWordTap = useCallback(
+    (word: string, contextSentence: string) => {
+      const norm = normalizeToken(word);
+      if (!norm) return;
+      setWmWord(word);
+      setWmOpen(true);
+      void loadWordModalAnalysis(word, contextSentence);
+    },
+    [loadWordModalAnalysis]
+  );
 
   async function handleAddCardFromWordModal() {
     const translation = wmAnalysis?.word?.translation;
@@ -461,26 +559,6 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     }
     onAddCard(localCard);
     showToast("✓ Карточка добавлена");
-  }
-
-  function renderWords(text: string) {
-    const tokens = splitIntoTokens(text);
-    return tokens.map((token, i) => {
-      const norm = normalizeToken(token);
-      if (!norm) return <span key={i}>{token}</span>;
-      return (
-        <span
-          key={i}
-          className="livechat-clickable-word"
-          role="button"
-          tabIndex={0}
-          onClick={() => handleWordTap(token, text)}
-          onKeyDown={(e) => { if (e.key === "Enter") handleWordTap(token, text); }}
-        >
-          {token}
-        </span>
-      );
-    });
   }
 
   if (!isOpen) return null;
@@ -584,42 +662,18 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                   <p className="livechat-empty">{placeholder}</p>
                 )}
                 {history.map((line, index) => (
-                  <div key={index} className={`livechat-line-wrap ${line.role}`}>
-                    <div className={`livechat-line ${line.role}`}>
-                      {line.role === "model" ? (
-                        <>
-                          <span className="livechat-line-text">{renderWords(line.text)}</span>
-                          {line.audioChunks && line.audioChunks.length > 0 && (
-                            <button
-                              type="button"
-                              className={`livechat-replay-btn${playingIndex === index ? " active" : ""}`}
-                              onClick={() => playCachedAudio(index, line.audioChunks!)}
-                              aria-label="Прослушать ещё раз"
-                              title="Прослушать ещё раз (из кэша, без затрат)"
-                            >
-                              <Volume2 size={14} />
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        line.text
-                      )}
-                    </div>
-                    {line.role === "model" && (
-                      <button
-                        type="button"
-                        className="livechat-translation"
-                        onClick={() => revealTranslation(index, line.text)}
-                        title={revealed.has(index) ? undefined : "Нажмите, чтобы увидеть перевод"}
-                      >
-                        <span className={revealed.has(index) ? "revealed" : "blurred"}>
-                          {revealed.has(index)
-                            ? (translating.has(index) ? <Loader2 size={12} className="spin" /> : translations[index])
-                            : line.text}
-                        </span>
-                      </button>
-                    )}
-                  </div>
+                  <TranscriptLineView
+                    key={index}
+                    line={line}
+                    index={index}
+                    isPlaying={playingIndex === index}
+                    isRevealed={revealed.has(index)}
+                    isTranslating={translating.has(index)}
+                    translation={translations[index]}
+                    onWordTap={handleWordTap}
+                    onReplay={playCachedAudio}
+                    onReveal={revealTranslation}
+                  />
                 ))}
                 {pendingUser && <p className="livechat-line user pending">{pendingUser}</p>}
                 {pendingModel && <p className="livechat-line model pending">{pendingModel}</p>}
