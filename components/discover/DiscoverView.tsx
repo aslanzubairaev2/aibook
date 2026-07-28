@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
@@ -618,6 +618,14 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   // Never index TAB_INFO directly with state that could have come from storage.
   const tabInfo = TAB_INFO[activeTab] ?? TAB_INFO.classic;
 
+  // The tab row scrolls sideways, so a tab restored from preferences can sit
+  // off-screen on load. Pull it into view. `nearest` on both axes means this is
+  // a no-op when the tab is already visible, and never scrolls the page itself.
+  const activeTabRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeTab]);
+
   return (
     <section className="screen discover-screen">
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
@@ -635,6 +643,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
           <button
             key={tab}
             type="button"
+            ref={activeTab === tab ? activeTabRef : undefined}
             className={`discover-tab-btn ${activeTab === tab ? "active" : ""}`}
             onClick={() => setActiveTab(tab)}
           >
@@ -1288,14 +1297,27 @@ const STYLES = `
     padding: 4px;
     margin-bottom: 18px;
     gap: 4px;
+    /* Four tabs do not fit a phone width, so the row scrolls sideways. The
+       scrollbar itself is hidden globally (see styles/globals.css); repeated
+       here so the rule survives if that global ever changes. */
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    /* Keeps a sideways swipe on the tabs from triggering the browser's
+       back-navigation gesture. */
+    overscroll-behavior-x: contain;
   }
+  .discover-tabs::-webkit-scrollbar { display: none; }
   .discover-tab-btn {
-    flex: 1;
+    /* Grow to share the row when it fits, never shrink below the label — that
+       is what makes the row overflow into a scroll instead of clipping text. */
+    flex: 1 0 auto;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
     height: 38px;
+    padding: 0 12px;
     font-size: 12px;
     font-weight: 700;
     border: 0;
