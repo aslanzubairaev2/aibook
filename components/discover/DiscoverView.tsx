@@ -203,7 +203,14 @@ type DiscoverPrefs = {
 function readPrefs(): DiscoverPrefs {
   if (typeof window === "undefined") return {};
   try {
-    return JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as DiscoverPrefs;
+    const parsed = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as DiscoverPrefs;
+    // Stored preferences outlive the code that wrote them: a returning user can
+    // carry a tab name that no longer exists (e.g. the retired "wikibooks").
+    // Dropping it here keeps every TAB_INFO lookup total.
+    if (parsed.activeTab && !(parsed.activeTab in TAB_INFO)) {
+      delete parsed.activeTab;
+    }
+    return parsed;
   } catch {
     return {};
   }
@@ -608,6 +615,9 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     [klexikonBooks, lessonProgress]
   );
 
+  // Never index TAB_INFO directly with state that could have come from storage.
+  const tabInfo = TAB_INFO[activeTab] ?? TAB_INFO.classic;
+
   return (
     <section className="screen discover-screen">
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
@@ -640,8 +650,8 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       <div className="source-note">
         <Info size={14} aria-hidden />
         <div>
-          <strong>{TAB_INFO[activeTab].source}</strong>
-          <p>{TAB_INFO[activeTab].note}</p>
+          <strong>{tabInfo.source}</strong>
+          <p>{tabInfo.note}</p>
         </div>
       </div>
 
