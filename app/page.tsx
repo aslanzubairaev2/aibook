@@ -158,12 +158,15 @@ function getLatestLessonProgress(
   return best;
 }
 
-/** Rebuild a shared lesson (Wikibooks/CEFR) into a Book so reading can resume on app load. */
+/** Rebuild a shared lesson (Klexikon / CEFR / generated) into a Book so reading can resume on app load. */
 async function loadLessonBook(sharedBookId: string, paragraphIndex: number, percentage: number): Promise<Book | null> {
   try {
+    // AI-generated lessons are owner-scoped, so the token has to travel with
+    // every one of these calls or they come back empty.
+    const headers = await sbAuthHeaders();
     const [metaRes, chRes] = await Promise.all([
-      freshFetch(`/api/shared-books?id=${sharedBookId}`),
-      freshFetch(`/api/shared-books/${sharedBookId}/chapters`),
+      freshFetch(`/api/shared-books?id=${sharedBookId}`, { headers }),
+      freshFetch(`/api/shared-books/${sharedBookId}/chapters`, { headers }),
     ]);
     const metaData = await metaRes.json() as { books?: SharedBookMeta[] };
     const meta = metaData.books?.[0];
@@ -175,7 +178,7 @@ async function loadLessonBook(sharedBookId: string, paragraphIndex: number, perc
 
     let courseBooks: SharedBookMeta[] = [meta];
     if (meta.course_id) {
-      const courseRes = await freshFetch(`/api/shared-books?course_id=${meta.course_id}`);
+      const courseRes = await freshFetch(`/api/shared-books?course_id=${meta.course_id}`, { headers });
       const courseData = await courseRes.json() as { books?: SharedBookMeta[] };
       if (courseData.books && courseData.books.length > 0) courseBooks = courseData.books;
     }
@@ -186,7 +189,7 @@ async function loadLessonBook(sharedBookId: string, paragraphIndex: number, perc
     return {
       id: sharedBookId,
       title: meta.title,
-      author: meta.author ?? "Wikibooks",
+      author: meta.author ?? "Учебный материал",
       language: meta.language,
       format: "txt",
       progress: percentage,
@@ -305,7 +308,7 @@ function AppInner() {
         return;
       }
 
-      // …or a shared lesson (Wikibooks/CEFR), whose progress lives in
+      // …or a shared lesson (Klexikon / CEFR / generated), whose progress lives in
       // user_lesson_progress. Rebuild it and resume. This must be checked
       // before any "latest own book" fallback, otherwise reading a lesson
       // last would reopen an older own book on the next device.
@@ -736,14 +739,16 @@ function AppInner() {
 
       if (!targetLesson) return;
 
-      // Fetch paragraphs for the target lesson
-      const res = await freshFetch(`/api/shared-books/${sharedBookId}/chapters`);
+      // Fetch paragraphs for the target lesson. Generated lessons are private,
+      // so the auth token has to be sent here too.
+      const headers = await sbAuthHeaders();
+      const res = await freshFetch(`/api/shared-books/${sharedBookId}/chapters`, { headers });
       const data = await res.json() as { paragraphs?: string[] };
       const paragraphs = data.paragraphs ?? [];
       if (paragraphs.length === 0) return;
 
       // Fetch the book metadata
-      const metaRes = await freshFetch(`/api/shared-books?course_id=${lessonCtx.courseId}`);
+      const metaRes = await freshFetch(`/api/shared-books?course_id=${lessonCtx.courseId}`, { headers });
       const metaData = await metaRes.json() as { books?: Array<{ id: string; title: string; author: string | null; language: string; cefr_level: string | null; source_type: string; course_id: string | null; course_title: string | null; lesson_order: number | null; cover_url: string | null; metadata: Record<string, unknown> }> };
       const courseBooks = metaData.books ?? [];
       const targetMeta = courseBooks.find((b) => b.id === sharedBookId);
@@ -756,7 +761,7 @@ function AppInner() {
       const newBook: Book = {
         id: sharedBookId,
         title: targetMeta.title,
-        author: targetMeta.author ?? "Wikibooks",
+        author: targetMeta.author ?? "Учебный материал",
         language: targetMeta.language,
         format: "txt",
         progress: 0,
@@ -837,6 +842,8 @@ function AppInner() {
       {section === "discover" && (
         <DiscoverView
           books={books}
+          cards={cards}
+          profile={profile}
           onBooksChange={handleBooksChange}
           onOpenBook={handleOpenBook}
           downloadTasks={downloadTasks}

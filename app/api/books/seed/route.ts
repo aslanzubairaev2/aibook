@@ -1,22 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin, isAdminConfigured } from "@/lib/db/supabase-admin";
-import { LEVELED_TEXTS_SEED } from "@/lib/db/leveledTextsData";
 import { getUserFromRequest, isOwnerUser } from "@/lib/auth/serverUser";
+import {
+  fetchKlexikonTitles,
+  fetchKlexikonArticle,
+  KLEXIKON_LICENSE,
+  KLEXIKON_COURSE_ID,
+  KLEXIKON_COURSE_TITLE,
+} from "@/lib/content/klexikon";
 
 export const dynamic = "force-dynamic";
 
-const COURSE_ID = "wikibooks_german";
-const COURSE_TITLE = "German (Wikibooks)";
-const WIKIBOOKS_BASE = "https://en.wikibooks.org/w/api.php";
 const HEADERS = { "User-Agent": "AIBook/1.0 (aslan.zubairaev@gmail.com) NextJS" };
 
-// UniversalCEFR datasets on HuggingFace (open, CEFR-labelled document-level texts)
+// ─── Source 1: UniversalCEFR on HuggingFace ──────────────────────────────────
+// Open, CEFR-labelled document-level texts. Levels come from the dataset, so
+// no estimation is involved.
 const HF_ROWS_BASE = "https://datasets-server.huggingface.co/rows";
 const CEFR_DATASETS: { dataset: string; lang: string; label: string }[] = [
   { dataset: "UniversalCEFR/elg_cefr_de", lang: "de", label: "Немецкий" },
   { dataset: "UniversalCEFR/elg_cefr_en", lang: "en", label: "Английский" },
 ];
 const CEFR_PER_LEVEL_CAP = 40;
+
+// ─── Source 2: Klexikon ──────────────────────────────────────────────────────
+// How many articles one import run pulls. The wiki has a few thousand; a full
+// sweep would take ~30 minutes of polite request pacing, so import in batches.
+const KLEXIKON_BATCH = 150;
+const KLEXIKON_REQUEST_DELAY_MS = 250;
 
 type CefrRow = { title?: string; lang?: string; cefr_level?: string; text?: string };
 
@@ -87,16 +98,6 @@ async function fetchCefrRows(dataset: string, offset: number, length: number): P
   return (data.rows ?? []).map((r) => r.row);
 }
 
-type WikiCategory = "lesson" | "grammar" | "vocabulary";
-
-type WikiPage = {
-  page: string;       // full page title, e.g. "German/Lesson 1"
-  shortTitle: string; // display title
-  category: WikiCategory;
-  order: number;      // sort order within course
-  cefr: string;
-};
-
 function pickColor(title: string) {
   const colors = [
     "linear-gradient(160deg, #c49a28 0%, #7a5c10 100%)",
@@ -111,154 +112,6 @@ function pickColor(title: string) {
   return colors[hash % colors.length];
 }
 
-function decodeHtmlEntities(s: string): string {
-  return s
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(parseInt(n, 10)))
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/ /g, " ");
-}
-
-function cleanMediaWikiHtml(html: string): string[] {
-  const paragraphs: string[] = [];
-  // Remove navboxes, tables, edit buttons, references
-  const cleaned = html
-    .replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, "")
-    .replace(/<div[^>]*class="[^"]*(?:navbox|reflist|toc|mw-editsection|sistersitebox|noprint)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi, "")
-    .replace(/<sup[^>]*>([\s\S]*?)<\/sup>/gi, "");
-
-  const matches = cleaned.match(/<(p|li|dt|dd)[^>]*>([\s\S]*?)<\/\1>/gi);
-  if (matches) {
-    for (const match of matches) {
-      const text = decodeHtmlEntities(match.replace(/<[^>]*>/g, ""))
-        .replace(/\[.*?\]/g, "")
-        .replace(/[«»<>]{2,}/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (
-        text.length > 20 &&
-        !text.startsWith("Bearbeiten") &&
-        !text.includes("Wikibooks") &&
-        !text.includes("Diese Seite") &&
-        !text.includes("Bitte beachte") &&
-        !/^(Lesson Layout Guide|Pronunciation Guide|Lessons?|Contents?)\s*$/i.test(text)
-      ) {
-        paragraphs.push(text);
-      }
-    }
-  }
-  if (paragraphs.length === 0) {
-    const raw = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-    if (raw) paragraphs.push(raw.slice(0, 800));
-  }
-  return paragraphs.slice(0, 60);
-}
-
-// Map a German/ subpage title to a categorized WikiPage (or null to skip).
-function categorizeWikiPage(title: string): WikiPage | null {
-  // Lessons: "German/Lesson 1", "German/Lesson 5B"
-  const lessonMatch = title.match(/^German\/Lesson\s+(\d+)([A-Z]?)$/i);
-  if (lessonMatch) {
-    const num = parseInt(lessonMatch[1], 10);
-    const cefr = num <= 5 ? "A1" : num <= 10 ? "A2" : "B1";
-    return {
-      page: title,
-      shortTitle: title.replace("German/", ""),
-      category: "lesson",
-      order: 100 + num * 2 + (lessonMatch[2] ? 1 : 0),
-      cefr,
-    };
-  }
-  // Grammar reference pages
-  if (/^German\/Grammar\/.+/i.test(title)) {
-    return {
-      page: title,
-      shortTitle: title.replace("German/Grammar/", "Grammatik: "),
-      category: "grammar",
-      order: 500,
-      cefr: "B1",
-    };
-  }
-  // Vocabulary appendices
-  if (/^German\/Appendices\/Vocabulary\/.+/i.test(title)) {
-    return {
-      page: title,
-      shortTitle: title.replace("German/Appendices/Vocabulary/", "Wortschatz: "),
-      category: "vocabulary",
-      order: 900,
-      cefr: "A1",
-    };
-  }
-  return null;
-}
-
-// Fetch all German course subpages from en.wikibooks.org and categorize them.
-async function fetchAllWikibooksLessonPages(): Promise<WikiPage[]> {
-  const results: WikiPage[] = [];
-  let continueToken: string | undefined;
-
-  do {
-    const params = new URLSearchParams({
-      action: "query",
-      list: "allpages",
-      apprefix: "German/",
-      apnamespace: "0",
-      aplimit: "500",
-      format: "json",
-      ...(continueToken ? { apcontinue: continueToken } : {}),
-    });
-
-    const res = await fetch(`${WIKIBOOKS_BASE}?${params}`, {
-      headers: HEADERS,
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!res.ok) break;
-    const data = await res.json() as {
-      query?: { allpages?: { pageid: number; title: string }[] };
-      continue?: { apcontinue: string };
-    };
-
-    const pages = data?.query?.allpages ?? [];
-    for (const p of pages) {
-      const categorized = categorizeWikiPage(p.title);
-      if (categorized) results.push(categorized);
-    }
-
-    continueToken = data?.continue?.apcontinue;
-  } while (continueToken);
-
-  // Lessons first (by number), then grammar, then vocabulary
-  results.sort((a, b) => a.order - b.order || a.shortTitle.localeCompare(b.shortTitle));
-  return results;
-}
-
-async function scrapeWikibooksPage(page: string): Promise<string[]> {
-  const params = new URLSearchParams({
-    action: "parse",
-    page,
-    format: "json",
-    prop: "text",
-    disableeditsection: "1",
-  });
-
-  const res = await fetch(`${WIKIBOOKS_BASE}?${params}`, {
-    headers: HEADERS,
-    signal: AbortSignal.timeout(10000),
-  });
-
-  if (!res.ok) return [];
-  const data = await res.json() as { parse?: { text?: { "*": string } } };
-  const rawHtml = data?.parse?.text?.["*"];
-  if (!rawHtml) return [];
-  return cleanMediaWikiHtml(rawHtml);
-}
-
 export async function GET(req: NextRequest) {
   // Seeding writes to shared tables via the service-role client — owners only.
   const user = await getUserFromRequest(req);
@@ -271,6 +124,8 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type") ?? "all";
+  // Klexikon is imported in batches; `offset` continues where the last run stopped.
+  const klexikonOffset = Math.max(0, parseInt(searchParams.get("offset") ?? "0", 10) || 0);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -289,53 +144,9 @@ export async function GET(req: NextRequest) {
         send({ message: "Подключение к базе данных...", progress: 2 });
         await delay(300);
 
-        // ── Part 1: Pre-packaged Wikibooks seed lessons ──────────────────────
-        if (type === "all" || type === "wikibooks" || type === "leveled") {
-          const wikibooksSeeds = LEVELED_TEXTS_SEED.filter((t) => t.sourceType === "wikibooks");
-
-          send({ message: `Импорт ${wikibooksSeeds.length} базовых уроков Wikibooks...`, progress: 5 });
-
-          let idx = 0;
-          for (const text of wikibooksSeeds) {
-            idx++;
-            const sourceId = `wikibooks_lesson_${text.lessonNumber ?? text.title.slice(0, 20).replace(/\s+/g, "_")}`;
-            const orderNum = parseFloat(text.lessonNumber ?? "0") * 10;
-            const { data: bookData } = await supabaseAdmin
-              .from("shared_books")
-              .upsert({
-                source_type: "wikibooks",
-                source_id: sourceId,
-                title: text.title,
-                author: text.author ?? "Wikibooks",
-                language: text.language,
-                cefr_level: text.cefrLevel,
-                course_id: COURSE_ID,
-                course_title: COURSE_TITLE,
-                lesson_order: Math.round(orderNum),
-                total_chars: text.paragraphs.join("").length,
-                metadata: { description: text.description ?? "", cover_color: pickColor(text.title) },
-              }, { onConflict: "source_type,source_id" })
-              .select("id")
-              .single();
-
-            if (bookData) {
-              await supabaseAdmin.from("shared_book_chapters").upsert({
-                shared_book_id: bookData.id,
-                chapter_index: 0,
-                title: text.title,
-                paragraphs: text.paragraphs,
-                plain_text: text.paragraphs.join("\n"),
-                char_count: text.paragraphs.join("").length,
-              }, { onConflict: "shared_book_id,chapter_index" });
-            }
-            send({ message: `Базовый урок ${idx}/${wikibooksSeeds.length}: "${text.title}"`, progress: 5 + Math.round((idx / wikibooksSeeds.length) * 10) });
-            await delay(50);
-          }
-        }
-
-        // ── Part 1b: UniversalCEFR texts from HuggingFace ────────────────────
+        // ── UniversalCEFR texts from HuggingFace ────────────────────────────
         if (type === "all" || type === "cefr") {
-          send({ message: "Загрузка датасета UniversalCEFR с HuggingFace...", progress: 8 });
+          send({ message: "Загрузка датасета UniversalCEFR с HuggingFace...", progress: 5 });
           let totalSaved = 0;
 
           for (let d = 0; d < CEFR_DATASETS.length; d++) {
@@ -405,7 +216,7 @@ export async function GET(req: NextRequest) {
                   totalSaved++;
                 }
 
-                const pct = 8 + Math.round(((d + 0.5) / CEFR_DATASETS.length) * (type === "cefr" ? 88 : 10));
+                const pct = 5 + Math.round(((d + 0.5) / CEFR_DATASETS.length) * (type === "cefr" ? 90 : 40));
                 send({ message: `UniversalCEFR ${ds.label} ${cefr}: сохранено ${totalSaved}`, progress: pct });
               }
               offset += rows.length;
@@ -415,90 +226,105 @@ export async function GET(req: NextRequest) {
 
           send({
             message: `Импорт UniversalCEFR завершён. Сохранено ${totalSaved} текстов.`,
-            progress: type === "cefr" ? 100 : 18,
+            progress: type === "cefr" ? 100 : 48,
           });
         }
 
-        // ── Part 2: Full Wikibooks scrape ─────────────────────────────────────
-        if (type === "all" || type === "wikibooks") {
-          send({ message: "Загружаю полное оглавление Wikibooks DaF...", progress: 22 });
+        // ── Klexikon articles ───────────────────────────────────────────────
+        if (type === "all" || type === "klexikon") {
+          const base = type === "klexikon" ? 0 : 48;
+          const span = type === "klexikon" ? 98 : 50;
 
-          let lessonPages: WikiPage[] = [];
+          send({ message: "Получаю список статей Клексикона...", progress: base + 2 });
+
+          let titles: string[] = [];
           try {
-            lessonPages = await fetchAllWikibooksLessonPages();
+            // allpages is alphabetical and stable, so offset+batch resumes cleanly.
+            const all = await fetchKlexikonTitles(klexikonOffset + KLEXIKON_BATCH);
+            titles = all.slice(klexikonOffset);
           } catch (err) {
-            send({ message: `Не удалось загрузить оглавление: ${err instanceof Error ? err.message : err}.`, progress: 25 });
+            send({ error: `Не удалось получить список статей Клексикона: ${err instanceof Error ? err.message : err}` });
+            controller.close();
+            return;
           }
 
-          send({ message: `Найдено ${lessonPages.length} страниц курса German. Начинаю скачивание...`, progress: 28 });
-          await delay(200);
+          if (titles.length === 0) {
+            send({ message: "Новых статей нет — весь Клексикон уже импортирован.", progress: 100, nextOffset: klexikonOffset });
+            await delay(300);
+            controller.close();
+            return;
+          }
 
-          const categoryLabel: Record<WikiCategory, string> = {
-            lesson: "Урок",
-            grammar: "Грамматика",
-            vocabulary: "Словарь",
-          };
+          send({ message: `Найдено ${titles.length} статей. Начинаю импорт...`, progress: base + 4 });
 
-          let count = 0;
           let saved = 0;
-          for (const lesson of lessonPages) {
-            count++;
-            const progressPct = 28 + Math.round((count / lessonPages.length) * 68);
-            send({
-              message: `Скачивание (${count}/${lessonPages.length}): "${lesson.shortTitle}"`,
-              progress: progressPct,
-            });
+          let skipped = 0;
+          for (let i = 0; i < titles.length; i++) {
+            const title = titles[i];
+            const pct = base + 4 + Math.round(((i + 1) / titles.length) * (span - 6));
+            send({ message: `Клексикон (${i + 1}/${titles.length}): «${title}»`, progress: pct });
 
             try {
-              const paragraphs = await scrapeWikibooksPage(lesson.page);
-              if (paragraphs.length >= 2) {
-                const sourceId = `wikibooks_de_${lesson.page.replace(/\//g, "_").replace(/\s+/g, "_")}`;
+              const article = await fetchKlexikonArticle(title);
+              if (!article) { skipped++; continue; }
 
-                const { data: bookData } = await supabaseAdmin!
-                  .from("shared_books")
-                  .upsert({
-                    source_type: "wikibooks",
-                    source_id: sourceId,
-                    title: lesson.shortTitle,
-                    author: "Wikibooks Contributors",
-                    language: "de",
-                    cefr_level: lesson.cefr,
-                    course_id: COURSE_ID,
-                    course_title: COURSE_TITLE,
-                    lesson_order: lesson.order,
-                    total_chars: paragraphs.join("").length,
-                    metadata: {
-                      description: `${categoryLabel[lesson.category]} Wikibooks German: ${lesson.shortTitle}`,
-                      cover_color: pickColor(lesson.shortTitle),
-                      wikibooks_page: lesson.page,
-                      category: lesson.category,
-                    },
-                  }, { onConflict: "source_type,source_id" })
-                  .select("id")
-                  .single();
+              const { data: bookData } = await supabaseAdmin
+                .from("shared_books")
+                .upsert({
+                  source_type: "klexikon",
+                  source_id: `klexikon_${title.replace(/\s+/g, "_")}`,
+                  title: article.title,
+                  author: "Klexikon",
+                  language: "de",
+                  cefr_level: article.cefrLevel,
+                  course_id: KLEXIKON_COURSE_ID,
+                  course_title: KLEXIKON_COURSE_TITLE,
+                  lesson_order: null,
+                  total_chars: article.charCount,
+                  metadata: {
+                    description: article.paragraphs[0]?.slice(0, 180) ?? "",
+                    cover_color: pickColor(article.title),
+                    source_url: article.url,
+                    license: KLEXIKON_LICENSE,
+                    // The level is estimated from readability, not assigned by a
+                    // human — the UI labels it as such.
+                    level_estimated: true,
+                    lix: article.lix,
+                  },
+                }, { onConflict: "source_type,source_id" })
+                .select("id")
+                .single();
 
-                if (bookData) {
-                  await supabaseAdmin!.from("shared_book_chapters").upsert({
-                    shared_book_id: bookData.id,
-                    chapter_index: 0,
-                    title: lesson.shortTitle,
-                    paragraphs,
-                    plain_text: paragraphs.join("\n"),
-                    char_count: paragraphs.join("").length,
-                  }, { onConflict: "shared_book_id,chapter_index" });
-                  saved++;
-                }
+              if (bookData) {
+                await supabaseAdmin.from("shared_book_chapters").upsert({
+                  shared_book_id: bookData.id,
+                  chapter_index: 0,
+                  title: article.title,
+                  paragraphs: article.paragraphs,
+                  plain_text: article.paragraphs.join("\n"),
+                  char_count: article.charCount,
+                }, { onConflict: "shared_book_id,chapter_index" });
+                saved++;
               }
             } catch (err) {
-              console.warn(`Wikibooks fetch failed for ${lesson.page}:`, err);
+              console.warn(`Klexikon fetch failed for ${title}:`, err);
+              skipped++;
             }
-            await delay(200);
+
+            await delay(KLEXIKON_REQUEST_DELAY_MS);
           }
 
-          send({ message: `Сохранено ${saved} из ${lessonPages.length} страниц Wikibooks German.`, progress: 97 });
+          // The client stores nextOffset so the following run continues from
+          // here. Counting imported rows instead would drift, because skipped
+          // stubs advance the cursor without producing a row.
+          send({
+            message: `Клексикон: сохранено ${saved}, пропущено ${skipped}.`,
+            progress: base + span,
+            nextOffset: klexikonOffset + titles.length,
+          });
         }
 
-        send({ message: "Импорт завершён! Учебная программа доступна для всех пользователей.", progress: 100 });
+        send({ message: "Импорт завершён.", progress: 100 });
         await delay(300);
         controller.close();
       } catch (err) {

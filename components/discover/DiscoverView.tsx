@@ -6,15 +6,19 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
   Sparkles, CheckCircle2, PlayCircle, Clock, Circle,
+  Wand2, Trash2, ExternalLink, Info,
 } from "lucide-react";
-import type { Book, LessonContext } from "@/lib/types";
+import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
 import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
+import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 
 type Props = {
   books: Book[];
+  cards: Flashcard[];
+  profile: UserProfile;
   onBooksChange: (books: Book[]) => void;
   onOpenBook: (book: Book) => void;
   downloadTasks: Record<number, DownloadTask>;
@@ -56,8 +60,44 @@ type SharedBook = {
   lesson_order: number | null;
   cover_url: string | null;
   total_chars: number;
-  metadata: { description?: string; cover_color?: string; [key: string]: unknown };
+  metadata: {
+    description?: string;
+    cover_color?: string;
+    /** Klexikon: link back to the article + its CC licence (attribution). */
+    source_url?: string;
+    license?: string;
+    /** Klexikon: the CEFR level is a readability estimate, not a human rating. */
+    level_estimated?: boolean;
+    [key: string]: unknown;
+  };
   created_at: string;
+};
+
+// Each tab is one source, described in its own words so it is obvious what the
+// content is and where it came from.
+type TabKey = "classic" | "klexikon" | "cefr" | "lessons";
+
+const TAB_INFO: Record<TabKey, { label: string; source: string; note: string }> = {
+  classic: {
+    label: "Классика",
+    source: "Project Gutenberg",
+    note: "Книги, перешедшие в общественное достояние. Оригинальные тексты без адаптации под уровень.",
+  },
+  klexikon: {
+    label: "Клексикон",
+    source: "klexikon.zum.de · CC BY-SA",
+    note: "Немецкая детская энциклопедия: настоящий немецкий, но короткими предложениями и простыми словами. Уровень — оценка по читаемости текста, не экспертная разметка.",
+  },
+  cefr: {
+    label: "CEFR тексты",
+    source: "UniversalCEFR (HuggingFace)",
+    note: "Открытый корпус текстов с проставленными уровнями A1–C1. Уровень задан в самом датасете.",
+  },
+  lessons: {
+    label: "Мои уроки",
+    source: "Генерация ИИ",
+    note: "Текст пишется под ваш уровень и вашу тему, с вплетёнными словами из ваших карточек. Виден только вам.",
+  },
 };
 
 type LessonProgressMap = Record<string, {
@@ -147,14 +187,17 @@ function groupByCefr(books: SharedBook[]): Array<{ level: string; levelTitle: st
 const PREFS_KEY = "aibook:discover:prefs";
 
 type DiscoverPrefs = {
-  activeTab?: "classic" | "wikibooks" | "cefr";
+  activeTab?: TabKey;
   language?: string;
   cefrLangFilter?: string;
   cefrLevelFilter?: string;
-  wikiLevelFilter?: string;
-  wikiStatusFilter?: string;
+  klexLevelFilter?: string;
+  klexStatusFilter?: string;
+  klexikonOffset?: number;
   cefrStatusFilter?: string;
   collapsedLevels?: string[];
+  lessonLevel?: CefrLevel;
+  lessonLength?: "short" | "medium" | "long";
 };
 
 function readPrefs(): DiscoverPrefs {
@@ -166,10 +209,10 @@ function readPrefs(): DiscoverPrefs {
   }
 }
 
-export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, onDownloadBook }: Props) {
+export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook }: Props) {
   const { user } = useAuth();
   const [prefs] = useState<DiscoverPrefs>(readPrefs);
-  const [activeTab, setActiveTab] = useState<"classic" | "wikibooks" | "cefr">(prefs.activeTab ?? "classic");
+  const [activeTab, setActiveTab] = useState<TabKey>(prefs.activeTab ?? "classic");
 
   // Gutenberg States
   const [query, setQuery] = useState("");
@@ -183,8 +226,9 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
   const [error, setError] = useState<string | null>(null);
 
   // Shared books state
-  const [wikibooksBooks, setWikibooksBooks] = useState<SharedBook[]>([]);
+  const [klexikonBooks, setKlexikonBooks] = useState<SharedBook[]>([]);
   const [cefrBooks, setCefrBooks] = useState<SharedBook[]>([]);
+  const [myLessons, setMyLessons] = useState<SharedBook[]>([]);
   const [isSharedLoading, setIsSharedLoading] = useState(false);
   const [lessonProgress, setLessonProgress] = useState<LessonProgressMap>({});
   const [openingLesson, setOpeningLesson] = useState<string | null>(null); // sharedBookId being loaded
@@ -194,11 +238,23 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
   const [cefrLevelFilter, setCefrLevelFilter] = useState(prefs.cefrLevelFilter ?? "");
   const [cefrStatusFilter, setCefrStatusFilter] = useState(prefs.cefrStatusFilter ?? "");
 
-  // Filters for Wikibooks tab
-  const [wikiLevelFilter, setWikiLevelFilter] = useState(prefs.wikiLevelFilter ?? "");
-  const [wikiStatusFilter, setWikiStatusFilter] = useState(prefs.wikiStatusFilter ?? "");
+  // Filters for Klexikon tab
+  const [klexLevelFilter, setKlexLevelFilter] = useState(prefs.klexLevelFilter ?? "");
+  const [klexStatusFilter, setKlexStatusFilter] = useState(prefs.klexStatusFilter ?? "");
+  const [klexQuery, setKlexQuery] = useState("");
+  // Where the next Klexikon import batch should resume from (reported by the
+  // seed route, persisted so it survives a reload).
+  const [klexikonOffset, setKlexikonOffset] = useState(prefs.klexikonOffset ?? 0);
 
-  // Collapsible level sections (keys like "wikibooks:A1")
+  // "Мои уроки" generator form
+  const [lessonTopic, setLessonTopic] = useState("");
+  const [lessonLevel, setLessonLevel] = useState<CefrLevel>(prefs.lessonLevel ?? "A2");
+  const [lessonLength, setLessonLength] = useState<"short" | "medium" | "long">(prefs.lessonLength ?? "medium");
+  const [useReviewWords, setUseReviewWords] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+
+  // Collapsible level sections (keys like "klexikon:A1")
   const [collapsedLevels, setCollapsedLevels] = useState<Set<string>>(
     () => new Set(prefs.collapsedLevels ?? [])
   );
@@ -223,13 +279,13 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
   const loadSharedBooks = useCallback(async () => {
     setIsSharedLoading(true);
     try {
-      const [wikiRes, cefrRes] = await Promise.all([
-        freshFetch("/api/shared-books?source_type=wikibooks"),
+      const [klexRes, cefrRes] = await Promise.all([
+        freshFetch("/api/shared-books?source_type=klexikon"),
         freshFetch("/api/shared-books?source_type=universal_cefr"),
       ]);
-      if (wikiRes.ok) {
-        const data = await wikiRes.json() as { books: SharedBook[] };
-        setWikibooksBooks(data.books ?? []);
+      if (klexRes.ok) {
+        const data = await klexRes.json() as { books: SharedBook[] };
+        setKlexikonBooks(data.books ?? []);
       }
       if (cefrRes.ok) {
         const data = await cefrRes.json() as { books: SharedBook[] };
@@ -241,6 +297,20 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
       setIsSharedLoading(false);
     }
   }, []);
+
+  // ── Load the caller's own generated lessons ──────────────────────────────────
+  const loadMyLessons = useCallback(async () => {
+    if (!user) { setMyLessons([]); return; }
+    try {
+      const res = await freshFetch("/api/lessons", { headers: await sbAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json() as { lessons: SharedBook[] };
+        setMyLessons(data.lessons ?? []);
+      }
+    } catch (err) {
+      console.error("loadMyLessons:", err);
+    }
+  }, [user]);
 
   // ── Load lesson progress ─────────────────────────────────────────────────────
   const loadLessonProgress = useCallback(async () => {
@@ -265,20 +335,36 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
   }, [user]);
 
   useEffect(() => {
-    if (activeTab === "wikibooks" || activeTab === "cefr") {
+    if (activeTab === "klexikon" || activeTab === "cefr") {
       void loadSharedBooks();
       void loadLessonProgress();
     }
-  }, [activeTab, loadSharedBooks, loadLessonProgress]);
+    if (activeTab === "lessons") {
+      void loadMyLessons();
+      void loadLessonProgress();
+    }
+  }, [activeTab, loadSharedBooks, loadMyLessons, loadLessonProgress]);
+
+  // Default the generator to the learner's estimated level, unless they have
+  // already picked one themselves (which readPrefs restores).
+  useEffect(() => {
+    if (prefs.lessonLevel) return;
+    let cancelled = false;
+    void estimateTargetLanguageLevel(profile.targetLanguage).then((estimate) => {
+      if (!cancelled && estimate) setLessonLevel(estimate.level);
+    });
+    return () => { cancelled = true; };
+  }, [prefs.lessonLevel, profile.targetLanguage]);
 
   // Persist tab + filters + collapsed sections
   useEffect(() => {
     const data: DiscoverPrefs = {
       activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter,
-      wikiLevelFilter, wikiStatusFilter, collapsedLevels: Array.from(collapsedLevels),
+      klexLevelFilter, klexStatusFilter, collapsedLevels: Array.from(collapsedLevels),
+      lessonLevel, lessonLength, klexikonOffset,
     };
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(data)); } catch { /* ignore */ }
-  }, [activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, wikiLevelFilter, wikiStatusFilter, collapsedLevels]);
+  }, [activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, klexLevelFilter, klexStatusFilter, collapsedLevels, lessonLevel, lessonLength, klexikonOffset]);
 
   // ── Gutenberg auto-search ────────────────────────────────────────────────────
   useEffect(() => {
@@ -334,11 +420,12 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
   const openSharedLesson = useCallback(async (sharedBook: SharedBook, courseBooks: SharedBook[]) => {
     setOpeningLesson(sharedBook.id);
     try {
-      const res = await freshFetch(`/api/shared-books/${sharedBook.id}/chapters`);
+      // Generated lessons are owner-scoped, so the chapters call needs the token.
+      const res = await freshFetch(`/api/shared-books/${sharedBook.id}/chapters`, { headers: await sbAuthHeaders() });
       const data = await res.json() as { paragraphs: string[] };
       const paragraphs = data.paragraphs ?? [];
       if (paragraphs.length === 0) {
-        alert("Текст урока пока недоступен. Запустите импорт учебной программы.");
+        alert("Текст пока недоступен. Запустите импорт материалов.");
         return;
       }
 
@@ -349,7 +436,7 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
 
       const lessonContext: LessonContext = {
         courseId: sharedBook.course_id ?? "standalone",
-        courseTitle: sharedBook.course_title ?? "Учебные материалы",
+        courseTitle: sharedBook.course_title ?? "Материалы",
         sharedBookId: sharedBook.id,
         lessonOrder: sharedBook.lesson_order ?? courseIdx,
         totalLessons: courseBooks.length,
@@ -360,7 +447,7 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
       const book: Book = {
         id: sharedBook.id,
         title: sharedBook.title,
-        author: sharedBook.author ?? "Wikibooks",
+        author: sharedBook.author ?? "Учебный материал",
         language: sharedBook.language,
         format: "txt",
         progress: progress?.percentage ?? 0,
@@ -389,13 +476,15 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
   function clearSearch() { setQuery(""); setSubmittedQuery(""); setPage(1); }
 
   // ── Seed import ──────────────────────────────────────────────────────────────
-  const startImport = async (type: "wikibooks" | "cefr" = "wikibooks") => {
+  // Klexikon is imported in batches; `offset` resumes where the previous run
+  // stopped, so repeated presses walk through the wiki instead of redoing it.
+  const startImport = async (type: "klexikon" | "cefr", offset = 0) => {
     setIsSeeding(true);
     setSeedProgress(5);
     setSeedMessage("Инициализация импорта...");
     setSeedError(null);
     try {
-      const res = await fetch(`/api/books/seed?type=${type}`, { headers: await sbAuthHeaders() });
+      const res = await fetch(`/api/books/seed?type=${type}&offset=${offset}`, { headers: await sbAuthHeaders() });
       if (!res.ok) {
         const data = await res.json().catch(() => null) as { error?: string } | null;
         throw new Error(data?.error ?? `Ошибка импорта (${res.status})`);
@@ -415,10 +504,11 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             try {
-              const data = JSON.parse(line.replace("data: ", "").trim()) as { error?: string; progress?: number; message?: string };
+              const data = JSON.parse(line.replace("data: ", "").trim()) as { error?: string; progress?: number; message?: string; nextOffset?: number };
               if (data.error) { setSeedError(data.error); setIsSeeding(false); return; }
               if (data.progress !== undefined) setSeedProgress(data.progress);
               if (data.message) setSeedMessage(data.message);
+              if (data.nextOffset !== undefined) setKlexikonOffset(data.nextOffset);
             } catch { /* ignore parse errors */ }
           }
         }
@@ -432,21 +522,75 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
     }
   };
 
+  // ── Generate a lesson ────────────────────────────────────────────────────────
+  // Words the SRS says are due now — feeding them to the generator is the whole
+  // point of this tab: the text is built around what needs revising today.
+  const dueReviewWords = useMemo(() => {
+    const now = Date.now();
+    return cards
+      .filter((c) => c.type === "word" && new Date(c.dueAt).getTime() <= now)
+      .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())
+      .slice(0, 12)
+      .map((c) => c.front);
+  }, [cards]);
+
+  const generateLesson = async () => {
+    const topic = lessonTopic.trim();
+    if (!topic || isGenerating) return;
+
+    setIsGenerating(true);
+    setGenerateError(null);
+    try {
+      const res = await fetch("/api/lessons/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+        body: JSON.stringify({
+          topic,
+          level: lessonLevel,
+          length: lessonLength,
+          targetLanguage: profile.targetLanguage,
+          nativeLanguage: profile.nativeLanguage,
+          reviewWords: useReviewWords ? dueReviewWords : [],
+        }),
+      });
+      const data = await res.json() as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `Ошибка генерации (${res.status})`);
+      setLessonTopic("");
+      await loadMyLessons();
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : "Неизвестная ошибка");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const deleteLesson = async (id: string) => {
+    if (!confirm("Удалить этот урок?")) return;
+    try {
+      const res = await fetch(`/api/lessons?id=${id}`, { method: "DELETE", headers: await sbAuthHeaders() });
+      if (res.ok) setMyLessons((prev) => prev.filter((l) => l.id !== id));
+    } catch (err) {
+      console.error("deleteLesson:", err);
+    }
+  };
+
   const matchStatus = useCallback((bookId: string, filter: string) => {
     if (!filter) return true;
     const status = lessonProgress[bookId]?.status ?? "not_started";
     return status === filter;
   }, [lessonProgress]);
 
-  // ── Wikibooks syllabus ────────────────────────────────────────────────────────
-  const filteredWikibooks = useMemo(() => {
-    return wikibooksBooks.filter((b) => {
-      if (wikiLevelFilter && b.cefr_level !== wikiLevelFilter) return false;
-      if (!matchStatus(b.id, wikiStatusFilter)) return false;
+  // ── Klexikon articles ────────────────────────────────────────────────────────
+  const filteredKlexikon = useMemo(() => {
+    const q = klexQuery.trim().toLowerCase();
+    return klexikonBooks.filter((b) => {
+      if (klexLevelFilter && b.cefr_level !== klexLevelFilter) return false;
+      if (!matchStatus(b.id, klexStatusFilter)) return false;
+      if (q && !b.title.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [wikibooksBooks, wikiLevelFilter, wikiStatusFilter, matchStatus]);
-  const wikibooksGrouped = useMemo(() => groupByCefr(filteredWikibooks), [filteredWikibooks]);
+  }, [klexikonBooks, klexLevelFilter, klexStatusFilter, klexQuery, matchStatus]);
+  const klexikonGrouped = useMemo(() => groupByCefr(filteredKlexikon), [filteredKlexikon]);
 
   // ── Filtered CEFR texts ──────────────────────────────────────────────────────
   const filteredCefrBooks = useMemo(() => {
@@ -459,9 +603,9 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
   }, [cefrBooks, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, matchStatus]);
   const cefrGrouped = useMemo(() => groupByCefr(filteredCefrBooks), [filteredCefrBooks]);
 
-  const completedWikibooks = useMemo(() =>
-    wikibooksBooks.filter((b) => lessonProgress[b.id]?.status === "completed").length,
-    [wikibooksBooks, lessonProgress]
+  const completedKlexikon = useMemo(() =>
+    klexikonBooks.filter((b) => lessonProgress[b.id]?.status === "completed").length,
+    [klexikonBooks, lessonProgress]
   );
 
   return (
@@ -475,20 +619,30 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
         </div>
       </header>
 
-      {/* 4-tab navigation */}
+      {/* One tab per source — the source note below spells out which is which */}
       <div className="discover-tabs">
-        {(["classic", "wikibooks", "cefr"] as const).map((tab) => (
+        {(["classic", "klexikon", "cefr", "lessons"] as const).map((tab) => (
           <button
             key={tab}
             type="button"
             className={`discover-tab-btn ${activeTab === tab ? "active" : ""}`}
             onClick={() => setActiveTab(tab)}
           >
-            {tab === "classic" && <><BookOpen size={15} />Классика</>}
-            {tab === "wikibooks" && <><GraduationCap size={15} />Wikibooks</>}
-            {tab === "cefr" && <><BookMarked size={15} />CEFR тексты</>}
+            {tab === "classic" && <BookOpen size={15} />}
+            {tab === "klexikon" && <GraduationCap size={15} />}
+            {tab === "cefr" && <BookMarked size={15} />}
+            {tab === "lessons" && <Wand2 size={15} />}
+            {TAB_INFO[tab].label}
           </button>
         ))}
+      </div>
+
+      <div className="source-note">
+        <Info size={14} aria-hidden />
+        <div>
+          <strong>{TAB_INFO[activeTab].source}</strong>
+          <p>{TAB_INFO[activeTab].note}</p>
+        </div>
       </div>
 
       {/* ── Classic (Gutenberg) ─────────────────────────────────────────────── */}
@@ -559,43 +713,63 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
         </>
       )}
 
-      {/* ── Wikibooks German Course ─────────────────────────────────────────── */}
-      {activeTab === "wikibooks" && (
+      {/* ── Klexikon (authentic German, CC BY-SA) ───────────────────────────── */}
+      {activeTab === "klexikon" && (
         <>
           <div className="discover-meta" style={{ marginBottom: 12 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <Sparkles size={14} style={{ color: "var(--accent)" }} />
-              {wikibooksBooks.length > 0
-                ? `${filteredWikibooks.length} из ${wikibooksBooks.length} • ${completedWikibooks} пройдено`
-                : "Учебная программа не загружена"}
+              {klexikonBooks.length > 0
+                ? `${filteredKlexikon.length} из ${klexikonBooks.length} • ${completedKlexikon} прочитано`
+                : "Статьи не загружены"}
             </span>
-            <button type="button" className="mini-btn" onClick={() => void startImport()} style={{ gap: 4, height: 26, fontSize: 11 }}>
-              {wikibooksBooks.length > 0 ? "Обновить" : "Загрузить программу"}
+            <button
+              type="button"
+              className="mini-btn"
+              onClick={() => void startImport("klexikon", klexikonOffset)}
+              style={{ gap: 4, height: 26, fontSize: 11 }}
+            >
+              {klexikonBooks.length > 0 ? "Загрузить ещё" : "Загрузить статьи"}
             </button>
           </div>
 
-          {wikibooksBooks.length > 0 && (
-            <div className="discover-toolbar" style={{ gridTemplateColumns: "1fr 1fr auto", marginBottom: 16, alignItems: "center" }}>
-              <div className={`discover-language${wikiLevelFilter ? " filter-active" : ""}`}>
-                {wikiLevelFilter && <span className="filter-lamp" aria-hidden />}
-                <select value={wikiLevelFilter} onChange={(e) => setWikiLevelFilter(e.target.value)} aria-label="Уровень CEFR">
+          {klexikonBooks.length > 0 && (
+            <div className="discover-toolbar" style={{ gridTemplateColumns: "1fr 1fr 1fr auto", marginBottom: 16, alignItems: "center" }}>
+              <div className="discover-search">
+                <Search size={16} aria-hidden />
+                <input
+                  type="text"
+                  placeholder="Тема статьи"
+                  value={klexQuery}
+                  onChange={(e) => setKlexQuery(e.target.value)}
+                />
+                {klexQuery && <button type="button" className="discover-clear" onClick={() => setKlexQuery("")} aria-label="Очистить"><X size={16} /></button>}
+              </div>
+              <div className={`discover-language${klexLevelFilter ? " filter-active" : ""}`}>
+                {klexLevelFilter && <span className="filter-lamp" aria-hidden />}
+                <select value={klexLevelFilter} onChange={(e) => setKlexLevelFilter(e.target.value)} aria-label="Уровень CEFR">
                   <option value="">Все уровни</option>
-                  {["A1","A2","B1","B2","C1","C2"].map((l) => <option key={l} value={l}>{l}</option>)}
+                  {["A1","A2","B1","B2","C1"].map((l) => <option key={l} value={l}>{l}</option>)}
                 </select>
                 <ChevronDown size={15} aria-hidden />
               </div>
-              <div className={`discover-language${wikiStatusFilter ? " filter-active" : ""}`}>
-                {wikiStatusFilter && <span className="filter-lamp" aria-hidden />}
-                <select value={wikiStatusFilter} onChange={(e) => setWikiStatusFilter(e.target.value)} aria-label="Статус">
+              <div className={`discover-language${klexStatusFilter ? " filter-active" : ""}`}>
+                {klexStatusFilter && <span className="filter-lamp" aria-hidden />}
+                <select value={klexStatusFilter} onChange={(e) => setKlexStatusFilter(e.target.value)} aria-label="Статус">
                   <option value="">Любой статус</option>
                   <option value="not_started">Не начатые</option>
                   <option value="in_progress">В процессе</option>
-                  <option value="completed">Пройденные</option>
+                  <option value="completed">Прочитанные</option>
                 </select>
                 <ChevronDown size={15} aria-hidden />
               </div>
-              {(wikiLevelFilter || wikiStatusFilter) && (
-                <button type="button" className="filter-reset-btn" onClick={() => { setWikiLevelFilter(""); setWikiStatusFilter(""); }} title="Сбросить фильтры">
+              {(klexLevelFilter || klexStatusFilter || klexQuery) && (
+                <button
+                  type="button"
+                  className="filter-reset-btn"
+                  onClick={() => { setKlexLevelFilter(""); setKlexStatusFilter(""); setKlexQuery(""); }}
+                  title="Сбросить фильтры"
+                >
                   <X size={13} />Сброс
                 </button>
               )}
@@ -604,31 +778,34 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
 
           {isSharedLoading ? (
             <div className="catalog-loading-inline" style={{ justifyContent: "center", padding: "40px 0" }}>
-              <Loader2 className="spin" size={24} /><span>Загрузка уроков...</span>
+              <Loader2 className="spin" size={24} /><span>Загрузка статей...</span>
             </div>
-          ) : wikibooksBooks.length === 0 ? (
+          ) : klexikonBooks.length === 0 ? (
             <div className="seed-card">
               <Server size={42} style={{ color: "var(--accent)" }} />
-              <h3>Программа Wikibooks не установлена</h3>
-              <p>Нажмите кнопку ниже, чтобы скачать уроки немецкого A1–B2 из открытого учебника Wikibooks. Контент загружается один раз для всех пользователей.</p>
-              <button type="button" className="seed-btn" onClick={() => void startImport()}>
-                <Server size={15} />Загрузить учебную программу
+              <h3>Статьи Клексикона не загружены</h3>
+              <p>
+                Клексикон — энциклопедия на немецком, написанная для детей: настоящий язык носителей,
+                но короткими предложениями. Статьи загружаются партиями и сохраняются для всех пользователей.
+              </p>
+              <button type="button" className="seed-btn" onClick={() => void startImport("klexikon", 0)}>
+                <Server size={15} />Загрузить статьи
               </button>
             </div>
-          ) : wikibooksGrouped.length === 0 ? (
+          ) : klexikonGrouped.length === 0 ? (
             <div className="empty-state"><Globe size={40} /><strong>Ничего не найдено</strong><p>Измените фильтры</p></div>
           ) : (
             <>
-              {wikibooksGrouped.map((group) => {
-                const key = `wikibooks:${group.level}`;
+              {klexikonGrouped.map((group) => {
+                const key = `klexikon:${group.level}`;
                 const collapsed = collapsedLevels.has(key);
                 const done = group.books.filter((b) => lessonProgress[b.id]?.status === "completed").length;
                 return (
                   <LevelSection
                     key={group.level}
-                    levelTitle={group.levelTitle}
+                    levelTitle={`${group.levelTitle} · оценка`}
                     headerStyle={{ background: group.color }}
-                    counterText={`${done} / ${group.books.length} пройдено`}
+                    counterText={`${done} / ${group.books.length} прочитано`}
                     collapsed={collapsed}
                     onToggle={() => toggleLevel(key)}
                   >
@@ -638,12 +815,109 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
                         book={sb}
                         progress={lessonProgress[sb.id]}
                         isLoading={openingLesson === sb.id}
-                        onOpen={() => void openSharedLesson(sb, filteredWikibooks)}
+                        onOpen={() => void openSharedLesson(sb, filteredKlexikon)}
                       />
                     ))}
                   </LevelSection>
                 );
               })}
+            </>
+          )}
+        </>
+      )}
+
+      {/* ── My lessons (AI-generated, private) ──────────────────────────────── */}
+      {activeTab === "lessons" && (
+        <>
+          {!user ? (
+            <div className="seed-card">
+              <Wand2 size={42} style={{ color: "var(--accent)" }} />
+              <h3>Войдите, чтобы генерировать уроки</h3>
+              <p>Уроки сохраняются в вашем аккаунте и видны только вам.</p>
+            </div>
+          ) : (
+            <>
+              <div className="lesson-form">
+                <label className="lesson-field">
+                  <span>Тема</span>
+                  <input
+                    type="text"
+                    placeholder="Например: Wohnungssuche in Berlin"
+                    value={lessonTopic}
+                    onChange={(e) => setLessonTopic(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void generateLesson(); }}
+                    maxLength={200}
+                  />
+                </label>
+
+                <div className="lesson-row">
+                  <label className="lesson-field">
+                    <span>Уровень</span>
+                    <select value={lessonLevel} onChange={(e) => setLessonLevel(e.target.value as CefrLevel)}>
+                      {(["A1","A2","B1","B2","C1","C2"] as CefrLevel[]).map((l) => <option key={l} value={l}>{l}</option>)}
+                    </select>
+                  </label>
+                  <label className="lesson-field">
+                    <span>Объём</span>
+                    <select value={lessonLength} onChange={(e) => setLessonLength(e.target.value as "short" | "medium" | "long")}>
+                      <option value="short">Короткий</option>
+                      <option value="medium">Средний</option>
+                      <option value="long">Длинный</option>
+                    </select>
+                  </label>
+                </div>
+
+                <label className="lesson-check">
+                  <input
+                    type="checkbox"
+                    checked={useReviewWords}
+                    onChange={(e) => setUseReviewWords(e.target.checked)}
+                    disabled={dueReviewWords.length === 0}
+                  />
+                  <span>
+                    {dueReviewWords.length > 0
+                      ? `Вплести ${dueReviewWords.length} слов(а) из карточек, готовых к повторению`
+                      : "Нет карточек, готовых к повторению"}
+                  </span>
+                </label>
+
+                {useReviewWords && dueReviewWords.length > 0 && (
+                  <div className="lesson-words">
+                    {dueReviewWords.map((w) => <span key={w}>{w}</span>)}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="seed-btn"
+                  onClick={() => void generateLesson()}
+                  disabled={isGenerating || !lessonTopic.trim()}
+                >
+                  {isGenerating ? <><Loader2 className="spin" size={15} />Генерирую урок...</> : <><Wand2 size={15} />Сгенерировать урок</>}
+                </button>
+
+                {generateError && <div className="inline-error">{generateError}</div>}
+              </div>
+
+              {myLessons.length === 0 ? (
+                <div className="empty-state">
+                  <Wand2 size={40} /><strong>Уроков пока нет</strong>
+                  <p>Задайте тему выше — текст будет написан под ваш уровень</p>
+                </div>
+              ) : (
+                <div className="syllabus-timeline" style={{ borderLeftColor: "rgba(240,230,211,0.15)" }}>
+                  {myLessons.map((lesson) => (
+                    <SyllabusItem
+                      key={lesson.id}
+                      book={lesson}
+                      progress={lessonProgress[lesson.id]}
+                      isLoading={openingLesson === lesson.id}
+                      onOpen={() => void openSharedLesson(lesson, myLessons)}
+                      onDelete={() => void deleteLesson(lesson.id)}
+                    />
+                  ))}
+                </div>
+              )}
             </>
           )}
         </>
@@ -771,9 +1045,9 @@ export function DiscoverView({ books, onBooksChange, onOpenBook, downloadTasks, 
         <div className="seed-modal-backdrop">
           <div className="seed-modal">
             <Loader2 className="spin" size={32} style={{ color: "var(--accent)", margin: "0 auto 12px" }} />
-            <h3>Импорт учебных материалов</h3>
+            <h3>Импорт материалов</h3>
             <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "4px 0 16px" }}>
-              Загружаем уроки Wikibooks и тексты UniversalCEFR. Контент сохраняется для всех пользователей...
+              Загружаем тексты из открытых источников. Контент сохраняется для всех пользователей...
             </p>
             <div className="seed-progress-bar-wrap">
               <div className="seed-progress-bar" style={{ width: `${seedProgress}%` }} />
@@ -827,10 +1101,22 @@ type SyllabusItemProps = {
   isLoading: boolean;
   showLang?: boolean;
   onOpen: () => void;
+  /** Only generated lessons can be removed — public content is shared. */
+  onDelete?: () => void;
 };
 
-function SyllabusItem({ book, progress, isLoading, showLang, onOpen }: SyllabusItemProps) {
+const SOURCE_LABELS: Record<string, string> = {
+  klexikon: "Klexikon",
+  universal_cefr: "UniversalCEFR",
+  generated: "ИИ",
+  oersi: "OERSI",
+};
+
+function SyllabusItem({ book, progress, isLoading, showLang, onOpen, onDelete }: SyllabusItemProps) {
   const status = progress?.status ?? "not_started";
+  const sourceUrl = book.metadata?.source_url;
+  const license = book.metadata?.license;
+  const isGenerated = book.source_type === "generated";
   return (
     <div className={`syllabus-item ${status === "completed" ? "completed" : status === "in_progress" ? "active" : ""}`}>
       <span className="syllabus-node" style={{
@@ -839,9 +1125,13 @@ function SyllabusItem({ book, progress, isLoading, showLang, onOpen }: SyllabusI
       }} />
       <div className="syllabus-meta">
         {showLang && <span>{book.language.toUpperCase()}</span>}
-        {book.cefr_level && <span>{book.cefr_level}</span>}
+        {book.cefr_level && (
+          <span title={book.metadata?.level_estimated ? "Уровень оценён автоматически по читаемости текста" : undefined}>
+            {book.cefr_level}{book.metadata?.level_estimated ? "≈" : ""}
+          </span>
+        )}
         {showLang && <span>•</span>}
-        <span>{book.source_type === "wikibooks" ? "Wikibooks" : "UniversalCEFR"}</span>
+        <span>{SOURCE_LABELS[book.source_type] ?? book.source_type}</span>
         {progress && progress.status !== "not_started" && (
           <span style={{ color: status === "completed" ? "#7aab6a" : "var(--accent)" }}>
             {status === "completed" ? "✓ Пройдено" : `${Math.round(progress.percentage)}%`}
@@ -851,6 +1141,11 @@ function SyllabusItem({ book, progress, isLoading, showLang, onOpen }: SyllabusI
       <h3 className="syllabus-title">{book.title}</h3>
       {book.metadata?.description && (
         <p className="syllabus-desc">{String(book.metadata.description)}</p>
+      )}
+      {sourceUrl && (
+        <a className="syllabus-source" href={sourceUrl} target="_blank" rel="noopener noreferrer">
+          <ExternalLink size={11} />Оригинал{license ? ` · ${license}` : ""}
+        </a>
       )}
       <div className="syllabus-action-row">
         <button
@@ -869,13 +1164,18 @@ function SyllabusItem({ book, progress, isLoading, showLang, onOpen }: SyllabusI
           {isLoading ? (
             <><Loader2 className="spin" size={13} />Загрузка...</>
           ) : status === "completed" ? (
-            <><CheckCircle2 size={13} />Пройти заново</>
+            <><CheckCircle2 size={13} />Читать заново</>
           ) : status === "in_progress" ? (
             <><Clock size={13} />Продолжить</>
           ) : (
-            <><PlayCircle size={13} />Начать урок</>
+            <><PlayCircle size={13} />{isGenerated ? "Начать урок" : "Читать"}</>
           )}
         </button>
+        {onDelete && (
+          <button type="button" className="mini-btn syllabus-delete" onClick={onDelete} title="Удалить урок">
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -900,6 +1200,72 @@ function CatalogSkeleton() {
 // ── Inline styles ─────────────────────────────────────────────────────────────
 
 const STYLES = `
+  .source-note {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 9px 11px;
+    margin: 0 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(240,230,211,0.04);
+    color: var(--text-muted);
+  }
+  .source-note > svg { flex-shrink: 0; margin-top: 2px; color: var(--accent); }
+  .source-note strong { display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-primary); }
+  .source-note p { margin: 3px 0 0; font-size: 12px; line-height: 1.45; }
+
+  .lesson-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: rgba(240,230,211,0.03);
+  }
+  .lesson-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .lesson-field { display: flex; flex-direction: column; gap: 5px; }
+  .lesson-field > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+  .lesson-field input, .lesson-field select {
+    width: 100%;
+    height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--bg-elevated, rgba(0,0,0,0.2));
+    color: var(--text-primary);
+    font-size: 14px;
+  }
+  .lesson-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); }
+  .lesson-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .lesson-words { display: flex; flex-wrap: wrap; gap: 5px; }
+  .lesson-words span {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(212,168,71,0.12);
+    color: var(--accent);
+    font-size: 11.5px;
+  }
+
+  .syllabus-source {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-decoration: none;
+  }
+  .syllabus-source:hover { color: var(--accent); }
+  .syllabus-delete {
+    padding: 0 8px;
+    color: var(--text-muted);
+    background: rgba(240,230,211,0.05);
+  }
+  .syllabus-delete:hover { color: #d98080; }
+
   .discover-tabs {
     position: sticky;
     top: 0;

@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/db/supabase";
+import { supabaseAdmin } from "@/lib/db/supabase-admin";
+import { getUserFromRequest } from "@/lib/auth/serverUser";
 
 export const dynamic = "force-dynamic";
 
+// Lists shared content. Public rows (Klexikon, UniversalCEFR, OERSI) have
+// owner_user_id NULL and are visible to everyone; AI-generated lessons are
+// owner-scoped and only come back for their author, whose identity is taken
+// from the verified JWT — the admin client bypasses RLS, so the filter below is
+// the access check.
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id") ?? "";
@@ -11,15 +17,21 @@ export async function GET(req: NextRequest) {
   const cefrLevel = searchParams.get("cefr_level") ?? "";
   const courseId = searchParams.get("course_id") ?? "";
 
-  if (!supabase) {
+  if (!supabaseAdmin) {
     return NextResponse.json({ books: [] });
   }
 
-  let query = supabase
+  const user = await getUserFromRequest(req);
+
+  let query = supabaseAdmin
     .from("shared_books")
     .select("*")
     .order("lesson_order", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true });
+
+  query = user
+    ? query.or(`owner_user_id.is.null,owner_user_id.eq.${user.id}`)
+    : query.is("owner_user_id", null);
 
   if (id) query = query.eq("id", id);
   if (sourceType) query = query.eq("source_type", sourceType);

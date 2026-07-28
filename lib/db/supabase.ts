@@ -42,7 +42,7 @@ export type DbBook = {
   cover_color: string;
   created_at: string;
   cefr_level?: "A1" | "A2" | "B1" | "B2" | "C1" | "C2" | null;
-  source_type?: "upload" | "gutenberg" | "standard_ebooks" | "wikibooks" | "oersi" | "universal_cefr";
+  source_type?: "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated";
 };
 
 export type DbBookChapter = {
