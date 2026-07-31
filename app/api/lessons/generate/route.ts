@@ -1,12 +1,11 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 import { AI_CONFIG } from "@/lib/config";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
+import { runLessonPrompt } from "@/lib/ai/lessonModel";
 import {
   buildLessonPrompt,
-  parseGeneratedLesson,
   lessonToParagraphs,
   type LessonRequest,
 } from "@/lib/ai/buildLessonPrompt";
@@ -16,10 +15,6 @@ export const dynamic = "force-dynamic";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const LENGTHS = ["short", "medium", "long"] as const;
-
-// Generated texts are long compared to the per-word analyses the shared
-// AI_CONFIG budget is sized for.
-const LESSON_MAX_OUTPUT_TOKENS = 4096;
 
 const COVER_COLORS = [
   "linear-gradient(160deg, #c49a28 0%, #7a5c10 100%)",
@@ -66,47 +61,21 @@ export async function POST(req: Request) {
   const reviewWords = Array.isArray(body.reviewWords)
     ? body.reviewWords.filter((w): w is string => typeof w === "string").map((w) => w.trim()).filter(Boolean).slice(0, 12)
     : [];
+  const context = (body.context ?? "").trim().slice(0, 1000);
 
   if (!topic) {
     return NextResponse.json({ error: "Укажите тему урока." }, { status: 400 });
   }
 
-  const prompt = buildLessonPrompt({ level, topic, targetLanguage, nativeLanguage, reviewWords, length });
+  const prompt = buildLessonPrompt({ level, topic, targetLanguage, nativeLanguage, reviewWords, length, context });
 
-  let lesson;
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: AI_CONFIG.model,
-      generationConfig: {
-        responseMimeType: "application/json",
-        maxOutputTokens: LESSON_MAX_OUTPUT_TOKENS,
-        // Higher than the analysis routes: a reading text should vary between
-        // runs, otherwise every lesson on "Reisen" comes out the same.
-        temperature: 0.9,
-      },
-    });
-
-    const result = await model.generateContent(prompt);
-    const rawText = result.response.text();
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch {
-      return NextResponse.json({ error: "Модель вернула некорректный JSON. Попробуйте ещё раз." }, { status: 502 });
-    }
-
-    lesson = parseGeneratedLesson(parsed);
-    if (!lesson) {
-      return NextResponse.json({ error: "Не удалось разобрать сгенерированный урок. Попробуйте ещё раз." }, { status: 502 });
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Неизвестная ошибка";
-    return NextResponse.json({ error: msg }, { status: 500 });
+  const result = await runLessonPrompt(apiKey, prompt);
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
+  const lesson = result.lesson;
 
-  const paragraphs = lessonToParagraphs(lesson, "Wortschatz", "Fragen");
+  const paragraphs = lessonToParagraphs(lesson);
   const charCount = paragraphs.join("").length;
   // source_id must stay unique per row — UNIQUE (source_type, source_id) is
   // global, not per user.
@@ -130,7 +99,14 @@ export async function POST(req: Request) {
         description: lesson.description,
         cover_color: pickColor(lesson.title),
         topic,
+        context,
+        // Kept so a later revision can address the learner in the same language
+        // without the client having to resend the profile.
+        native_language: nativeLanguage,
         review_words: reviewWords,
+        // How many leading paragraphs are the reading text itself. Revision
+        // needs to feed back the prose without the glossary appended below it.
+        body_paragraph_count: lesson.paragraphs.length,
         generated_at: new Date().toISOString(),
         model: AI_CONFIG.model,
       },

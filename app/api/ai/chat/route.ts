@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { AI_CONFIG } from "@/lib/config";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 
 export async function POST(req: Request) {
@@ -19,7 +20,9 @@ export async function POST(req: Request) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    // Every other route reads the model from AI_CONFIG; this one had it pinned
+    // to a 2.5 build, which meant model upgrades silently skipped it.
+    const model = genAI.getGenerativeModel({ model: AI_CONFIG.model });
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
