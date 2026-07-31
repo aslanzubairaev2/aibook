@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
   Sparkles, CheckCircle2, PlayCircle, Clock, Circle,
-  Wand2, Trash2, ExternalLink, Info, Mic, MicOff, Pencil,
+  Wand2, Trash2, ExternalLink, Info, Pencil, Plus,
 } from "lucide-react";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
@@ -14,7 +14,8 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
-import { startRecognition, isSpeechRecognitionSupported, type Recognizer } from "@/lib/speech/recognition";
+import { LessonComposerModal, type ComposerState } from "./LessonComposerModal";
+import { LessonRefineModal } from "./LessonRefineModal";
 
 type Props = {
   books: Book[];
@@ -254,12 +255,20 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   // seed route, persisted so it survives a reload).
   const [klexikonOffset, setKlexikonOffset] = useState(prefs.klexikonOffset ?? 0);
 
-  // "Мои уроки" generator form
-  const [lessonTopic, setLessonTopic] = useState("");
-  const [lessonContext, setLessonContext] = useState("");
-  const [lessonLevel, setLessonLevel] = useState<CefrLevel>(prefs.lessonLevel ?? "A2");
-  const [lessonLength, setLessonLength] = useState<"short" | "medium" | "long">(prefs.lessonLength ?? "medium");
-  const [useReviewWords, setUseReviewWords] = useState(true);
+  // "Мои уроки": both forms live in bottom sheets, so the tab itself stays a
+  // plain list. `composerOpen` / `refiningId` are what is on screen.
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composer, setComposer] = useState<ComposerState>({
+    topic: "",
+    context: "",
+    level: prefs.lessonLevel ?? "A2",
+    length: prefs.lessonLength ?? "medium",
+    useReviewWords: true,
+  });
+  const patchComposer = useCallback(
+    (patch: Partial<ComposerState>) => setComposer((prev) => ({ ...prev, ...patch })),
+    []
+  );
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
@@ -366,20 +375,20 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     if (prefs.lessonLevel) return;
     let cancelled = false;
     void estimateTargetLanguageLevel(profile.targetLanguage).then((estimate) => {
-      if (!cancelled && estimate) setLessonLevel(estimate.level);
+      if (!cancelled && estimate) patchComposer({ level: estimate.level });
     });
     return () => { cancelled = true; };
-  }, [prefs.lessonLevel, profile.targetLanguage]);
+  }, [prefs.lessonLevel, profile.targetLanguage, patchComposer]);
 
   // Persist tab + filters + collapsed sections
   useEffect(() => {
     const data: DiscoverPrefs = {
       activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter,
       klexLevelFilter, klexStatusFilter, collapsedLevels: Array.from(collapsedLevels),
-      lessonLevel, lessonLength, klexikonOffset,
+      lessonLevel: composer.level, lessonLength: composer.length, klexikonOffset,
     };
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(data)); } catch { /* ignore */ }
-  }, [activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, klexLevelFilter, klexStatusFilter, collapsedLevels, lessonLevel, lessonLength, klexikonOffset]);
+  }, [activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, klexLevelFilter, klexStatusFilter, collapsedLevels, composer.level, composer.length, klexikonOffset]);
 
   // ── Gutenberg auto-search ────────────────────────────────────────────────────
   useEffect(() => {
@@ -550,7 +559,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   }, [cards]);
 
   const generateLesson = async () => {
-    const topic = lessonTopic.trim();
+    const topic = composer.topic.trim();
     if (!topic || isGenerating) return;
 
     setIsGenerating(true);
@@ -561,23 +570,30 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
         headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
         body: JSON.stringify({
           topic,
-          context: lessonContext.trim(),
-          level: lessonLevel,
-          length: lessonLength,
+          context: composer.context.trim(),
+          level: composer.level,
+          length: composer.length,
           targetLanguage: profile.targetLanguage,
           nativeLanguage: profile.nativeLanguage,
-          reviewWords: useReviewWords ? dueReviewWords : [],
+          reviewWords: composer.useReviewWords ? dueReviewWords : [],
         }),
       });
       const data = await res.json() as { error?: string };
       if (!res.ok) throw new Error(data.error ?? `Ошибка генерации (${res.status})`);
-      setLessonTopic("");
+      // Level and length are deliberately kept for the next lesson.
+      patchComposer({ topic: "", context: "" });
+      setComposerOpen(false);
       await loadMyLessons();
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : "Неизвестная ошибка");
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const openComposer = () => {
+    setGenerateError(null);
+    setComposerOpen(true);
   };
 
   const refineLesson = async (id: string) => {
@@ -596,6 +612,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       if (!res.ok) throw new Error(data.error ?? `Ошибка правки (${res.status})`);
       setRefineText("");
       setRefiningId(null);
+      setRefineError(null);
       await loadMyLessons();
     } catch (err) {
       setRefineError(err instanceof Error ? err.message : "Неизвестная ошибка");
@@ -605,10 +622,21 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   };
 
   const openRefine = (id: string) => {
-    setRefiningId((prev) => (prev === id ? null : id));
+    setRefiningId(id);
     setRefineText("");
     setRefineError(null);
   };
+
+  const closeRefine = () => {
+    setRefiningId(null);
+    setRefineText("");
+    setRefineError(null);
+  };
+
+  const refiningLesson = useMemo(
+    () => myLessons.find((l) => l.id === refiningId) ?? null,
+    [myLessons, refiningId]
+  );
 
   const deleteLesson = async (id: string) => {
     if (!confirm("Удалить этот урок?")) return;
@@ -895,156 +923,42 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             </div>
           ) : (
             <>
-              <div className="lesson-form">
-                <label className="lesson-field">
-                  <span>Тема</span>
-                  <div className="lesson-input-row">
-                    <input
-                      type="text"
-                      placeholder="Например: Wohnungssuche in Berlin"
-                      value={lessonTopic}
-                      onChange={(e) => setLessonTopic(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") void generateLesson(); }}
-                      maxLength={200}
-                    />
-                    <DictateButton
-                      lang={profile.nativeLanguage}
-                      title="Наговорить тему"
-                      onText={(t) => setLessonTopic((prev) => appendSpoken(prev, t))}
-                    />
-                  </div>
-                </label>
-
-                <label className="lesson-field">
-                  <span>Детали <em>необязательно</em></span>
-                  <div className="lesson-input-row">
-                    <textarea
-                      rows={3}
-                      placeholder="Например: друг держит цветочный магазин, живём вместе"
-                      value={lessonContext}
-                      onChange={(e) => setLessonContext(e.target.value)}
-                      maxLength={1000}
-                    />
-                    <DictateButton
-                      lang={profile.nativeLanguage}
-                      title="Наговорить детали"
-                      onText={(t) => setLessonContext((prev) => appendSpoken(prev, t))}
-                    />
-                  </div>
-                  <small>Факты отсюда важнее слов на повторении: слово, которое им противоречит, будет пропущено.</small>
-                </label>
-
-                <div className="lesson-row">
-                  <label className="lesson-field">
-                    <span>Уровень</span>
-                    <select value={lessonLevel} onChange={(e) => setLessonLevel(e.target.value as CefrLevel)}>
-                      {(["A1","A2","B1","B2","C1","C2"] as CefrLevel[]).map((l) => <option key={l} value={l}>{l}</option>)}
-                    </select>
-                  </label>
-                  <label className="lesson-field">
-                    <span>Объём</span>
-                    <select value={lessonLength} onChange={(e) => setLessonLength(e.target.value as "short" | "medium" | "long")}>
-                      <option value="short">Короткий</option>
-                      <option value="medium">Средний</option>
-                      <option value="long">Длинный</option>
-                    </select>
-                  </label>
-                </div>
-
-                <label className="lesson-check">
-                  <input
-                    type="checkbox"
-                    // With nothing due, a checked-but-disabled box would read as
-                    // "words will be used" when none can be.
-                    checked={useReviewWords && dueReviewWords.length > 0}
-                    onChange={(e) => setUseReviewWords(e.target.checked)}
-                    disabled={dueReviewWords.length === 0}
-                  />
-                  <span>
-                    {dueReviewWords.length > 0
-                      ? `Использовать ${dueReviewWords.length} слов(а) из карточек, готовых к повторению`
-                      : "Нет карточек, готовых к повторению"}
-                  </span>
-                </label>
-
-                {useReviewWords && dueReviewWords.length > 0 && (
-                  <div className="lesson-words">
-                    {dueReviewWords.map((w) => <span key={w}>{w}</span>)}
-                  </div>
-                )}
-
+              <div className="discover-meta" style={{ marginBottom: 12 }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <Sparkles size={14} style={{ color: "var(--accent)" }} />
+                  {myLessons.length > 0 ? `${myLessons.length} уроков` : "Уроков пока нет"}
+                </span>
                 <button
                   type="button"
-                  className="seed-btn"
-                  onClick={() => void generateLesson()}
-                  disabled={isGenerating || !lessonTopic.trim()}
+                  className="add-lesson-btn"
+                  onClick={openComposer}
+                  aria-label="Новый урок"
+                  title="Новый урок"
                 >
-                  {isGenerating ? <><Loader2 className="spin" size={15} />Генерирую урок...</> : <><Wand2 size={15} />Сгенерировать урок</>}
+                  <Plus size={18} />
                 </button>
-
-                {generateError && <div className="inline-error">{generateError}</div>}
               </div>
 
               {myLessons.length === 0 ? (
                 <div className="empty-state">
                   <Wand2 size={40} /><strong>Уроков пока нет</strong>
-                  <p>Задайте тему выше — текст будет написан под ваш уровень</p>
+                  <p>Задайте тему — текст будет написан под ваш уровень</p>
+                  <button type="button" className="seed-btn" onClick={openComposer} style={{ marginTop: 14 }}>
+                    <Plus size={15} />Создать урок
+                  </button>
                 </div>
               ) : (
                 <div className="syllabus-timeline" style={{ borderLeftColor: "rgba(240,230,211,0.15)" }}>
                   {myLessons.map((lesson) => (
-                    <div key={lesson.id}>
-                      <SyllabusItem
-                        book={lesson}
-                        progress={lessonProgress[lesson.id]}
-                        isLoading={openingLesson === lesson.id}
-                        onOpen={() => void openSharedLesson(lesson, myLessons)}
-                        onDelete={() => void deleteLesson(lesson.id)}
-                        onRefine={() => openRefine(lesson.id)}
-                        isRefineOpen={refiningId === lesson.id}
-                      />
-
-                      {refiningId === lesson.id && (
-                        <div className="refine-panel">
-                          <span className="refine-label">Что изменить в тексте</span>
-                          <div className="lesson-input-row">
-                            <textarea
-                              rows={3}
-                              autoFocus
-                              placeholder="Например: друг работает не в магазине, а в цветочной лавке; мы живём вместе, а не по отдельности"
-                              value={refineText}
-                              onChange={(e) => setRefineText(e.target.value)}
-                              maxLength={2000}
-                            />
-                            <DictateButton
-                              lang={profile.nativeLanguage}
-                              title="Наговорить правки"
-                              onText={(t) => setRefineText((prev) => appendSpoken(prev, t))}
-                            />
-                          </div>
-                          <small>Остальной текст останется как есть — меняется только то, о чём вы просите, и то, что из этого следует.</small>
-                          <div className="refine-actions">
-                            <button
-                              type="button"
-                              className="mini-btn"
-                              onClick={() => { setRefiningId(null); setRefineText(""); setRefineError(null); }}
-                              disabled={isRefining}
-                            >
-                              Отмена
-                            </button>
-                            <button
-                              type="button"
-                              className="mini-btn refine-apply"
-                              onClick={() => void refineLesson(lesson.id)}
-                              disabled={isRefining || !refineText.trim()}
-                            >
-                              {isRefining ? <><Loader2 className="spin" size={13} />Переписываю...</> : <><Pencil size={13} />Применить</>}
-                            </button>
-                          </div>
-                          {refineError && <div className="inline-error">{refineError}</div>}
-                        </div>
-                      )}
-                    </div>
+                    <SyllabusItem
+                      key={lesson.id}
+                      book={lesson}
+                      progress={lessonProgress[lesson.id]}
+                      isLoading={openingLesson === lesson.id}
+                      onOpen={() => void openSharedLesson(lesson, myLessons)}
+                      onDelete={() => void deleteLesson(lesson.id)}
+                      onRefine={() => openRefine(lesson.id)}
+                    />
                   ))}
                 </div>
               )}
@@ -1170,6 +1084,34 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
         />
       )}
 
+      {/* New lesson */}
+      {composerOpen && (
+        <LessonComposerModal
+          value={composer}
+          onChange={patchComposer}
+          dueReviewWords={dueReviewWords}
+          nativeLanguage={profile.nativeLanguage}
+          isGenerating={isGenerating}
+          error={generateError}
+          onSubmit={() => void generateLesson()}
+          onClose={() => { if (!isGenerating) setComposerOpen(false); }}
+        />
+      )}
+
+      {/* Revise an existing lesson */}
+      {refiningLesson && (
+        <LessonRefineModal
+          lessonTitle={refiningLesson.title}
+          value={refineText}
+          onChange={setRefineText}
+          nativeLanguage={profile.nativeLanguage}
+          isRefining={isRefining}
+          error={refineError}
+          onSubmit={() => void refineLesson(refiningLesson.id)}
+          onClose={() => { if (!isRefining) closeRefine(); }}
+        />
+      )}
+
       {/* Seed progress modal */}
       {isSeeding && (
         <div className="seed-modal-backdrop">
@@ -1234,7 +1176,6 @@ type SyllabusItemProps = {
   /** Only generated lessons can be removed or revised — public content is shared. */
   onDelete?: () => void;
   onRefine?: () => void;
-  isRefineOpen?: boolean;
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -1244,7 +1185,7 @@ const SOURCE_LABELS: Record<string, string> = {
   oersi: "OERSI",
 };
 
-function SyllabusItem({ book, progress, isLoading, showLang, onOpen, onDelete, onRefine, isRefineOpen }: SyllabusItemProps) {
+function SyllabusItem({ book, progress, isLoading, showLang, onOpen, onDelete, onRefine }: SyllabusItemProps) {
   const status = progress?.status ?? "not_started";
   const sourceUrl = book.metadata?.source_url;
   const license = book.metadata?.license;
@@ -1306,7 +1247,7 @@ function SyllabusItem({ book, progress, isLoading, showLang, onOpen, onDelete, o
         {onRefine && (
           <button
             type="button"
-            className={`mini-btn syllabus-refine ${isRefineOpen ? "open" : ""}`}
+            className="mini-btn syllabus-refine"
             onClick={onRefine}
             title="Изменить текст урока"
           >
@@ -1320,59 +1261,6 @@ function SyllabusItem({ book, progress, isLoading, showLang, onOpen, onDelete, o
         )}
       </div>
     </div>
-  );
-}
-
-// ── Sub-component: dictation button ──────────────────────────────────────────
-
-/** Appends dictated text rather than replacing, so speaking twice adds to what is there. */
-function appendSpoken(previous: string, spoken: string): string {
-  const base = previous.trim();
-  return base ? `${base} ${spoken}` : spoken;
-}
-
-type DictateButtonProps = {
-  /** BCP-47-ish language code; the topic and notes are written in the native language. */
-  lang: string;
-  title: string;
-  onText: (text: string) => void;
-};
-
-/** Renders nothing where the Web Speech API is missing (Firefox, older Safari). */
-function DictateButton({ lang, title, onText }: DictateButtonProps) {
-  const [listening, setListening] = useState(false);
-  const recognizerRef = useRef<Recognizer | null>(null);
-  const supported = isSpeechRecognitionSupported();
-
-  useEffect(() => () => { recognizerRef.current?.stop(); }, []);
-
-  if (!supported) return null;
-
-  const toggle = () => {
-    if (listening) {
-      recognizerRef.current?.stop();
-      recognizerRef.current = null;
-      setListening(false);
-      return;
-    }
-    const rec = startRecognition(lang, {
-      onResult: onText,
-      onEnd: () => { recognizerRef.current = null; setListening(false); },
-      onError: () => { recognizerRef.current = null; setListening(false); },
-    });
-    if (rec) { recognizerRef.current = rec; setListening(true); }
-  };
-
-  return (
-    <button
-      type="button"
-      className={`dictate-btn ${listening ? "live" : ""}`}
-      onClick={toggle}
-      aria-label={title}
-      title={title}
-    >
-      {listening ? <MicOff size={16} /> : <Mic size={16} />}
-    </button>
   );
 }
 
@@ -1410,15 +1298,41 @@ const STYLES = `
   .source-note strong { display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-primary); }
   .source-note p { margin: 3px 0 0; font-size: 12px; line-height: 1.45; }
 
+  /* Both lesson forms live inside a modal now, which already provides the
+     frame — so this is just the vertical rhythm. */
   .lesson-form {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 16px;
-    margin-bottom: 20px;
+    /* Keeps the primary button off the bottom edge of the sheet. */
+    padding-bottom: 20px;
+  }
+
+  /* Laconic "+" that opens the composer; the tab itself stays a plain list. */
+  .add-lesson-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid rgba(212,168,71,0.35);
+    border-radius: 50%;
+    background: rgba(212,168,71,0.12);
+    color: var(--accent);
+    transition: all var(--transition-fast);
+  }
+  .add-lesson-btn:hover { background: rgba(212,168,71,0.22); border-color: var(--accent); }
+  .add-lesson-btn:active { transform: scale(0.94); }
+
+  .refine-target {
+    margin: 0;
+    padding: 9px 11px;
     border: 1px solid var(--border);
-    border-radius: 14px;
-    background: rgba(240,230,211,0.03);
+    border-radius: 9px;
+    background: rgba(240,230,211,0.04);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
   }
   .lesson-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .lesson-field { display: flex; flex-direction: column; gap: 5px; }
@@ -1435,7 +1349,7 @@ const STYLES = `
     font-size: 14px;
   }
   .lesson-field input, .lesson-field select { height: 38px; }
-  .lesson-field textarea, .refine-panel textarea {
+  .lesson-field textarea {
     padding: 9px 10px;
     font-family: inherit;
     line-height: 1.45;
@@ -1467,31 +1381,8 @@ const STYLES = `
   }
   @keyframes dictate-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-  .refine-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin: -4px 0 14px 14px;
-    padding: 12px;
-    border: 1px solid var(--border-strong);
-    border-radius: 12px;
-    background: rgba(212,168,71,0.05);
-  }
-  .refine-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); }
-  .refine-panel textarea {
-    width: 100%;
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    background: var(--bg-elevated, rgba(0,0,0,0.2));
-    color: var(--text-primary);
-    font-size: 14px;
-  }
-  .refine-panel > small { font-size: 11.5px; line-height: 1.4; color: var(--text-muted); opacity: 0.8; }
-  .refine-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .refine-apply { gap: 4px; background: rgba(212,168,71,0.14); color: var(--accent); border: 1px solid rgba(212,168,71,0.3); }
-  .refine-apply:disabled { opacity: 0.5; }
   .syllabus-refine { gap: 4px; color: var(--text-muted); background: rgba(240,230,211,0.05); }
-  .syllabus-refine:hover, .syllabus-refine.open { color: var(--accent); }
+  .syllabus-refine:hover { color: var(--accent); }
   .lesson-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); }
   .lesson-check input { width: 16px; height: 16px; accent-color: var(--accent); }
   .lesson-words { display: flex; flex-wrap: wrap; gap: 5px; }
