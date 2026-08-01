@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
   Sparkles, CheckCircle2, PlayCircle, Clock, Circle,
-  Wand2, Trash2, ExternalLink, Info, Pencil, Plus,
+  Wand2, Trash2, ExternalLink, Pencil, Plus,
 } from "lucide-react";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
@@ -75,31 +75,16 @@ type SharedBook = {
   created_at: string;
 };
 
-// Each tab is one source, described in its own words so it is obvious what the
-// content is and where it came from.
 type TabKey = "classic" | "klexikon" | "cefr" | "lessons";
 
-const TAB_INFO: Record<TabKey, { label: string; source: string; note: string }> = {
-  classic: {
-    label: "Классика",
-    source: "Project Gutenberg",
-    note: "Книги, перешедшие в общественное достояние. Оригинальные тексты без адаптации под уровень.",
-  },
-  klexikon: {
-    label: "Клексикон",
-    source: "klexikon.zum.de · CC BY-SA",
-    note: "Немецкая детская энциклопедия: настоящий немецкий, но короткими предложениями и простыми словами. Уровень — оценка по читаемости текста, не экспертная разметка.",
-  },
-  cefr: {
-    label: "CEFR тексты",
-    source: "UniversalCEFR (HuggingFace)",
-    note: "Открытый корпус текстов с проставленными уровнями A1–C1. Уровень задан в самом датасете.",
-  },
-  lessons: {
-    label: "Мои уроки",
-    source: "Генерация ИИ",
-    note: "Текст пишется под ваш уровень и вашу тему, с вплетёнными словами из ваших карточек. Виден только вам.",
-  },
+// Each tab is one source. The name carries it; the source and its licence show
+// up per item (the "Оригинал · CC BY-SA" link, the "≈" on estimated levels)
+// rather than in a banner above the list.
+const TAB_LABELS: Record<TabKey, string> = {
+  classic: "Классика",
+  klexikon: "Клексикон",
+  cefr: "CEFR тексты",
+  lessons: "Мои уроки",
 };
 
 type LessonProgressMap = Record<string, {
@@ -208,8 +193,8 @@ function readPrefs(): DiscoverPrefs {
     const parsed = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as DiscoverPrefs;
     // Stored preferences outlive the code that wrote them: a returning user can
     // carry a tab name that no longer exists (e.g. the retired "wikibooks").
-    // Dropping it here keeps every TAB_INFO lookup total.
-    if (parsed.activeTab && !(parsed.activeTab in TAB_INFO)) {
+    // Dropping it here keeps every TAB_LABELS lookup total.
+    if (parsed.activeTab && !(parsed.activeTab in TAB_LABELS)) {
       delete parsed.activeTab;
     }
     return parsed;
@@ -682,9 +667,6 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     [klexikonBooks, lessonProgress]
   );
 
-  // Never index TAB_INFO directly with state that could have come from storage.
-  const tabInfo = TAB_INFO[activeTab] ?? TAB_INFO.classic;
-
   // The tab row scrolls sideways, so a tab restored from preferences can sit
   // off-screen on load. Pull it into view. `nearest` on both axes means this is
   // a no-op when the tab is already visible, and never scrolls the page itself.
@@ -718,17 +700,9 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             {tab === "klexikon" && <GraduationCap size={15} />}
             {tab === "cefr" && <BookMarked size={15} />}
             {tab === "lessons" && <Wand2 size={15} />}
-            {TAB_INFO[tab].label}
+            {TAB_LABELS[tab]}
           </button>
         ))}
-      </div>
-
-      <div className="source-note">
-        <Info size={14} aria-hidden />
-        <div>
-          <strong>{tabInfo.source}</strong>
-          <p>{tabInfo.note}</p>
-        </div>
       </div>
 
       {/* ── Classic (Gutenberg) ─────────────────────────────────────────────── */}
@@ -923,21 +897,14 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             </div>
           ) : (
             <>
-              <div className="discover-meta" style={{ marginBottom: 12 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <Sparkles size={14} style={{ color: "var(--accent)" }} />
-                  {myLessons.length > 0 ? `${myLessons.length} уроков` : "Уроков пока нет"}
-                </span>
-                <button
-                  type="button"
-                  className="add-lesson-btn"
-                  onClick={openComposer}
-                  aria-label="Новый урок"
-                  title="Новый урок"
-                >
-                  <Plus size={18} />
-                </button>
-              </div>
+              {myLessons.length > 0 && (
+                <div className="discover-meta" style={{ marginBottom: 12 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Sparkles size={14} style={{ color: "var(--accent)" }} />
+                    {myLessons.length} уроков
+                  </span>
+                </div>
+              )}
 
               {myLessons.length === 0 ? (
                 <div className="empty-state">
@@ -962,6 +929,17 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                   ))}
                 </div>
               )}
+
+              {/* Floating "+": within thumb reach, and off the top of the list */}
+              <button
+                type="button"
+                className="add-lesson-fab"
+                onClick={openComposer}
+                aria-label="Новый урок"
+                title="Новый урок"
+              >
+                <Plus size={24} />
+              </button>
             </>
           )}
         </>
@@ -1210,6 +1188,13 @@ function SyllabusItem({ book, progress, isLoading, showLang, onOpen, onDelete, o
             {status === "completed" ? "✓ Пройдено" : `${Math.round(progress.percentage)}%`}
           </span>
         )}
+        {/* Up here rather than in the action row: three buttons do not fit a
+            phone width, and delete is the rarest of them. */}
+        {onDelete && (
+          <button type="button" className="syllabus-delete" onClick={onDelete} title="Удалить урок" aria-label="Удалить урок">
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
       <h3 className="syllabus-title">{book.title}</h3>
       {book.metadata?.description && (
@@ -1254,11 +1239,6 @@ function SyllabusItem({ book, progress, isLoading, showLang, onOpen, onDelete, o
             <Pencil size={13} />Изменить
           </button>
         )}
-        {onDelete && (
-          <button type="button" className="mini-btn syllabus-delete" onClick={onDelete} title="Удалить урок">
-            <Trash2 size={13} />
-          </button>
-        )}
       </div>
     </div>
   );
@@ -1283,21 +1263,6 @@ function CatalogSkeleton() {
 // ── Inline styles ─────────────────────────────────────────────────────────────
 
 const STYLES = `
-  .source-note {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-    padding: 9px 11px;
-    margin: 0 0 14px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: rgba(240,230,211,0.04);
-    color: var(--text-muted);
-  }
-  .source-note > svg { flex-shrink: 0; margin-top: 2px; color: var(--accent); }
-  .source-note strong { display: block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-primary); }
-  .source-note p { margin: 3px 0 0; font-size: 12px; line-height: 1.45; }
-
   /* Both lesson forms live inside a modal now, which already provides the
      frame — so this is just the vertical rhythm. */
   .lesson-form {
@@ -1308,21 +1273,29 @@ const STYLES = `
     padding-bottom: 20px;
   }
 
-  /* Laconic "+" that opens the composer; the tab itself stays a plain list. */
-  .add-lesson-btn {
+  /* Floating "+" that opens the composer. Sits above the bottom nav (which is
+     12px from the bottom and ~52px tall) and tracks the right edge of the
+     640px content column on wide screens, falling back to a 16px inset on
+     phones. */
+  .add-lesson-fab {
+    position: fixed;
+    right: max(16px, calc(50% - 304px));
+    bottom: 78px;
+    z-index: 25;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
-    border: 1px solid rgba(212,168,71,0.35);
+    width: 52px;
+    height: 52px;
+    border: 0;
     border-radius: 50%;
-    background: rgba(212,168,71,0.12);
-    color: var(--accent);
-    transition: all var(--transition-fast);
+    background: var(--accent);
+    color: var(--text-dark);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.45), 0 0 0 1px rgba(212,168,71,0.35);
+    transition: transform var(--transition-fast), background var(--transition-fast);
   }
-  .add-lesson-btn:hover { background: rgba(212,168,71,0.22); border-color: var(--accent); }
-  .add-lesson-btn:active { transform: scale(0.94); }
+  .add-lesson-fab:hover { background: var(--accent-bright); }
+  .add-lesson-fab:active { transform: scale(0.92); }
 
   .refine-target {
     margin: 0;
@@ -1405,11 +1378,17 @@ const STYLES = `
   }
   .syllabus-source:hover { color: var(--accent); }
   .syllabus-delete {
-    padding: 0 8px;
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    padding: 2px;
+    border: 0;
+    background: transparent;
     color: var(--text-muted);
-    background: rgba(240,230,211,0.05);
+    opacity: 0.7;
+    transition: color var(--transition-fast), opacity var(--transition-fast);
   }
-  .syllabus-delete:hover { color: #d98080; }
+  .syllabus-delete:hover { color: #d98080; opacity: 1; }
 
   .discover-tabs {
     position: sticky;
@@ -1651,6 +1630,9 @@ const STYLES = `
     display: flex;
     align-items: center;
     gap: 8px;
+    /* The card is align-items: flex-start, so without this the row shrinks to
+       its content and the delete button cannot push itself to the right edge. */
+    width: 100%;
     margin-bottom: 4px;
     font-size: 11px;
     font-weight: 800;
