@@ -8,6 +8,7 @@ import {
   KLEXIKON_COURSE_ID,
   KLEXIKON_COURSE_TITLE,
 } from "@/lib/content/klexikon";
+import { vocabMetadata } from "@/lib/text/vocab";
 
 export const dynamic = "force-dynamic";
 
@@ -199,6 +200,9 @@ export async function GET(req: NextRequest) {
                       description: `Текст уровня ${cefr} (${ds.label}) из открытого корпуса UniversalCEFR.`,
                       cover_color: pickColor(title),
                       dataset: ds.dataset,
+                      // Lets the catalogue show how much of the text the reader
+                      // already knows without fetching the text itself.
+                      ...vocabMetadata(text),
                     },
                   }, { onConflict: "source_type,source_id" })
                   .select("id")
@@ -286,6 +290,7 @@ export async function GET(req: NextRequest) {
                     cover_color: pickColor(article.title),
                     source_url: article.url,
                     license: KLEXIKON_LICENSE,
+                    ...vocabMetadata(article.paragraphs.join(" ")),
                     // The level is estimated from readability, not assigned by a
                     // human — the UI labels it as such.
                     level_estimated: true,

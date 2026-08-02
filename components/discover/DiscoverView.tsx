@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
   Sparkles, CheckCircle2, PlayCircle, Clock, Circle,
-  Wand2, Trash2, ExternalLink, Pencil, Plus,
+  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart,
 } from "lucide-react";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
@@ -14,6 +14,7 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
+import { buildKnownWordSet, computeCoverage, COMFORT_MIN, COMFORT_MAX, type Coverage } from "@/lib/text/vocab";
 import { LessonComposerModal, type ComposerState } from "./LessonComposerModal";
 import { LessonRefineModal } from "./LessonRefineModal";
 
@@ -70,6 +71,9 @@ type SharedBook = {
     license?: string;
     /** Klexikon: the CEFR level is a readability estimate, not a human rating. */
     level_estimated?: boolean;
+    /** Word frequency of the text, written at import; drives coverage. */
+    word_counts?: Record<string, number>;
+    token_total?: number;
     [key: string]: unknown;
   };
   created_at: string;
@@ -181,6 +185,7 @@ type DiscoverPrefs = {
   klexLevelFilter?: string;
   klexStatusFilter?: string;
   klexikonOffset?: number;
+  onlyComfortable?: boolean;
   cefrStatusFilter?: string;
   collapsedLevels?: string[];
   lessonLevel?: CefrLevel;
@@ -236,6 +241,9 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [klexLevelFilter, setKlexLevelFilter] = useState(prefs.klexLevelFilter ?? "");
   const [klexStatusFilter, setKlexStatusFilter] = useState(prefs.klexStatusFilter ?? "");
   const [klexQuery, setKlexQuery] = useState("");
+  // Applies to whichever catalogue tab is open: keep only texts sitting in the
+  // learner's productive band.
+  const [onlyComfortable, setOnlyComfortable] = useState(prefs.onlyComfortable ?? false);
   // Where the next Klexikon import batch should resume from (reported by the
   // seed route, persisted so it survives a reload).
   const [klexikonOffset, setKlexikonOffset] = useState(prefs.klexikonOffset ?? 0);
@@ -371,9 +379,10 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter,
       klexLevelFilter, klexStatusFilter, collapsedLevels: Array.from(collapsedLevels),
       lessonLevel: composer.level, lessonLength: composer.length, klexikonOffset,
+      onlyComfortable,
     };
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(data)); } catch { /* ignore */ }
-  }, [activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, klexLevelFilter, klexStatusFilter, collapsedLevels, composer.level, composer.length, klexikonOffset]);
+  }, [activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, klexLevelFilter, klexStatusFilter, collapsedLevels, composer.level, composer.length, klexikonOffset, onlyComfortable]);
 
   // ── Gutenberg auto-search ────────────────────────────────────────────────────
   useEffect(() => {
@@ -484,19 +493,17 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   function submitSearch() { setSubmittedQuery(query.trim()); setPage(1); }
   function clearSearch() { setQuery(""); setSubmittedQuery(""); setPage(1); }
 
-  // ── Seed import ──────────────────────────────────────────────────────────────
-  // Klexikon is imported in batches; `offset` resumes where the previous run
-  // stopped, so repeated presses walk through the wiki instead of redoing it.
-  const startImport = async (type: "klexikon" | "cefr", offset = 0) => {
+  // ── Long-running catalogue jobs (server-sent progress) ──────────────────────
+  const runSseJob = async (url: string, initialMessage: string) => {
     setIsSeeding(true);
     setSeedProgress(5);
-    setSeedMessage("Инициализация импорта...");
+    setSeedMessage(initialMessage);
     setSeedError(null);
     try {
-      const res = await fetch(`/api/books/seed?type=${type}&offset=${offset}`, { headers: await sbAuthHeaders() });
+      const res = await fetch(url, { headers: await sbAuthHeaders() });
       if (!res.ok) {
         const data = await res.json().catch(() => null) as { error?: string } | null;
-        throw new Error(data?.error ?? `Ошибка импорта (${res.status})`);
+        throw new Error(data?.error ?? `Ошибка (${res.status})`);
       }
       if (!res.body) throw new Error("Поток пуст");
 
@@ -531,9 +538,43 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     }
   };
 
+  // Klexikon is imported in batches; `offset` resumes where the previous run
+  // stopped, so repeated presses walk through the wiki instead of redoing it.
+  const startImport = (type: "klexikon" | "cefr", offset = 0) =>
+    runSseJob(`/api/books/seed?type=${type}&offset=${offset}`, "Инициализация импорта...");
+
+  // One-off for texts imported before coverage existed.
+  const startVocabReindex = () =>
+    runSseJob("/api/books/reindex-vocab", "Считаю словарь текстов...");
+
   // ── Generate a lesson ────────────────────────────────────────────────────────
   // Words the SRS says are due now — feeding them to the generator is the whole
   // point of this tab: the text is built around what needs revising today.
+  // ── Vocabulary coverage ──────────────────────────────────────────────────────
+  // Everything the learner has ever saved counts as known, not just what is due:
+  // the question here is "can I read this", not "do I need to revise this".
+  const knownWords = useMemo(
+    () => buildKnownWordSet(cards.map((c) => c.front)),
+    [cards]
+  );
+
+  const coverageOf = useCallback(
+    (book: SharedBook): Coverage | null =>
+      computeCoverage(
+        { wordCounts: book.metadata?.word_counts, tokenTotal: book.metadata?.token_total },
+        knownWords
+      ),
+    [knownWords]
+  );
+
+  // Texts imported before coverage existed carry no frequency data. Surfacing
+  // the backfill button only while some are missing keeps it out of the way
+  // once the catalogue is indexed.
+  const needsVocabIndex = useMemo(
+    () => [...klexikonBooks, ...cefrBooks].some((b) => !b.metadata?.token_total),
+    [klexikonBooks, cefrBooks]
+  );
+
   const dueReviewWords = useMemo(() => {
     const now = Date.now();
     return cards
@@ -646,9 +687,10 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       if (klexLevelFilter && b.cefr_level !== klexLevelFilter) return false;
       if (!matchStatus(b.id, klexStatusFilter)) return false;
       if (q && !b.title.toLowerCase().includes(q)) return false;
+      if (onlyComfortable && !coverageOf(b)?.isComfortable) return false;
       return true;
     });
-  }, [klexikonBooks, klexLevelFilter, klexStatusFilter, klexQuery, matchStatus]);
+  }, [klexikonBooks, klexLevelFilter, klexStatusFilter, klexQuery, matchStatus, onlyComfortable, coverageOf]);
   const klexikonGrouped = useMemo(() => groupByCefr(filteredKlexikon), [filteredKlexikon]);
 
   // ── Filtered CEFR texts ──────────────────────────────────────────────────────
@@ -657,9 +699,10 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       if (cefrLangFilter && b.language !== cefrLangFilter) return false;
       if (cefrLevelFilter && b.cefr_level !== cefrLevelFilter) return false;
       if (!matchStatus(b.id, cefrStatusFilter)) return false;
+      if (onlyComfortable && !coverageOf(b)?.isComfortable) return false;
       return true;
     });
-  }, [cefrBooks, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, matchStatus]);
+  }, [cefrBooks, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, matchStatus, onlyComfortable, coverageOf]);
   const cefrGrouped = useMemo(() => groupByCefr(filteredCefrBooks), [filteredCefrBooks]);
 
   const completedKlexikon = useMemo(() =>
@@ -783,14 +826,27 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 ? `${filteredKlexikon.length} из ${klexikonBooks.length} • ${completedKlexikon} прочитано`
                 : "Статьи не загружены"}
             </span>
-            <button
-              type="button"
-              className="mini-btn"
-              onClick={() => void startImport("klexikon", klexikonOffset)}
-              style={{ gap: 4, height: 26, fontSize: 11 }}
-            >
-              {klexikonBooks.length > 0 ? "Загрузить ещё" : "Загрузить статьи"}
-            </button>
+            <span style={{ display: "flex", gap: 6 }}>
+              {needsVocabIndex && (
+                <button
+                  type="button"
+                  className="mini-btn"
+                  onClick={() => void startVocabReindex()}
+                  style={{ gap: 4, height: 26, fontSize: 11 }}
+                  title="Посчитать словарь для текстов, загруженных раньше"
+                >
+                  <ListRestart size={12} />Словарь
+                </button>
+              )}
+              <button
+                type="button"
+                className="mini-btn"
+                onClick={() => void startImport("klexikon", klexikonOffset)}
+                style={{ gap: 4, height: 26, fontSize: 11 }}
+              >
+                {klexikonBooks.length > 0 ? "Загрузить ещё" : "Загрузить статьи"}
+              </button>
+            </span>
           </div>
 
           {klexikonBooks.length > 0 && (
@@ -823,6 +879,14 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 </select>
                 <ChevronDown size={15} aria-hidden />
               </div>
+              <button
+                type="button"
+                className={`fits-toggle${onlyComfortable ? " on" : ""}`}
+                onClick={() => setOnlyComfortable((v) => !v)}
+                title={`Оставить тексты, где вы знаете ${Math.round(COMFORT_MIN * 100)}–${Math.round(COMFORT_MAX * 100)}% слов`}
+              >
+                <Target size={13} />Подходит вам
+              </button>
               {(klexLevelFilter || klexStatusFilter || klexQuery) && (
                 <button
                   type="button"
@@ -875,6 +939,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                         book={sb}
                         progress={lessonProgress[sb.id]}
                         isLoading={openingLesson === sb.id}
+                        coverage={coverageOf(sb)}
                         onOpen={() => void openSharedLesson(sb, filteredKlexikon)}
                       />
                     ))}
@@ -922,6 +987,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                       book={lesson}
                       progress={lessonProgress[lesson.id]}
                       isLoading={openingLesson === lesson.id}
+                      coverage={coverageOf(lesson)}
                       onOpen={() => void openSharedLesson(lesson, myLessons)}
                       onDelete={() => void deleteLesson(lesson.id)}
                       onRefine={() => openRefine(lesson.id)}
@@ -978,6 +1044,14 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
               </select>
               <ChevronDown size={15} aria-hidden />
             </div>
+            <button
+              type="button"
+              className={`fits-toggle${onlyComfortable ? " on" : ""}`}
+              onClick={() => setOnlyComfortable((v) => !v)}
+              title={`Оставить тексты, где вы знаете ${Math.round(COMFORT_MIN * 100)}–${Math.round(COMFORT_MAX * 100)}% слов`}
+            >
+              <Target size={13} />Подходит вам
+            </button>
             {(cefrLangFilter || cefrLevelFilter || cefrStatusFilter) && (
               <button
                 type="button"
@@ -992,9 +1066,22 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
 
           <div className="discover-meta" style={{ marginBottom: 12 }}>
             <span>{cefrBooks.length > 0 ? `${filteredCefrBooks.length} текстов` : "Тексты не загружены"}</span>
-            <button type="button" className="mini-btn" onClick={() => void startImport("cefr")} style={{ gap: 4, height: 26, fontSize: 11 }}>
-              {cefrBooks.length > 0 ? "Обновить" : "Загрузить тексты"}
-            </button>
+            <span style={{ display: "flex", gap: 6 }}>
+              {needsVocabIndex && (
+                <button
+                  type="button"
+                  className="mini-btn"
+                  onClick={() => void startVocabReindex()}
+                  style={{ gap: 4, height: 26, fontSize: 11 }}
+                  title="Посчитать словарь для текстов, загруженных раньше"
+                >
+                  <ListRestart size={12} />Словарь
+                </button>
+              )}
+              <button type="button" className="mini-btn" onClick={() => void startImport("cefr")} style={{ gap: 4, height: 26, fontSize: 11 }}>
+                {cefrBooks.length > 0 ? "Обновить" : "Загрузить тексты"}
+              </button>
+            </span>
           </div>
 
           {isSharedLoading ? (
@@ -1034,6 +1121,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                       progress={lessonProgress[sb.id]}
                       isLoading={openingLesson === sb.id}
                       showLang
+                      coverage={coverageOf(sb)}
                       onOpen={() => void openSharedLesson(sb, filteredCefrBooks)}
                     />
                   ))}
@@ -1150,6 +1238,8 @@ type SyllabusItemProps = {
   progress?: { status: "not_started" | "in_progress" | "completed"; percentage: number };
   isLoading: boolean;
   showLang?: boolean;
+  /** Null when the text has no frequency data yet — the badge is then hidden. */
+  coverage?: Coverage | null;
   onOpen: () => void;
   /** Only generated lessons can be removed or revised — public content is shared. */
   onDelete?: () => void;
@@ -1163,7 +1253,7 @@ const SOURCE_LABELS: Record<string, string> = {
   oersi: "OERSI",
 };
 
-function SyllabusItem({ book, progress, isLoading, showLang, onOpen, onDelete, onRefine }: SyllabusItemProps) {
+function SyllabusItem({ book, progress, isLoading, showLang, coverage, onOpen, onDelete, onRefine }: SyllabusItemProps) {
   const status = progress?.status ?? "not_started";
   const sourceUrl = book.metadata?.source_url;
   const license = book.metadata?.license;
@@ -1183,6 +1273,18 @@ function SyllabusItem({ book, progress, isLoading, showLang, onOpen, onDelete, o
         )}
         {showLang && <span>•</span>}
         <span>{SOURCE_LABELS[book.source_type] ?? book.source_type}</span>
+        {coverage && (
+          <span
+            className={`coverage-chip${coverage.isComfortable ? " fits" : ""}`}
+            title={
+              coverage.isComfortable
+                ? "Примерно одно слово из десяти новое — хорошая нагрузка для чтения"
+                : `Знакомо ${Math.round(coverage.ratio * 100)}% слов текста`
+            }
+          >
+            {coverage.isComfortable && "✓ "}{Math.round(coverage.ratio * 100)}% слов
+          </span>
+        )}
         {progress && progress.status !== "not_started" && (
           <span style={{ color: status === "completed" ? "#7aab6a" : "var(--accent)" }}>
             {status === "completed" ? "✓ Пройдено" : `${Math.round(progress.percentage)}%`}
@@ -1296,6 +1398,45 @@ const STYLES = `
   }
   .add-lesson-fab:hover { background: var(--accent-bright); }
   .add-lesson-fab:active { transform: scale(0.92); }
+
+  /* "You already know N% of the words here" — the closer to the comfort band,
+     the more useful the text, so the band gets the accent colour. */
+  .coverage-chip {
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .coverage-chip.fits {
+    border-color: rgba(122,171,106,0.5);
+    background: rgba(122,171,106,0.14);
+    color: #8fbf7f;
+  }
+
+  .fits-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: all var(--transition-fast);
+  }
+  .fits-toggle:hover { color: var(--text-primary); }
+  .fits-toggle.on {
+    border-color: rgba(122,171,106,0.5);
+    background: rgba(122,171,106,0.14);
+    color: #8fbf7f;
+  }
 
   .refine-target {
     margin: 0;

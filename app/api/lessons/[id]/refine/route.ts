@@ -4,6 +4,7 @@ import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import { runLessonPrompt } from "@/lib/ai/lessonModel";
+import { vocabMetadata } from "@/lib/text/vocab";
 import {
   buildLessonRefinePrompt,
   lessonToParagraphs,
@@ -119,6 +120,7 @@ export async function POST(
         ...metadata,
         description: lesson.description,
         body_paragraph_count: lesson.paragraphs.length,
+        ...vocabMetadata(lesson.paragraphs.join(" ")),
         revisions: revisions + 1,
         last_revised_at: new Date().toISOString(),
         last_revision_note: instructions,

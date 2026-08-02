@@ -4,6 +4,7 @@ import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import { runLessonPrompt } from "@/lib/ai/lessonModel";
+import { vocabMetadata } from "@/lib/text/vocab";
 import {
   buildLessonPrompt,
   lessonToParagraphs,
@@ -107,6 +108,8 @@ export async function POST(req: Request) {
         // How many leading paragraphs are the reading text itself. Revision
         // needs to feed back the prose without the glossary appended below it.
         body_paragraph_count: lesson.paragraphs.length,
+        // Frequency data for the catalogue's "how much of this do you know" badge.
+        ...vocabMetadata(lesson.paragraphs.join(" ")),
         generated_at: new Date().toISOString(),
         model: AI_CONFIG.model,
       },
