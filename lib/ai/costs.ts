@@ -1,29 +1,29 @@
 // What a whole-text translation or narration will cost, shown before it runs.
 //
 // Rates below are from https://ai.google.dev/gemini-api/docs/pricing (paid
-// tier, standard, USD per 1M tokens). Two of the three models are confirmed
-// against that page; the third is marked. Everything else here is arithmetic,
-// and the UI shows every figure with "≈" regardless.
+// tier, standard, USD per 1M tokens), checked against the page for each of the
+// three models the app calls. Everything else here is arithmetic.
+//
+// The quotes stay marked "≈" in the UI even so: the number of output tokens
+// cannot be known before they are generated, and that approximation remains
+// whatever the rates are.
 
 export type Rates = {
   currency: string;
 
   /**
-   * gemini-3.1-flash-lite — translation, word analysis, lesson generation.
-   *
-   * ⚠️ NOT CONFIRMED. Taken from a pricing table whose model heading was cut
-   * off in the screenshot it came from. It is the higher of the candidates, so
-   * an error here overstates the quote rather than understating it — the safe
-   * direction for a spend warning. Verify against the page above.
+   * gemini-3.1-flash-lite — translation, word analysis, lesson generation, and
+   * reading photographs (image input is billed at the same per-token rate as
+   * text on this model).
    */
   textInputPerMTok: number;
   textOutputPerMTok: number;
 
-  /** gemini-3.1-flash-tts-preview — narration. Confirmed. */
+  /** gemini-3.1-flash-tts-preview — narration. */
   ttsInputPerMTok: number;
   ttsOutputPerMTok: number;
 
-  /** gemini-3.1-flash-live-preview — voice chat. Confirmed, billed per minute. */
+  /** gemini-3.1-flash-live-preview — voice chat, billed per minute of audio. */
   liveAudioInPerMin: number;
   liveAudioOutPerMin: number;
 };
