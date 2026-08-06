@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, BookmarkCheck, ChevronLeft, ChevronRight, Phone } from "lucide-react";
+import { ArrowLeft, BookmarkCheck, ChevronLeft, ChevronRight, Phone, Languages, Volume2 } from "lucide-react";
+import { BulkActionSheet, type BulkAction } from "./BulkActionSheet";
+import { estimateAudioCost, estimateTranslationCost } from "@/lib/ai/costs";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { WordModal } from "@/components/word-modal/WordModal";
@@ -33,6 +35,7 @@ import {
   sbGetDiscussHistory,
   sbSaveDiscussHistory,
 } from "@/lib/db/supabase";
+import { sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { findDuplicateCard } from "@/lib/cards";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
@@ -198,6 +201,87 @@ export function ReaderView({
   const initialParaIndex = initialProgress?.selectionState?.paraIndex ?? initialProgress?.paragraphIndex ?? book.paragraphIndex;
   const [pageIndex, setPageIndex] = useState(() => findPageIndex(pages, initialParaIndex));
   const [lessonCompleted, setLessonCompleted] = useState(false);
+
+  // ── Whole-text translation and narration ───────────────────────────────────
+  // Both cost money per text, so both go through a confirmation sheet that
+  // states the size and the estimated price before anything is spent.
+  const [bulkAction, setBulkAction] = useState<BulkAction | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [translations, setTranslations] = useState<Record<number, string>>({});
+  const hasTranslations = Object.keys(translations).length > 0;
+
+  const wholeText = useMemo(() => book.paragraphs.join("\n"), [book.paragraphs]);
+  const bulkEstimate = useMemo(
+    () => (bulkAction === "audio" ? estimateAudioCost(wholeText) : estimateTranslationCost(wholeText)),
+    [bulkAction, wholeText],
+  );
+
+  const runTranslateAll = useCallback(async () => {
+    setBulkBusy(true);
+    setBulkError(null);
+    setBulkProgress({ done: 0, total: book.paragraphs.length });
+    try {
+      const res = await fetch("/api/translate-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+        body: JSON.stringify({
+          paragraphs: book.paragraphs,
+          sourceLanguage: book.language,
+          targetLanguage: profile.nativeLanguage,
+        }),
+      });
+      const data = await res.json() as { translations?: (string | null)[]; error?: string };
+      if (!res.ok) throw new Error(data.error ?? `Ошибка перевода (${res.status})`);
+
+      const next: Record<number, string> = {};
+      (data.translations ?? []).forEach((text, index) => { if (text) next[index] = text; });
+      setTranslations(next);
+      setBulkProgress({ done: Object.keys(next).length, total: book.paragraphs.length });
+      setBulkAction(null);
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : "Неизвестная ошибка");
+    } finally {
+      setBulkBusy(false);
+      setBulkProgress(null);
+    }
+  }, [book.paragraphs, book.language, profile.nativeLanguage]);
+
+  const runAudioAll = useCallback(async () => {
+    setBulkBusy(true);
+    setBulkError(null);
+
+    // The TTS endpoint takes one passage at a time and caches each by its text,
+    // so a whole book is just its paragraphs sent through in order. Anything
+    // already cached comes back without being charged again.
+    const chunks = book.paragraphs.filter((p) => p.trim().length > 0);
+    setBulkProgress({ done: 0, total: chunks.length });
+
+    let failed = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      try {
+        const res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+          body: JSON.stringify({ text: chunks[i].slice(0, 2000), lang: book.language, provider: profile.ttsProvider ?? "gemini" }),
+        });
+        if (!res.ok) failed++;
+      } catch {
+        failed++;
+      }
+      setBulkProgress({ done: i + 1, total: chunks.length });
+    }
+
+    setBulkBusy(false);
+    setBulkProgress(null);
+    if (failed === chunks.length) {
+      setBulkError("Не удалось озвучить текст. Попробуйте позже.");
+    } else {
+      if (failed > 0) console.warn(`bulk TTS: ${failed} of ${chunks.length} passages failed`);
+      setBulkAction(null);
+    }
+  }, [book.paragraphs, book.language, profile.ttsProvider]);
   const currentPage = pages[Math.min(pageIndex, pages.length - 1)] ?? pages[0];
   const visibleParagraphs = book.paragraphs.slice(currentPage.start, currentPage.end);
   const isReaderAudioActive = tts.status === "playing" || tts.status === "paused";
@@ -1094,8 +1178,40 @@ export function ReaderView({
             <Phone size={18} />
           </button>
         )}
+        <button
+          className={`icon-btn${hasTranslations ? " active" : ""}`}
+          type="button"
+          aria-label="Перевести весь текст"
+          title="Перевести весь текст"
+          onClick={() => (hasTranslations ? setTranslations({}) : setBulkAction("translate"))}
+        >
+          <Languages size={18} />
+        </button>
+        <button
+          className="icon-btn"
+          type="button"
+          aria-label="Озвучить весь текст"
+          title="Озвучить весь текст"
+          onClick={() => setBulkAction("audio")}
+        >
+          <Volume2 size={18} />
+        </button>
         <span className="reader-pct">{Math.round(book.progress)}%</span>
       </header>
+
+      {bulkAction && (
+        <BulkActionSheet
+          action={bulkAction}
+          estimate={bulkEstimate}
+          cachedCount={bulkAction === "translate" ? Object.keys(translations).length : 0}
+          totalCount={book.paragraphs.length}
+          busy={bulkBusy}
+          progress={bulkProgress}
+          error={bulkError}
+          onConfirm={() => void (bulkAction === "audio" ? runAudioAll() : runTranslateAll())}
+          onClose={() => { if (!bulkBusy) { setBulkAction(null); setBulkError(null); } }}
+        />
+      )}
 
       <div className="reading-progress-bar">
         <div className="reading-progress-fill" style={{ width: `${book.progress}%` }} />
@@ -1238,6 +1354,9 @@ export function ReaderView({
                     </span>
                   );
                 })}
+                {translations[paraIndex] && (
+                  <span className="reader-translation">{translations[paraIndex]}</span>
+                )}
               </p>
             );
           })}

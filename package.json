@@ -9,7 +9,7 @@
     "lint": "next lint",
     "test:vocab": "node --experimental-strip-types --test lib/text/vocab.test.ts",
     "test:crop": "node --experimental-strip-types --test components/capture/imageCrop.test.ts",
-    "test": "node --experimental-strip-types --test lib/text/vocab.test.ts components/capture/imageCrop.test.ts"
+    "test": "node --experimental-strip-types --test lib/text/vocab.test.ts components/capture/imageCrop.test.ts lib/ai/costs.test.ts"
   },
   "proxy": "http://192.168.178.55:3000",
   "keywords": [],

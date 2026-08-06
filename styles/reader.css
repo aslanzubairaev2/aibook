@@ -229,3 +229,21 @@
   touch-action: none;
   cursor: grabbing;
 }
+
+/* Whole-text translation, shown under its paragraph so the original stays put.
+   Block display keeps it off the token flow, which the tap handlers own. */
+.reader-translation {
+  display: block;
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.88em;
+  line-height: 1.55;
+  font-family: var(--font-ui);
+}
+
+.reader-toolbar .icon-btn.active {
+  color: var(--accent);
+  background: rgba(212, 168, 71, 0.14);
+}
