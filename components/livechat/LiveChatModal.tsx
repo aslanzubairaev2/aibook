@@ -5,6 +5,7 @@ import { Loader2, Mic, MicOff, PhoneOff, Send, Shuffle, Volume2, X, Gauge } from
 import { getLocalGeminiKey, getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import { sbAuthHeaders, sbGetCachedAnalysis, sbSaveCachedAnalysis, sbInsertFlashcard } from "@/lib/db/supabase";
 import { LiveChatSession, base64Pcm16ToFloat32, OUTPUT_SAMPLE_RATE, type LiveChatMode, type LiveChatStatus } from "@/lib/ai/liveChat";
+import { estimateLiveChatPerMinute } from "@/lib/ai/costs";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 import {
   fetchLiveScenarios,
@@ -177,6 +178,20 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   const [liveModel, setLiveModel] = useState("");
   const [mode, setMode] = useState<LiveChatMode>("call");
   const [retryToken, setRetryToken] = useState(0);
+
+  // ── Cost meter ─────────────────────────────────────────────────────────────
+  // Voice chat is billed by the minute of audio in each direction and is by far
+  // the most expensive thing in the app — an hour costs more than translating a
+  // book many times over. Everything else that spends money asks first; a live
+  // call cannot, so it shows the running cost instead.
+  const [callSeconds, setCallSeconds] = useState(0);
+
+  useEffect(() => {
+    const connected = status === "listening" || status === "speaking";
+    if (!connected) return;
+    const timer = window.setInterval(() => setCallSeconds((s) => s + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [status]);
 
   const [scenarios, setScenarios] = useState<LiveScenario[] | null>(null);
   const [scenarioError, setScenarioError] = useState<string | null>(null);
@@ -596,6 +611,14 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
       <section className="livechat-modal" role="dialog" aria-modal aria-label="Голосовой чат с AI">
         <header className="livechat-header">
           <span>Голосовой чат</span>
+          {callSeconds > 0 && (
+            <span
+              className="livechat-meter"
+              title="Примерная стоимость этого разговора. Считается по тарифу за минуту аудио."
+            >
+              {formatDuration(callSeconds)} · {formatLiveCost(callSeconds)}
+            </span>
+          )}
           <div className="livechat-header-actions">
             {needsScenario && selectedScenario && (
               <button className="icon-btn" type="button" onClick={handleSwitchScenario} aria-label="Сменить сценарий" title="Сменить сценарий">
@@ -809,4 +832,23 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
       {toast && <div className="toast">{toast}</div>}
     </div>
   );
+}
+
+/** "3:07" — elapsed call time. */
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const sec = seconds % 60;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+/**
+ * Running cost of the call so far.
+ *
+ * Uses an even split between speaking and listening — the API does not report
+ * the split live, and assuming half is closer than assuming either extreme.
+ * Shown with "≈" for that reason.
+ */
+function formatLiveCost(seconds: number): string {
+  const amount = (seconds / 60) * estimateLiveChatPerMinute();
+  return amount < 0.01 ? "≈ <$0.01" : `≈ $${amount.toFixed(2)}`;
 }

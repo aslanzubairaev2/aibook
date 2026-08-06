@@ -11,10 +11,14 @@ type Props = {
   /** Paragraphs already cached — those cost nothing and are excluded from the quote. */
   cachedCount: number;
   totalCount: number;
+  /** Exact input tokens from the model's tokenizer; null until it answers. */
+  inputTokens: number | null;
   busy: boolean;
   progress: { done: number; total: number } | null;
   error: string | null;
   onConfirm: () => void;
+  /** Stop a run already in flight. Absent for jobs that cannot be interrupted. */
+  onCancelRun?: () => void;
   onClose: () => void;
 };
 
@@ -27,7 +31,7 @@ type Props = {
  * quoting an obvious approximation.
  */
 export function BulkActionSheet({
-  action, estimate, cachedCount, totalCount, busy, progress, error, onConfirm, onClose,
+  action, estimate, cachedCount, totalCount, inputTokens, busy, progress, error, onConfirm, onCancelRun, onClose,
 }: Props) {
   const isAudio = action === "audio";
   const minutes = isAudio ? (estimate as AudioCostEstimate).minutes : 0;
@@ -63,6 +67,12 @@ export function BulkActionSheet({
               <dd>{minutes} мин</dd>
             </div>
           )}
+          {inputTokens !== null && (
+            <div>
+              <dt>Токенов на входе</dt>
+              <dd>{inputTokens.toLocaleString("ru-RU")} — точно</dd>
+            </div>
+          )}
           {cachedCount > 0 && (
             <div>
               <dt>Уже готово</dt>
@@ -92,7 +102,14 @@ export function BulkActionSheet({
         {error && <div className="inline-error">{error}</div>}
 
         <div className="bulk-actions">
-          <button type="button" className="mini-btn" onClick={onClose} disabled={busy}>Отмена</button>
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={busy ? onCancelRun : onClose}
+            disabled={busy && !onCancelRun}
+          >
+            {busy ? "Остановить" : "Отмена"}
+          </button>
           <button type="button" className="bulk-go" onClick={onConfirm} disabled={busy}>
             {busy
               ? <><Loader2 className="spin" size={16} />{isAudio ? "Озвучиваю..." : "Перевожу..."}</>

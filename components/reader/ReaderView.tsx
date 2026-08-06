@@ -218,6 +218,30 @@ export function ReaderView({
     [bulkAction, wholeText],
   );
 
+  // Refined server-side once the sheet opens: the model's own tokenizer instead
+  // of dividing characters by four, and how much narration is already cached.
+  const [jobFacts, setJobFacts] = useState<{ inputTokens: number | null; cachedCount: number } | null>(null);
+
+  useEffect(() => {
+    if (!bulkAction) { setJobFacts(null); return; }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/estimate-job", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+          body: JSON.stringify({ paragraphs: book.paragraphs, kind: bulkAction, lang: book.language }),
+        });
+        if (!res.ok) return;
+        const data = await res.json() as { inputTokens: number | null; cachedCount: number };
+        if (!cancelled) setJobFacts(data);
+      } catch {
+        // Falls back to the character-based estimate already on screen.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bulkAction, book.paragraphs, book.language]);
+
   const runTranslateAll = useCallback(async () => {
     setBulkBusy(true);
     setBulkError(null);
@@ -248,26 +272,40 @@ export function ReaderView({
     }
   }, [book.paragraphs, book.language, profile.nativeLanguage]);
 
+  // Set while a narration run is in flight, so Cancel can stop it. A request
+  // already sent still completes and is still billed — it cannot be un-sent —
+  // so cancelling stops the *next* paragraph, not the current one.
+  const bulkCancelRef = useRef(false);
+
   const runAudioAll = useCallback(async () => {
     setBulkBusy(true);
     setBulkError(null);
+    bulkCancelRef.current = false;
 
     // The TTS endpoint takes one passage at a time and caches each by its text,
     // so a whole book is just its paragraphs sent through in order. Anything
-    // already cached comes back without being charged again.
+    // already cached comes back without being charged again — which is also why
+    // closing the app mid-run loses nothing: finished paragraphs stay cached,
+    // and pressing the button again picks up where it stopped.
     const chunks = book.paragraphs.filter((p) => p.trim().length > 0);
     setBulkProgress({ done: 0, total: chunks.length });
 
+    let done = 0;
     let failed = 0;
+    let cancelled = false;
+
     for (let i = 0; i < chunks.length; i++) {
+      if (bulkCancelRef.current) { cancelled = true; break; }
       try {
         const res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
           body: JSON.stringify({ text: chunks[i].slice(0, 2000), lang: book.language, provider: profile.ttsProvider ?? "gemini" }),
         });
-        if (!res.ok) failed++;
+        if (res.ok) done++; else failed++;
       } catch {
+        // A dropped connection fails this paragraph only; the loop carries on
+        // so a brief blip does not throw away the whole run.
         failed++;
       }
       setBulkProgress({ done: i + 1, total: chunks.length });
@@ -275,10 +313,16 @@ export function ReaderView({
 
     setBulkBusy(false);
     setBulkProgress(null);
-    if (failed === chunks.length) {
-      setBulkError("Не удалось озвучить текст. Попробуйте позже.");
+
+    if (cancelled) {
+      setBulkError(`Остановлено. Озвучено ${done} из ${chunks.length} — они сохранены, продолжить можно позже.`);
+    } else if (failed === chunks.length) {
+      setBulkError("Не удалось озвучить текст. Проверьте соединение и попробуйте ещё раз.");
+    } else if (failed > 0) {
+      // Silently reporting success here would leave gaps the reader only finds
+      // when the audio stops mid-text.
+      setBulkError(`Озвучено ${done} из ${chunks.length}. ${failed} не удалось — нажмите ещё раз, повторно оплачены не будут.`);
     } else {
-      if (failed > 0) console.warn(`bulk TTS: ${failed} of ${chunks.length} passages failed`);
       setBulkAction(null);
     }
   }, [book.paragraphs, book.language, profile.ttsProvider]);
@@ -1203,12 +1247,18 @@ export function ReaderView({
         <BulkActionSheet
           action={bulkAction}
           estimate={bulkEstimate}
-          cachedCount={bulkAction === "translate" ? Object.keys(translations).length : 0}
+          cachedCount={
+            bulkAction === "translate"
+              ? Object.keys(translations).length
+              : jobFacts?.cachedCount ?? 0
+          }
+          inputTokens={jobFacts?.inputTokens ?? null}
           totalCount={book.paragraphs.length}
           busy={bulkBusy}
           progress={bulkProgress}
           error={bulkError}
           onConfirm={() => void (bulkAction === "audio" ? runAudioAll() : runTranslateAll())}
+          onCancelRun={() => { bulkCancelRef.current = true; }}
           onClose={() => { if (!bulkBusy) { setBulkAction(null); setBulkError(null); } }}
         />
       )}
