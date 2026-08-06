@@ -1,6 +1,6 @@
 "use client";
 
-import { Languages, Loader2, Volume2, X } from "lucide-react";
+import { Languages, Loader2, Play, Volume2, X } from "lucide-react";
 import { formatChars, formatCost, type AudioCostEstimate, type CostEstimate } from "@/lib/ai/costs";
 
 export type BulkAction = "translate" | "audio";
@@ -16,6 +16,9 @@ type Props = {
   busy: boolean;
   progress: { done: number; total: number } | null;
   error: string | null;
+  /** The whole text already has a joined recording, so the action is Play. */
+  audioReady?: boolean;
+  onPlay?: () => void;
   onConfirm: () => void;
   /** Stop a run already in flight. Absent for jobs that cannot be interrupted. */
   onCancelRun?: () => void;
@@ -31,7 +34,8 @@ type Props = {
  * quoting an obvious approximation.
  */
 export function BulkActionSheet({
-  action, estimate, cachedCount, totalCount, inputTokens, busy, progress, error, onConfirm, onCancelRun, onClose,
+  action, estimate, cachedCount, totalCount, inputTokens, busy, progress, error,
+  audioReady, onPlay, onConfirm, onCancelRun, onClose,
 }: Props) {
   const isAudio = action === "audio";
   const minutes = isAudio ? (estimate as AudioCostEstimate).minutes : 0;
@@ -110,10 +114,17 @@ export function BulkActionSheet({
           >
             {busy ? "Остановить" : "Отмена"}
           </button>
-          <button type="button" className="bulk-go" onClick={onConfirm} disabled={busy}>
+          <button
+            type="button"
+            className="bulk-go"
+            onClick={audioReady && onPlay ? onPlay : onConfirm}
+            disabled={busy}
+          >
             {busy
               ? <><Loader2 className="spin" size={16} />{isAudio ? "Озвучиваю..." : "Перевожу..."}</>
-              : <>{isAudio ? <Volume2 size={16} /> : <Languages size={16} />}{isAudio ? "Озвучить" : "Перевести"}</>}
+              : audioReady
+                ? <><Play size={16} />Слушать</>
+                : <>{isAudio ? <Volume2 size={16} /> : <Languages size={16} />}{isAudio ? "Озвучить" : "Перевести"}</>}
           </button>
         </div>
       </div>

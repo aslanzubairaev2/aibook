@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, BookmarkCheck, ChevronLeft, ChevronRight, Phone, Languages, Volume2 } from "lucide-react";
 import { BulkActionSheet, type BulkAction } from "./BulkActionSheet";
+import { TranslationModal } from "./TranslationModal";
 import { estimateAudioCost, estimateTranslationCost } from "@/lib/ai/costs";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
@@ -39,7 +40,7 @@ import { sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { findDuplicateCard } from "@/lib/cards";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
-import { getTTSState, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
+import { getTTSState, prepareFullTextAudio, speak, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
 import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, LessonContext, ReaderProgressSnapshot, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
 
 const PAGE_TARGET_CHARS = 7200;
@@ -210,6 +211,10 @@ export function ReaderView({
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
   const [translations, setTranslations] = useState<Record<number, string>>({});
+  const [translationOpen, setTranslationOpen] = useState(false);
+  // A request already sent still completes and is still billed — it cannot be
+  // un-sent — so cancelling stops the next passage, not the current one.
+  const bulkCancelRef = useRef(false);
   const hasTranslations = Object.keys(translations).length > 0;
 
   const wholeText = useMemo(() => book.paragraphs.join("\n"), [book.paragraphs]);
@@ -262,8 +267,8 @@ export function ReaderView({
       const next: Record<number, string> = {};
       (data.translations ?? []).forEach((text, index) => { if (text) next[index] = text; });
       setTranslations(next);
-      setBulkProgress({ done: Object.keys(next).length, total: book.paragraphs.length });
       setBulkAction(null);
+      setTranslationOpen(true);
     } catch (err) {
       setBulkError(err instanceof Error ? err.message : "Неизвестная ошибка");
     } finally {
@@ -272,60 +277,41 @@ export function ReaderView({
     }
   }, [book.paragraphs, book.language, profile.nativeLanguage]);
 
-  // Set while a narration run is in flight, so Cancel can stop it. A request
-  // already sent still completes and is still billed — it cannot be un-sent —
-  // so cancelling stops the *next* paragraph, not the current one.
-  const bulkCancelRef = useRef(false);
+  // Set once the whole text has a joined recording waiting, which turns the
+  // sheet's action button into Play.
+  const [audioReady, setAudioReady] = useState(false);
 
   const runAudioAll = useCallback(async () => {
     setBulkBusy(true);
     setBulkError(null);
     bulkCancelRef.current = false;
+    setBulkProgress({ done: 0, total: book.paragraphs.length });
 
-    // The TTS endpoint takes one passage at a time and caches each by its text,
-    // so a whole book is just its paragraphs sent through in order. Anything
-    // already cached comes back without being charged again — which is also why
-    // closing the app mid-run loses nothing: finished paragraphs stay cached,
-    // and pressing the button again picks up where it stopped.
-    const chunks = book.paragraphs.filter((p) => p.trim().length > 0);
-    setBulkProgress({ done: 0, total: chunks.length });
-
-    let done = 0;
-    let failed = 0;
-    let cancelled = false;
-
-    for (let i = 0; i < chunks.length; i++) {
-      if (bulkCancelRef.current) { cancelled = true; break; }
-      try {
-        const res = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
-          body: JSON.stringify({ text: chunks[i].slice(0, 2000), lang: book.language, provider: profile.ttsProvider ?? "gemini" }),
-        });
-        if (res.ok) done++; else failed++;
-      } catch {
-        // A dropped connection fails this paragraph only; the loop carries on
-        // so a brief blip does not throw away the whole run.
-        failed++;
-      }
-      setBulkProgress({ done: i + 1, total: chunks.length });
-    }
+    const result = await prepareFullTextAudio(book.paragraphs, wholeText, book.language, {
+      authHeaders: sbAuthHeaders,
+      onProgress: setBulkProgress,
+      shouldCancel: () => bulkCancelRef.current,
+    });
 
     setBulkBusy(false);
     setBulkProgress(null);
 
-    if (cancelled) {
-      setBulkError(`Остановлено. Озвучено ${done} из ${chunks.length} — они сохранены, продолжить можно позже.`);
-    } else if (failed === chunks.length) {
+    if (result.cancelled) {
+      setBulkError(`Остановлено на ${result.done}. Озвученное сохранено — можно продолжить позже.`);
+    } else if (result.done === 0) {
       setBulkError("Не удалось озвучить текст. Проверьте соединение и попробуйте ещё раз.");
-    } else if (failed > 0) {
-      // Silently reporting success here would leave gaps the reader only finds
-      // when the audio stops mid-text.
-      setBulkError(`Озвучено ${done} из ${chunks.length}. ${failed} не удалось — нажмите ещё раз, повторно оплачены не будут.`);
+    } else if (result.failed > 0) {
+      setBulkError(`Озвучено ${result.done}, ${result.failed} не удалось. Нажмите ещё раз — готовое повторно не оплачивается.`);
+      setAudioReady(true);
     } else {
-      setBulkAction(null);
+      setAudioReady(true);
     }
-  }, [book.paragraphs, book.language, profile.ttsProvider]);
+  }, [book.paragraphs, wholeText, book.language]);
+
+  const playFullText = useCallback(() => {
+    setBulkAction(null);
+    void speak(wholeText, book.language);
+  }, [wholeText, book.language]);
   const currentPage = pages[Math.min(pageIndex, pages.length - 1)] ?? pages[0];
   const visibleParagraphs = book.paragraphs.slice(currentPage.start, currentPage.end);
   const isReaderAudioActive = tts.status === "playing" || tts.status === "paused";
@@ -1227,7 +1213,7 @@ export function ReaderView({
           type="button"
           aria-label="Перевести весь текст"
           title="Перевести весь текст"
-          onClick={() => (hasTranslations ? setTranslations({}) : setBulkAction("translate"))}
+          onClick={() => (hasTranslations ? setTranslationOpen(true) : setBulkAction("translate"))}
         >
           <Languages size={18} />
         </button>
@@ -1236,7 +1222,7 @@ export function ReaderView({
           type="button"
           aria-label="Озвучить весь текст"
           title="Озвучить весь текст"
-          onClick={() => setBulkAction("audio")}
+          onClick={() => (audioReady ? playFullText() : setBulkAction("audio"))}
         >
           <Volume2 size={18} />
         </button>
@@ -1257,9 +1243,19 @@ export function ReaderView({
           busy={bulkBusy}
           progress={bulkProgress}
           error={bulkError}
+          audioReady={bulkAction === "audio" && audioReady}
+          onPlay={playFullText}
           onConfirm={() => void (bulkAction === "audio" ? runAudioAll() : runTranslateAll())}
           onCancelRun={() => { bulkCancelRef.current = true; }}
           onClose={() => { if (!bulkBusy) { setBulkAction(null); setBulkError(null); } }}
+        />
+      )}
+
+      {translationOpen && (
+        <TranslationModal
+          title={book.title}
+          paragraphs={book.paragraphs.map((_, i) => translations[i]).filter((t): t is string => !!t)}
+          onClose={() => setTranslationOpen(false)}
         />
       )}
 
@@ -1404,9 +1400,6 @@ export function ReaderView({
                     </span>
                   );
                 })}
-                {translations[paraIndex] && (
-                  <span className="reader-translation">{translations[paraIndex]}</span>
-                )}
               </p>
             );
           })}

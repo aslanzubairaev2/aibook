@@ -394,3 +394,142 @@ export async function speak(
     isPlaying: () => window.speechSynthesis.speaking && !window.speechSynthesis.paused
   };
 }
+
+// ─── Whole-text narration ────────────────────────────────────────────────────
+//
+// The TTS endpoint caps a request at 2000 characters, so a long text has to be
+// sent a passage at a time. But the learner wants one recording they can play
+// straight through, not eighteen fragments they have to trigger one by one.
+//
+// The audio comes back as raw 16-bit PCM with no container, which means the
+// passages concatenate into a single continuous stream just by appending the
+// bytes. Doing that and writing the result into the browser cache under the key
+// `speak()` looks up for the *whole* text means the existing player then treats
+// the entire text as one recording — no change to playback at all.
+
+/** Must match the key `speak()` builds, or the joined audio would never be found. */
+function ttsCacheKey(text: string, provider: string, lang: string): string {
+  const voiceKey = provider === "deepgram" ? getDeepgramTtsModel(lang) : "Algenib";
+  return `tts-${provider}-${voiceKey ?? "default"}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
+}
+
+export type NarrationProgress = { done: number; total: number };
+
+export type NarrationResult = {
+  /** Passages that came back; the joined audio covers exactly these. */
+  done: number;
+  failed: number;
+  cancelled: boolean;
+  /** Seconds of audio produced, once anything was. */
+  seconds: number;
+};
+
+/**
+ * Narrate every passage and leave one joined recording ready for `speak()`.
+ *
+ * Passages already narrated are served from the server-side cache, so stopping
+ * and resuming — or closing the app entirely — never pays for the same passage
+ * twice.
+ */
+export async function prepareFullTextAudio(
+  passages: string[],
+  fullText: string,
+  lang: string,
+  opts: {
+    authHeaders: () => Promise<Record<string, string>>;
+    onProgress?: (p: NarrationProgress) => void;
+    shouldCancel?: () => boolean;
+  },
+): Promise<NarrationResult> {
+  const profile = getLocalProfile();
+  const requested = profile.ttsProvider ?? "gemini";
+  // Local browser speech cannot be captured as data, so joining needs a server
+  // voice; fall back to Gemini rather than producing nothing.
+  const provider = requested === "local" ? "gemini" : requested;
+
+  const chunks = passages.map((p) => p.slice(0, 2000)).filter((p) => p.trim().length > 0);
+  const parts: Uint8Array[] = [];
+  let done = 0;
+  let failed = 0;
+
+  for (let i = 0; i < chunks.length; i++) {
+    if (opts.shouldCancel?.()) {
+      return { done, failed, cancelled: true, seconds: totalSeconds(parts) };
+    }
+
+    let base64: string | null = null;
+    const key = ttsCacheKey(chunks[i], provider, lang);
+
+    try {
+      const cache = await caches.open("aibook-tts-cache");
+      const hit = await cache.match(key);
+      if (hit) base64 = await hit.text();
+    } catch { /* no Cache API */ }
+
+    if (!base64) {
+      try {
+        const res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(await opts.authHeaders()) },
+          body: JSON.stringify({ text: chunks[i], lang, provider }),
+        });
+        if (res.ok) {
+          const data = await res.json() as { audioBase64?: string };
+          base64 = data.audioBase64 ?? null;
+          if (base64) {
+            try {
+              const cache = await caches.open("aibook-tts-cache");
+              await cache.put(key, new Response(base64));
+            } catch { /* cache full or unavailable */ }
+          }
+        }
+      } catch { /* connection dropped on this passage only */ }
+    }
+
+    if (base64) {
+      parts.push(Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)));
+      done++;
+    } else {
+      failed++;
+    }
+
+    opts.onProgress?.({ done: i + 1, total: chunks.length });
+  }
+
+  if (parts.length > 0) {
+    const joined = concatBytes(parts);
+    try {
+      const cache = await caches.open("aibook-tts-cache");
+      await cache.put(ttsCacheKey(fullText, provider, lang), new Response(bytesToBase64(joined)));
+    } catch { /* cache full — playback falls back to per-passage */ }
+  }
+
+  return { done, failed, cancelled: false, seconds: totalSeconds(parts) };
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, p) => sum + p.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
+}
+
+/** 16-bit samples at the provider rate. */
+function totalSeconds(parts: Uint8Array[]): number {
+  const bytes = parts.reduce((sum, p) => sum + p.byteLength, 0);
+  return bytes / 2 / DEEPGRAM_TTS_SAMPLE_RATE;
+}
+
+/** btoa cannot take a whole book at once; chunk it to stay under the arg limit. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const STEP = 0x8000;
+  for (let i = 0; i < bytes.length; i += STEP) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + STEP));
+  }
+  return btoa(binary);
+}
