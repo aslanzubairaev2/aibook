@@ -9,8 +9,10 @@ import {
   estimateAudioCost,
   estimateTokens,
   estimateTranslationCost,
+  estimateLiveChatPerMinute,
   formatCost,
   LARGE_TEXT_CHARS,
+  RATES,
 } from "./costs.ts";
 
 test("Cyrillic is counted as more tokens per character than Latin", () => {
@@ -51,4 +53,30 @@ test("audio is never quoted as zero minutes", () => {
 test("a price too small to round is spelled out, not shown as $0.00", () => {
   assert.equal(formatCost(estimateTranslationCost("Hallo.")), "меньше цента");
   assert.match(formatCost(estimateTranslationCost("x".repeat(4_000_000))), /^≈ \$\d+\.\d\d$/);
+});
+
+test("narration is billed by duration, not by text length", () => {
+  // 25 audio tokens per second at $20/1M means $0.03 for a minute of speech.
+  // Deriving it from characters alone understated it by about half.
+  const oneMinute = estimateAudioCost("x".repeat(900));
+  assert.equal(oneMinute.minutes, 1);
+  assert.ok(
+    Math.abs(oneMinute.amount - 0.03) < 0.005,
+    `a minute of speech should cost about $0.03, got ${oneMinute.amount.toFixed(4)}`,
+  );
+});
+
+test("narration costs far more than translating the same text", () => {
+  const text = "Die Blume steht am Fenster. ".repeat(1500);
+  assert.ok(
+    estimateAudioCost(text).amount > estimateTranslationCost(text).amount * 10,
+    "audio is the expensive one; a quote that says otherwise is wrong",
+  );
+});
+
+test("voice chat is quoted per minute of conversation", () => {
+  // Between the two per-minute rates, and closer to the model's when it talks more.
+  const even = estimateLiveChatPerMinute(0.5);
+  assert.ok(even > RATES.liveAudioInPerMin && even < RATES.liveAudioOutPerMin);
+  assert.ok(estimateLiveChatPerMinute(0.9) > even);
 });

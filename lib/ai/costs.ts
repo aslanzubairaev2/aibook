@@ -1,29 +1,50 @@
 // What a whole-text translation or narration will cost, shown before it runs.
 //
-// ─────────────────────────────────────────────────────────────────────────────
-// THE RATES BELOW ARE NOT VERIFIED. Check them against Google's current
-// pricing page before trusting the figures this produces:
-//   https://ai.google.dev/gemini-api/docs/pricing
-// They are the one place to edit — everything else here is arithmetic. The UI
-// always shows the result with a "≈" for the same reason.
-// ─────────────────────────────────────────────────────────────────────────────
+// Rates below are from https://ai.google.dev/gemini-api/docs/pricing (paid
+// tier, standard, USD per 1M tokens). Two of the three models are confirmed
+// against that page; the third is marked. Everything else here is arithmetic,
+// and the UI shows every figure with "≈" regardless.
 
 export type Rates = {
   currency: string;
-  /** Per 1,000,000 input tokens. */
+
+  /**
+   * gemini-3.1-flash-lite — translation, word analysis, lesson generation.
+   *
+   * ⚠️ NOT CONFIRMED. Taken from a pricing table whose model heading was cut
+   * off in the screenshot it came from. It is the higher of the candidates, so
+   * an error here overstates the quote rather than understating it — the safe
+   * direction for a spend warning. Verify against the page above.
+   */
   textInputPerMTok: number;
-  /** Per 1,000,000 output tokens. */
   textOutputPerMTok: number;
-  /** Per 1,000,000 characters sent to text-to-speech. */
-  ttsPerMChar: number;
+
+  /** gemini-3.1-flash-tts-preview — narration. Confirmed. */
+  ttsInputPerMTok: number;
+  ttsOutputPerMTok: number;
+
+  /** gemini-3.1-flash-live-preview — voice chat. Confirmed, billed per minute. */
+  liveAudioInPerMin: number;
+  liveAudioOutPerMin: number;
 };
 
 export const RATES: Rates = {
   currency: "$",
-  textInputPerMTok: 0.10,
-  textOutputPerMTok: 0.40,
-  ttsPerMChar: 16.0,
+  textInputPerMTok: 0.25,
+  textOutputPerMTok: 1.50,
+  ttsInputPerMTok: 1.00,
+  ttsOutputPerMTok: 20.00,
+  liveAudioInPerMin: 0.005,
+  liveAudioOutPerMin: 0.018,
 };
+
+/**
+ * Speech is billed by duration, not by the length of the text fed in: the
+ * pricing page states audio tokens correspond to 25 tokens per second of
+ * audio. Estimating narration from characters alone — as this did before —
+ * understated it by roughly half.
+ */
+const AUDIO_TOKENS_PER_SECOND = 25;
 
 /**
  * Characters per token, by script.
@@ -90,7 +111,13 @@ export function estimateTranslationCost(text: string): CostEstimate {
 }
 
 export function estimateAudioCost(text: string): AudioCostEstimate {
-  const amount = (text.length / 1_000_000) * RATES.ttsPerMChar;
+  const seconds = (text.length / CHARS_PER_MINUTE_SPEECH) * 60;
+  const audioTokens = seconds * AUDIO_TOKENS_PER_SECOND;
+
+  const amount =
+    (estimateTokens(text) / 1_000_000) * RATES.ttsInputPerMTok +
+    (audioTokens / 1_000_000) * RATES.ttsOutputPerMTok;
+
   return {
     chars: text.length,
     amount,
@@ -109,4 +136,18 @@ export function formatCost(estimate: CostEstimate): string {
 /** "18 500 знаков" with thin spaces, for the confirmation sheet. */
 export function formatChars(chars: number): string {
   return `${chars.toLocaleString("ru-RU")} знаков`;
+}
+
+/**
+ * Voice chat, per minute of conversation.
+ *
+ * Billed by audio minute in each direction, so the figure depends on who is
+ * talking. `speakingShare` is the fraction of the minute the model speaks —
+ * 0.5 for an even back-and-forth.
+ */
+export function estimateLiveChatPerMinute(speakingShare = 0.5): number {
+  return (
+    RATES.liveAudioInPerMin * (1 - speakingShare) +
+    RATES.liveAudioOutPerMin * speakingShare
+  );
 }
