@@ -14,6 +14,50 @@ const LESSON_MAX_OUTPUT_TOKENS = 4096;
 // otherwise every lesson on the same topic comes out identical.
 const LESSON_TEMPERATURE = 0.9;
 
+export type ImageModelResult =
+  | { ok: true; data: unknown }
+  | { ok: false; error: string; status: number };
+
+/**
+ * One multimodal call: a photo plus a prompt, JSON back.
+ *
+ * Returns the parsed JSON untouched — the photo step has its own shape, unlike
+ * the lesson steps, so narrowing happens at the call site.
+ */
+export async function runImagePrompt(
+  apiKey: string,
+  prompt: string,
+  imageBase64: string,
+  mimeType: string,
+): Promise<ImageModelResult> {
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: AI_CONFIG.model,
+      generationConfig: {
+        responseMimeType: "application/json",
+        maxOutputTokens: LESSON_MAX_OUTPUT_TOKENS,
+        // Transcription is not a creative task: the same photo should read the
+        // same way every time.
+        temperature: 0,
+      },
+    });
+
+    const result = await model.generateContent([
+      { inlineData: { data: imageBase64, mimeType } },
+      { text: prompt },
+    ]);
+
+    try {
+      return { ok: true, data: JSON.parse(result.response.text()) };
+    } catch {
+      return { ok: false, error: "Модель вернула некорректный JSON. Попробуйте ещё раз.", status: 502 };
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Неизвестная ошибка", status: 500 };
+  }
+}
+
 export type LessonModelResult =
   | { ok: true; lesson: GeneratedLesson }
   | { ok: false; error: string; status: number };

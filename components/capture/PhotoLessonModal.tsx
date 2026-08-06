@@ -1,0 +1,475 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Camera, Check, ImageUp, Loader2, RotateCw, X, Repeat,
+} from "lucide-react";
+import type { CefrLevel } from "@/lib/types";
+import { SUPPORTED_LANGUAGES } from "@/lib/config";
+import { PhotoCropper, type CropperHandle } from "./PhotoCropper";
+
+type Stage = "camera" | "crop" | "reading" | "language" | "building";
+
+type Props = {
+  targetLanguage: string;
+  nativeLanguage: string;
+  level: CefrLevel;
+  length: "short" | "medium" | "long";
+  /** Called with the new lesson id once it is saved. */
+  onCreated: (lessonId: string) => void;
+  onClose: () => void;
+  /** Auth headers for the API calls; the parent owns the session. */
+  authHeaders: () => Promise<Record<string, string>>;
+};
+
+type Extracted = { language: string; text: string; kind: string };
+
+const MAX_UPLOAD_SIZE = 1600;
+const JPEG_QUALITY = 0.85;
+
+function languageName(code: string): string {
+  return SUPPORTED_LANGUAGES.find((l) => l.code === code)?.nameNative ?? code.toUpperCase();
+}
+
+/**
+ * Photograph something, crop it, get a lesson.
+ *
+ * Fullscreen throughout: a page of a textbook needs the whole viewport to frame
+ * and to crop accurately, and this is a phone-first flow.
+ */
+export function PhotoLessonModal({
+  targetLanguage, nativeLanguage, level, length, onCreated, onClose, authHeaders,
+}: Props) {
+  const [stage, setStage] = useState<Stage>("camera");
+  const [error, setError] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [extracted, setExtracted] = useState<Extracted | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const cropperRef = useRef<CropperHandle | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setCameraReady(false);
+  }, []);
+
+  // Start the rear camera on entry. Failure is not fatal — the file picker
+  // below covers desktops, denied permissions and browsers without getUserMedia.
+  useEffect(() => {
+    if (stage !== "camera") return;
+    let cancelled = false;
+
+    void (async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setError("Камера недоступна в этом браузере — выберите фото из галереи.");
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 2560 }, height: { ideal: 1440 } },
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => { /* autoplay guard */ });
+        }
+        setCameraReady(true);
+        setError(null);
+      } catch {
+        if (!cancelled) setError("Нет доступа к камере — выберите фото из галереи.");
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [stage]);
+
+  useEffect(() => stopCamera, [stopCamera]);
+
+  const shoot = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d")?.drawImage(video, 0, 0);
+    setPhoto(canvas.toDataURL("image/jpeg", 0.95));
+    stopCamera();
+    setStage("crop");
+  };
+
+  const pickFile = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPhoto(String(reader.result));
+      stopCamera();
+      setStage("crop");
+      setError(null);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const retake = () => {
+    setPhoto(null);
+    setExtracted(null);
+    setError(null);
+    setStage("camera");
+  };
+
+  /** Step 1: send the cropped region and get back what it says. */
+  const readPhoto = async () => {
+    const cropped = cropperRef.current?.exportCropped(MAX_UPLOAD_SIZE, JPEG_QUALITY);
+    if (!cropped) {
+      setError("Не удалось подготовить снимок. Попробуйте ещё раз.");
+      return;
+    }
+
+    setStage("reading");
+    setError(null);
+    try {
+      const res = await fetch("/api/lessons/from-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ image: cropped }),
+      });
+      const data = await res.json() as Extracted & { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `Ошибка распознавания (${res.status})`);
+
+      setExtracted(data);
+      // Already in the language being learned: nothing to ask, go straight on.
+      if (data.language === targetLanguage) {
+        await buildLesson(data, targetLanguage);
+      } else {
+        setStage("language");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Неизвестная ошибка");
+      setStage("crop");
+    }
+  };
+
+  /** Step 2: build and save the lesson from the transcription. */
+  const buildLesson = async (source: Extracted, chosenLanguage: string) => {
+    setStage("building");
+    setError(null);
+    try {
+      const res = await fetch("/api/lessons/from-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({
+          sourceText: source.text,
+          sourceLanguage: source.language,
+          sourceKind: source.kind,
+          targetLanguage: chosenLanguage,
+          nativeLanguage,
+          level,
+          length,
+        }),
+      });
+      const data = await res.json() as { id?: string; error?: string };
+      if (!res.ok || !data.id) throw new Error(data.error ?? `Ошибка создания урока (${res.status})`);
+      onCreated(data.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Неизвестная ошибка");
+      setStage(source.language === targetLanguage ? "crop" : "language");
+    }
+  };
+
+  const busy = stage === "reading" || stage === "building";
+
+  return (
+    <div className="photo-modal">
+      <style dangerouslySetInnerHTML={{ __html: STYLES }} />
+
+      <header className="photo-bar">
+        <button type="button" className="photo-icon-btn" onClick={onClose} aria-label="Закрыть" disabled={busy}>
+          <X size={22} />
+        </button>
+        <span className="photo-bar-title">
+          {stage === "camera" && "Сфотографируйте текст"}
+          {stage === "crop" && "Выделите нужный участок"}
+          {stage === "reading" && "Читаю снимок..."}
+          {stage === "language" && "Выберите язык"}
+          {stage === "building" && "Составляю урок..."}
+        </span>
+        {stage === "crop" ? (
+          <button type="button" className="photo-icon-btn" onClick={retake} aria-label="Переснять">
+            <Repeat size={20} />
+          </button>
+        ) : <span className="photo-icon-btn" aria-hidden />}
+      </header>
+
+      <div className="photo-stage">
+        {stage === "camera" && (
+          <>
+            <video ref={videoRef} className="photo-video" playsInline muted autoPlay />
+            {!cameraReady && (
+              <div className="photo-hint">
+                {error ?? "Запрашиваю камеру..."}
+              </div>
+            )}
+          </>
+        )}
+
+        {(stage === "crop" || busy) && photo && (
+          <PhotoCropper ref={cropperRef} src={photo} disabled={busy} />
+        )}
+
+        {stage === "language" && extracted && (
+          <div className="photo-sheet">
+            <h3>Текст на снимке — {languageName(extracted.language)}</h3>
+            <p>
+              {extracted.kind ? `Похоже на: ${extracted.kind}. ` : ""}
+              На каком языке составить урок по этому материалу?
+            </p>
+            <div className="photo-excerpt">{extracted.text.slice(0, 300)}{extracted.text.length > 300 ? "…" : ""}</div>
+            <div className="photo-lang-list">
+              {SUPPORTED_LANGUAGES.filter((l) => l.code !== nativeLanguage).map((lang) => (
+                <button
+                  key={lang.code}
+                  type="button"
+                  className={`photo-lang-btn${lang.code === targetLanguage ? " primary" : ""}`}
+                  onClick={() => void buildLesson(extracted, lang.code)}
+                >
+                  {lang.nameNative}
+                  {lang.code === targetLanguage && <span>вы учите</span>}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="photo-cancel" onClick={onClose}>Отменить</button>
+          </div>
+        )}
+
+        {busy && (
+          <div className="photo-overlay">
+            <Loader2 className="spin" size={34} />
+            <span>{stage === "reading" ? "Разбираю текст на снимке..." : "Составляю урок..."}</span>
+          </div>
+        )}
+      </div>
+
+      {error && stage !== "camera" && <div className="photo-error">{error}</div>}
+
+      <footer className="photo-actions">
+        {stage === "camera" && (
+          <>
+            <button
+              type="button"
+              className="photo-gallery-btn"
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Выбрать фото"
+            >
+              <ImageUp size={22} />
+            </button>
+            <button
+              type="button"
+              className="photo-shutter"
+              onClick={shoot}
+              disabled={!cameraReady}
+              aria-label="Снять"
+            >
+              <Camera size={26} />
+            </button>
+            <span className="photo-gallery-btn" aria-hidden />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(e) => pickFile(e.target.files?.[0])}
+            />
+          </>
+        )}
+
+        {stage === "crop" && (
+          <>
+            <button type="button" className="photo-tool" onClick={() => cropperRef.current?.rotate()}>
+              <RotateCw size={18} />Повернуть
+            </button>
+            <button type="button" className="photo-tool" onClick={() => cropperRef.current?.reset()}>
+              Весь кадр
+            </button>
+            <button type="button" className="photo-confirm" onClick={() => void readPhoto()}>
+              <Check size={18} />Готово
+            </button>
+          </>
+        )}
+      </footer>
+    </div>
+  );
+}
+
+const STYLES = `
+  .photo-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: flex;
+    flex-direction: column;
+    background: #0b0a09;
+    color: var(--text-primary);
+  }
+  .photo-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .photo-bar-title { flex: 1; text-align: center; font-size: 14px; font-weight: 700; }
+  .photo-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-primary);
+  }
+  .photo-icon-btn:disabled { opacity: 0.4; }
+
+  .photo-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+  .photo-video { width: 100%; height: 100%; object-fit: cover; background: #000; }
+  .photo-hint {
+    position: absolute;
+    inset: auto 16px 16px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(0,0,0,0.66);
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .photo-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: rgba(11,10,9,0.82);
+    font-size: 14px;
+  }
+
+  .photo-error {
+    margin: 0 12px 8px;
+    padding: 9px 11px;
+    border: 1px solid rgba(196,106,106,0.45);
+    border-radius: 9px;
+    background: rgba(196,106,106,0.12);
+    color: #e2a0a0;
+    font-size: 12.5px;
+  }
+
+  .photo-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 14px 16px;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .photo-shutter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 68px;
+    height: 68px;
+    border: 4px solid rgba(255,255,255,0.85);
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--text-dark);
+  }
+  .photo-shutter:disabled { opacity: 0.4; }
+  .photo-shutter:active:not(:disabled) { transform: scale(0.94); }
+  .photo-gallery-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-primary);
+  }
+  .photo-tool, .photo-confirm {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 42px;
+    padding: 0 16px;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .photo-confirm { border-color: transparent; background: var(--accent); color: var(--text-dark); }
+
+  .photo-sheet {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+    padding: 20px 18px 24px;
+    background: var(--bg-secondary);
+  }
+  .photo-sheet h3 { font-size: 17px; margin-bottom: 6px; }
+  .photo-sheet > p { font-size: 13.5px; color: var(--text-muted); line-height: 1.5; margin-bottom: 12px; }
+  .photo-excerpt {
+    max-height: 30vh;
+    overflow-y: auto;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(240,230,211,0.04);
+    color: var(--text-muted);
+    font-size: 12.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .photo-lang-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .photo-lang-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 46px;
+    padding: 0 14px;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .photo-lang-btn.primary { border-color: var(--accent); background: rgba(212,168,71,0.12); color: var(--accent); }
+  .photo-lang-btn span { font-size: 11px; font-weight: 700; text-transform: uppercase; opacity: 0.75; }
+  .photo-cancel {
+    width: 100%;
+    height: 42px;
+    border: 0;
+    border-radius: 11px;
+    background: rgba(240,230,211,0.06);
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 600;
+  }
+`;

@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
   Sparkles, CheckCircle2, PlayCircle, Clock, Circle,
-  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart,
+  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera,
 } from "lucide-react";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
@@ -17,6 +17,7 @@ import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 import { buildKnownWordSet, computeCoverage, COMFORT_MIN, COMFORT_MAX, type Coverage } from "@/lib/text/vocab";
 import { LessonComposerModal, type ComposerState } from "./LessonComposerModal";
 import { LessonRefineModal } from "./LessonRefineModal";
+import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 
 type Props = {
   books: Book[];
@@ -264,6 +265,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   );
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [photoOpen, setPhotoOpen] = useState(false);
 
   // Revising an existing lesson: which one is open, and the notes for it.
   const [refiningId, setRefiningId] = useState<string | null>(null);
@@ -996,7 +998,16 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 </div>
               )}
 
-              {/* Floating "+": within thumb reach, and off the top of the list */}
+              {/* Both within thumb reach: photograph a text, or write a topic */}
+              <button
+                type="button"
+                className="add-lesson-fab secondary"
+                onClick={() => setPhotoOpen(true)}
+                aria-label="Урок из фотографии"
+                title="Урок из фотографии"
+              >
+                <Camera size={20} />
+              </button>
               <button
                 type="button"
                 className="add-lesson-fab"
@@ -1147,6 +1158,19 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             const existing = books.find((b) => b.title.toLowerCase() === selectedBook.title.toLowerCase());
             if (existing) { onOpenBook(existing); setSelectedBook(null); }
           }}
+        />
+      )}
+
+      {/* Lesson from a photograph */}
+      {photoOpen && (
+        <PhotoLessonModal
+          targetLanguage={profile.targetLanguage}
+          nativeLanguage={profile.nativeLanguage}
+          level={composer.level}
+          length={composer.length}
+          authHeaders={sbAuthHeaders}
+          onClose={() => setPhotoOpen(false)}
+          onCreated={() => { setPhotoOpen(false); void loadMyLessons(); }}
         />
       )}
 
@@ -1398,6 +1422,16 @@ const STYLES = `
   }
   .add-lesson-fab:hover { background: var(--accent-bright); }
   .add-lesson-fab:active { transform: scale(0.92); }
+  /* Sits directly above the primary one, smaller so the hierarchy is obvious. */
+  .add-lesson-fab.secondary {
+    bottom: 140px;
+    width: 44px;
+    height: 44px;
+    background: rgba(39,35,25,0.96);
+    color: var(--accent);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4), 0 0 0 1px rgba(212,168,71,0.35);
+  }
+  .add-lesson-fab.secondary:hover { background: rgba(212,168,71,0.18); }
 
   /* "You already know N% of the words here" — the closer to the comfort band,
      the more useful the text, so the band gets the accent colour. */
