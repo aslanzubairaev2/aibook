@@ -1166,8 +1166,6 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
         <PhotoLessonModal
           targetLanguage={profile.targetLanguage}
           nativeLanguage={profile.nativeLanguage}
-          level={composer.level}
-          length={composer.length}
           authHeaders={sbAuthHeaders}
           onClose={() => setPhotoOpen(false)}
           onCreated={() => { setPhotoOpen(false); void loadMyLessons(); }}

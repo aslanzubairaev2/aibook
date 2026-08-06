@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Camera, Check, ImageUp, Loader2, RotateCw, X, Repeat,
 } from "lucide-react";
-import type { CefrLevel } from "@/lib/types";
 import { SUPPORTED_LANGUAGES } from "@/lib/config";
 import { PhotoCropper, type CropperHandle } from "./PhotoCropper";
 
@@ -13,8 +12,6 @@ type Stage = "camera" | "crop" | "reading" | "language" | "building";
 type Props = {
   targetLanguage: string;
   nativeLanguage: string;
-  level: CefrLevel;
-  length: "short" | "medium" | "long";
   /** Called with the new lesson id once it is saved. */
   onCreated: (lessonId: string) => void;
   onClose: () => void;
@@ -32,13 +29,17 @@ function languageName(code: string): string {
 }
 
 /**
- * Photograph something, crop it, get a lesson.
+ * Photograph a real document and get it into the reader.
  *
- * Fullscreen throughout: a page of a textbook needs the whole viewport to frame
- * and to crop accurately, and this is a phone-first flow.
+ * The text is reproduced as it is — restored, or translated faithfully — not
+ * graded down to the learner's level. These are contracts, letters and labels
+ * from daily life, and their difficulty is the point.
+ *
+ * Fullscreen throughout: framing a page and cropping it accurately needs the
+ * whole viewport, and this is a phone-first flow.
  */
 export function PhotoLessonModal({
-  targetLanguage, nativeLanguage, level, length, onCreated, onClose, authHeaders,
+  targetLanguage, nativeLanguage, onCreated, onClose, authHeaders,
 }: Props) {
   const [stage, setStage] = useState<Stage>("camera");
   const [error, setError] = useState<string | null>(null);
@@ -171,8 +172,6 @@ export function PhotoLessonModal({
           sourceKind: source.kind,
           targetLanguage: chosenLanguage,
           nativeLanguage,
-          level,
-          length,
         }),
       });
       const data = await res.json() as { id?: string; error?: string };
@@ -198,8 +197,8 @@ export function PhotoLessonModal({
           {stage === "camera" && "Сфотографируйте текст"}
           {stage === "crop" && "Выделите нужный участок"}
           {stage === "reading" && "Читаю снимок..."}
-          {stage === "language" && "Выберите язык"}
-          {stage === "building" && "Составляю урок..."}
+          {stage === "language" && "Язык перевода"}
+          {stage === "building" && "Перевожу текст..."}
         </span>
         {stage === "crop" ? (
           <button type="button" className="photo-icon-btn" onClick={retake} aria-label="Переснять">
@@ -229,7 +228,7 @@ export function PhotoLessonModal({
             <h3>Текст на снимке — {languageName(extracted.language)}</h3>
             <p>
               {extracted.kind ? `Похоже на: ${extracted.kind}. ` : ""}
-              На каком языке составить урок по этому материалу?
+              На какой язык перевести? Перевод точный, без упрощения — текст останется таким же по сложности.
             </p>
             <div className="photo-excerpt">{extracted.text.slice(0, 300)}{extracted.text.length > 300 ? "…" : ""}</div>
             <div className="photo-lang-list">
@@ -252,7 +251,7 @@ export function PhotoLessonModal({
         {busy && (
           <div className="photo-overlay">
             <Loader2 className="spin" size={34} />
-            <span>{stage === "reading" ? "Разбираю текст на снимке..." : "Составляю урок..."}</span>
+            <span>{stage === "reading" ? "Разбираю текст на снимке..." : "Готовлю текст..."}</span>
           </div>
         )}
       </div>

@@ -52,76 +52,67 @@ export function parseExtractedImageText(raw: unknown): ExtractedImageText | null
   };
 }
 
-// ─── Step 2: build a lesson from the transcription ───────────────────────────
 
-export type LessonFromSourceRequest = {
+// ─── Step 2: turn the transcription into a readable document ─────────────────
+//
+// Deliberately NOT graded. These are texts the learner meets in real life — a
+// rental contract, a letter from an office, a package insert, a sign — and the
+// point is to work through the real thing. Simplifying it to A2 would destroy
+// exactly what they photographed it for. So: no level, no length target, no
+// rewriting. Faithful, and as hard as it happens to be.
+
+export type DocumentFromSourceRequest = {
   sourceText: string;
   /** Language of the photographed text. */
   sourceLanguage: string;
   targetLanguage: string;
   nativeLanguage: string;
-  level: CefrLevel;
-  length: "short" | "medium" | "long";
 };
 
-const LENGTH_HINTS: Record<LessonFromSourceRequest["length"], string> = {
-  short: "4-5 paragraphs of 2-3 sentences each",
-  medium: "6-8 paragraphs of 3-4 sentences each",
-  long: "10-12 paragraphs of 4-5 sentences each",
-};
-
-const LEVEL_HINTS: Record<CefrLevel, string> = {
-  A1: "present tense only, ~500 most common words, very short main clauses, no subordinate clauses",
-  A2: "present and perfect tense, common everyday vocabulary, simple subordinate clauses with weil/dass",
-  B1: "past and future tenses, connectors, moderate abstraction, some idiomatic phrasing",
-  B2: "passive voice, subjunctive II, abstract argument, varied sentence structure",
-  C1: "nuanced register, complex syntax, figurative and idiomatic language, specialised vocabulary",
-  C2: "near-native complexity, subtle connotation, sophisticated rhetoric",
-};
-
-export function buildLessonFromSourcePrompt(req: LessonFromSourceRequest): string {
+export function buildDocumentFromSourcePrompt(req: DocumentFromSourceRequest): string {
   const sameLanguage = req.sourceLanguage === req.targetLanguage;
 
-  // Photographed text is raw: OCR noise, fragments, a level that may be nothing
-  // like the learner's. Two different jobs depending on where it started.
   const job = sameLanguage
     ? `The text below was photographed and is already in ${req.targetLanguage}.
 
-Turn it into a readable lesson:
-- Keep the subject matter, the facts and the specific vocabulary of the original — that is what the learner photographed and wants to study.
-- Repair transcription damage: broken words, missing punctuation, fragments run together, lines split mid-sentence.
-- Rewrite it into connected prose at CEFR ${req.level} (${LEVEL_HINTS[req.level] ?? ""}). Simplify structures that sit above that level, but do NOT drop the topic vocabulary — reintroduce a hard but central word in a context that explains it.
-- If the source is only fragments (a label, a sign, a word list), write a short coherent text at ${req.level} that uses them naturally in a real situation.`
-    : `The text below was photographed and is in ${req.sourceLanguage}, which is not the language being learned.
+Restore it, and change nothing else:
+- Repair damage from the photo: words broken across line ends, characters misread, missing punctuation, lines run together, columns interleaved.
+- Keep every sentence, every clause, every number, name, date, amount and reference exactly as it stands.
+- Keep the register. A contract stays a contract, an official letter stays official, a sign stays terse. Do not make it friendlier, shorter or easier.
+- Do NOT simplify vocabulary or grammar. Do NOT summarise. Do NOT explain inside the text.
+- If a passage is illegible, omit it rather than inventing it.`
+    : `The text below was photographed and is in ${req.sourceLanguage}. The learner wants it in ${req.targetLanguage}.
 
-Write a NEW text in ${req.targetLanguage} on the same subject:
-- Do not translate sentence by sentence. Take the topic, the facts and the specifics, and write a natural text a ${req.targetLanguage} speaker would write about them.
-- Keep concrete details from the source (names, numbers, places, terms) so the learner recognises the material.
-- Write at CEFR ${req.level} (${LEVEL_HINTS[req.level] ?? ""}).`;
+Translate it accurately:
+- Convey exactly what the source says — every statement, condition, number, name, date and amount. Nothing added, nothing left out, nothing softened.
+- Translate meaning, not words. The result must read as natural ${req.targetLanguage}, the way it would have been written by someone drafting this document in ${req.targetLanguage}. Avoid word-for-word calques and source-language word order.
+- Preserve the register and the document type: legal text stays legal, official stays official, a label stays a label. Use the established ${req.targetLanguage} terminology for the domain.
+- Do NOT simplify for a learner. Do NOT shorten. The difficulty of the result should match the difficulty of the source.
+- Keep proper names, addresses and identifiers in their original form unless the target language has an established equivalent.`;
 
-  return `You write graded reading texts for language learners.
+  return `You prepare real-world documents for a language learner to study.
 
 ${job}
 
-Length: ${LENGTH_HINTS[req.length]}.
+Keep the original structure: one paragraph per paragraph, headings on their own line, list items on their own lines. Do not merge or reorder them.
 
 Photographed source:
 """
-${req.sourceText.slice(0, 6000)}
+${req.sourceText.slice(0, 8000)}
 """
 
 Return ONLY valid JSON with this exact shape:
 {
-  "title": "short title in ${req.targetLanguage}",
-  "description": "one sentence in ${req.nativeLanguage} describing what the text is about",
+  "title": "short title in ${req.targetLanguage} naming what this document is",
+  "description": "one sentence in ${req.nativeLanguage} saying what this is and what it is about",
   "paragraphs": ["paragraph 1", "paragraph 2", "..."],
   "vocabulary": [{ "term": "word or phrase in ${req.targetLanguage}", "translation": "translation in ${req.nativeLanguage}" }],
-  "questions": ["comprehension question in ${req.targetLanguage}", "..."]
+  "questions": []
 }
 
 Rules:
-- "paragraphs" contains ONLY the text itself in ${req.targetLanguage} — no headings, no numbering, no translations, no markdown.
-- "vocabulary": 8-12 entries, the words most likely to be new at ${req.level}, prioritising the topic vocabulary from the source.
-- "questions": 3 short comprehension questions in ${req.targetLanguage}.
+- "paragraphs" is the document itself in ${req.targetLanguage} and nothing else — no headings you invented, no numbering you added, no translations, no notes, no markdown.
+- "vocabulary": 10-15 entries — the terms a learner is most likely to stumble on here, especially domain and legal vocabulary. Translate each as it is used in THIS text, not its most common meaning.
+- "questions" must be an empty array. This is a real document, not an exercise.
 - No markdown anywhere. No text outside the JSON object.`;
 }

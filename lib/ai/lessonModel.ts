@@ -62,15 +62,31 @@ export type LessonModelResult =
   | { ok: true; lesson: GeneratedLesson }
   | { ok: false; error: string; status: number };
 
-export async function runLessonPrompt(apiKey: string, prompt: string): Promise<LessonModelResult> {
+export type RunLessonOptions = {
+  /**
+   * The output must reproduce a source rather than invent one: a photographed
+   * document restored or translated. Variation between runs is a defect there,
+   * and the result can be as long as the original, so both knobs change.
+   */
+  faithful?: boolean;
+};
+
+// A restored contract or letter can run well past a generated reading text.
+const FAITHFUL_MAX_OUTPUT_TOKENS = 8192;
+
+export async function runLessonPrompt(
+  apiKey: string,
+  prompt: string,
+  options: RunLessonOptions = {},
+): Promise<LessonModelResult> {
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
       model: AI_CONFIG.model,
       generationConfig: {
         responseMimeType: "application/json",
-        maxOutputTokens: LESSON_MAX_OUTPUT_TOKENS,
-        temperature: LESSON_TEMPERATURE,
+        maxOutputTokens: options.faithful ? FAITHFUL_MAX_OUTPUT_TOKENS : LESSON_MAX_OUTPUT_TOKENS,
+        temperature: options.faithful ? 0 : LESSON_TEMPERATURE,
       },
     });
 
