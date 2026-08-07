@@ -44,6 +44,8 @@ export async function POST(req: Request) {
     targetLanguage?: string;
     nativeLanguage?: string;
     sourceKind?: string;
+    note?: string;
+    isStudyMaterial?: boolean;
   };
 
   const sourceText = (body.sourceText ?? "").trim().slice(0, 8000);
@@ -55,11 +57,15 @@ export async function POST(req: Request) {
   const nativeLanguage = (body.nativeLanguage ?? "ru").trim();
   const sourceLanguage = (body.sourceLanguage ?? targetLanguage).trim();
 
+  const note = (body.note ?? "").trim().slice(0, 800);
+
   const prompt = buildDocumentFromSourcePrompt({
     sourceText,
     sourceLanguage,
     targetLanguage,
     nativeLanguage,
+    note,
+    isStudyMaterial: body.isStudyMaterial === true,
   });
 
   const result = await runLessonPrompt(apiKey, prompt, { faithful: true });
@@ -82,6 +88,8 @@ export async function POST(req: Request) {
       source_language: sourceLanguage,
       source_kind: (body.sourceKind ?? "").trim().slice(0, 120),
       translated: sourceLanguage !== targetLanguage,
+      note,
+      study_material: body.isStudyMaterial === true,
       // Measured from the text, not chosen — the catalogue marks it with "≈".
       level_estimated: true,
       lix,

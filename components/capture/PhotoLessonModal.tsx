@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { SUPPORTED_LANGUAGES } from "@/lib/config";
 import { PhotoCropper, type CropperHandle } from "./PhotoCropper";
+import { DictateButton, appendSpoken } from "@/components/discover/DictateButton";
 
 type Stage = "camera" | "crop" | "reading" | "language" | "building";
 
@@ -19,7 +20,7 @@ type Props = {
   authHeaders: () => Promise<Record<string, string>>;
 };
 
-type Extracted = { language: string; text: string; kind: string };
+type Extracted = { language: string; languages?: string[]; isStudyMaterial?: boolean; text: string; kind: string };
 
 const MAX_UPLOAD_SIZE = 1600;
 const JPEG_QUALITY = 0.85;
@@ -45,6 +46,9 @@ export function PhotoLessonModal({
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
   const [extracted, setExtracted] = useState<Extracted | null>(null);
+  // Free-text instruction: "just list these words", "write a text using them",
+  // "make it about the kitchen". Sent with the photo and outranks the defaults.
+  const [note, setNote] = useState("");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -146,8 +150,12 @@ export function PhotoLessonModal({
       if (!res.ok) throw new Error(data.error ?? `Ошибка распознавания (${res.status})`);
 
       setExtracted(data);
-      // Already in the language being learned: nothing to ask, go straight on.
-      if (data.language === targetLanguage) {
+      // Teaching material is always worked in the language being learned — the
+      // page is mostly explanations in the learner's own language, but the
+      // material is the foreign words, so there is nothing to ask.
+      const alreadyTarget = data.language === targetLanguage;
+      const teaches = data.isStudyMaterial && (data.languages ?? []).includes(targetLanguage);
+      if (alreadyTarget || teaches) {
         await buildLesson(data, targetLanguage);
       } else {
         setStage("language");
@@ -172,6 +180,8 @@ export function PhotoLessonModal({
           sourceKind: source.kind,
           targetLanguage: chosenLanguage,
           nativeLanguage,
+          note: note.trim(),
+          isStudyMaterial: source.isStudyMaterial === true,
         }),
       });
       const data = await res.json() as { id?: string; error?: string };
@@ -221,6 +231,25 @@ export function PhotoLessonModal({
 
         {(stage === "crop" || busy) && photo && (
           <PhotoCropper ref={cropperRef} src={photo} disabled={busy} />
+        )}
+
+        {stage === "crop" && (
+          <div className="photo-note">
+            <div className="lesson-input-row">
+              <input
+                type="text"
+                placeholder="Что сделать с этим? Например: просто список слов"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                maxLength={800}
+              />
+              <DictateButton
+                lang={nativeLanguage}
+                title="Наговорить указание"
+                onText={(t) => setNote((prev) => appendSpoken(prev, t))}
+              />
+            </div>
+          </div>
         )}
 
         {stage === "language" && extracted && (
@@ -426,6 +455,25 @@ const STYLES = `
     white-space: nowrap;
   }
   .photo-confirm { border-color: transparent; background: var(--accent); color: var(--text-dark); }
+
+  .photo-note {
+    position: absolute;
+    inset: auto 10px 10px;
+    padding: 8px;
+    border-radius: 12px;
+    background: rgba(11,10,9,0.82);
+    backdrop-filter: blur(8px);
+  }
+  .photo-note input {
+    width: 100%;
+    height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: rgba(0,0,0,0.35);
+    color: var(--text-primary);
+    font-size: 13.5px;
+  }
 
   .photo-sheet {
     position: absolute;
