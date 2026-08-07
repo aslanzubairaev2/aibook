@@ -8,6 +8,12 @@ import { buildLessonPrompt, type LessonRequest } from "@/lib/ai/buildLessonPromp
 import type { CefrLevel } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+// Reading an image, or writing a document from it, routinely takes longer than
+// the 10-second default: without this the platform kills the function mid-call
+// and the browser reports only "Failed to fetch". 60s is the ceiling on the
+// Hobby plan.
+export const maxDuration = 60;
+
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const LENGTHS = ["short", "medium", "long"] as const;

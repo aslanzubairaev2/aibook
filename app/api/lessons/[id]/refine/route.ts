@@ -13,6 +13,12 @@ import {
 import type { CefrLevel } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+// Reading an image, or writing a document from it, routinely takes longer than
+// the 10-second default: without this the platform kills the function mid-call
+// and the browser reports only "Failed to fetch". 60s is the ceiling on the
+// Hobby plan.
+export const maxDuration = 60;
+
 
 // POST /api/lessons/<id>/refine
 // Body: { instructions: string }

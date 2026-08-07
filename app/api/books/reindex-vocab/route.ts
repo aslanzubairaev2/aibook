@@ -4,8 +4,9 @@ import { getUserFromRequest, isOwnerUser } from "@/lib/auth/serverUser";
 import { vocabMetadata } from "@/lib/text/vocab";
 
 export const dynamic = "force-dynamic";
-// Reading and rewriting every shared text takes longer than the default budget.
-export const maxDuration = 300;
+// Reading and rewriting every shared text takes longer than the default
+// budget. 60s is the ceiling on the Hobby plan; the job resumes on re-run.
+export const maxDuration = 60;
 
 // Rows per round trip. Chapter text is a couple of KB each, so this keeps a
 // single response comfortably small while still making steady progress.

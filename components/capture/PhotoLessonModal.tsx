@@ -25,6 +25,19 @@ type Extracted = { language: string; languages?: string[]; isStudyMaterial?: boo
 const MAX_UPLOAD_SIZE = 1600;
 const JPEG_QUALITY = 0.85;
 
+/**
+ * `fetch` rejects with a bare "Failed to fetch" for anything that never got a
+ * reply — a dropped connection, or the platform killing a function that ran
+ * past its limit. Neither tells the learner what to do about it.
+ */
+function describeNetworkFailure(err: unknown, fallback: string): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/failed to fetch|networkerror|load failed/i.test(message)) {
+    return "Сервер не ответил. Возможно, снимок слишком крупный или пропала связь — обрежьте кадр плотнее и попробуйте ещё раз.";
+  }
+  return message || fallback;
+}
+
 function languageName(code: string): string {
   return SUPPORTED_LANGUAGES.find((l) => l.code === code)?.nameNative ?? code.toUpperCase();
 }
@@ -161,7 +174,7 @@ export function PhotoLessonModal({
         setStage("language");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Неизвестная ошибка");
+      setError(describeNetworkFailure(err, "Не удалось прочитать снимок."));
       setStage("crop");
     }
   };
@@ -188,7 +201,7 @@ export function PhotoLessonModal({
       if (!res.ok || !data.id) throw new Error(data.error ?? `Ошибка создания урока (${res.status})`);
       onCreated(data.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Неизвестная ошибка");
+      setError(describeNetworkFailure(err, "Не удалось составить текст."));
       setStage(source.language === targetLanguage ? "crop" : "language");
     }
   };

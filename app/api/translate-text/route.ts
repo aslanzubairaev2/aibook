@@ -7,8 +7,10 @@ import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 
 export const dynamic = "force-dynamic";
-// A book's worth of paragraphs takes several model round trips.
-export const maxDuration = 300;
+// A book's worth of paragraphs takes several model round trips. 60s is the
+// ceiling on the Hobby plan; longer jobs have to be re-run, which is free
+// because finished work is cached.
+export const maxDuration = 60;
 
 // Paragraphs are translated in groups rather than one call per paragraph: the
 // model needs neighbouring context to resolve pronouns and terminology, and

@@ -5,6 +5,12 @@ import { runImagePrompt } from "@/lib/ai/lessonModel";
 import { buildImageExtractPrompt, parseExtractedImageText } from "@/lib/ai/buildImageLessonPrompt";
 
 export const dynamic = "force-dynamic";
+// Reading an image, or writing a document from it, routinely takes longer than
+// the 10-second default: without this the platform kills the function mid-call
+// and the browser reports only "Failed to fetch". 60s is the ceiling on the
+// Hobby plan.
+export const maxDuration = 60;
+
 
 // Photos are downscaled and cropped in the browser before upload; this is the
 // backstop against a client that does not, and against the platform's own body
