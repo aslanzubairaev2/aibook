@@ -66,7 +66,7 @@ export function PhotoLessonModal({
 
     void (async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setError("Камера недоступна в этом браузере — выберите фото из галереи.");
+        setError("Камера недоступна — нажмите значок слева, чтобы выбрать фото из галереи.");
         return;
       }
       try {
@@ -86,7 +86,7 @@ export function PhotoLessonModal({
         setCameraReady(true);
         setError(null);
       } catch {
-        if (!cancelled) setError("Нет доступа к камере — выберите фото из галереи.");
+        if (!cancelled) setError("Нет доступа к камере — нажмите значок слева, чтобы выбрать фото из галереи.");
       }
     })();
 
@@ -265,7 +265,8 @@ export function PhotoLessonModal({
               type="button"
               className="photo-gallery-btn"
               onClick={() => fileInputRef.current?.click()}
-              aria-label="Выбрать фото"
+              aria-label="Выбрать фото из галереи"
+              title="Выбрать фото из галереи"
             >
               <ImageUp size={22} />
             </button>
@@ -283,7 +284,10 @@ export function PhotoLessonModal({
               ref={fileInputRef}
               type="file"
               accept="image/*"
-              capture="environment"
+              // Deliberately no `capture` attribute: it forces Android straight
+              // into the camera app, which is what this button is an
+              // alternative to. Without it the picker offers the gallery,
+              // files, and the camera as one of the choices.
               hidden
               onChange={(e) => pickFile(e.target.files?.[0])}
             />
