@@ -9,7 +9,7 @@ import {
   getLocalGeminiKey, 
   saveLocalGeminiKey 
 } from "@/lib/db/local";
-import { sbUpsertSettings } from "@/lib/db/supabase";
+import { sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { getTtsProviderLabel, isDeepgramTtsSupported } from "@/lib/ttsProviders";
 import type { TtsProvider, UserProfile } from "@/lib/types";
@@ -26,6 +26,37 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
   const [aiProvider, setAiProvider] = useState<"off" | "custom">(() => getLocalAiProvider());
   const [geminiKey, setGeminiKey] = useState<string>(() => getLocalGeminiKey());
   const [showKey, setShowKey] = useState(false);
+
+  const [mcpUrl, setMcpUrl] = useState<string | null>(null);
+  const [mcpError, setMcpError] = useState<string | null>(null);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpCopied, setMcpCopied] = useState(false);
+
+  async function loadMcpUrl() {
+    setMcpLoading(true);
+    setMcpError(null);
+    try {
+      const res = await fetch("/api/mcp-token", { headers: await sbAuthHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Не удалось получить ссылку.");
+      setMcpUrl(data.url as string);
+    } catch (err) {
+      setMcpError(err instanceof Error ? err.message : "Не удалось получить ссылку.");
+    } finally {
+      setMcpLoading(false);
+    }
+  }
+
+  async function copyMcpUrl() {
+    if (!mcpUrl) return;
+    try {
+      await navigator.clipboard.writeText(mcpUrl);
+      setMcpCopied(true);
+      setTimeout(() => setMcpCopied(false), 2000);
+    } catch {
+      // Clipboard can be unavailable in some webviews; the URL stays visible to select by hand.
+    }
+  }
 
   function handleAiProviderChange(val: "off" | "custom") {
     setAiProvider(val);
@@ -142,6 +173,60 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
                 </p>
               </div>
             )}
+          </div>
+
+          <p className="setting-section-title">Подключение ИИ‑агентов (MCP)</p>
+          <div className="settings-list" style={{ marginBottom: 20 }}>
+            <div className="setting-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 10, padding: "14px 16px" }}>
+              <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: "1.5", margin: 0 }}>
+                Личная ссылка, по которой ChatGPT, Claude или другой ИИ подключается к приложению:
+                сможет добавлять вам карточки, сохранять тексты в «Мои уроки» и видеть ваш прогресс.
+              </p>
+
+              {!mcpUrl && (
+                <button
+                  type="button"
+                  className="primary-btn"
+                  disabled={mcpLoading}
+                  onClick={() => void loadMcpUrl()}
+                >
+                  {mcpLoading ? "Получаю…" : "Показать мою ссылку"}
+                </button>
+              )}
+
+              {mcpError && (
+                <p style={{ fontSize: 12, color: "var(--red)", margin: 0 }}>{mcpError}</p>
+              )}
+
+              {mcpUrl && (
+                <>
+                  <div
+                    style={{
+                      background: "rgba(255,255,255,0.05)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      fontFamily: "monospace",
+                      fontSize: 11,
+                      color: "rgba(255,255,255,0.85)",
+                      wordBreak: "break-all",
+                      userSelect: "all",
+                    }}
+                  >
+                    {mcpUrl}
+                  </div>
+                  <button type="button" className="primary-btn" onClick={() => void copyMcpUrl()}>
+                    {mcpCopied ? "✓ Скопировано" : "Скопировать ссылку"}
+                  </button>
+                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: "1.5", margin: 0 }}>
+                    Как подключить: в ChatGPT — Settings → Apps &amp; Connectors → включить Developer mode → Create,
+                    вставить ссылку, аутентификация «None». В Claude — Settings → Connectors → Add custom connector.
+                    <br />
+                    Эта ссылка — ключ к вашим данным в приложении: не публикуйте её и не отправляйте в общие чаты.
+                  </p>
+                </>
+              )}
+            </div>
           </div>
         </>
       )}
