@@ -17,11 +17,24 @@ export async function POST(req: Request) {
     nativeLanguage: string;
     targetLanguage: string;
     scenarioContext?: string;
+    kind?: "analyze" | "practice";
   };
 
   const contextLine = body.scenarioContext ? `\nConversation context: ${body.scenarioContext}` : "";
 
-  const systemInstruction = `You are helping a learner of "${body.targetLanguage}" (native language "${body.nativeLanguage}") keep a live voice conversation going without freezing up.${contextLine}
+  // In an analysis conversation the learner is asking about the language, in
+  // their own language — offering them replies to recite in the language they
+  // are learning would be answering a question they did not ask.
+  const systemInstruction = body.kind === "analyze"
+    ? `You are helping a learner of "${body.targetLanguage}" (native language "${body.nativeLanguage}") keep a voice conversation with their teacher going. This conversation is held in ${body.nativeLanguage}: the learner asks about grammar, words and meaning, and the teacher explains.${contextLine}
+
+The teacher just said: "${body.lastModelLine}"
+
+Suggest exactly 4 short follow-up questions the learner could ask next, written in ${body.nativeLanguage}, varied in direction (not 4 versions of the same question) — e.g. asking why a form was chosen, how it would change in another tense, what a quoted word means, or for another example.
+Keep each one short enough to say in one breath.
+
+Return ONLY valid JSON: { "suggestions": [ { "text": "question in ${body.nativeLanguage}", "translation": "" } ] }`
+    : `You are helping a learner of "${body.targetLanguage}" (native language "${body.nativeLanguage}") keep a live voice conversation going without freezing up.${contextLine}
 
 The conversation partner just said (in ${body.targetLanguage}): "${body.lastModelLine}"
 

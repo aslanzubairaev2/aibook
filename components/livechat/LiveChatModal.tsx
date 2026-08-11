@@ -49,9 +49,16 @@ const STATUS_LABEL: Record<LiveChatStatus, string> = {
 const NO_KEY_MESSAGE = "Добавьте свой Gemini API ключ в настройках, чтобы начать голосовой чат.";
 const MIC_DENIED_MESSAGE = "Нет доступа к микрофону. Разрешите доступ в настройках браузера и попробуйте снова.";
 
+// A mobile connection drops for a second all the time, and Gemini Live ends
+// long sessions on its own. Neither should cost the learner their conversation,
+// so the call reconnects itself and only gives up — with a manual button —
+// after a few quick tries.
+const MAX_AUTO_RECONNECTS = 4;
+const RECONNECT_DELAYS_MS = [700, 1500, 3000, 6000];
+
 const EMPTY_PLACEHOLDER: Record<LiveChatMode, string> = {
   call: "Скажите что-нибудь — AI вас услышит и ответит голосом.",
-  discuss: "Спросите что-нибудь о языке — например, про грамматику или слово.",
+  discuss: "Спросите на родном языке что угодно о языке — про грамматику, слово или оборот.",
 };
 
 // Beginners benefit most from a safety net of ready-made replies; show the
@@ -92,6 +99,8 @@ type TranscriptLineProps = {
   isRevealed: boolean;
   isTranslating: boolean;
   translation?: string;
+  /** Off when the AI is already speaking the learner's language — there is nothing to reveal. */
+  showTranslation: boolean;
   onWordTap: (word: string, contextSentence: string) => void;
   onReplay: (index: number, audioChunks: string[]) => void;
   onReveal: (index: number, text: string) => void;
@@ -109,6 +118,7 @@ const TranscriptLineView = memo(function TranscriptLineView({
   isRevealed,
   isTranslating,
   translation,
+  showTranslation,
   onWordTap,
   onReplay,
   onReveal,
@@ -135,7 +145,7 @@ const TranscriptLineView = memo(function TranscriptLineView({
           line.text
         )}
       </div>
-      {line.role === "model" && (
+      {line.role === "model" && showTranslation && (
         <button
           type="button"
           className="livechat-translation"
@@ -214,15 +224,37 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   const [wmLoading, setWmLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
+  const [reconnecting, setReconnecting] = useState(false);
+
   const sessionRef = useRef<LiveChatSession | null>(null);
   const liveUserRef = useRef("");
   const liveModelRef = useRef("");
+  // The transcript as the connect effect can see it: it reconnects from a
+  // callback, long after its own render's `history` went stale.
+  const historyRef = useRef<TranscriptLine[]>([]);
+  const mutedRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  // The server's latest resumption handle: restores the model's own state on
+  // reconnect, which the replayed transcript can only approximate.
+  const resumeHandleRef = useRef<string | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  // Identifies "the same conversation": the transcript survives a reconnect,
+  // but must not survive switching scenario, mode or language.
+  const sessionKeyRef = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const replayCtxRef = useRef<AudioContext | null>(null);
   const replaySourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
   const contextText = textContext?.text ?? null;
   const needsScenario = !!contextText;
+  // Analysis runs in the learner's own language; practice runs in the language
+  // being learned. Everything downstream (suggestions, placeholder) follows.
+  const scenarioKind = needsScenario
+    ? selectedScenario?.kind ?? "analyze"
+    : mode === "discuss" ? "analyze" : "practice";
+
+  useEffect(() => { historyRef.current = history; }, [history]);
+  useEffect(() => { mutedRef.current = muted; }, [muted]);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -237,6 +269,10 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     if (isOpen) return;
     sessionRef.current?.close();
     sessionRef.current = null;
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     stopReplay();
     setStatus("idle");
     setError(null);
@@ -245,6 +281,13 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     setLiveModel("");
     liveUserRef.current = "";
     liveModelRef.current = "";
+    historyRef.current = [];
+    sessionKeyRef.current = null;
+    reconnectAttemptsRef.current = 0;
+    resumeHandleRef.current = null;
+    setReconnecting(false);
+    // The cost meter belongs to one call; a reopened modal starts from zero.
+    setCallSeconds(0);
     setScenarios(null);
     setScenarioError(null);
     setSelectedScenario(null);
@@ -289,13 +332,32 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     if (needsScenario && !selectedScenario) return;
     let cancelled = false;
 
-    setHistory([]);
+    // A reconnect continues the same conversation; a new scenario/mode starts
+    // a new one. Only the latter may wipe the transcript.
+    const sessionKey = [nativeLanguage, targetLanguage, mode, contextText ? "text" : "free", selectedScenario?.id ?? ""].join("|");
+    const isNewConversation = sessionKeyRef.current !== sessionKey;
+    sessionKeyRef.current = sessionKey;
+
+    if (isNewConversation) {
+      setHistory([]);
+      historyRef.current = [];
+      setRevealed(new Set());
+      setTranslations({});
+      reconnectAttemptsRef.current = 0;
+      resumeHandleRef.current = null;
+    }
+    const resumeHandle = isNewConversation ? undefined : resumeHandleRef.current ?? undefined;
+    // The transcript is only replayed when there is no handle to resume from:
+    // with a handle the model already remembers, and repeating it back would
+    // duplicate the conversation in its context.
+    const resumeFrom = isNewConversation || resumeHandle
+      ? []
+      : historyRef.current.map((line) => ({ role: line.role, text: line.text }));
+
     setError(null);
     setLiveUser("");
     setLiveModel("");
     setSuggestions([]);
-    setRevealed(new Set());
-    setTranslations({});
     liveUserRef.current = "";
     liveModelRef.current = "";
     setStatus("connecting");
@@ -314,7 +376,29 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
       setSuggestionsVisible(!levelEstimate || SUGGESTIONS_DEFAULT_LEVELS.includes(levelEstimate.level));
 
       const session = new LiveChatSession(apiKey, {
-        onStatusChange: setStatus,
+        onStatusChange: (next) => {
+          setStatus(next);
+          if (next === "listening" || next === "speaking") setReconnecting(false);
+        },
+        onSessionHandle: (handle) => { resumeHandleRef.current = handle; },
+        onDropped: (message, wasStable) => {
+          if (cancelled) return;
+          // A call that ran for a while and then dropped is a new problem, not
+          // a continuation of the old one — give it a full retry budget again.
+          // Without this check a permanently broken setup would loop forever.
+          if (wasStable) reconnectAttemptsRef.current = 0;
+          if (reconnectAttemptsRef.current >= MAX_AUTO_RECONNECTS) {
+            setReconnecting(false);
+            setError(`${message}. Разговор сохранён — нажмите «Продолжить разговор».`);
+            setStatus("error");
+            return;
+          }
+          const delay = RECONNECT_DELAYS_MS[Math.min(reconnectAttemptsRef.current, RECONNECT_DELAYS_MS.length - 1)];
+          reconnectAttemptsRef.current += 1;
+          setReconnecting(true);
+          setStatus("connecting");
+          reconnectTimerRef.current = window.setTimeout(() => setRetryToken((t) => t + 1), delay);
+        },
         onUserTranscript: (text) => {
           liveUserRef.current += text;
           setLiveUser(liveUserRef.current);
@@ -348,15 +432,21 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
         onError: (message) => setError(message),
       });
       sessionRef.current = session;
+      // The mic switch belongs to the learner, not to the connection.
+      session.setMuted(mutedRef.current);
 
       session
         .connect(nativeLanguage, targetLanguage, {
           mode,
           levelSummary: levelEstimate?.summary,
           textContext: contextText && selectedScenario ? { text: contextText, scenario: selectedScenario } : undefined,
+          previousTranscript: resumeFrom,
+          resumeHandle,
         })
         .catch((err) => {
+          if (cancelled) return;
           const message = err?.name === "NotAllowedError" ? MIC_DENIED_MESSAGE : (err?.message || "Не удалось начать звонок");
+          setReconnecting(false);
           setError(message);
           setStatus("error");
         });
@@ -364,6 +454,10 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
 
     return () => {
       cancelled = true;
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       sessionRef.current?.close();
       sessionRef.current = null;
     };
@@ -372,12 +466,12 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   const fetchSuggestionsFor = useCallback(
     (lastLine: string) => {
       setSuggestionsLoading(true);
-      fetchLiveSuggestions(lastLine, nativeLanguage, targetLanguage, selectedScenario?.prompt)
+      fetchLiveSuggestions(lastLine, nativeLanguage, targetLanguage, selectedScenario?.prompt, scenarioKind)
         .then((list) => setSuggestions(list))
         .catch(() => setSuggestions([]))
         .finally(() => setSuggestionsLoading(false));
     },
-    [nativeLanguage, targetLanguage, selectedScenario]
+    [nativeLanguage, targetLanguage, selectedScenario, scenarioKind]
   );
 
   // Only auto-scroll on discrete events (a finalized line, a suggestion
@@ -394,10 +488,11 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     onClose();
   }
 
-  // Connection drops (e.g. WebSocket code 1006 on a mobile network blip)
-  // land in status "error" with no automatic retry — bumping this token
-  // re-runs the connect effect from scratch without closing the modal.
+  // Manual retry after the automatic ones ran out. The transcript is kept and
+  // replayed into the new session, so the conversation picks up where it was.
   function handleReconnect() {
+    reconnectAttemptsRef.current = 0;
+    setReconnecting(true);
     setRetryToken((t) => t + 1);
   }
 
@@ -410,6 +505,12 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   function handleSwitchScenario() {
     sessionRef.current?.close();
     sessionRef.current = null;
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    setReconnecting(false);
+    setError(null);
     setSelectedScenario(null);
     setStatus("idle");
   }
@@ -603,8 +704,13 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   const pendingModel = cleanText(liveModel);
   const showingScenarioPicker = needsScenario && !selectedScenario;
   const placeholder = needsScenario && selectedScenario
-    ? `Сценарий: ${selectedScenario.label}. Начните говорить!`
+    ? selectedScenario.kind === "analyze"
+      ? "Спрашивайте по-русски всё, что непонятно в тексте: грамматику, слова, порядок слов."
+      : `Сценарий: ${selectedScenario.label}. Начните говорить!`
     : EMPTY_PLACEHOLDER[mode];
+  const statusLabel = reconnecting && status === "connecting"
+    ? "Связь прервалась, восстанавливаю…"
+    : STATUS_LABEL[status];
 
   return (
     <div className="modal-backdrop livechat-backdrop">
@@ -650,7 +756,11 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                     onClick={() => setSelectedScenario(scenario)}
                   >
                     <strong>{scenario.label}</strong>
-                    <span>{scenario.aiRole} ↔ {scenario.userRole}</span>
+                    <span>
+                      {scenario.kind === "analyze"
+                        ? "Разговор на родном языке — объяснить грамматику и слова"
+                        : `${scenario.aiRole} ↔ ${scenario.userRole} · разговор на изучаемом языке`}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -686,7 +796,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                 <div className={`livechat-orb ${status}`}>
                   {status === "connecting" || status === "idle" ? <Loader2 size={16} className="spin" /> : <Mic size={16} />}
                 </div>
-                <strong className="livechat-status">{STATUS_LABEL[status]}</strong>
+                <strong className="livechat-status">{statusLabel}</strong>
               </div>
 
               {error && (
@@ -698,7 +808,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                     </button>
                   ) : (
                     <button type="button" className="primary-btn" onClick={handleReconnect}>
-                      Переподключиться
+                      {history.length > 0 ? "Продолжить разговор" : "Переподключиться"}
                     </button>
                   )}
                 </div>
@@ -717,6 +827,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                     isRevealed={revealed.has(index)}
                     isTranslating={translating.has(index)}
                     translation={translations[index]}
+                    showTranslation={scenarioKind === "practice"}
                     onWordTap={handleWordTap}
                     onReplay={playCachedAudio}
                     onReveal={revealTranslation}
@@ -758,7 +869,9 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                               onClick={() => handleSuggestionTap(suggestion)}
                             >
                               <span className="livechat-suggestion-text">{suggestion.text}</span>
-                              <span className="livechat-suggestion-translation">{suggestion.translation}</span>
+                              {suggestion.translation && (
+                                <span className="livechat-suggestion-translation">{suggestion.translation}</span>
+                              )}
                             </button>
                           ))
                         )}

@@ -7,12 +7,25 @@
 import { supabase } from "@/lib/db/supabase";
 import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
 
+/**
+ * Two different activities share the live-call screen, and they are not the
+ * same thing in a different costume:
+ *
+ * - "analyze" — the learner wants to UNDERSTAND the text (why "machten" and
+ *   not "gemacht"). That conversation has to run in their native language,
+ *   otherwise the explanation is itself an obstacle.
+ * - "practice" — the learner wants to USE the language. That one runs in the
+ *   target language, because struggling is the point.
+ */
+export type LiveScenarioKind = "analyze" | "practice";
+
 export type LiveScenario = {
   id: string;
   label: string;
   aiRole: string;
   userRole: string;
   prompt: string;
+  kind: LiveScenarioKind;
 };
 
 async function getAiHeaders() {
@@ -67,13 +80,15 @@ export async function fetchLiveSuggestions(
   lastModelLine: string,
   nativeLanguage: string,
   targetLanguage: string,
-  scenarioContext?: string
+  scenarioContext?: string,
+  kind: LiveScenarioKind = "practice",
 ): Promise<LiveSuggestion[]> {
   const data = await postJson<{ suggestions: LiveSuggestion[] }>("/api/ai/live-suggestions", {
     lastModelLine,
     nativeLanguage,
     targetLanguage,
     scenarioContext,
+    kind,
   });
   return data.suggestions;
 }
