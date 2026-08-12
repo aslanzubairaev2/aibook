@@ -154,7 +154,9 @@ export function parseGeneratedLesson(raw: unknown): GeneratedLesson | null {
   const paragraphs = Array.isArray(obj.paragraphs)
     ? obj.paragraphs.filter((p): p is string => typeof p === "string" && p.trim().length > 0).map((p) => p.trim())
     : [];
-  if (paragraphs.length < 2) return null;
+  // One paragraph is a legitimate result — a sign, a label, a short notice.
+  // Demanding two turned those photos into "не удалось разобрать ответ".
+  if (paragraphs.length === 0) return null;
 
   const vocabulary = Array.isArray(obj.vocabulary)
     ? obj.vocabulary

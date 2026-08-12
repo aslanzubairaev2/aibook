@@ -8,13 +8,14 @@ import { SUPPORTED_LANGUAGES } from "@/lib/config";
 import { PhotoCropper, type CropperHandle } from "./PhotoCropper";
 import { DictateButton, appendSpoken } from "@/components/discover/DictateButton";
 
-type Stage = "camera" | "crop" | "reading" | "language" | "building";
+type Stage = "camera" | "crop" | "reading" | "language" | "building" | "failed";
 
 type Props = {
   targetLanguage: string;
   nativeLanguage: string;
   /** Called with the new lesson id once it is saved. */
-  onCreated: (lessonId: string) => void;
+  /** `warning` is set when the lesson was saved in a degraded form (raw transcription, or text that may be cut short). */
+  onCreated: (lessonId: string, warning?: string) => void;
   onClose: () => void;
   /** Auth headers for the API calls; the parent owns the session. */
   authHeaders: () => Promise<Record<string, string>>;
@@ -56,6 +57,8 @@ export function PhotoLessonModal({
   targetLanguage, nativeLanguage, onCreated, onClose, authHeaders,
 }: Props) {
   const [stage, setStage] = useState<Stage>("camera");
+  // Kept so a failed rewrite can be retried without paying to read the photo again.
+  const [retry, setRetry] = useState<{ source: Extracted; language: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<string | null>(null);
   const [extracted, setExtracted] = useState<Extracted | null>(null);
@@ -139,6 +142,7 @@ export function PhotoLessonModal({
   const retake = () => {
     setPhoto(null);
     setExtracted(null);
+    setRetry(null);
     setError(null);
     setStage("camera");
   };
@@ -197,12 +201,16 @@ export function PhotoLessonModal({
           isStudyMaterial: source.isStudyMaterial === true,
         }),
       });
-      const data = await res.json() as { id?: string; error?: string };
+      const data = await res.json() as { id?: string; error?: string; warning?: string };
       if (!res.ok || !data.id) throw new Error(data.error ?? `Ошибка создания урока (${res.status})`);
-      onCreated(data.id);
+      onCreated(data.id, data.warning);
     } catch (err) {
       setError(describeNetworkFailure(err, "Не удалось составить текст."));
-      setStage(source.language === targetLanguage ? "crop" : "language");
+      // Back to a screen that can retry from the transcription already in
+      // hand: re-reading the photo costs another model call and gains nothing,
+      // since the text was read correctly — it was the rewrite that failed.
+      setRetry({ source, language: chosenLanguage });
+      setStage("failed");
     }
   };
 
@@ -222,6 +230,7 @@ export function PhotoLessonModal({
           {stage === "reading" && "Читаю снимок..."}
           {stage === "language" && "Язык перевода"}
           {stage === "building" && "Перевожу текст..."}
+          {stage === "failed" && "Не получилось"}
         </span>
         {stage === "crop" ? (
           <button type="button" className="photo-icon-btn" onClick={retake} aria-label="Переснять">
@@ -285,6 +294,30 @@ export function PhotoLessonModal({
                   {lang.code === targetLanguage && <span>вы учите</span>}
                 </button>
               ))}
+            </div>
+            <button type="button" className="photo-cancel" onClick={onClose}>Отменить</button>
+          </div>
+        )}
+
+        {stage === "failed" && retry && (
+          <div className="photo-sheet">
+            <h3>Текст со снимка прочитан, но урок не собрался</h3>
+            <p>
+              Снимок повторно отправлять не нужно — попробуем собрать урок ещё раз из того же
+              распознанного текста.
+            </p>
+            <div className="photo-excerpt">{retry.source.text.slice(0, 300)}{retry.source.text.length > 300 ? "…" : ""}</div>
+            <div className="photo-lang-list">
+              <button
+                type="button"
+                className="photo-lang-btn primary"
+                onClick={() => void buildLesson(retry.source, retry.language)}
+              >
+                Попробовать ещё раз
+              </button>
+              <button type="button" className="photo-lang-btn" onClick={retake}>
+                Снять заново
+              </button>
             </div>
             <button type="button" className="photo-cancel" onClick={onClose}>Отменить</button>
           </div>

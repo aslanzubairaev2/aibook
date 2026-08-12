@@ -6,6 +6,7 @@ import { runLessonPrompt } from "@/lib/ai/lessonModel";
 import { buildDocumentFromSourcePrompt } from "@/lib/ai/buildImageLessonPrompt";
 import { saveGeneratedLesson } from "@/lib/db/lessonStore";
 import { estimateLevel } from "@/lib/text/readability";
+import { lessonFromTranscription } from "@/lib/ai/transcriptionLesson";
 
 export const dynamic = "force-dynamic";
 // Reading an image, or writing a document from it, routinely takes longer than
@@ -75,17 +76,36 @@ export async function POST(req: Request) {
   });
 
   const result = await runLessonPrompt(apiKey, prompt, { faithful: true });
-  if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+
+  // What the learner gets when the rewrite could not be had.
+  //
+  // The transcription is already in hand and is most of the value — the words
+  // that were on the page. Handing it over beats an error message that throws
+  // the reading away, so the only failures that reach the learner as failures
+  // are the ones where there is nothing to hand over: a refusal, or a photo
+  // that could not be read in the first place. The lesson says plainly that it
+  // is the raw text.
+  let lesson = result.ok ? result.lesson : null;
+  let degraded = false;
+  if (!lesson) {
+    const sameLanguage = sourceLanguage === targetLanguage;
+    const salvaged = sameLanguage && !note && body.isStudyMaterial !== true
+      ? lessonFromTranscription(sourceText, (body.sourceKind ?? "").trim())
+      : null;
+    if (!salvaged) {
+      return NextResponse.json({ error: result.ok ? "Пустой урок." : result.error }, { status: result.ok ? 502 : result.status });
+    }
+    lesson = salvaged;
+    degraded = true;
   }
 
   // The document is whatever difficulty it is; measure the result rather than
   // pretending the learner chose a level for it.
-  const { level, lix } = estimateLevel(result.lesson.paragraphs.join(" "));
+  const { level, lix } = estimateLevel(lesson.paragraphs.join(" "));
 
   const saved = await saveGeneratedLesson(supabaseAdmin, {
     userId: user.id,
-    lesson: result.lesson,
+    lesson,
     level,
     targetLanguage,
     nativeLanguage,
@@ -98,6 +118,10 @@ export async function POST(req: Request) {
       study_material: body.isStudyMaterial === true,
       // Measured from the text, not chosen — the catalogue marks it with "≈".
       level_estimated: true,
+      // The rewrite failed and this is the raw transcription.
+      raw_transcription: degraded,
+      // The model's answer was cut short and had to be salvaged.
+      truncated: result.ok ? result.truncated : false,
       lix,
       // The transcription, so a later revision can be checked against what was
       // actually on the page. The photo itself is never stored.
@@ -111,9 +135,16 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     id: saved.id,
-    title: result.lesson.title,
-    description: result.lesson.description,
+    title: lesson.title,
+    description: lesson.description,
     cefr_level: level,
     paragraphs: saved.paragraphs,
+    // The client warns rather than silently passing off a degraded or
+    // shortened result as the finished thing.
+    warning: degraded
+      ? "Разбор не удался — сохранён текст со снимка как есть."
+      : result.ok && result.truncated
+        ? "Текст мог обрезаться в конце: снимите длинную страницу по частям."
+        : undefined,
   });
 }

@@ -5,6 +5,7 @@ import { Loader2, Mic, MicOff, PhoneOff, Send, Shuffle, Volume2, X, Gauge } from
 import { getLocalGeminiKey, getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import { sbAuthHeaders, sbGetCachedAnalysis, sbSaveCachedAnalysis, sbInsertFlashcard } from "@/lib/db/supabase";
 import { LiveChatSession, base64Pcm16ToFloat32, OUTPUT_SAMPLE_RATE, type LiveChatMode, type LiveChatStatus } from "@/lib/ai/liveChat";
+import { DEFAULT_LIVE_MODEL } from "@/lib/ai/liveModels";
 import { estimateLiveChatPerMinute } from "@/lib/ai/costs";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 import {
@@ -160,6 +161,36 @@ const TranscriptLineView = memo(function TranscriptLineView({
     </div>
   );
 });
+
+/**
+ * Which live model to open the session with.
+ *
+ * Asked of the server (which asks the service) rather than hardcoded: preview
+ * model ids are retired on a schedule, and the day one is, every call fails
+ * with an abrupt disconnect. Cached for the page's lifetime; any failure falls
+ * back to the built-in id.
+ */
+let cachedLiveModel: string | null = null;
+async function resolveLiveModel(): Promise<string> {
+  if (cachedLiveModel) return cachedLiveModel;
+  try {
+    const headers = await sbAuthHeaders();
+    const localKey = getLocalGeminiKey();
+    if (localKey) headers["x-gemini-key"] = localKey;
+    const res = await fetch("/api/ai/live-model", { headers });
+    if (res.ok) {
+      const data = await res.json();
+      if (typeof data.model === "string" && data.model) {
+        cachedLiveModel = data.model;
+        return data.model;
+      }
+    }
+  } catch {
+    // fall through to the built-in id
+  }
+  cachedLiveModel = DEFAULT_LIVE_MODEL;
+  return DEFAULT_LIVE_MODEL;
+}
 
 /** Owners get the key from the server's env (set on Vercel); everyone else uses their local key. */
 async function resolveGeminiKey(): Promise<string | null> {
@@ -363,9 +394,10 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
     setStatus("connecting");
 
     (async () => {
-      const [apiKey, levelEstimate] = await Promise.all([
+      const [apiKey, levelEstimate, liveModel] = await Promise.all([
         resolveGeminiKey(),
         estimateTargetLanguageLevel(targetLanguage).catch(() => null),
+        resolveLiveModel(),
       ]);
       if (cancelled) return;
       if (!apiKey) {
@@ -375,7 +407,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
       }
       setSuggestionsVisible(!levelEstimate || SUGGESTIONS_DEFAULT_LEVELS.includes(levelEstimate.level));
 
-      const session = new LiveChatSession(apiKey, {
+      const session = new LiveChatSession(apiKey, liveModel, {
         onStatusChange: (next) => {
           setStatus(next);
           if (next === "listening" || next === "speaking") setReconnecting(false);

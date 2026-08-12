@@ -7,7 +7,6 @@
 import { GoogleGenAI, Modality, type LiveCallbacks, type LiveServerMessage, type Session } from "@google/genai";
 import type { LiveScenario } from "./liveChatExtras";
 
-export const LIVE_CHAT_MODEL = "gemini-3.1-flash-live-preview";
 
 const INPUT_SAMPLE_RATE = 16000;
 export const OUTPUT_SAMPLE_RATE = 24000;
@@ -199,6 +198,30 @@ function stripInvisible(text: string): string {
   return text.replace(/[​-‏‪-‮⁠﻿]/g, "");
 }
 
+/** The service refused this configuration; the caller may retry with a simpler one. */
+class SetupRejected extends Error {}
+
+// How long to wait for setupComplete before treating the attempt as refused.
+// Generous: a cold session on a slow mobile link can take several seconds.
+const SETUP_TIMEOUT_MS = 15_000;
+
+/** Turns a close event received before setupComplete into something a learner can act on. */
+function describeSetupClose(e: { code?: number; reason?: string } | undefined): string {
+  const reason = e?.reason?.trim();
+  if (reason) return reason;
+  switch (e?.code) {
+    case 1006:
+      return "Соединение разорвано без ответа сервера";
+    case 1007:
+    case 1008:
+      return "Сервис отклонил параметры сессии";
+    case 1011:
+      return "Ошибка на стороне сервиса";
+    default:
+      return `Соединение закрыто (код ${e?.code ?? "неизвестен"})`;
+  }
+}
+
 /** Manages one live voice session: mic capture → Gemini Live API → audio playback. */
 export class LiveChatSession {
   private ai: GoogleGenAI;
@@ -208,9 +231,12 @@ export class LiveChatSession {
   private muted = false;
   /** True once the socket actually opened — separates "dropped" from "never connected". */
   private opened = false;
+  /** True once the service confirmed the session with setupComplete. Only then may anything be sent. */
+  private ready = false;
   private openedAt = 0;
   /** A session drops once. goAway followed by the actual close must not schedule two reconnects. */
   private dropReported = false;
+  private readonly model: string;
 
   private micStream: MediaStream | null = null;
   private captureCtx: AudioContext | null = null;
@@ -227,9 +253,18 @@ export class LiveChatSession {
   private modelTurnActive = false;
   private currentTurnAudio: string[] = [];
 
-  constructor(apiKey: string, callbacks: LiveChatCallbacks) {
-    this.ai = new GoogleGenAI({ apiKey });
+  /**
+   * @param model Which live model to open the session with. Resolved by the
+   * caller (see lib/ai/liveModels.ts and /api/ai/live-model) rather than fixed
+   * here, so a retired preview id can be replaced without a deploy.
+   * @param baseUrl Points the SDK at a different endpoint. Exists so the
+   * handshake and reconnect behaviour can be exercised against a stand-in
+   * service in tests; production passes nothing and talks to Google.
+   */
+  constructor(apiKey: string, model: string, callbacks: LiveChatCallbacks, baseUrl?: string) {
+    this.ai = new GoogleGenAI(baseUrl ? { apiKey, httpOptions: { baseUrl } } : { apiKey });
     this.cb = callbacks;
+    this.model = model;
   }
 
   async connect(nativeLanguage: string, targetLanguage: string, options?: LiveChatConnectOptions): Promise<void> {
@@ -275,78 +310,129 @@ export class LiveChatSession {
       sessionResumption: options?.resumeHandle ? { handle: options.resumeHandle } : {},
     };
 
-    const callbacks: LiveCallbacks = {
+    const resuming = (options?.previousTranscript?.length ?? 0) > 0 || !!options?.resumeHandle;
+    const scenario = options?.textContext?.scenario;
+    const openingTurn = resuming
+      ? RESUME_INSTRUCTION
+      : scenario
+        ? buildKickoffInstruction(nativeLanguage, targetLanguage, scenario)
+        : null;
+
+    // Try the long-session config first. If the service rejects it — an
+    // unsupported option, an expired resumption handle — fall back to the
+    // plain one rather than leaving the learner with a phone button that
+    // does nothing.
+    try {
+      await this.openSession(durableConfig, openingTurn);
+    } catch (err) {
+      if (this.closed) return;
+      if (!(err instanceof SetupRejected)) throw err;
+      console.warn("Live setup rejected with session options, retrying plain:", err.message);
+      await this.openSession(baseConfig, openingTurn);
+    }
+  }
+
+  /**
+   * One connection attempt, resolved only when the service confirms the
+   * session with setupComplete.
+   *
+   * The SDK's `connect()` resolves as soon as the WebSocket handshake is done:
+   * it fires our onopen and only then sends the setup message. An open socket
+   * therefore says nothing about whether the session is usable. When the
+   * service turns the configuration down it simply hangs up — often with no
+   * close frame at all, which the browser reports as code 1006 — and the old
+   * code, having already called the call "connected" at onopen, read that as a
+   * network drop and reconnected with the very same rejected configuration,
+   * forever. Hence: nothing is live, nothing is sent, and no reconnect is
+   * scheduled until setupComplete has actually arrived.
+   */
+  private openSession(config: Record<string, unknown>, openingTurn: string | null): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let watchdog: ReturnType<typeof setTimeout> | null = null;
+
+      const finishSetup = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (watchdog) clearTimeout(watchdog);
+        watchdog = null;
+        if (err) reject(err);
+        else resolve();
+      };
+
+      // A service that accepts the socket but never confirms the session is
+      // indistinguishable from a hang; treat silence as a rejection so the
+      // fallback config still gets its turn.
+      watchdog = setTimeout(
+        () => finishSetup(new SetupRejected("Сервис не подтвердил сессию за 15 секунд")),
+        SETUP_TIMEOUT_MS,
+      );
+
+      const callbacks: LiveCallbacks = {
         onopen: () => {
+          // Socket only. Nothing may be sent, and nothing is live, until the
+          // service confirms the session below.
           if (this.closed) return;
           this.opened = true;
-          this.openedAt = Date.now();
-          this.cb.onStatusChange("listening");
-          this.startMicCapture();
         },
-        onmessage: (message) => this.handleMessage(message),
+        onmessage: (message) => {
+          if (message.setupComplete && !this.ready) {
+            this.ready = true;
+            this.openedAt = Date.now();
+            finishSetup();
+            if (this.closed) return;
+            this.cb.onStatusChange("listening");
+            this.startMicCapture();
+            if (openingTurn) this.sendText(openingTurn);
+            return;
+          }
+          this.handleMessage(message);
+        },
         onerror: (e) => {
           if (this.closed) return;
-          // A socket-level error on an established call is a drop, not a
-          // configuration problem: retrying it works, and telling the learner
-          // their key is broken would be a lie.
-          if (this.opened) {
+          if (this.ready) {
             this.reportDrop(e?.message || "Соединение прервалось");
           } else {
-            this.cb.onError(e?.message || "Не удалось подключиться к Gemini Live");
-            this.cb.onStatusChange("error");
+            finishSetup(new SetupRejected(e?.message || "Ошибка соединения с Gemini Live"));
           }
         },
         onclose: (e) => {
           if (this.closed) return;
           const abnormal = !!(e && (e.reason || (e.code && e.code !== 1000)));
-          if (this.opened) {
+          if (this.ready) {
             // Even a clean close we did not ask for ends the call: Gemini Live
             // caps session length server-side, so a long conversation hits
             // this on its own. Reconnecting is the right answer either way.
             this.reportDrop(e?.reason || (abnormal ? `Соединение закрыто (код ${e?.code})` : "Сессия завершилась"));
-          } else if (abnormal) {
-            this.cb.onError(e?.reason || `Соединение закрыто (код ${e?.code})`);
-            this.cb.onStatusChange("error");
           } else {
-            this.cb.onStatusChange("closed");
+            // Closed before the session was ever confirmed: the service turned
+            // this configuration down. Retrying it unchanged would only fail
+            // again, so this rejects instead of scheduling a reconnect.
+            finishSetup(new SetupRejected(describeSetupClose(e)));
           }
         },
-    };
+      };
 
-    let session: Session;
-    try {
-      session = await this.ai.live.connect({ model: LIVE_CHAT_MODEL, config: durableConfig, callbacks });
-    } catch (err) {
-      if (this.closed) throw err;
-      // A stale handle, or an API surface that doesn't take these options, must
-      // not cost the learner the call itself: retry once with the plain config.
-      // Losing the session-length extension is a far smaller failure than a
-      // phone button that does nothing.
-      console.warn("Live connect with resumption failed, retrying plain:", err instanceof Error ? err.message : err);
-      session = await this.ai.live.connect({ model: LIVE_CHAT_MODEL, config: baseConfig, callbacks });
-    }
-    // Same race, one step later: the Gemini Live handshake resolved after
-    // close() already ran. Close this orphaned session instead of keeping
-    // it open — Gemini Live caps concurrent sessions per key, so a leaked
-    // one silently blocks every future reconnect.
-    if (this.closed) {
-      try { session.close(); } catch { /* already gone */ }
-      return;
-    }
-    this.session = session;
-
-    const resuming = (options?.previousTranscript?.length ?? 0) > 0 || !!options?.resumeHandle;
-    const scenario = options?.textContext?.scenario;
-    if (resuming) {
-      this.sendText(RESUME_INSTRUCTION);
-    } else if (scenario) {
-      this.sendText(buildKickoffInstruction(nativeLanguage, targetLanguage, scenario));
-    }
+      this.ai.live
+        .connect({ model: this.model, config, callbacks })
+        .then((session) => {
+          // The handshake resolved after close() already ran. Close this
+          // orphaned session — Gemini Live caps concurrent sessions per key,
+          // so a leaked one silently blocks every future reconnect.
+          if (this.closed) {
+            try { session.close(); } catch { /* already gone */ }
+            finishSetup();
+            return;
+          }
+          this.session = session;
+        })
+        .catch((err) => finishSetup(new SetupRejected(err instanceof Error ? err.message : String(err))));
+    });
   }
 
   /** A call that ran for a quarter of a minute was working; anything shorter is a setup that keeps failing. */
   private wasStable(): boolean {
-    return this.opened && Date.now() - this.openedAt > 15_000;
+    return this.ready && Date.now() - this.openedAt > 15_000;
   }
 
   private reportDrop(message: string) {
@@ -412,7 +498,7 @@ export class LiveChatSession {
     const processor = this.captureCtx.createScriptProcessor(CAPTURE_BUFFER_SIZE, 1, 1);
 
     processor.onaudioprocess = (event) => {
-      if (this.muted || !this.session) return;
+      if (this.muted || !this.session || !this.ready) return;
       const input = event.inputBuffer.getChannelData(0);
       try {
         this.session.sendRealtimeInput({
@@ -477,7 +563,9 @@ export class LiveChatSession {
 
   /** Sends a typed/tapped text turn into the live session, e.g. when the learner taps a suggested reply instead of speaking it. */
   sendText(text: string) {
-    if (this.closed || !this.session) return;
+    // Never before setupComplete: the service treats early traffic as a
+    // protocol violation and hangs up without a close frame (code 1006).
+    if (this.closed || !this.session || !this.ready) return;
     try {
       this.session.sendClientContent({ turns: text, turnComplete: true });
     } catch {
@@ -504,6 +592,7 @@ export class LiveChatSession {
     if (this.closed) return;
     this.closed = true;
     this.muted = true;
+    this.ready = false;
 
     try {
       this.session?.close();

@@ -9,7 +9,7 @@
     "lint": "next lint",
     "test:vocab": "node --experimental-strip-types --test lib/text/vocab.test.ts",
     "test:crop": "node --experimental-strip-types --test components/capture/imageCrop.test.ts",
-    "test": "node --experimental-strip-types --test lib/text/vocab.test.ts components/capture/imageCrop.test.ts lib/ai/costs.test.ts lib/mcp/token.test.ts"
+    "test": "node --experimental-strip-types --import ./scripts/register-test-loader.mjs --test --test-timeout 30000 lib/text/vocab.test.ts components/capture/imageCrop.test.ts lib/ai/costs.test.ts lib/mcp/token.test.ts lib/ai/lessonModel.test.ts lib/ai/transcriptionLesson.test.ts lib/ai/liveModels.test.ts lib/ai/liveChat.test.ts"
   },
   "proxy": "http://192.168.178.55:3000",
   "keywords": [],
@@ -32,8 +32,11 @@
     "@types/node": "^25.8.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.6",
-    "typescript": "^6.0.3"
+    "playwright": "^1.62.1",
+    "typescript": "^6.0.3",
+    "ws": "^8.21.3"
   }
 }

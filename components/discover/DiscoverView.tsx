@@ -266,6 +266,13 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [photoOpen, setPhotoOpen] = useState(false);
+  // Surfaces a degraded result from the photo flow: the lesson was saved, but
+  // not in the form it was meant to take.
+  const [toast, setToast] = useState<string | null>(null);
+  function showToast(message: string) {
+    setToast(message);
+    setTimeout(() => setToast(null), 5000);
+  }
 
   // Revising an existing lesson: which one is open, and the notes for it.
   const [refiningId, setRefiningId] = useState<string | null>(null);
@@ -1168,7 +1175,11 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
           nativeLanguage={profile.nativeLanguage}
           authHeaders={sbAuthHeaders}
           onClose={() => setPhotoOpen(false)}
-          onCreated={() => { setPhotoOpen(false); void loadMyLessons(); }}
+          onCreated={(_id, warning) => {
+            setPhotoOpen(false);
+            void loadMyLessons();
+            if (warning) showToast(warning);
+          }}
         />
       )}
 
@@ -1220,6 +1231,8 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
           </div>
         </div>
       )}
+
+      {toast && <div className="toast">{toast}</div>}
     </section>
   );
 }
