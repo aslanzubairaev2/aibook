@@ -848,6 +848,7 @@ function AppInner() {
           onOpenBook={handleOpenBook}
           downloadTasks={downloadTasks}
           onDownloadBook={(book) => void handleCatalogDownload(book)}
+          onAddCard={handleAddCard}
         />
       )}
 

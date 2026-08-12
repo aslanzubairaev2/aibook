@@ -6,18 +6,21 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
   Sparkles, CheckCircle2, PlayCircle, Clock, Circle,
-  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera,
+  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, BookA,
 } from "lucide-react";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
 import { useAuth } from "@/lib/auth/useAuth";
-import { sbAuthHeaders } from "@/lib/db/supabase";
+import { sbAuthHeaders, sbInsertFlashcard } from "@/lib/db/supabase";
+import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 import { buildKnownWordSet, computeCoverage, COMFORT_MIN, COMFORT_MAX, type Coverage } from "@/lib/text/vocab";
 import { LessonComposerModal, type ComposerState } from "./LessonComposerModal";
 import { LessonRefineModal } from "./LessonRefineModal";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
+import { DictionaryPanel, entryToCardText } from "@/components/dictionary/DictionaryPanel";
+import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 
 type Props = {
   books: Book[];
@@ -27,6 +30,8 @@ type Props = {
   onOpenBook: (book: Book) => void;
   downloadTasks: Record<number, DownloadTask>;
   onDownloadBook: (book: GutendexBook) => void;
+  /** Turning a dictionary entry into a flashcard goes through the app's single card path. */
+  onAddCard?: (card: Flashcard) => void;
 };
 
 type GutendexBook = {
@@ -80,7 +85,7 @@ type SharedBook = {
   created_at: string;
 };
 
-type TabKey = "classic" | "klexikon" | "cefr" | "lessons";
+type TabKey = "classic" | "klexikon" | "cefr" | "lessons" | "dictionary";
 
 // Each tab is one source. The name carries it; the source and its licence show
 // up per item (the "Оригинал · CC BY-SA" link, the "≈" on estimated levels)
@@ -90,6 +95,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   klexikon: "Клексикон",
   cefr: "CEFR тексты",
   lessons: "Мои уроки",
+  dictionary: "Словарь",
 };
 
 type LessonProgressMap = Record<string, {
@@ -209,7 +215,7 @@ function readPrefs(): DiscoverPrefs {
   }
 }
 
-export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook }: Props) {
+export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook, onAddCard }: Props) {
   const { user } = useAuth();
   const [prefs] = useState<DiscoverPrefs>(readPrefs);
   const [activeTab, setActiveTab] = useState<TabKey>(prefs.activeTab ?? "classic");
@@ -266,6 +272,12 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [photoOpen, setPhotoOpen] = useState(false);
+  // "lesson" photographs a text to read; "dictionary" photographs words to learn.
+  const [photoMode, setPhotoMode] = useState<"lesson" | "dictionary">("lesson");
+
+  const [dictionary, setDictionary] = useState<DictionaryEntry[]>([]);
+  const [dictLoading, setDictLoading] = useState(false);
+  const [dictError, setDictError] = useState<string | null>(null);
   // Surfaces a degraded result from the photo flow: the lesson was saved, but
   // not in the form it was meant to take.
   const [toast, setToast] = useState<string | null>(null);
@@ -360,6 +372,82 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     }
   }, [user]);
 
+  const loadDictionary = useCallback(async () => {
+    if (!user) { setDictionary([]); return; }
+    setDictLoading(true);
+    setDictError(null);
+    try {
+      const res = await freshFetch(`/api/dictionary?language=${encodeURIComponent(profile.targetLanguage)}`, {
+        headers: await sbAuthHeaders(),
+      });
+      const data = await res.json() as { entries?: DictionaryEntry[]; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Не удалось загрузить словарь.");
+      setDictionary(data.entries ?? []);
+    } catch (err) {
+      setDictError(err instanceof Error ? err.message : "Не удалось загрузить словарь.");
+    } finally {
+      setDictLoading(false);
+    }
+  }, [user, profile.targetLanguage]);
+
+  // Which words are already flashcards, so the entry says so instead of
+  // silently making a duplicate.
+  const cardFronts = useMemo(
+    () => new Set(cards.map((c) => c.front.trim().toLowerCase())),
+    [cards],
+  );
+
+  function addCardFromEntry(entry: DictionaryEntry) {
+    if (!onAddCard) return;
+    const { front, back } = entryToCardText(entry);
+    if (cardFronts.has(front.trim().toLowerCase())) {
+      showToast("Такая карточка уже есть");
+      return;
+    }
+    const srs = createDefaultSrsFields(null, "Словарь");
+    const card: Flashcard = {
+      id: `card-${Date.now()}`,
+      type: "word",
+      source: "Словарь",
+      addedAt: new Date().toISOString(),
+      ...srs,
+      front,
+      back,
+    };
+    onAddCard(card);
+    showToast("✓ Карточка добавлена");
+    if (user) {
+      void sbInsertFlashcard({
+        user_id: user.id,
+        vocabulary_item_id: null,
+        front: card.front,
+        back: card.back,
+        source_book_title: "Словарь",
+        selection_type: "word",
+        repetitions: srs.repetitions,
+        lapses: srs.lapses,
+        easiness_factor: srs.easeFactor,
+        interval_days: srs.intervalDays,
+        next_review_at: srs.dueAt,
+        last_reviewed_at: srs.lastReviewedAt,
+        source_book_id: null,
+        status: srs.status,
+      });
+    }
+  }
+
+  async function deleteDictionaryEntry(id: string) {
+    setDictionary((prev) => prev.filter((e) => e.id !== id));
+    try {
+      await fetch(`/api/dictionary?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: await sbAuthHeaders(),
+      });
+    } catch {
+      void loadDictionary();
+    }
+  }
+
   useEffect(() => {
     if (activeTab === "klexikon" || activeTab === "cefr") {
       void loadSharedBooks();
@@ -369,7 +457,10 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       void loadMyLessons();
       void loadLessonProgress();
     }
-  }, [activeTab, loadSharedBooks, loadMyLessons, loadLessonProgress]);
+    if (activeTab === "dictionary") {
+      void loadDictionary();
+    }
+  }, [activeTab, loadSharedBooks, loadMyLessons, loadLessonProgress, loadDictionary]);
 
   // Default the generator to the learner's estimated level, unless they have
   // already picked one themselves (which readPrefs restores).
@@ -740,7 +831,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
 
       {/* One tab per source — the source note below spells out which is which */}
       <div className="discover-tabs">
-        {(["classic", "klexikon", "cefr", "lessons"] as const).map((tab) => (
+        {(["classic", "klexikon", "cefr", "lessons", "dictionary"] as const).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -752,6 +843,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             {tab === "klexikon" && <GraduationCap size={15} />}
             {tab === "cefr" && <BookMarked size={15} />}
             {tab === "lessons" && <Wand2 size={15} />}
+            {tab === "dictionary" && <BookA size={15} />}
             {TAB_LABELS[tab]}
           </button>
         ))}
@@ -960,6 +1052,41 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
         </>
       )}
 
+      {/* ── Dictionary: the learner's own words ─────────────────────────────── */}
+      {activeTab === "dictionary" && (
+        <>
+          {!user ? (
+            <div className="seed-card">
+              <BookA size={42} style={{ color: "var(--accent)" }} />
+              <h3>Войдите, чтобы вести словарь</h3>
+              <p>Слова сохраняются в вашем аккаунте и видны только вам.</p>
+            </div>
+          ) : (
+            <>
+              <DictionaryPanel
+                entries={dictionary}
+                isLoading={dictLoading}
+                error={dictError}
+                language={profile.targetLanguage}
+                cardFronts={cardFronts}
+                onPhotograph={() => { setPhotoMode("dictionary"); setPhotoOpen(true); }}
+                onDelete={(id) => void deleteDictionaryEntry(id)}
+                onAddCard={(entry) => addCardFromEntry(entry)}
+              />
+              <button
+                type="button"
+                className="add-lesson-fab"
+                onClick={() => { setPhotoMode("dictionary"); setPhotoOpen(true); }}
+                aria-label="Сфотографировать слова"
+                title="Сфотографировать слова"
+              >
+                <Camera size={22} />
+              </button>
+            </>
+          )}
+        </>
+      )}
+
       {/* ── My lessons (AI-generated, private) ──────────────────────────────── */}
       {activeTab === "lessons" && (
         <>
@@ -1009,7 +1136,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
               <button
                 type="button"
                 className="add-lesson-fab secondary"
-                onClick={() => setPhotoOpen(true)}
+                onClick={() => { setPhotoMode("lesson"); setPhotoOpen(true); }}
                 aria-label="Урок из фотографии"
                 title="Урок из фотографии"
               >
@@ -1168,17 +1295,29 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
         />
       )}
 
-      {/* Lesson from a photograph */}
+      {/* A photograph becomes either a reading text or dictionary entries */}
       {photoOpen && (
         <PhotoLessonModal
           targetLanguage={profile.targetLanguage}
           nativeLanguage={profile.nativeLanguage}
+          mode={photoMode}
           authHeaders={sbAuthHeaders}
           onClose={() => setPhotoOpen(false)}
           onCreated={(_id, warning) => {
             setPhotoOpen(false);
             void loadMyLessons();
             if (warning) showToast(warning);
+          }}
+          onWordsAdded={({ added, updated, warning }) => {
+            setPhotoOpen(false);
+            void loadDictionary();
+            showToast(
+              warning
+                ? warning
+                : updated > 0
+                  ? `Добавлено слов: ${added}, обновлено: ${updated}`
+                  : `Добавлено слов: ${added}`,
+            );
           }}
         />
       )}

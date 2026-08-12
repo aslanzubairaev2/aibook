@@ -21,6 +21,7 @@ export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
       partOfSpeech: `part of speech in ${p.nativeLanguage}`,
       posTag: "one of: verb | noun | adjective | adverb | pronoun | numeral | other",
       gender: "grammatical gender/article if applicable, otherwise empty string",
+      cefr: "CEFR level of this word itself — A1, A2, B1, B2, C1 or C2, judged by how common the word is",
       translation: `short primary translation in ${p.nativeLanguage}`,
       explanation: `short dictionary-style note in ${p.nativeLanguage}`,
       nounDetails: {

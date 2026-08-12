@@ -128,6 +128,10 @@
 
 .word-meta-chip.gender { color: var(--accent); border-color: rgba(212,168,71,0.4); background: rgba(212,168,71,0.08); }
 
+/* CEFR level of the word itself: how common it is, and so whether it is worth
+   memorising at this stage. */
+.word-meta-chip.level { color: var(--green); border-color: rgba(122,171,106,0.45); background: rgba(122,171,106,0.1); letter-spacing: 0.04em; }
+
 /* ─── Modal Sections ─────────────────────────────────────────────────────── */
 .modal-section {
   margin-top: 12px;

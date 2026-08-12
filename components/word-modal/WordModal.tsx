@@ -95,6 +95,7 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
           <div className="word-hero-meta">
             <span className="word-meta-chip">{word.partOfSpeech}</span>
             {word.gender && <span className="word-meta-chip gender">{word.gender}</span>}
+            {word.cefr && <span className="word-meta-chip level" title="Уровень слова по CEFR">{word.cefr}</span>}
           </div>
           {hasLemma && (
             <div className="word-lemma-line">

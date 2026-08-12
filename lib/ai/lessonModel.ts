@@ -221,6 +221,79 @@ export async function runImagePrompt(
   return { ok: true, data: result.value, truncated: result.repaired };
 }
 
+// ─── Reading a photo into dictionary entries ─────────────────────────────────
+
+const DICTIONARY_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    pageKind: { type: Type.STRING },
+    isVocabularyList: { type: Type.BOOLEAN },
+    entries: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          headword: { type: Type.STRING },
+          lemma: { type: Type.STRING },
+          translation: { type: Type.STRING },
+          partOfSpeech: { type: Type.STRING },
+          gender: { type: Type.STRING },
+          article: { type: Type.STRING },
+          plural: { type: Type.STRING },
+          forms: {
+            type: Type.OBJECT,
+            properties: {
+              praeteritum: { type: Type.STRING },
+              partizip2: { type: Type.STRING },
+              hilfsverb: { type: Type.STRING },
+              trennbar: { type: Type.STRING },
+              komparativ: { type: Type.STRING },
+              superlativ: { type: Type.STRING },
+            },
+          },
+          cefr: { type: Type.STRING },
+          note: { type: Type.STRING },
+          example: { type: Type.STRING },
+          exampleTranslation: { type: Type.STRING },
+        },
+        required: ["headword", "lemma", "translation", "cefr"],
+      },
+    },
+  },
+  required: ["entries"],
+} as const;
+
+/**
+ * A whole page of vocabulary in one multimodal call.
+ *
+ * Deliberately not routed through the transcription step the lesson flow uses:
+ * a word list is a layout — two columns, articles in one place, plural markers
+ * in another — and the model reads that layout far better from the picture than
+ * from a flattened transcription of it.
+ *
+ * Thinking stays off and the ceiling is high for the same reason as everywhere
+ * else here: a full page of forty-plus entries is a long answer, and losing its
+ * tail to a thinking budget is exactly the failure this module exists to avoid.
+ */
+export async function runDictionaryPrompt(
+  apiKey: string,
+  prompt: string,
+  imageBase64: string,
+  mimeType: string,
+): Promise<ImageModelResult> {
+  const result = await callJson({
+    apiKey,
+    parts: [{ inlineData: { data: imageBase64, mimeType } }, prompt],
+    schema: DICTIONARY_SCHEMA,
+    maxOutputTokens: PAGE_MAX_OUTPUT_TOKENS,
+    temperature: 0,
+    think: false,
+  });
+
+  if (!result.ok) return { ok: false, error: result.error, status: result.status };
+  return { ok: true, data: result.value, truncated: result.repaired };
+}
+
 // ─── Writing the lesson ──────────────────────────────────────────────────────
 
 export type LessonModelResult =

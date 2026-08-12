@@ -83,6 +83,8 @@ export type WordAnalysis = {
   partOfSpeech: string;
   posTag?: PosTag;
   gender?: string;
+  /** How common the word is, as a CEFR level — tells the learner whether it is worth memorising now. */
+  cefr?: string;
   translation: string;
   explanation?: string;
   nounDetails?: {

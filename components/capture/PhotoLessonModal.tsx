@@ -13,9 +13,17 @@ type Stage = "camera" | "crop" | "reading" | "language" | "building" | "failed";
 type Props = {
   targetLanguage: string;
   nativeLanguage: string;
+  /**
+   * "lesson" turns the photo into a reading text; "dictionary" turns it into
+   * word entries. Same camera and cropper, different destination — and in the
+   * dictionary case there is no lesson to open afterwards.
+   */
+  mode?: "lesson" | "dictionary";
   /** Called with the new lesson id once it is saved. */
   /** `warning` is set when the lesson was saved in a degraded form (raw transcription, or text that may be cut short). */
   onCreated: (lessonId: string, warning?: string) => void;
+  /** Dictionary mode: how many words were added, and any warning about the page. */
+  onWordsAdded?: (summary: { added: number; updated: number; total: number; warning?: string }) => void;
   onClose: () => void;
   /** Auth headers for the API calls; the parent owns the session. */
   authHeaders: () => Promise<Record<string, string>>;
@@ -54,8 +62,9 @@ function languageName(code: string): string {
  * whole viewport, and this is a phone-first flow.
  */
 export function PhotoLessonModal({
-  targetLanguage, nativeLanguage, onCreated, onClose, authHeaders,
+  targetLanguage, nativeLanguage, mode = "lesson", onCreated, onWordsAdded, onClose, authHeaders,
 }: Props) {
+  const toDictionary = mode === "dictionary";
   const [stage, setStage] = useState<Stage>("camera");
   // Kept so a failed rewrite can be retried without paying to read the photo again.
   const [retry, setRetry] = useState<{ source: Extracted; language: string } | null>(null);
@@ -147,11 +156,48 @@ export function PhotoLessonModal({
     setStage("camera");
   };
 
+  /**
+   * Dictionary mode: one call, straight from the picture to word entries.
+   *
+   * Not routed through the transcription step the lesson flow uses — a word
+   * list is a layout, and the model reads "der Ball, ¨e" out of the picture far
+   * more reliably than out of a flattened transcription of it.
+   */
+  const readWords = async (cropped: string) => {
+    setStage("reading");
+    setError(null);
+    try {
+      const res = await fetch("/api/dictionary/from-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ image: cropped, targetLanguage, nativeLanguage, note: note.trim() }),
+      });
+      const data = await res.json() as {
+        added?: number; updated?: number; total?: number; warning?: string; error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? `Ошибка распознавания (${res.status})`);
+      onWordsAdded?.({
+        added: data.added ?? 0,
+        updated: data.updated ?? 0,
+        total: data.total ?? 0,
+        warning: data.warning,
+      });
+    } catch (err) {
+      setError(describeNetworkFailure(err, "Не удалось разобрать слова."));
+      setStage("crop");
+    }
+  };
+
   /** Step 1: send the cropped region and get back what it says. */
   const readPhoto = async () => {
     const cropped = cropperRef.current?.exportCropped(MAX_UPLOAD_SIZE, JPEG_QUALITY);
     if (!cropped) {
       setError("Не удалось подготовить снимок. Попробуйте ещё раз.");
+      return;
+    }
+
+    if (toDictionary) {
+      await readWords(cropped);
       return;
     }
 
@@ -225,7 +271,7 @@ export function PhotoLessonModal({
           <X size={22} />
         </button>
         <span className="photo-bar-title">
-          {stage === "camera" && "Сфотографируйте текст"}
+          {stage === "camera" && (toDictionary ? "Сфотографируйте слова" : "Сфотографируйте текст")}
           {stage === "crop" && "Выделите нужный участок"}
           {stage === "reading" && "Читаю снимок..."}
           {stage === "language" && "Язык перевода"}
@@ -260,7 +306,9 @@ export function PhotoLessonModal({
             <div className="lesson-input-row">
               <input
                 type="text"
-                placeholder="Что сделать с этим? Например: просто список слов"
+                placeholder={toDictionary
+                  ? "Примечание для ИИ — например: только существительные"
+                  : "Что сделать с этим? Например: просто список слов"}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 maxLength={800}
@@ -326,7 +374,11 @@ export function PhotoLessonModal({
         {busy && (
           <div className="photo-overlay">
             <Loader2 className="spin" size={34} />
-            <span>{stage === "reading" ? "Разбираю текст на снимке..." : "Готовлю текст..."}</span>
+            <span>
+              {stage === "reading"
+                ? (toDictionary ? "Собираю слова со снимка..." : "Разбираю текст на снимке...")
+                : "Готовлю текст..."}
+            </span>
           </div>
         )}
       </div>
