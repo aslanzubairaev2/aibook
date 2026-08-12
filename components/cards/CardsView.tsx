@@ -106,6 +106,9 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const [isFlipped, setIsFlipped] = useState(false);
   const [trainFilter, setTrainFilter] = useState<FilterType>(savedFilters?.trainFilter ?? "all");
   const [trainStatus, setTrainStatus] = useState<TrainStatus>(savedFilters?.trainStatus ?? "all");
+  // Narrows a training session to one source — a book, or a dictionary batch
+  // («тренировать именно эти слова» from the dictionary lands here).
+  const [trainBook, setTrainBook] = useState<string>(savedFilters?.trainBook ?? "all");
   const [trainVariants, setTrainVariants] = useState<TrainVariant[]>(savedFilters?.trainVariants?.length ? savedFilters.trainVariants : DEFAULT_TRAIN_VARIANTS);
   const [trainMode, setTrainMode] = useState<"recognize" | "active">(savedFilters?.trainMode ?? "recognize");
   // Snapshot of the cards being trained this session — built once per session
@@ -284,8 +287,9 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   // Each selected variant (forward/reverse/audio) carries its own independent
   // schedule (see getVariantProgress), so a card can be due in one variant and
   // produces its own queue item per due variant rather than a single coin-flip.
-  function buildTrainQueue(status: TrainStatus, filter: FilterType, variants: TrainVariant[]): TrainQueueItem[] {
-    const typed = filter === "all" ? cards : cards.filter((c) => c.type === filter);
+  function buildTrainQueue(status: TrainStatus, filter: FilterType, variants: TrainVariant[], book: string = trainBook): TrainQueueItem[] {
+    let typed = filter === "all" ? cards : cards.filter((c) => c.type === filter);
+    if (book !== "all") typed = typed.filter((c) => (c.sourceBookTitle || c.source || "") === book);
     const items: TrainQueueItem[] = [];
     for (const card of typed) {
       for (const variant of variants) {
@@ -311,8 +315,8 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
 
   const trainPool = buildTrainQueue(trainStatus, "all", trainVariants);
 
-  function startTrainingSession(status: TrainStatus, filter: FilterType, variants: TrainVariant[]) {
-    setTrainQueue(buildTrainQueue(status, filter, variants));
+  function startTrainingSession(status: TrainStatus, filter: FilterType, variants: TrainVariant[], book: string = trainBook) {
+    setTrainQueue(buildTrainQueue(status, filter, variants, book));
     setCurrentTrainIndex(0);
     setReviewedIds([]);
     setIsFlipped(false);
@@ -492,7 +496,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const cardLevels = ["A1", "A2", "B1", "B2", "C1", "C2"].filter((l) => cards.some((c) => c.cefr === l));
   const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all", filterLevel !== "all"].filter(Boolean).length;
   const variantsAreDefault = trainVariants.length === 1 && trainVariants[0] === "forward";
-  const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", !variantsAreDefault].filter(Boolean).length;
+  const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", trainBook !== "all", !variantsAreDefault].filter(Boolean).length;
 
   const filteredAllCards = cards
     .filter((c) => {
@@ -785,6 +789,25 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
           <>
           {showTrainFilterPanel && (
             <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
+              {allBooks.length > 1 && (
+                <div className="filter-group">
+                  <div className="filter-group-label">Книга / пачка</div>
+                  <select
+                    className="book-select"
+                    value={trainBook}
+                    onChange={(e) => {
+                      const book = e.target.value;
+                      setTrainBook(book);
+                      persistCardFilters({ trainBook: book });
+                      startTrainingSession(trainStatus, trainFilter, trainVariants, book);
+                    }}
+                  >
+                    <option value="all">Все источники</option>
+                    {allBooks.map((b) => <option key={b} value={b}>{b.length > 32 ? b.slice(0, 32) + "…" : b}</option>)}
+                  </select>
+                </div>
+              )}
+
               <div className="filter-group">
                 <div className="filter-group-label">Тип</div>
                 <div className="filter-chips">
@@ -856,7 +879,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
               {activeTrainFilterCount > 0 && (
                 <button
                   className="filter-reset-btn"
-                  onClick={() => { setTrainFilter("all"); setTrainStatus("all"); setTrainVariants(DEFAULT_TRAIN_VARIANTS); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainVariants: DEFAULT_TRAIN_VARIANTS }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS); }}
+                  onClick={() => { setTrainFilter("all"); setTrainStatus("all"); setTrainBook("all"); setTrainVariants(DEFAULT_TRAIN_VARIANTS); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainBook: "all", trainVariants: DEFAULT_TRAIN_VARIANTS }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS, "all"); }}
                   type="button"
                 >
                   Сбросить фильтры

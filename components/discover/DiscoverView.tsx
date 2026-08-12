@@ -22,6 +22,9 @@ import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { DictionaryPanel, entryToCardText, entryToAnalysis } from "@/components/dictionary/DictionaryPanel";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { WordModal } from "@/components/word-modal/WordModal";
+import { analyzeSelection } from "@/lib/ai/analyze";
+import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
+import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import type { AiAnalysis } from "@/lib/types";
 
 type Props = {
@@ -219,6 +222,41 @@ function readPrefs(): DiscoverPrefs {
   }
 }
 
+/**
+ * The AI's full analysis, corrected by the coursebook's own facts. The model
+ * brings richer translations, an explanation and five examples; the entry
+ * brings the article, plural and level as the course printed them — and the
+ * page's own example goes first.
+ */
+function mergeEntryWithAnalysis(entry: DictionaryEntry, base: AiAnalysis, full: AiAnalysis): AiAnalysis {
+  const aiWord = full.word!;
+  const baseWord = base.word!;
+  const examples = [
+    ...(entry.example ? [{ text: entry.example, translation: entry.example_translation }] : []),
+    ...(full.examples ?? []),
+  ].filter((ex, i, list) => list.findIndex((o) => o.text.trim() === ex.text.trim()) === i);
+
+  return {
+    word: {
+      ...aiWord,
+      text: entry.headword,
+      lemma: aiWord.lemma || entry.lemma,
+      partOfSpeech: entry.part_of_speech || aiWord.partOfSpeech,
+      posTag: baseWord.posTag !== "other" ? baseWord.posTag : aiWord.posTag,
+      gender: entry.article || aiWord.gender,
+      cefr: entry.cefr || aiWord.cefr,
+      translation: aiWord.translation || entry.translation,
+      explanation: [entry.note, aiWord.explanation].filter(Boolean).join("\n"),
+      nounDetails: {
+        article: entry.article || aiWord.nounDetails?.article,
+        plural: entry.plural || aiWord.nounDetails?.plural,
+      },
+      verbDetails: aiWord.verbDetails ?? baseWord.verbDetails,
+    },
+    examples,
+  };
+}
+
 export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook, onAddCard, onTrainWords }: Props) {
   const { user } = useAuth();
   const [prefs] = useState<DiscoverPrefs>(readPrefs);
@@ -285,7 +323,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [dictError, setDictError] = useState<string | null>(null);
   // The dictionary reuses the app-wide word modal rather than inventing its
   // own; the entry already holds everything the modal shows, so no AI call.
-  const [dictWord, setDictWord] = useState<DictionaryEntry | null>(null);
+  const [dictWord, setDictWord] = useState<{ entry: DictionaryEntry; analysis: AiAnalysis; enriching: boolean } | null>(null);
   const [miniTextBusy, setMiniTextBusy] = useState(false);
   // Surfaces a degraded result from the photo flow: the lesson was saved, but
   // not in the form it was meant to take.
@@ -468,6 +506,45 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       });
     } catch {
       void loadDictionary();
+    }
+  }
+
+  /**
+   * Opening a dictionary word shows the same word modal as everywhere else,
+   * instantly, from what the entry already knows — then quietly upgrades it
+   * with the full AI analysis (five examples, explanation, verb details), so
+   * the modal is identical to the one the reader's «Подробнее» opens. The
+   * textbook's own facts win where they overlap: its article, plural and
+   * level are the course's word, not the model's guess.
+   */
+  async function openDictWord(entry: DictionaryEntry) {
+    const base = entryToAnalysis(entry);
+    setDictWord({ entry, analysis: base, enriching: true });
+
+    const lookup = entry.lemma || entry.headword;
+    const cacheKey = makeAiCacheKey("word", lookup, profile.targetLanguage, profile.nativeLanguage);
+    try {
+      let full = getLocalAiAnalysis(cacheKey);
+      if (!full?.word) {
+        full = await analyzeSelection({
+          mode: "word",
+          word: lookup,
+          text: lookup,
+          sentence: entry.example || lookup,
+          sentenceBefore: "",
+          sentenceAfter: "",
+          nativeLanguage: profile.nativeLanguage,
+          targetLanguage: profile.targetLanguage,
+        });
+        if (full?.word) saveLocalAiAnalysis(cacheKey, full);
+      }
+      if (!full?.word) throw new Error("empty analysis");
+
+      const merged = mergeEntryWithAnalysis(entry, base, full);
+      setDictWord((cur) => (cur && cur.entry.id === entry.id ? { entry, analysis: merged, enriching: false } : cur));
+    } catch {
+      // The entry-only view is already complete enough to be useful.
+      setDictWord((cur) => (cur && cur.entry.id === entry.id ? { ...cur, enriching: false } : cur));
     }
   }
 
@@ -1139,8 +1216,9 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 cards={cards}
                 isLoading={dictLoading}
                 error={dictError}
+                language={profile.targetLanguage}
                 onPhotograph={() => { setPhotoMode("dictionary"); setPhotoOpen(true); }}
-                onOpenEntry={(entry) => setDictWord(entry)}
+                onOpenEntry={(entry) => void openDictWord(entry)}
                 onDeleteEntry={(id) => void deleteDictionaryEntry(id)}
                 onDeleteBatch={(id) => void deleteDictionaryBatch(id)}
                 onTrainBatch={(batch) => onTrainWords?.(batch.id, batch.title)}
@@ -1446,14 +1524,21 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       {/* A dictionary word opens the same word modal as everywhere else. */}
       {dictWord && (
         <WordModal
-          analysis={entryToAnalysis(dictWord)}
+          analysis={dictWord.analysis}
           isOpen
           lang={profile.targetLanguage}
           nativeLang={profile.nativeLanguage}
-          selectedWord={dictWord.headword}
+          selectedWord={dictWord.entry.headword}
           onClose={() => setDictWord(null)}
-          onAddCard={() => addCardFromEntry(dictWord)}
-          onCreateText={() => void createMiniTextForWord(dictWord)}
+          onAddCard={() => addCardFromEntry(dictWord.entry)}
+          onAddExample={(text, translation) => {
+            if (onAddCard) {
+              const srs = createDefaultSrsFields(null, "Словарь");
+              onAddCard({ id: `card-${Date.now()}`, type: "phrase", source: "Словарь", addedAt: new Date().toISOString(), ...srs, front: text, back: translation });
+              showToast("✓ Карточка добавлена");
+            }
+          }}
+          onCreateText={() => void createMiniTextForWord(dictWord.entry)}
           isCreatingText={miniTextBusy}
         />
       )}

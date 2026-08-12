@@ -6,6 +6,7 @@ import { SpeakButton } from "@/components/ui/SpeakButton";
 import { GrammarModal, POS_GRAMMAR_LABEL } from "@/components/word-modal/GrammarModal";
 import type { AiAnalysis, PosTag, WordAnalysis } from "@/lib/types";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
+import { sbAuthHeaders } from "@/lib/db/supabase";
 
 type Props = {
   analysis: AiAnalysis | null;
@@ -19,7 +20,12 @@ type Props = {
   onAddLemma?: (lemma: string) => void;
   onWordTap?: (word: string, contextSentence: string) => void;
   onAddExample?: (text: string, translation: string) => void;
-  /** Write a short reading text built around this word and open it. */
+  /**
+   * Write a short reading text built around this word. When the host screen
+   * can open lessons it passes its own handler (the dictionary opens the text
+   * at once); everywhere else the modal saves the text into «Мои уроки» itself
+   * and says so — the button exists wherever the modal does.
+   */
   onCreateText?: () => void;
   isCreatingText?: boolean;
 };
@@ -45,12 +51,55 @@ const PLURAL_LABEL = "\u041c\u043d. \u0447\u0438\u0441\u043b\u043e";
 const INFINITIVE_LABEL = "\u0418\u043d\u0444\u0438\u043d\u0438\u0442\u0438\u0432";
 const FORM_LABEL = "\u0424\u043e\u0440\u043c\u0430";
 
+/** der → blue, die → pink, das → green: the app's one gender colour code. */
+function articleGender(article: string): string {
+  const a = article.trim().toLowerCase();
+  if (a === "der") return "gender-m";
+  if (a === "die") return "gender-f";
+  if (a === "das") return "gender-n";
+  return "";
+}
+
 export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onAddExample, onCreateText, isCreatingText }: Props) {
   const [grammarOpen, setGrammarOpen] = useState(false);
+  // The built-in fallback for "мини-текст": save into «Мои уроки» right here.
+  const [miniState, setMiniState] = useState<"idle" | "busy" | "done" | "error">("idle");
+
+  async function createTextHere(word: WordAnalysis) {
+    if (miniState === "busy") return;
+    setMiniState("busy");
+    try {
+      const target = (word.lemma || word.text || selectedWord).trim();
+      const res = await fetch("/api/lessons/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+        body: JSON.stringify({
+          level: ["A1", "A2", "B1", "B2", "C1", "C2"].includes(word.cefr ?? "") ? word.cefr : "A2",
+          topic: `Слово «${target}»`,
+          targetLanguage: lang,
+          nativeLanguage: nativeLang,
+          reviewWords: [target],
+          length: "short",
+          context: `Короткий текст, построенный вокруг слова «${target}» (${word.translation}): показать его в нескольких типичных ситуациях и формах.`,
+        }),
+      });
+      const data = await res.json() as { id?: string; error?: string };
+      if (!res.ok || !data.id) throw new Error(data.error ?? "Не удалось создать текст.");
+      setMiniState("done");
+    } catch {
+      setMiniState("error");
+      setTimeout(() => setMiniState("idle"), 2500);
+    }
+  }
   if (!isOpen) return null;
   const word = analysis?.word;
   const displayWord = selectedWord || word?.text || word?.lemma || "";
   const hasLemma = word?.lemma && word.lemma.toLowerCase() !== displayWord.toLowerCase();
+  // Either the analysis names the article, or the headword already carries it
+  // ("der Ball") — a dictionary word arrives in the second shape.
+  const article =
+    word?.nounDetails?.article?.trim() ||
+    (/^(der|die|das)\s+/i.exec(displayWord)?.[1] ?? "").toLowerCase();
 
   return (
     <div className="modal-backdrop word-modal-backdrop" onClick={onClose}>
@@ -97,7 +146,11 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
           <div className="word-hero-lemma">{displayWord.toUpperCase()}</div>
           <div className="word-hero-meta">
             <span className="word-meta-chip">{word.partOfSpeech}</span>
-            {word.gender && <span className="word-meta-chip gender">{word.gender}</span>}
+            {/* The article is the single most important thing to memorise with
+                a German noun, so it gets its own chip in the gender colour
+                rather than hiding in the details grid below. */}
+            {article && <span className={`word-meta-chip article ${articleGender(article)}`}>{article}</span>}
+            {word.gender && word.gender !== article && <span className="word-meta-chip gender">{word.gender}</span>}
             {word.cefr && <span className="word-meta-chip level" title="Уровень слова по CEFR">{word.cefr}</span>}
           </div>
           {hasLemma && (
@@ -224,21 +277,32 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
         </button>
 
         {/* A short text built around this word: the fastest way to meet it in
-            the wild rather than as a table row. */}
-        {onCreateText && (
-          <button
-            type="button"
-            className="grammar-open-btn"
-            onClick={onCreateText}
-            disabled={isCreatingText}
-          >
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              {isCreatingText ? <Loader2 size={16} className="spin" /> : <FileText size={16} />}
-              {isCreatingText ? "Пишу текст…" : "Мини-текст с этим словом"}
-            </span>
-            {!isCreatingText && <ChevronRight size={18} />}
-          </button>
-        )}
+            the wild rather than as a table row. Present in every module —
+            without a host handler the modal saves the text itself. */}
+        {(() => {
+          const busy = isCreatingText || miniState === "busy";
+          const label = busy
+            ? "Пишу текст…"
+            : miniState === "done"
+              ? "Сохранено в «Мои уроки» ✓"
+              : miniState === "error"
+                ? "Не получилось — ещё раз?"
+                : "Мини-текст с этим словом";
+          return (
+            <button
+              type="button"
+              className="grammar-open-btn"
+              onClick={() => (onCreateText ? onCreateText() : void createTextHere(word))}
+              disabled={busy || miniState === "done" || !word.translation}
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                {busy ? <Loader2 size={16} className="spin" /> : <FileText size={16} />}
+                {label}
+              </span>
+              {!busy && miniState === "idle" && <ChevronRight size={18} />}
+            </button>
+          );
+        })()}
         </>
         )}
 

@@ -5,6 +5,7 @@ import {
   BookA, Camera, ChevronDown, Dumbbell, Loader2, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
+import { SpeakButton } from "@/components/ui/SpeakButton";
 import type { AiAnalysis, CefrLevel, Flashcard, PosTag } from "@/lib/types";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -24,6 +25,24 @@ function normalizePos(pos: string): string {
   return pos.trim().toLowerCase();
 }
 
+// The row has little width to spare; the chip carries the familiar
+// dictionary-style abbreviation, and the full label lives in the word modal.
+const POS_SHORT: Record<string, string> = {
+  "существительное": "сущ.",
+  "глагол": "гл.",
+  "прилагательное": "прил.",
+  "наречие": "нар.",
+  "предлог": "предл.",
+  "союз": "союз",
+  "местоимение": "мест.",
+  "числительное": "числ.",
+  "выражение": "выраж.",
+};
+function shortPos(pos: string): string {
+  const norm = normalizePos(pos);
+  return POS_SHORT[norm] ?? (norm ? norm.slice(0, 6) : "");
+}
+
 type BatchGroup = {
   batch: DictionaryBatch | null; // null = words photographed before batches existed
   entries: DictionaryEntry[];
@@ -37,6 +56,8 @@ type Props = {
   cards: Flashcard[];
   isLoading: boolean;
   error: string | null;
+  /** Target language, for pronouncing the words in the rows. */
+  language: string;
   onPhotograph: () => void;
   onOpenEntry: (entry: DictionaryEntry) => void;
   onDeleteEntry: (id: string) => void;
@@ -55,7 +76,7 @@ type Props = {
  * to show disappears rather than sitting there empty.
  */
 export function DictionaryPanel({
-  entries, batches, cards, isLoading, error,
+  entries, batches, cards, isLoading, error, language,
   onPhotograph, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch,
 }: Props) {
   const [query, setQuery] = useState("");
@@ -227,19 +248,17 @@ export function DictionaryPanel({
         {searchOpen && (
           <div className="dict-search-float" onClick={(e) => e.stopPropagation()}>
             <Search size={15} />
+            {/* type="text": the browser's own ✕ on type="search" made three
+                crosses in one row. The yellow toggle on the right both closes
+                and clears — one cross is enough. */}
             <input
               autoFocus
-              type="search"
+              type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Слово или перевод — по всем пачкам"
               aria-label="Поиск по словарю"
             />
-            {query && (
-              <button type="button" className="dict-search-clear" onClick={() => setQuery("")} aria-label="Очистить">
-                ✕
-              </button>
-            )}
           </div>
         )}
       </div>
@@ -296,9 +315,11 @@ export function DictionaryPanel({
                     {group.batch ? group.batch.title : "Прочие слова"}
                   </strong>
                   <span className="dict-batch-meta">
-                    {group.batch?.kind ? `${group.batch.kind} · ` : ""}
-                    {group.entries.length} {wordNoun(group.entries.length)}
-                    {group.batch ? ` · ${formatDate(group.batch.created_at)}` : ""}
+                    {group.batch
+                      ? [group.batch.kind, `${group.entries.length} ${wordNoun(group.entries.length)}`, formatDate(group.batch.created_at)]
+                          .filter(Boolean)
+                          .join(" · ")
+                      : `${group.entries.length} ${wordNoun(group.entries.length)} · добавлены до появления пачек`}
                   </span>
                 </div>
                 {pct !== null && (
@@ -348,10 +369,14 @@ export function DictionaryPanel({
                           </span>
                         </div>
                         <div className="dict-row-meta">
+                          {shortPos(entry.part_of_speech) && <span className="dict-chip pos">{shortPos(entry.part_of_speech)}</span>}
                           {entry.plural && <span className="dict-chip">{entry.plural}</span>}
                           {entry.cefr && <span className="dict-chip level">{entry.cefr}</span>}
                         </div>
                       </button>
+                      <span className="dict-row-side" onClick={(e) => e.stopPropagation()}>
+                        <SpeakButton text={entry.headword} lang={language} size={15} />
+                      </span>
                       <button
                         type="button"
                         className="dict-row-delete"

@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  const { entries, pageKind, topic, isVocabularyList } = parseDictionaryEntries(result.data);
+  const { entries, pageKind, topic, pageLabel, isVocabularyList } = parseDictionaryEntries(result.data);
   if (entries.length === 0) {
     return NextResponse.json(
       { error: "На снимке не нашлось слов. Попробуйте кадр покрупнее или при лучшем свете." },
@@ -83,12 +83,15 @@ export async function POST(req: Request) {
   // One photo, one batch: the page is the unit the learner was set to learn,
   // and keeping it whole is the whole point of the dictionary being organised.
   const title = batchTitle(pageKind, topic);
+  // The page label ("стр. 56", "Lektion 4") travels inside `kind`, which the
+  // batch header prints — no extra column needed.
+  const kindLine = [pageKind, pageLabel].filter(Boolean).join(" · ");
   const { data: batch, error: batchError } = await supabaseAdmin
     .from("dictionary_batches")
     .insert({
       user_id: user.id,
       title,
-      kind: pageKind,
+      kind: kindLine,
       topic,
       language: targetLanguage,
       word_count: entries.length,

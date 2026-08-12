@@ -130,6 +130,11 @@
 
 /* CEFR level of the word itself: how common it is, and so whether it is worth
    memorising at this stage. */
+.word-meta-chip.article { font-weight: 800; border-color: currentColor; background: rgba(255,255,255,0.04); }
+.word-meta-chip.article.gender-m { color: #6ea8e0; }
+.word-meta-chip.article.gender-f { color: #e08aa8; }
+.word-meta-chip.article.gender-n { color: #7fc9a0; }
+
 .word-meta-chip.level { color: var(--green); border-color: rgba(122,171,106,0.45); background: rgba(122,171,106,0.1); letter-spacing: 0.04em; }
 
 /* ─── Modal Sections ─────────────────────────────────────────────────────── */

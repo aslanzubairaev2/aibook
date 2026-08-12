@@ -1742,7 +1742,6 @@ textarea,
   flex: 1; min-width: 0; background: none; border: none; outline: none;
   color: var(--text-primary); font-size: 14px;
 }
-.dict-search-clear { background: none; border: none; color: var(--text-muted); font-weight: 700; cursor: pointer; }
 
 /* Batches */
 .dict-batches { display: flex; flex-direction: column; gap: 10px; padding-bottom: 90px; }
@@ -1781,15 +1780,17 @@ textarea,
 
 /* Word rows inside a batch */
 .dict-list { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
-.dict-row-wrap { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
+.dict-row-wrap { display: flex; align-items: center; border-bottom: 1px solid var(--border); transition: background 0.15s; }
 .dict-row-wrap:last-child { border-bottom: none; }
+/* The whole row lights up, not just the clickable half — a row highlighted in
+   pieces reads as broken. */
+.dict-row-wrap:hover { background: rgba(212, 168, 71, 0.06); }
 .dict-row {
   flex: 1; min-width: 0;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 10px 0 10px 14px; text-align: left;
   background: none; border: none; cursor: pointer; transition: background 0.15s;
 }
-.dict-row:hover { background: rgba(212, 168, 71, 0.05); }
 .dict-row-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .dict-word { font-size: 14.5px; font-weight: 700; color: var(--text-primary); }
 .dict-translation {
@@ -1804,6 +1805,8 @@ textarea,
   border-radius: 5px; white-space: nowrap;
 }
 .dict-chip.level { color: var(--accent); font-weight: 800; }
+.dict-chip.pos { font-style: italic; }
+.dict-row-side { display: flex; align-items: center; flex: 0 0 auto; padding: 0 2px; }
 .dict-row-delete {
   flex: 0 0 auto; width: 34px;
   display: flex; align-items: center; justify-content: center;

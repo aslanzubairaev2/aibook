@@ -51,6 +51,8 @@ export type CardFilters = {
   sortOrder?: "added" | "due" | "ease";
   trainFilter?: "all" | "word" | "phrase" | "sentence";
   trainStatus?: "all" | "new" | "learning" | "review" | "relearning" | "hard";
+  /** Narrow training to one source — a book title or a dictionary batch title. */
+  trainBook?: string;
   trainVariants?: TrainVariant[];
   trainMode?: "recognize" | "active";
 };

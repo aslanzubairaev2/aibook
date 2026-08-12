@@ -223,7 +223,7 @@ function AppInner() {
   const [section, setSection] = useState<AppSection>("home");
   // Set when arriving from "train this batch" so the card module opens on the
   // right tab with the batch filter already applied.
-  const [cardsInitialTab, setCardsInitialTab] = useState<"all" | null>(null);
+  const [cardsInitialTab, setCardsInitialTab] = useState<"all" | "train" | null>(null);
   const [isLiveChatOpen, setIsLiveChatOpen] = useState(false);
   const [liveChatTextContext, setLiveChatTextContext] = useState<{ text: string } | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -524,15 +524,19 @@ function AppInner() {
       ...profile,
       cardFilters: {
         ...profile.cardFilters,
+        // The list tab and the trainer both open narrowed to this batch.
         filterBook: batchTitle,
         filterStatus: "all",
         filterType: "all",
         filterLevel: "all",
+        trainBook: batchTitle,
+        trainFilter: "all",
+        trainStatus: "all",
       },
     };
     saveLocalProfile(updated);
     setProfile(updated);
-    setCardsInitialTab("all");
+    setCardsInitialTab("train");
     setSection("cards");
   }
 
