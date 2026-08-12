@@ -101,10 +101,16 @@ Rules:
 - No duplicates: one entry per word.
 - "pageKind" describes what you decided the page is, in ${native} ("список слов из учебника",
   "страница книги").
+- "topic" is what the words are about, in ${native}, two or three words — "свободное время",
+  "аренда жилья", "погода и природа". It becomes the name of this batch in the learner's
+  dictionary, so it has to be recognisable a month later. Empty only if the words share nothing.
+- "pageLabel" is any page or unit number printed on the page ("стр. 56", "Lektion 4"), or empty.
 
 Return ONLY valid JSON:
 {
   "pageKind": "…",
+  "topic": "…",
+  "pageLabel": "…",
   "isVocabularyList": true,
   "entries": [ { "headword": "…", "lemma": "…", "translation": "…", "partOfSpeech": "…",
                  "gender": "…", "article": "…", "plural": "…", "forms": {},
@@ -119,6 +125,8 @@ const GENDERS = new Set(["m", "f", "n", "pl"]);
 export function parseDictionaryEntries(raw: unknown): {
   entries: DictionaryEntryDraft[];
   pageKind: string;
+  topic: string;
+  pageLabel: string;
   isVocabularyList: boolean;
 } {
   const obj = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
@@ -171,6 +179,8 @@ export function parseDictionaryEntries(raw: unknown): {
   return {
     entries,
     pageKind: String(obj.pageKind ?? "").trim().slice(0, 120),
+    topic: String(obj.topic ?? "").trim().slice(0, 80),
+    pageLabel: String(obj.pageLabel ?? "").trim().slice(0, 40),
     isVocabularyList: obj.isVocabularyList === true,
   };
 }

@@ -221,6 +221,9 @@ async function loadLessonBook(sharedBookId: string, paragraphIndex: number, perc
 function AppInner() {
   const { user, isLoading: authLoading } = useAuth();
   const [section, setSection] = useState<AppSection>("home");
+  // Set when arriving from "train this batch" so the card module opens on the
+  // right tab with the batch filter already applied.
+  const [cardsInitialTab, setCardsInitialTab] = useState<"all" | null>(null);
   const [isLiveChatOpen, setIsLiveChatOpen] = useState(false);
   const [liveChatTextContext, setLiveChatTextContext] = useState<{ text: string } | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -432,6 +435,7 @@ function AppInner() {
         lastReviewedAt: c.last_reviewed_at || null,
         sourceBookId: c.source_book_id || null,
         sourceBookTitle: c.source_book_title || null,
+        cefr: c.cefr ?? null,
       }));
       setCards(localCards);
     }
@@ -507,6 +511,29 @@ function AppInner() {
     setReaderOrigin(section === "reader" ? readerOrigin : section);
     setActiveBook(book);
     setSection("reader");
+  }
+
+  /**
+   * "Train this batch": jump to the card module with its filters preset to
+   * exactly the cards made from that photographed page. The filters live in
+   * the profile, which is also how they normally persist, so CardsView picks
+   * them up on mount without any new plumbing.
+   */
+  function handleTrainWords(_batchId: string, batchTitle: string) {
+    const updated: UserProfile = {
+      ...profile,
+      cardFilters: {
+        ...profile.cardFilters,
+        filterBook: batchTitle,
+        filterStatus: "all",
+        filterType: "all",
+        filterLevel: "all",
+      },
+    };
+    saveLocalProfile(updated);
+    setProfile(updated);
+    setCardsInitialTab("all");
+    setSection("cards");
   }
 
   function handleAddCard(card: Flashcard) {
@@ -849,6 +876,7 @@ function AppInner() {
           downloadTasks={downloadTasks}
           onDownloadBook={(book) => void handleCatalogDownload(book)}
           onAddCard={handleAddCard}
+          onTrainWords={handleTrainWords}
         />
       )}
 
@@ -876,7 +904,8 @@ function AppInner() {
       {section === "cards" && (
         <CardsView
           cards={cards}
-          onBack={() => setSection("home")}
+          initialTab={cardsInitialTab}
+          onBack={() => { setCardsInitialTab(null); setSection("home"); }}
           onAddCard={handleAddCard}
           onUpdateCard={handleUpdateCard}
           onDeleteCard={handleDeleteCard}

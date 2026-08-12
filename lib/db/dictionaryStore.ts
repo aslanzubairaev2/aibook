@@ -8,8 +8,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 
+export type DictionaryBatch = {
+  id: string;
+  title: string;
+  kind: string;
+  topic: string;
+  language: string;
+  word_count: number;
+  created_at: string;
+};
+
 export type DictionaryEntry = {
   id: string;
+  batch_id: string | null;
   headword: string;
   lemma: string;
   language: string;
@@ -28,7 +39,7 @@ export type DictionaryEntry = {
 };
 
 export const DICTIONARY_COLUMNS =
-  "id, headword, lemma, language, translation, part_of_speech, gender, article, plural, forms, cefr, note, example, example_translation, source, created_at";
+  "id, batch_id, headword, lemma, language, translation, part_of_speech, gender, article, plural, forms, cefr, note, example, example_translation, source, created_at";
 
 export type SaveEntriesResult =
   | { ok: true; added: number; updated: number }
@@ -40,6 +51,7 @@ export async function saveDictionaryEntries(
   language: string,
   drafts: DictionaryEntryDraft[],
   source: string,
+  batchId: string | null = null,
 ): Promise<SaveEntriesResult> {
   if (drafts.length === 0) return { ok: true, added: 0, updated: 0 };
 
@@ -62,6 +74,7 @@ export async function saveDictionaryEntries(
     return {
       user_id: userId,
       language,
+      batch_id: batchId,
       headword: d.headword,
       lemma: d.lemma,
       translation: keep(d.translation, prior?.translation),
@@ -86,4 +99,81 @@ export async function saveDictionaryEntries(
   if (error) return { ok: false, error: `Не удалось сохранить слова: ${error.message}` };
 
   return { ok: true, added: rows.length - existing.size, updated: existing.size };
+}
+
+/**
+ * Every word of a batch becomes a flashcard straight away.
+ *
+ * The learner photographed a page they have been told to learn; making them
+ * tap "add to cards" forty times to actually start learning it is a chore with
+ * no purpose. Cards carry the batch id, which is what lets the deck be
+ * narrowed to one page, and the CEFR level, which is what lets it be narrowed
+ * by difficulty.
+ *
+ * Words that are already cards are left exactly as they are — re-adding one
+ * would reset a schedule the learner has been building for weeks.
+ */
+export async function createCardsForEntries(
+  admin: SupabaseClient,
+  userId: string,
+  entries: DictionaryEntryDraft[],
+  batchId: string,
+  batchTitle: string,
+): Promise<{ created: number }> {
+  if (entries.length === 0) return { created: 0 };
+
+  const { data: existing } = await admin
+    .from("flashcards")
+    .select("front")
+    .eq("user_id", userId);
+
+  const known = new Set((existing ?? []).map((row) => normalizeFront(String(row.front ?? ""))));
+
+  // Due at the end of today, so a freshly photographed page is ready to study
+  // in the same sitting.
+  const dueAt = new Date();
+  dueAt.setHours(23, 59, 59, 999);
+
+  const rows = entries
+    .filter((e) => !known.has(normalizeFront(e.headword)))
+    .map((e) => ({
+      user_id: userId,
+      vocabulary_item_id: null,
+      front: e.headword,
+      back: cardBack(e),
+      source_book_title: batchTitle,
+      source_book_id: batchId,
+      selection_type: "word",
+      repetitions: 0,
+      lapses: 0,
+      easiness_factor: 2.5,
+      interval_days: 0,
+      next_review_at: dueAt.toISOString(),
+      last_reviewed_at: null,
+      status: "new",
+      cefr: e.cefr || null,
+    }));
+
+  if (rows.length === 0) return { created: 0 };
+
+  const { error } = await admin.from("flashcards").insert(rows);
+  if (error) {
+    // A dictionary that saved but could not make cards is still worth having.
+    console.error("createCardsForEntries:", error.message);
+    return { created: 0 };
+  }
+  return { created: rows.length };
+}
+
+function normalizeFront(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** The back of the card carries the cheat sheet, not just the translation. */
+export function cardBack(entry: DictionaryEntryDraft): string {
+  const extras = [
+    entry.plural && `мн. ч.: ${entry.plural}`,
+    ...Object.entries(entry.forms ?? {}).map(([k, v]) => `${k}: ${v}`),
+  ].filter(Boolean);
+  return extras.length > 0 ? `${entry.translation}\n${extras.join(" · ")}` : entry.translation;
 }

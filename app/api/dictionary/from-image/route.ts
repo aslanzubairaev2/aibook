@@ -4,10 +4,18 @@ import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import { runDictionaryPrompt } from "@/lib/ai/lessonModel";
 import { buildDictionaryFromImagePrompt, parseDictionaryEntries } from "@/lib/ai/buildDictionaryPrompt";
-import { saveDictionaryEntries } from "@/lib/db/dictionaryStore";
+import { saveDictionaryEntries, createCardsForEntries } from "@/lib/db/dictionaryStore";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+/** A name the learner will recognise in a list a month from now. */
+function batchTitle(pageKind: string, topic: string): string {
+  const date = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+  if (topic) return `${topic} · ${date}`;
+  if (pageKind) return `${pageKind.charAt(0).toUpperCase()}${pageKind.slice(1)} · ${date}`;
+  return `Слова · ${date}`;
+}
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -64,11 +72,34 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  const { entries, pageKind, isVocabularyList } = parseDictionaryEntries(result.data);
+  const { entries, pageKind, topic, isVocabularyList } = parseDictionaryEntries(result.data);
   if (entries.length === 0) {
     return NextResponse.json(
       { error: "На снимке не нашлось слов. Попробуйте кадр покрупнее или при лучшем свете." },
       { status: 422 },
+    );
+  }
+
+  // One photo, one batch: the page is the unit the learner was set to learn,
+  // and keeping it whole is the whole point of the dictionary being organised.
+  const title = batchTitle(pageKind, topic);
+  const { data: batch, error: batchError } = await supabaseAdmin
+    .from("dictionary_batches")
+    .insert({
+      user_id: user.id,
+      title,
+      kind: pageKind,
+      topic,
+      language: targetLanguage,
+      word_count: entries.length,
+    })
+    .select("id")
+    .single();
+
+  if (batchError || !batch) {
+    return NextResponse.json(
+      { error: `Не удалось создать пачку слов: ${batchError?.message ?? "нет ответа"}` },
+      { status: 500 },
     );
   }
 
@@ -78,16 +109,23 @@ export async function POST(req: Request) {
     targetLanguage,
     entries,
     pageKind ? `Фото · ${pageKind}` : "Фото",
+    batch.id as string,
   );
   if (!saved.ok) {
     return NextResponse.json({ error: saved.error }, { status: 500 });
   }
 
+  const cards = await createCardsForEntries(supabaseAdmin, user.id, entries, batch.id as string, title);
+
   return NextResponse.json({
+    batchId: batch.id,
+    batchTitle: title,
     added: saved.added,
     updated: saved.updated,
+    cardsCreated: cards.created,
     total: entries.length,
     pageKind,
+    topic,
     isVocabularyList,
     // A truncated answer means the tail of a long page did not arrive; the
     // learner should know to photograph the rest rather than assume it is in.

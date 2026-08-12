@@ -227,6 +227,8 @@ const DICTIONARY_SCHEMA = {
   type: Type.OBJECT,
   properties: {
     pageKind: { type: Type.STRING },
+    topic: { type: Type.STRING },
+    pageLabel: { type: Type.STRING },
     isVocabularyList: { type: Type.BOOLEAN },
     entries: {
       type: Type.ARRAY,

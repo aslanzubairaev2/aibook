@@ -87,6 +87,7 @@ export type DbFlashcard = {
   last_reviewed_at: string | null;
   source_book_id: string | null;
   status: string;
+  cefr?: string | null;
   created_at: string;
 };
 

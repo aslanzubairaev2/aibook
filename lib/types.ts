@@ -46,6 +46,8 @@ export type CardFilters = {
   filterStatus?: "all" | "new" | "learning" | "review" | "relearning";
   filterType?: "all" | "word" | "phrase" | "sentence";
   filterBook?: string;
+  /** CEFR level of the word on the card ("all" or A1…C2). */
+  filterLevel?: string;
   sortOrder?: "added" | "due" | "ease";
   trainFilter?: "all" | "word" | "phrase" | "sentence";
   trainStatus?: "all" | "new" | "learning" | "review" | "relearning" | "hard";
@@ -220,6 +222,8 @@ export type Flashcard = {
   lastReviewedAt?: string | null;
   sourceBookId?: string | null;
   sourceBookTitle?: string | null;
+  /** CEFR level of the word, when known (cards made from the dictionary carry it). */
+  cefr?: string | null;
 };
 
 // ─── Productive recall ──────────────────────────────────────────────────────

@@ -19,8 +19,10 @@ import { buildKnownWordSet, computeCoverage, COMFORT_MIN, COMFORT_MAX, type Cove
 import { LessonComposerModal, type ComposerState } from "./LessonComposerModal";
 import { LessonRefineModal } from "./LessonRefineModal";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
-import { DictionaryPanel, entryToCardText } from "@/components/dictionary/DictionaryPanel";
-import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
+import { DictionaryPanel, entryToCardText, entryToAnalysis } from "@/components/dictionary/DictionaryPanel";
+import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
+import { WordModal } from "@/components/word-modal/WordModal";
+import type { AiAnalysis } from "@/lib/types";
 
 type Props = {
   books: Book[];
@@ -32,6 +34,8 @@ type Props = {
   onDownloadBook: (book: GutendexBook) => void;
   /** Turning a dictionary entry into a flashcard goes through the app's single card path. */
   onAddCard?: (card: Flashcard) => void;
+  /** Open the flashcard module narrowed to one batch's cards. */
+  onTrainWords?: (batchId: string, batchTitle: string) => void;
 };
 
 type GutendexBook = {
@@ -215,7 +219,7 @@ function readPrefs(): DiscoverPrefs {
   }
 }
 
-export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook, onAddCard }: Props) {
+export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook, onAddCard, onTrainWords }: Props) {
   const { user } = useAuth();
   const [prefs] = useState<DiscoverPrefs>(readPrefs);
   const [activeTab, setActiveTab] = useState<TabKey>(prefs.activeTab ?? "classic");
@@ -276,8 +280,13 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [photoMode, setPhotoMode] = useState<"lesson" | "dictionary">("lesson");
 
   const [dictionary, setDictionary] = useState<DictionaryEntry[]>([]);
+  const [dictBatches, setDictBatches] = useState<DictionaryBatch[]>([]);
   const [dictLoading, setDictLoading] = useState(false);
   const [dictError, setDictError] = useState<string | null>(null);
+  // The dictionary reuses the app-wide word modal rather than inventing its
+  // own; the entry already holds everything the modal shows, so no AI call.
+  const [dictWord, setDictWord] = useState<DictionaryEntry | null>(null);
+  const [miniTextBusy, setMiniTextBusy] = useState(false);
   // Surfaces a degraded result from the photo flow: the lesson was saved, but
   // not in the form it was meant to take.
   const [toast, setToast] = useState<string | null>(null);
@@ -380,9 +389,10 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       const res = await freshFetch(`/api/dictionary?language=${encodeURIComponent(profile.targetLanguage)}`, {
         headers: await sbAuthHeaders(),
       });
-      const data = await res.json() as { entries?: DictionaryEntry[]; error?: string };
+      const data = await res.json() as { entries?: DictionaryEntry[]; batches?: DictionaryBatch[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Не удалось загрузить словарь.");
       setDictionary(data.entries ?? []);
+      setDictBatches(data.batches ?? []);
     } catch (err) {
       setDictError(err instanceof Error ? err.message : "Не удалось загрузить словарь.");
     } finally {
@@ -445,6 +455,66 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       });
     } catch {
       void loadDictionary();
+    }
+  }
+
+  async function deleteDictionaryBatch(batchId: string) {
+    setDictionary((prev) => prev.filter((e) => e.batch_id !== batchId));
+    setDictBatches((prev) => prev.filter((b) => b.id !== batchId));
+    try {
+      await fetch(`/api/dictionary?batchId=${encodeURIComponent(batchId)}`, {
+        method: "DELETE",
+        headers: await sbAuthHeaders(),
+      });
+    } catch {
+      void loadDictionary();
+    }
+  }
+
+  /**
+   * A short reading text built around one word, saved as a lesson and opened
+   * at once — the fastest way to see a dictionary word actually working.
+   */
+  async function createMiniTextForWord(entry: DictionaryEntry) {
+    if (miniTextBusy) return;
+    setMiniTextBusy(true);
+    try {
+      const level = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(entry.cefr)
+        ? entry.cefr
+        : prefs.lessonLevel ?? "A2";
+      const res = await freshFetch("/api/lessons/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+        body: JSON.stringify({
+          level,
+          topic: `Слово «${entry.headword}»`,
+          targetLanguage: profile.targetLanguage,
+          nativeLanguage: profile.nativeLanguage,
+          reviewWords: [entry.headword],
+          length: "short",
+          context: `Короткий текст, построенный вокруг слова «${entry.headword}» (${entry.translation}): показать его в нескольких типичных ситуациях и формах, чтобы слово можно было рассмотреть со всех сторон.`,
+        }),
+      });
+      const data = await res.json() as { id?: string; error?: string };
+      if (!res.ok || !data.id) throw new Error(data.error ?? "Не удалось создать текст.");
+
+      // Fetch the fresh list ourselves: the state update from loadMyLessons
+      // lands too late for this same handler to use.
+      const listRes = await freshFetch("/api/lessons", { headers: await sbAuthHeaders() });
+      const listData = await listRes.json() as { lessons?: SharedBook[] };
+      const lessons = listData.lessons ?? [];
+      setMyLessons(lessons);
+      const lesson = lessons.find((l) => l.id === data.id);
+      setDictWord(null);
+      if (lesson) {
+        await openSharedLesson(lesson, lessons);
+      } else {
+        showToast("Текст создан — смотрите в «Мои уроки»");
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Не удалось создать текст.");
+    } finally {
+      setMiniTextBusy(false);
     }
   }
 
@@ -1065,13 +1135,15 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             <>
               <DictionaryPanel
                 entries={dictionary}
+                batches={dictBatches}
+                cards={cards}
                 isLoading={dictLoading}
                 error={dictError}
-                language={profile.targetLanguage}
-                cardFronts={cardFronts}
                 onPhotograph={() => { setPhotoMode("dictionary"); setPhotoOpen(true); }}
-                onDelete={(id) => void deleteDictionaryEntry(id)}
-                onAddCard={(entry) => addCardFromEntry(entry)}
+                onOpenEntry={(entry) => setDictWord(entry)}
+                onDeleteEntry={(id) => void deleteDictionaryEntry(id)}
+                onDeleteBatch={(id) => void deleteDictionaryBatch(id)}
+                onTrainBatch={(batch) => onTrainWords?.(batch.id, batch.title)}
               />
               <button
                 type="button"
@@ -1369,6 +1441,21 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             {seedError && <div className="inline-error" style={{ marginTop: 10 }}>{seedError}</div>}
           </div>
         </div>
+      )}
+
+      {/* A dictionary word opens the same word modal as everywhere else. */}
+      {dictWord && (
+        <WordModal
+          analysis={entryToAnalysis(dictWord)}
+          isOpen
+          lang={profile.targetLanguage}
+          nativeLang={profile.nativeLanguage}
+          selectedWord={dictWord.headword}
+          onClose={() => setDictWord(null)}
+          onAddCard={() => addCardFromEntry(dictWord)}
+          onCreateText={() => void createMiniTextForWord(dictWord)}
+          isCreatingText={miniTextBusy}
+        />
       )}
 
       {toast && <div className="toast">{toast}</div>}

@@ -20,6 +20,8 @@ import { SkillBadges } from "@/components/cards/SkillBadges";
 
 type Props = {
   cards: Flashcard[];
+  /** Which tab to open on — "all" when arriving from «тренировать пачку» in the dictionary. */
+  initialTab?: "today" | "train" | "all" | null;
   onBack: () => void;
   onAddCard: (card: Flashcard) => void;
   onUpdateCard: (card: Flashcard) => void;
@@ -78,7 +80,7 @@ const TTS_PROVIDERS: { value: TtsProvider; label: string }[] = [
   { value: "deepgram", label: "Deepgram" },
 ];
 
-export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard }: Props) {
+export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, onDeleteCard }: Props) {
   const { user } = useAuth();
   const [profile, setProfile] = useState(getLocalProfile);
   const targetLanguage = profile.targetLanguage;
@@ -86,11 +88,12 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
 
   const savedFilters = profile.cardFilters;
 
-  const [activeTab, setActiveTab] = useState<"today" | "train" | "all">("today");
+  const [activeTab, setActiveTab] = useState<"today" | "train" | "all">(initialTab ?? "today");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<FilterStatus>(savedFilters?.filterStatus ?? "all");
   const [filterType, setFilterType] = useState<FilterType>(savedFilters?.filterType ?? "all");
   const [filterBook, setFilterBook] = useState<string>(savedFilters?.filterBook ?? "all");
+  const [filterLevel, setFilterLevel] = useState<string>(savedFilters?.filterLevel ?? "all");
   const [sortOrder, setSortOrder] = useState<SortOrder>(savedFilters?.sortOrder ?? "added");
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [showTrainFilterPanel, setShowTrainFilterPanel] = useState(false);
@@ -485,7 +488,9 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
 
   // --- All Cards filtering & sorting ---
   const allBooks = Array.from(new Set(cards.map((c) => c.sourceBookTitle || c.source || "").filter(Boolean)));
-  const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all"].filter(Boolean).length;
+  // Only levels that actually occur — cards made before levels existed have none.
+  const cardLevels = ["A1", "A2", "B1", "B2", "C1", "C2"].filter((l) => cards.some((c) => c.cefr === l));
+  const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all", filterLevel !== "all"].filter(Boolean).length;
   const variantsAreDefault = trainVariants.length === 1 && trainVariants[0] === "forward";
   const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", !variantsAreDefault].filter(Boolean).length;
 
@@ -494,6 +499,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
       if (filterStatus !== "all" && c.status !== filterStatus) return false;
       if (filterType !== "all" && c.type !== filterType) return false;
       if (filterBook !== "all" && (c.sourceBookTitle || c.source || "") !== filterBook) return false;
+      if (filterLevel !== "all" && (c.cefr ?? "") !== filterLevel) return false;
       const query = searchQuery.toLowerCase().trim();
       if (query) return c.front.toLowerCase().includes(query) || c.back.toLowerCase().includes(query) || (c.sourceBookTitle || c.source || "").toLowerCase().includes(query);
       return true;
@@ -1085,6 +1091,20 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                 </div>
               </div>
 
+              {cardLevels.length > 0 && (
+                <div className="filter-group">
+                  <div className="filter-group-label">Уровень CEFR</div>
+                  <div className="filter-chips">
+                    <button className={`filter-chip ${filterLevel === "all" ? "active" : ""}`} onClick={() => { setFilterLevel("all"); persistCardFilters({ filterLevel: "all" }); setVisibleCount(50); }} type="button">Все</button>
+                    {cardLevels.map((l) => (
+                      <button key={l} className={`filter-chip ${filterLevel === l ? "active" : ""}`} onClick={() => { setFilterLevel(l); persistCardFilters({ filterLevel: l }); setVisibleCount(50); }} type="button">
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {allBooks.length > 1 && (
                 <div className="filter-group">
                   <div className="filter-group-label">Книга</div>
@@ -1105,7 +1125,7 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
               </div>
 
               {activeFilterCount > 0 && (
-                <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); persistCardFilters({ filterStatus: "all", filterType: "all", filterBook: "all" }); setVisibleCount(50); }} type="button">
+                <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); setFilterLevel("all"); persistCardFilters({ filterStatus: "all", filterType: "all", filterBook: "all", filterLevel: "all" }); setVisibleCount(50); }} type="button">
                   Сбросить фильтры
                 </button>
               )}
@@ -1134,9 +1154,16 @@ export function CardsView({ cards, onBack, onAddCard, onUpdateCard, onDeleteCard
                         {card.intervalDays > 0 ? ` · ${card.intervalDays}дн` : ""}
                       </span>
                     </div>
-                    <div className="flash-card-front" style={{ fontSize: 15 }}>{card.front}</div>
-                    <div className="flash-card-back" style={{ fontSize: 13, color: "var(--text-muted)" }}>{card.back}</div>
-                    <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
+                    {/* Front is spoken and word-tappable, like text everywhere else in the app. */}
+                    <div className="flash-card-front" style={{ fontSize: 15, display: "flex", alignItems: "flex-start", gap: 6 }}>
+                      <TokenizedText text={card.front} style={{ flex: 1 }} />
+                      <SpeakButton text={card.front} lang={targetLanguage} size={15} />
+                    </div>
+                    <TokenizedText text={card.back} style={{ fontSize: 13, color: "var(--text-muted)" }} />
+                    <div className="flash-card-source" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      из «{card.sourceBookTitle || card.source}»
+                      {card.cefr && <span style={{ fontSize: 9.5, fontWeight: 800, color: "var(--green)", border: "1px solid rgba(122,171,106,0.4)", borderRadius: 4, padding: "1px 4px" }}>{card.cefr}</span>}
+                    </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
                     <button

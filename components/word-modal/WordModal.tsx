@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, X, ChevronRight } from "lucide-react";
+import { Plus, X, ChevronRight, Loader2, FileText } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { GrammarModal, POS_GRAMMAR_LABEL } from "@/components/word-modal/GrammarModal";
 import type { AiAnalysis, PosTag, WordAnalysis } from "@/lib/types";
@@ -19,6 +19,9 @@ type Props = {
   onAddLemma?: (lemma: string) => void;
   onWordTap?: (word: string, contextSentence: string) => void;
   onAddExample?: (text: string, translation: string) => void;
+  /** Write a short reading text built around this word and open it. */
+  onCreateText?: () => void;
+  isCreatingText?: boolean;
 };
 
 // Map the human-readable / AI-provided part of speech onto a normalized tag so
@@ -42,7 +45,7 @@ const PLURAL_LABEL = "\u041c\u043d. \u0447\u0438\u0441\u043b\u043e";
 const INFINITIVE_LABEL = "\u0418\u043d\u0444\u0438\u043d\u0438\u0442\u0438\u0432";
 const FORM_LABEL = "\u0424\u043e\u0440\u043c\u0430";
 
-export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onAddExample }: Props) {
+export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onAddExample, onCreateText, isCreatingText }: Props) {
   const [grammarOpen, setGrammarOpen] = useState(false);
   if (!isOpen) return null;
   const word = analysis?.word;
@@ -219,6 +222,23 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
           <span>{POS_GRAMMAR_LABEL[resolvePos(word)]}</span>
           <ChevronRight size={18} />
         </button>
+
+        {/* A short text built around this word: the fastest way to meet it in
+            the wild rather than as a table row. */}
+        {onCreateText && (
+          <button
+            type="button"
+            className="grammar-open-btn"
+            onClick={onCreateText}
+            disabled={isCreatingText}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              {isCreatingText ? <Loader2 size={16} className="spin" /> : <FileText size={16} />}
+              {isCreatingText ? "Пишу текст…" : "Мини-текст с этим словом"}
+            </span>
+            {!isCreatingText && <ChevronRight size={18} />}
+          </button>
+        )}
         </>
         )}
 

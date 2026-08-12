@@ -28,7 +28,19 @@ export async function GET(req: NextRequest) {
     .limit(2000);
   if (language) query = query.eq("language", language);
 
-  const { data, error } = await query;
+  const [{ data, error }, { data: batches }] = await Promise.all([
+    query,
+    (() => {
+      let b = supabaseAdmin
+        .from("dictionary_batches")
+        .select("id, title, kind, topic, language, word_count, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (language) b = b.eq("language", language);
+      return b;
+    })(),
+  ]);
   if (error) {
     // The table is added by a migration; say so plainly instead of showing an
     // empty dictionary as if there were nothing in it.
@@ -39,10 +51,14 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ entries: data ?? [] });
+  return NextResponse.json({ entries: data ?? [], batches: batches ?? [] });
 }
 
-// DELETE /api/dictionary?id=…
+// DELETE /api/dictionary?id=…            — one entry
+// DELETE /api/dictionary?batchId=…       — a whole batch and its entries
+//                                          (the flashcards made from it stay:
+//                                          learning progress is not something
+//                                          a cleanup should destroy)
 export async function DELETE(req: NextRequest) {
   const user = await getUserFromRequest(req);
   if (!user) {
@@ -50,6 +66,14 @@ export async function DELETE(req: NextRequest) {
   }
   if (!supabaseAdmin) {
     return NextResponse.json({ error: "Supabase не настроен на сервере." }, { status: 503 });
+  }
+
+  const batchId = req.nextUrl.searchParams.get("batchId");
+  if (batchId) {
+    await supabaseAdmin.from("dictionary_entries").delete().eq("batch_id", batchId).eq("user_id", user.id);
+    const { error } = await supabaseAdmin.from("dictionary_batches").delete().eq("id", batchId).eq("user_id", user.id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
   }
 
   const id = req.nextUrl.searchParams.get("id");
