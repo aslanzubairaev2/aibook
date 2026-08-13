@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2 } from "lucide-react";
+import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X } from "lucide-react";
 import type { AiAnalysis, CardFilters, DiscussMessage, Flashcard, TrainVariant, TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields, createDefaultSkillProgress } from "@/lib/srs/sm2";
-import { ALL_TRAIN_VARIANTS, filterCardsByTrainingSource, findDuplicateCard, splitCardBack } from "@/lib/cards";
+import { ALL_TRAIN_VARIANTS, filterCardsByTrainingSource, findDuplicateCard, getReviewHistoryPosition, splitCardBack } from "@/lib/cards";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { speak } from "@/lib/tts";
@@ -150,6 +150,10 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   // prop on every render, so grading a card can't shrink the queue out from
   // under `currentTrainIndex` mid-session.
   const [trainQueue, setTrainQueue] = useState<TrainQueueItem[]>([]);
+  // Session-only snapshots of cards that have already been graded. Browsing
+  // this list never touches the live queue or any SRS state.
+  const [reviewHistory, setReviewHistory] = useState<TrainQueueItem[]>([]);
+  const [viewingHistoryIndex, setViewingHistoryIndex] = useState<number | null>(null);
 
   // Discuss-with-AI state (chat about a specific card)
   const [discuss, setDiscuss] = useState<{
@@ -385,11 +389,13 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
     setCurrentTrainIndex(0);
     setReviewedIds([]);
     setIsFlipped(false);
+    setReviewHistory([]);
+    setViewingHistoryIndex(null);
     clearSrsSession();
   }
 
   const handleGrade = (score: 1 | 2 | 3 | 4) => {
-    if (trainQueue.length === 0 || currentTrainIndex >= trainQueue.length) return;
+    if (viewingHistoryIndex !== null || trainQueue.length === 0 || currentTrainIndex >= trainQueue.length) return;
     const { card, variant } = trainQueue[currentTrainIndex];
     const prev = getVariantProgress(card, variant);
     const srsUpdate = calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor);
@@ -405,6 +411,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
       onUpdateCard({ ...card, lastReviewedAt: now });
     }
 
+    setReviewHistory((history) => [...history, { card, variant }]);
     const nextReviewedIds = [...reviewedIds, card.id];
     const nextIndex = currentTrainIndex + 1;
     setReviewedIds(nextReviewedIds);
@@ -415,6 +422,13 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   };
 
   const restartTraining = () => startTrainingSession(trainStatus, trainFilter, trainVariants);
+
+  const openLatestReviewedCard = () => {
+    if (reviewHistory.length === 0) return;
+    setViewingHistoryIndex(reviewHistory.length - 1);
+  };
+
+  const closeReviewedCard = () => setViewingHistoryIndex(null);
 
   // Persists a filter/sort change to the local profile and, for signed-in users,
   // to user_settings — so selections survive reloads and follow the user across devices.
@@ -685,6 +699,10 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const promptLang = isReversed ? nativeLanguage : targetLanguage;
   const currentProgress = currentCard ? getVariantProgress(currentCard, currentVariant) : null;
   const currentMarkers = currentCard ? cardMarkers(currentCard) : [];
+  const historyPosition = getReviewHistoryPosition(reviewHistory.length, viewingHistoryIndex);
+  const historyItem = historyPosition ? reviewHistory[historyPosition.index] : null;
+  const historyCard = historyItem?.card;
+  const historyBackParts = splitCardBack(historyCard?.back ?? "");
 
   return (
     <section className="screen" onClick={() => { setShowFilterPanel(false); setShowTtsMenu(false); }}>
@@ -752,6 +770,32 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         .grade-btn-2 .grade-score { color: var(--blue); }
         .grade-btn-3 .grade-score { color: var(--green); }
         .grade-btn-4 .grade-score { color: var(--accent); }
+        .srs-history-open { display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; max-width: 420px; margin: 10px auto 0; padding: 9px 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.18s ease; }
+        .srs-history-open:hover { border-color: var(--border); background: var(--bg-elevated); color: var(--text-primary); }
+        .srs-history-open-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; line-height: 1.2; }
+        .srs-history-open-copy strong { font-size: 12px; font-weight: 800; }
+        .srs-history-open-copy small { font-size: 10px; color: var(--text-muted); }
+        .srs-history-view { width: 100%; max-width: 420px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+        .srs-history-banner { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid rgba(122, 171, 106, 0.25); border-radius: var(--radius-md); background: rgba(122, 171, 106, 0.07); color: var(--green); }
+        .srs-history-banner-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 1px; }
+        .srs-history-banner-copy strong { font-size: 12px; font-weight: 850; }
+        .srs-history-banner-copy span { font-size: 10px; color: var(--text-muted); }
+        .srs-history-close { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex-shrink: 0; border: none; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; }
+        .srs-history-close:hover { background: rgba(240, 230, 211, 0.08); color: var(--text-primary); }
+        .srs-history-card { position: relative; min-height: 250px; display: flex; flex-direction: column; justify-content: center; padding: 56px 22px 46px; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: linear-gradient(145deg, var(--bg-elevated), rgba(122, 171, 106, 0.04)); box-shadow: var(--shadow-sm); text-align: center; overflow: hidden; }
+        .srs-history-card-head { position: absolute; top: 14px; left: 14px; right: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .srs-history-direction { padding: 4px 8px; border-radius: 6px; background: rgba(212, 168, 71, 0.12); color: var(--accent); font-size: 10px; font-weight: 850; text-transform: uppercase; letter-spacing: 0.04em; }
+        .srs-history-word-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .srs-history-word { min-width: 0; font-size: clamp(22px, 7vw, 30px); font-weight: 850; line-height: 1.25; overflow-wrap: anywhere; }
+        .srs-history-divider { width: 42px; height: 1px; margin: 16px auto 13px; background: var(--border-strong); }
+        .srs-history-label { margin-bottom: 5px; color: var(--text-muted); font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
+        .srs-history-meaning { color: var(--accent); font-size: 18px; font-weight: 750; line-height: 1.35; white-space: pre-line; overflow-wrap: anywhere; }
+        .srs-history-details { margin-top: 7px; color: var(--text-muted); font-size: 13px; line-height: 1.4; white-space: pre-line; overflow-wrap: anywhere; }
+        .srs-history-source { position: absolute; left: 14px; right: 14px; bottom: 14px; overflow: hidden; color: var(--text-muted); font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+        .srs-history-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .srs-history-nav-btn { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 42px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); color: var(--text-primary); font-size: 12px; font-weight: 800; cursor: pointer; transition: all 0.18s ease; }
+        .srs-history-nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+        .srs-history-nav-btn:disabled { opacity: 0.35; cursor: default; }
         .all-search-bar { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--bg-card); border-radius: var(--radius-sm); padding: 0 12px; height: 40px; margin-bottom: 12px; min-width: 0; }
         .all-search-input { flex: 1; min-width: 0; background: transparent; border: none; color: var(--text-primary); outline: none; font-size: 14px; }
         .card-row-delete-btn { color: var(--text-muted); background: transparent; border: none; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; }
@@ -1059,6 +1103,60 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                 <p>{trainStatus === "hard" ? "Отлично — сложных карточек нет!" : "Попробуйте другой тип или статус."}</p>
               </div>
             )
+          ) : historyPosition && historyCard && historyItem ? (
+            <div className="srs-history-view">
+              <div className="srs-history-banner">
+                <Eye size={17} />
+                <div className="srs-history-banner-copy">
+                  <strong>Просмотр пройденной карточки</strong>
+                  <span>Не влияет на прогресс и расписание повторений</span>
+                </div>
+                <button className="srs-history-close" type="button" aria-label="Вернуться к обучению" onClick={closeReviewedCard}>
+                  <X size={17} />
+                </button>
+              </div>
+
+              <article className="srs-history-card">
+                <div className="srs-history-card-head">
+                  <span className="srs-history-direction">{TRAIN_VARIANT_LABELS[historyItem.variant]}</span>
+                  <span style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: 750 }}>
+                    {historyPosition.index + 1} из {reviewHistory.length}
+                  </span>
+                </div>
+
+                <div className="srs-history-word-row">
+                  <div className="srs-history-word">
+                    <TokenizedText text={historyCard.front} style={{ fontSize: "inherit", fontWeight: "inherit", lineHeight: "inherit" }} />
+                  </div>
+                  <SpeakButton text={historyCard.front} lang={targetLanguage} size={19} />
+                </div>
+                <div className="srs-history-divider" />
+                <div className="srs-history-label">Перевод</div>
+                <div className="srs-history-meaning">{historyBackParts.meaning || "—"}</div>
+                {historyBackParts.details && <div className="srs-history-details">{historyBackParts.details}</div>}
+                <div className="srs-history-source">{historyCard.sourceBookTitle || historyCard.source}</div>
+              </article>
+
+              <div className="srs-history-nav">
+                <button
+                  className="srs-history-nav-btn"
+                  type="button"
+                  disabled={!historyPosition.canGoOlder}
+                  onClick={() => setViewingHistoryIndex(historyPosition.index - 1)}
+                >
+                  <ChevronLeft size={16} /> Предыдущая
+                </button>
+                <button
+                  className="srs-history-nav-btn"
+                  type="button"
+                  onClick={() => historyPosition.canGoNewer
+                    ? setViewingHistoryIndex(historyPosition.index + 1)
+                    : closeReviewedCard()}
+                >
+                  {historyPosition.canGoNewer ? "Следующая" : "К обучению"} <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
           ) : currentTrainIndex >= trainQueue.length ? (
             <div className="empty-state" style={{ background: "linear-gradient(135deg, rgba(122, 171, 106, 0.08) 0%, var(--bg-elevated) 100%)", borderColor: "rgba(122, 171, 106, 0.2)" }}>
               <CheckCircle2 size={48} style={{ color: "var(--green)" }} />
@@ -1067,6 +1165,15 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
               <button className="secondary-btn" style={{ marginTop: 12 }} onClick={restartTraining} type="button">
                 <RotateCcw size={14} /> Начать заново
               </button>
+              {reviewHistory.length > 0 && (
+                <button className="srs-history-open" onClick={openLatestReviewedCard} type="button">
+                  <Eye size={15} />
+                  <span className="srs-history-open-copy">
+                    <strong>Посмотреть последнюю карточку</strong>
+                    <small>без изменения прогресса</small>
+                  </span>
+                </button>
+              )}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -1241,6 +1348,15 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                   <span className="grade-lbl">Легко</span>
                 </button>
               </div>
+              {reviewHistory.length > 0 && (
+                <button className="srs-history-open" onClick={openLatestReviewedCard} type="button">
+                  <Eye size={15} />
+                  <span className="srs-history-open-copy">
+                    <strong>Посмотреть предыдущую карточку</strong>
+                    <small>без изменения прогресса</small>
+                  </span>
+                </button>
+              )}
             </div>
           )}
           </>

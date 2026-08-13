@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, createBatchTrainingFilters, filterCardsByTrainingSource, getCardsVariantProgress, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import { ALL_TRAIN_VARIANTS, createBatchTrainingFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
 import type { CardVariantState, Flashcard, SkillProgress } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
@@ -82,4 +82,19 @@ test("variant progress keeps whichever copy was reviewed most recently", () => {
   );
   assert.equal(merged.card1.reverse, newer);
   assert.equal(merged.card1.audio, older);
+});
+
+test("review history stays within the completed cards and exposes safe navigation", () => {
+  assert.equal(getReviewHistoryPosition(0, 0), null);
+  assert.equal(getReviewHistoryPosition(3, null), null);
+  assert.deepEqual(getReviewHistoryPosition(3, -5), {
+    index: 0,
+    canGoOlder: false,
+    canGoNewer: true,
+  });
+  assert.deepEqual(getReviewHistoryPosition(3, 99), {
+    index: 2,
+    canGoOlder: true,
+    canGoNewer: false,
+  });
 });
