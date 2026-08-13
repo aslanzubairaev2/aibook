@@ -116,6 +116,11 @@ type LessonProgressMap = Record<string, {
 }>;
 
 const PAGE_SIZE = 18;
+// The shared shelves are browsed by level rather than searched one title at a
+// time, so they get a longer page than the Gutenberg catalogue. Still bounded:
+// every row carries its word-frequency map, and fetching the whole shelf is
+// what made the tab slow in the first place.
+const SHELF_PAGE_SIZE = 36;
 
 const LANGUAGES = [
   { value: "", label: "Все языки" },
@@ -294,6 +299,9 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [klexLevelFilter, setKlexLevelFilter] = useState(prefs.klexLevelFilter ?? "");
   const [klexStatusFilter, setKlexStatusFilter] = useState(prefs.klexStatusFilter ?? "");
   const [klexQuery, setKlexQuery] = useState("");
+  // The typed query, settled: it is a server filter now, so it is debounced
+  // rather than sent on every keystroke.
+  const [klexSearch, setKlexSearch] = useState("");
   // Applies to whichever catalogue tab is open: keep only texts sitting in the
   // learner's productive band.
   const [onlyComfortable, setOnlyComfortable] = useState(prefs.onlyComfortable ?? false);
@@ -377,11 +385,32 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       // One page each, not the whole shelf: these rows carry a word-frequency
       // map apiece, and fetching all of them to show eighteen tiles was the
       // slowest thing in the app.
-      const klexOffset = (klexPage - 1) * PAGE_SIZE;
-      const cefrOffset = (cefrPage - 1) * PAGE_SIZE;
+      //
+      // Because only one page is here, the shelf's own filters — language,
+      // level, title — have to be applied by the server. Narrowing eighteen
+      // rows on the client emptied the shelf: asking for English left whatever
+      // handful of English texts happened to land on the current page, and the
+      // other hundreds were never fetched to be filtered.
+      const klexParams = new URLSearchParams({
+        source_type: "klexikon",
+        limit: String(SHELF_PAGE_SIZE),
+        offset: String((klexPage - 1) * SHELF_PAGE_SIZE),
+      });
+      if (klexLevelFilter) klexParams.set("cefr_level", klexLevelFilter);
+      if (klexSearch) klexParams.set("q", klexSearch);
+
+      const cefrParams = new URLSearchParams({
+        source_type: "universal_cefr",
+        limit: String(SHELF_PAGE_SIZE),
+        offset: String((cefrPage - 1) * SHELF_PAGE_SIZE),
+        order_by: "level",
+      });
+      if (cefrLangFilter) cefrParams.set("language", cefrLangFilter);
+      if (cefrLevelFilter) cefrParams.set("cefr_level", cefrLevelFilter);
+
       const [klexRes, cefrRes] = await Promise.all([
-        freshFetch(`/api/shared-books?source_type=klexikon&limit=${PAGE_SIZE}&offset=${klexOffset}`),
-        freshFetch(`/api/shared-books?source_type=universal_cefr&limit=${PAGE_SIZE}&offset=${cefrOffset}`),
+        freshFetch(`/api/shared-books?${klexParams}`),
+        freshFetch(`/api/shared-books?${cefrParams}`),
       ]);
       if (klexRes.ok) {
         const data = await klexRes.json() as { books: SharedBook[]; total?: number };
@@ -398,7 +427,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     } finally {
       setIsSharedLoading(false);
     }
-  }, [klexPage, cefrPage]);
+  }, [klexPage, cefrPage, klexLevelFilter, klexSearch, cefrLangFilter, cefrLevelFilter]);
 
   // ── Load the caller's own generated lessons ──────────────────────────────────
   const loadMyLessons = useCallback(async () => {
@@ -611,6 +640,17 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       setMiniTextBusy(false);
     }
   }
+
+  // The Klexikon title search is a server filter; settle the typing first.
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setKlexSearch(klexQuery.trim()), 400);
+    return () => window.clearTimeout(timeout);
+  }, [klexQuery]);
+
+  // A narrower filter means a shorter shelf, so page 7 of the old one is
+  // usually past the end of the new one — start over at the first page.
+  useEffect(() => { setKlexPage(1); }, [klexLevelFilter, klexSearch]);
+  useEffect(() => { setCefrPage(1); }, [cefrLangFilter, cefrLevelFilter]);
 
   useEffect(() => {
     if (activeTab === "klexikon" || activeTab === "cefr") {
@@ -945,29 +985,29 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   }, [lessonProgress]);
 
   // ── Klexikon articles ────────────────────────────────────────────────────────
+  // Level and title are filtered by the server (see loadSharedBooks); what is
+  // left here is what the shelf cannot know — this reader's own progress and
+  // vocabulary. Those still narrow a page rather than the whole shelf.
   const filteredKlexikon = useMemo(() => {
-    const q = klexQuery.trim().toLowerCase();
     return klexikonBooks.filter((b) => {
-      if (klexLevelFilter && b.cefr_level !== klexLevelFilter) return false;
       if (!matchStatus(b.id, klexStatusFilter)) return false;
-      if (q && !b.title.toLowerCase().includes(q)) return false;
       if (onlyComfortable && !coverageOf(b)?.isComfortable) return false;
       return true;
     });
-  }, [klexikonBooks, klexLevelFilter, klexStatusFilter, klexQuery, matchStatus, onlyComfortable, coverageOf]);
+  }, [klexikonBooks, klexStatusFilter, matchStatus, onlyComfortable, coverageOf]);
   const klexikonGrouped = useMemo(() => groupByCefr(filteredKlexikon), [filteredKlexikon]);
+  const klexFiltersActive = Boolean(klexLevelFilter || klexStatusFilter || klexSearch || onlyComfortable);
 
   // ── Filtered CEFR texts ──────────────────────────────────────────────────────
   const filteredCefrBooks = useMemo(() => {
     return cefrBooks.filter((b) => {
-      if (cefrLangFilter && b.language !== cefrLangFilter) return false;
-      if (cefrLevelFilter && b.cefr_level !== cefrLevelFilter) return false;
       if (!matchStatus(b.id, cefrStatusFilter)) return false;
       if (onlyComfortable && !coverageOf(b)?.isComfortable) return false;
       return true;
     });
-  }, [cefrBooks, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, matchStatus, onlyComfortable, coverageOf]);
+  }, [cefrBooks, cefrStatusFilter, matchStatus, onlyComfortable, coverageOf]);
   const cefrGrouped = useMemo(() => groupByCefr(filteredCefrBooks), [filteredCefrBooks]);
+  const cefrFiltersActive = Boolean(cefrLangFilter || cefrLevelFilter || cefrStatusFilter || onlyComfortable);
 
   const completedKlexikon = useMemo(() =>
     klexikonBooks.filter((b) => lessonProgress[b.id]?.status === "completed").length,
@@ -1087,9 +1127,9 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
           <div className="discover-meta" style={{ marginBottom: 12 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <Sparkles size={14} style={{ color: "var(--accent)" }} />
-              {klexikonBooks.length > 0
-                ? `${filteredKlexikon.length} из ${klexikonBooks.length} • ${completedKlexikon} прочитано`
-                : "Статьи не загружены"}
+              {klexTotal > 0
+                ? `${filteredKlexikon.length} из ${klexTotal} • ${completedKlexikon} прочитано`
+                : (klexFiltersActive ? "Ничего не найдено" : "Статьи не загружены")}
             </span>
             <span style={{ display: "flex", gap: 6 }}>
               {needsVocabIndex && (
@@ -1109,12 +1149,12 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 onClick={() => void startImport("klexikon", klexikonOffset)}
                 style={{ gap: 4, height: 26, fontSize: 11 }}
               >
-                {klexikonBooks.length > 0 ? "Загрузить ещё" : "Загрузить статьи"}
+                {klexTotal > 0 ? "Загрузить ещё" : "Загрузить статьи"}
               </button>
             </span>
           </div>
 
-          {klexikonBooks.length > 0 && (
+          {(klexTotal > 0 || klexFiltersActive) && (
             <div className="discover-toolbar" style={{ gridTemplateColumns: "1fr 1fr 1fr auto", marginBottom: 16, alignItems: "center" }}>
               <div className="discover-search">
                 <Search size={16} aria-hidden />
@@ -1169,7 +1209,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             <div className="catalog-loading-inline" style={{ justifyContent: "center", padding: "40px 0" }}>
               <Loader2 className="spin" size={24} /><span>Загрузка статей...</span>
             </div>
-          ) : klexikonBooks.length === 0 ? (
+          ) : klexikonBooks.length === 0 && !klexFiltersActive ? (
             <div className="seed-card">
               <Server size={42} style={{ color: "var(--accent)" }} />
               <h3>Статьи Клексикона не загружены</h3>
@@ -1214,13 +1254,13 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             </>
           )}
 
-          {klexTotal > PAGE_SIZE && (
+          {klexTotal > SHELF_PAGE_SIZE && (
             <div className="pager" style={{ marginTop: 16 }}>
               <button type="button" className="mini-btn" disabled={klexPage <= 1 || isSharedLoading} onClick={() => setKlexPage((v) => Math.max(1, v - 1))}>
                 <ChevronLeft size={15} />Назад
               </button>
-              <span>{klexPage} / {Math.max(1, Math.ceil(klexTotal / PAGE_SIZE))}</span>
-              <button type="button" className="mini-btn" disabled={klexPage >= Math.ceil(klexTotal / PAGE_SIZE) || isSharedLoading} onClick={() => setKlexPage((v) => v + 1)}>
+              <span>{klexPage} / {Math.max(1, Math.ceil(klexTotal / SHELF_PAGE_SIZE))}</span>
+              <button type="button" className="mini-btn" disabled={klexPage >= Math.ceil(klexTotal / SHELF_PAGE_SIZE) || isSharedLoading} onClick={() => setKlexPage((v) => v + 1)}>
                 Вперёд<ChevronRight size={15} />
               </button>
             </div>
@@ -1389,7 +1429,13 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
           </div>
 
           <div className="discover-meta" style={{ marginBottom: 12 }}>
-            <span>{cefrBooks.length > 0 ? `${filteredCefrBooks.length} текстов` : "Тексты не загружены"}</span>
+            <span>
+              {cefrTotal > 0
+                ? (cefrTotal > filteredCefrBooks.length
+                    ? `${filteredCefrBooks.length} из ${cefrTotal} текстов`
+                    : `${cefrTotal} текстов`)
+                : (cefrFiltersActive ? "Ничего не найдено" : "Тексты не загружены")}
+            </span>
             <span style={{ display: "flex", gap: 6 }}>
               {needsVocabIndex && (
                 <button
@@ -1403,7 +1449,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 </button>
               )}
               <button type="button" className="mini-btn" onClick={() => void startImport("cefr")} style={{ gap: 4, height: 26, fontSize: 11 }}>
-                {cefrBooks.length > 0 ? "Обновить" : "Загрузить тексты"}
+                {cefrTotal > 0 ? "Обновить" : "Загрузить тексты"}
               </button>
             </span>
           </div>
@@ -1412,7 +1458,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             <div className="catalog-loading-inline" style={{ justifyContent: "center", padding: "40px 0" }}>
               <Loader2 className="spin" size={24} /><span>Загрузка...</span>
             </div>
-          ) : cefrBooks.length === 0 ? (
+          ) : cefrBooks.length === 0 && !cefrFiltersActive ? (
             <div className="seed-card">
               <BookMarked size={42} style={{ color: "var(--accent)" }} />
               <h3>Тексты UniversalCEFR не загружены</h3>
@@ -1454,13 +1500,13 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             })
           )}
 
-          {cefrTotal > PAGE_SIZE && (
+          {cefrTotal > SHELF_PAGE_SIZE && (
             <div className="pager" style={{ marginTop: 16 }}>
               <button type="button" className="mini-btn" disabled={cefrPage <= 1 || isSharedLoading} onClick={() => setCefrPage((v) => Math.max(1, v - 1))}>
                 <ChevronLeft size={15} />Назад
               </button>
-              <span>{cefrPage} / {Math.max(1, Math.ceil(cefrTotal / PAGE_SIZE))}</span>
-              <button type="button" className="mini-btn" disabled={cefrPage >= Math.ceil(cefrTotal / PAGE_SIZE) || isSharedLoading} onClick={() => setCefrPage((v) => v + 1)}>
+              <span>{cefrPage} / {Math.max(1, Math.ceil(cefrTotal / SHELF_PAGE_SIZE))}</span>
+              <button type="button" className="mini-btn" disabled={cefrPage >= Math.ceil(cefrTotal / SHELF_PAGE_SIZE) || isSharedLoading} onClick={() => setCefrPage((v) => v + 1)}>
                 Вперёд<ChevronRight size={15} />
               </button>
             </div>
