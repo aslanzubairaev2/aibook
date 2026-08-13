@@ -209,6 +209,8 @@ export async function speak(
             const cache = await caches.open("aibook-tts-cache");
             await cache.put(cacheKey, new Response(audioBase64));
           } catch(e) {}
+        } else {
+          console.warn(`${provider} TTS request failed with status ${res.status}; using local voice`);
         }
       } catch (e) {
         console.error(`${provider} TTS API failed`, e);
@@ -288,11 +290,10 @@ export async function speak(
         },
         isPlaying: () => !isPaused && !!currentSource
       };
-    } else {
-      updateState({ status: "idle" });
-      if (onEnd) onEnd();
-      return null;
     }
+
+    // A temporary auth/provider outage should not turn every speaker button
+    // into a silent no-op. Continue into the browser voice below instead.
   }
 
   // Fallback to local

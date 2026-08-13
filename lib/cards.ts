@@ -2,6 +2,26 @@ import type { CardFilters, CardVariantState, Flashcard, SkillProgress, TrainVari
 
 export const ALL_TRAIN_VARIANTS: TrainVariant[] = ["forward", "reverse", "audio"];
 
+export type ReviewHistoryPosition = {
+  index: number;
+  canGoOlder: boolean;
+  canGoNewer: boolean;
+};
+
+/** Resolves a safe, read-only position inside the current session's review history. */
+export function getReviewHistoryPosition(
+  historyLength: number,
+  requestedIndex: number | null,
+): ReviewHistoryPosition | null {
+  if (historyLength <= 0 || requestedIndex === null) return null;
+  const index = Math.min(Math.max(requestedIndex, 0), historyLength - 1);
+  return {
+    index,
+    canGoOlder: index > 0,
+    canGoNewer: index < historyLength - 1,
+  };
+}
+
 /** Dictionary grammar follows the native meaning on a separate line. */
 export function splitCardBack(back: string): { meaning: string; details: string } {
   const [meaning = "", ...detailLines] = back.replace(/\r\n/g, "\n").split("\n");
