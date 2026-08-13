@@ -23,9 +23,15 @@ export async function GET(req: NextRequest) {
 
   const user = await getUserFromRequest(req);
 
+  // Paged, and counted: the CEFR shelf alone is hundreds of rows, each
+  // carrying its word-frequency map, so fetching the lot to show eighteen
+  // tiles moved megabytes per tab switch.
+  const limit = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit")) || 500, 1), 500);
+  const offset = Math.max(Number(req.nextUrl.searchParams.get("offset")) || 0, 0);
+
   let query = supabaseAdmin
     .from("shared_books")
-    .select("*")
+    .select("*", { count: "exact" })
     .order("lesson_order", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true });
 
@@ -39,12 +45,12 @@ export async function GET(req: NextRequest) {
   if (cefrLevel) query = query.eq("cefr_level", cefrLevel);
   if (courseId) query = query.eq("course_id", courseId);
 
-  const { data, error } = await query;
+  const { data, error, count } = await query.range(offset, offset + limit - 1);
 
   if (error) {
     console.error("shared-books API:", error.message);
     return NextResponse.json({ books: [] });
   }
 
-  return NextResponse.json({ books: data ?? [] });
+  return NextResponse.json({ books: data ?? [], total: count ?? (data?.length ?? 0) });
 }

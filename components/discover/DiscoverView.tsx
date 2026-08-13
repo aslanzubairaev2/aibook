@@ -33,6 +33,8 @@ type Props = {
   profile: UserProfile;
   onBooksChange: (books: Book[]) => void;
   onOpenBook: (book: Book) => void;
+  /** Book whose text is being fetched right now, so its tile can show a spinner. */
+  openingBookId?: string | null;
   downloadTasks: Record<number, DownloadTask>;
   onDownloadBook: (book: GutendexBook) => void;
   /** Turning a dictionary entry into a flashcard goes through the app's single card path. */
@@ -317,6 +319,12 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   // "lesson" photographs a text to read; "dictionary" photographs words to learn.
   const [photoMode, setPhotoMode] = useState<"lesson" | "dictionary">("lesson");
 
+  // The shared shelves are paged; only the visible page is fetched.
+  const [klexPage, setKlexPage] = useState(1);
+  const [cefrPage, setCefrPage] = useState(1);
+  const [klexTotal, setKlexTotal] = useState(0);
+  const [cefrTotal, setCefrTotal] = useState(0);
+
   const [dictionary, setDictionary] = useState<DictionaryEntry[]>([]);
   const [dictBatches, setDictBatches] = useState<DictionaryBatch[]>([]);
   const [dictLoading, setDictLoading] = useState(false);
@@ -364,24 +372,31 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const loadSharedBooks = useCallback(async () => {
     setIsSharedLoading(true);
     try {
+      // One page each, not the whole shelf: these rows carry a word-frequency
+      // map apiece, and fetching all of them to show eighteen tiles was the
+      // slowest thing in the app.
+      const klexOffset = (klexPage - 1) * PAGE_SIZE;
+      const cefrOffset = (cefrPage - 1) * PAGE_SIZE;
       const [klexRes, cefrRes] = await Promise.all([
-        freshFetch("/api/shared-books?source_type=klexikon"),
-        freshFetch("/api/shared-books?source_type=universal_cefr"),
+        freshFetch(`/api/shared-books?source_type=klexikon&limit=${PAGE_SIZE}&offset=${klexOffset}`),
+        freshFetch(`/api/shared-books?source_type=universal_cefr&limit=${PAGE_SIZE}&offset=${cefrOffset}`),
       ]);
       if (klexRes.ok) {
-        const data = await klexRes.json() as { books: SharedBook[] };
+        const data = await klexRes.json() as { books: SharedBook[]; total?: number };
         setKlexikonBooks(data.books ?? []);
+        setKlexTotal(data.total ?? 0);
       }
       if (cefrRes.ok) {
-        const data = await cefrRes.json() as { books: SharedBook[] };
+        const data = await cefrRes.json() as { books: SharedBook[]; total?: number };
         setCefrBooks(data.books ?? []);
+        setCefrTotal(data.total ?? 0);
       }
     } catch (err) {
       console.error("loadSharedBooks:", err);
     } finally {
       setIsSharedLoading(false);
     }
-  }, []);
+  }, [klexPage, cefrPage]);
 
   // ── Load the caller's own generated lessons ──────────────────────────────────
   const loadMyLessons = useCallback(async () => {
@@ -395,7 +410,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     } catch (err) {
       console.error("loadMyLessons:", err);
     }
-  }, [user]);
+  }, [user, klexPage, cefrPage]);
 
   // ── Load lesson progress ─────────────────────────────────────────────────────
   const loadLessonProgress = useCallback(async () => {
@@ -1196,6 +1211,18 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
               })}
             </>
           )}
+
+          {klexTotal > PAGE_SIZE && (
+            <div className="pager" style={{ marginTop: 16 }}>
+              <button type="button" className="mini-btn" disabled={klexPage <= 1 || isSharedLoading} onClick={() => setKlexPage((v) => Math.max(1, v - 1))}>
+                <ChevronLeft size={15} />Назад
+              </button>
+              <span>{klexPage} / {Math.max(1, Math.ceil(klexTotal / PAGE_SIZE))}</span>
+              <button type="button" className="mini-btn" disabled={klexPage >= Math.ceil(klexTotal / PAGE_SIZE) || isSharedLoading} onClick={() => setKlexPage((v) => v + 1)}>
+                Вперёд<ChevronRight size={15} />
+              </button>
+            </div>
+          )}
         </>
       )}
 
@@ -1423,6 +1450,18 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 </LevelSection>
               );
             })
+          )}
+
+          {cefrTotal > PAGE_SIZE && (
+            <div className="pager" style={{ marginTop: 16 }}>
+              <button type="button" className="mini-btn" disabled={cefrPage <= 1 || isSharedLoading} onClick={() => setCefrPage((v) => Math.max(1, v - 1))}>
+                <ChevronLeft size={15} />Назад
+              </button>
+              <span>{cefrPage} / {Math.max(1, Math.ceil(cefrTotal / PAGE_SIZE))}</span>
+              <button type="button" className="mini-btn" disabled={cefrPage >= Math.ceil(cefrTotal / PAGE_SIZE) || isSharedLoading} onClick={() => setCefrPage((v) => v + 1)}>
+                Вперёд<ChevronRight size={15} />
+              </button>
+            </div>
           )}
         </>
       )}

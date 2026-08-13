@@ -13,6 +13,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { normalizeCardText } from "@/lib/cards";
 import { saveGeneratedLesson } from "@/lib/db/lessonStore";
+import { saveDictionaryEntries, createCardsForEntries } from "@/lib/db/dictionaryStore";
+import type { DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import { estimateLevel } from "@/lib/text/readability";
 import type { GeneratedLesson } from "@/lib/ai/buildLessonPrompt";
 import type { CefrLevel } from "@/lib/types";
@@ -49,14 +51,18 @@ type CardRow = {
   back: string;
   status: string | null;
   repetitions: number | null;
+  lapses: number | null;
+  easiness_factor: number | null;
+  interval_days: number | null;
   next_review_at: string | null;
   source_book_title: string | null;
+  cefr: string | null;
 };
 
 async function getCards(ctx: Ctx): Promise<CardRow[]> {
   const { data, error } = await ctx.admin
     .from("flashcards")
-    .select("id, front, back, status, repetitions, next_review_at, source_book_title")
+    .select("id, front, back, status, repetitions, lapses, easiness_factor, interval_days, next_review_at, source_book_title, cefr")
     .eq("user_id", ctx.userId)
     .order("created_at", { ascending: false });
   if (error) throw new Error(`flashcards read failed: ${error.message}`);
@@ -363,6 +369,201 @@ async function getText(ctx: Ctx, args: Args): Promise<unknown> {
   };
 }
 
+// ─── The dictionary: batches of words the learner was set to learn ──────────
+
+type DictRow = {
+  id: string; batch_id: string | null; headword: string; lemma: string;
+  translation: string; part_of_speech: string; cefr: string; example: string;
+};
+
+async function listBatches(ctx: Ctx): Promise<unknown> {
+  const [{ data: batches, error }, cards] = await Promise.all([
+    ctx.admin
+      .from("dictionary_batches")
+      .select("id, title, kind, topic, language, word_count, created_at")
+      .eq("user_id", ctx.userId)
+      .order("created_at", { ascending: false })
+      .limit(100),
+    getCards(ctx),
+  ]);
+  if (error) throw new Error(`batches read failed: ${error.message}`);
+
+  return {
+    explanation:
+      "A batch is one photographed page of vocabulary — the words the learner's course set them. Progress is measured from the flashcards made from those words.",
+    batches: (batches ?? []).map((b) => {
+      const batchCards = cards.filter((c) => c.source_book_title === b.title);
+      const learned = batchCards.filter((c) => (c.repetitions ?? 0) >= LEARNED_REPETITIONS).length;
+      const started = batchCards.filter((c) => (c.repetitions ?? 0) > 0).length;
+      return {
+        id: b.id,
+        title: b.title,
+        topic: b.topic,
+        page: b.kind,
+        words: b.word_count,
+        created_at: b.created_at,
+        progress: batchCards.length > 0
+          ? { cards: batchCards.length, started, learned, percent: Math.round((started / batchCards.length) * 100) }
+          : null,
+      };
+    }),
+  };
+}
+
+async function listBatchWords(ctx: Ctx, args: Args): Promise<unknown> {
+  const batchId = String(args.batch_id ?? "").trim();
+  if (!batchId) throw new Error("Pass 'batch_id' from list_word_batches.");
+
+  const { data, error } = await ctx.admin
+    .from("dictionary_entries")
+    .select("headword, lemma, translation, part_of_speech, cefr, plural, forms, example")
+    .eq("user_id", ctx.userId)
+    .eq("batch_id", batchId)
+    .limit(500);
+  if (error) throw new Error(`batch words read failed: ${error.message}`);
+
+  return { words: data ?? [] };
+}
+
+async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
+  const title = String(args.title ?? "").trim().slice(0, 200);
+  const rawWords = Array.isArray(args.words) ? args.words.slice(0, 200) : [];
+  if (!title || rawWords.length === 0) {
+    throw new Error("A batch needs a 'title' and a non-empty 'words' array.");
+  }
+
+  const langs = await getLanguages(ctx);
+  const language = typeof args.language === "string" && args.language.trim()
+    ? args.language.trim()
+    : langs.target;
+
+  const drafts: DictionaryEntryDraft[] = rawWords
+    .filter((w): w is Record<string, unknown> => typeof w === "object" && w !== null)
+    .map((w) => {
+      const headword = String(w.headword ?? "").trim().slice(0, 200);
+      const lemma = String(w.lemma ?? "").trim() || headword.replace(/^(der|die|das)\s+/i, "");
+      const cefr = String(w.cefr ?? "").trim().toUpperCase();
+      const forms: Record<string, string> = {};
+      if (typeof w.forms === "object" && w.forms !== null) {
+        for (const [k, v] of Object.entries(w.forms as Record<string, unknown>)) {
+          const value = String(v ?? "").trim();
+          if (value) forms[k.slice(0, 30)] = value.slice(0, 120);
+        }
+      }
+      return {
+        headword,
+        lemma,
+        translation: String(w.translation ?? "").trim().slice(0, 400),
+        partOfSpeech: String(w.part_of_speech ?? "").trim().slice(0, 60),
+        gender: String(w.gender ?? "").trim().toLowerCase().slice(0, 4),
+        article: String(w.article ?? "").trim().slice(0, 20),
+        plural: String(w.plural ?? "").trim().slice(0, 120),
+        forms,
+        cefr: ["A1", "A2", "B1", "B2", "C1", "C2"].includes(cefr) ? cefr : "",
+        note: String(w.note ?? "").trim().slice(0, 300),
+        example: String(w.example ?? "").trim().slice(0, 400),
+        exampleTranslation: String(w.example_translation ?? "").trim().slice(0, 400),
+      };
+    })
+    .filter((d) => d.headword && d.translation);
+
+  if (drafts.length === 0) {
+    throw new Error("Every word needs at least 'headword' and 'translation'.");
+  }
+
+  const { data: batch, error } = await ctx.admin
+    .from("dictionary_batches")
+    .insert({
+      user_id: ctx.userId,
+      title,
+      kind: String(args.source ?? "от ИИ-ассистента").slice(0, 120),
+      topic: String(args.topic ?? "").trim().slice(0, 80),
+      language,
+      word_count: drafts.length,
+    })
+    .select("id")
+    .single();
+  if (error || !batch) throw new Error(`batch insert failed: ${error?.message ?? "no row"}`);
+
+  const saved = await saveDictionaryEntries(ctx.admin, ctx.userId, language, drafts, title, batch.id as string);
+  if (!saved.ok) throw new Error(saved.error);
+
+  const cards = await createCardsForEntries(ctx.admin, ctx.userId, drafts, batch.id as string, title);
+
+  return {
+    batch_id: batch.id,
+    title,
+    words: drafts.length,
+    cards_created: cards.created,
+    note: "The batch appears in the learner's Словарь with its own progress and a 'train these' button; every new word is already a flashcard.",
+  };
+}
+
+// ─── How the learning is actually going ─────────────────────────────────────
+
+async function getProgress(ctx: Ctx, args: Args): Promise<unknown> {
+  const limit = Math.min(Math.max(Number(args.limit) || 40, 1), 200);
+  const cards = await getCards(ctx);
+  const now = Date.now();
+
+  const withStats = cards.map((c) => {
+    const reps = c.repetitions ?? 0;
+    const lapses = c.lapses ?? 0;
+    return {
+      word: c.front,
+      meaning: c.back.split("\n")[0],
+      level: c.cefr ?? "",
+      reps,
+      lapses,
+      ease: c.easiness_factor ?? 2.5,
+      interval_days: c.interval_days ?? 0,
+      due_in_days: c.next_review_at
+        ? Math.round((new Date(c.next_review_at).getTime() - now) / 86400000)
+        : 0,
+      source: c.source_book_title ?? "",
+    };
+  });
+
+  // "Struggling" is not a low score, it is a word that keeps being forgotten:
+  // lapses despite repetitions, or an ease factor the algorithm has pushed down.
+  const struggling = withStats
+    .filter((w) => w.lapses >= 2 || (w.lapses >= 1 && w.ease <= 2.2))
+    .sort((a, b) => b.lapses - a.lapses || a.ease - b.ease)
+    .slice(0, limit);
+
+  const confident = withStats
+    .filter((w) => w.reps >= LEARNED_REPETITIONS && w.lapses === 0)
+    .sort((a, b) => b.interval_days - a.interval_days)
+    .slice(0, limit);
+
+  const learning = withStats
+    .filter((w) => w.reps > 0 && w.reps < LEARNED_REPETITIONS)
+    .slice(0, limit);
+
+  const untouched = withStats.filter((w) => w.reps === 0);
+
+  return {
+    totals: {
+      cards: cards.length,
+      never_studied: untouched.length,
+      in_progress: withStats.filter((w) => w.reps > 0 && w.reps < LEARNED_REPETITIONS).length,
+      confident: withStats.filter((w) => w.reps >= LEARNED_REPETITIONS && w.lapses === 0).length,
+      struggling: withStats.filter((w) => w.lapses >= 2 || (w.lapses >= 1 && w.ease <= 2.2)).length,
+      due_now: cards.filter(isDue).length,
+    },
+    by_level: ["A1", "A2", "B1", "B2", "C1", "C2"].map((level) => ({
+      level,
+      total: withStats.filter((w) => w.level === level).length,
+      confident: withStats.filter((w) => w.level === level && w.reps >= LEARNED_REPETITIONS && w.lapses === 0).length,
+    })).filter((row) => row.total > 0),
+    struggling,
+    confident,
+    learning,
+    how_to_use:
+      "Practise new grammar with the 'confident' words so the sentence is about the construction, not the vocabulary. Weave 'struggling' words into examples and stories as often as you can — those are the ones being forgotten. Leave 'never studied' words alone unless the learner asks.",
+  };
+}
+
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 export const MCP_TOOLS: McpToolDef[] = [
@@ -453,6 +654,70 @@ export const MCP_TOOLS: McpToolDef[] = [
     },
   },
   {
+    name: "list_word_batches",
+    description:
+      "The learner's vocabulary batches («пачки»). A batch is one page of vocabulary — usually photographed from their coursebook — kept together as the unit they were set to learn, with its own learning progress. Call this to see what the course has covered and how far along each page is.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "list_batch_words",
+    description: "Every word of one batch, with article, plural, verb forms, translation and CEFR level.",
+    inputSchema: {
+      type: "object",
+      properties: { batch_id: { type: "string", description: "From list_word_batches" } },
+      required: ["batch_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "add_word_batch",
+    description:
+      "Create a new vocabulary batch — the right tool when a lesson with the learner produced a set of words that belong together (\"add the words from today's topic\"). It appears in their Словарь as one page with its own progress and a 'train these' button, and every word becomes a flashcard immediately. Use add_flashcards instead for a few loose words that are not a themed set.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "What this set is, in the learner's native language — e.g. «Транспорт · из чата»" },
+        topic: { type: "string", description: "Two or three words naming the theme" },
+        language: { type: "string", description: "ISO code; defaults to the learner's target language" },
+        source: { type: "string", description: "Where the words came from; shown under the title" },
+        words: {
+          type: "array",
+          description: "Up to 200 words",
+          items: {
+            type: "object",
+            properties: {
+              headword: { type: "string", description: "As a dictionary prints it — nouns with their article: «die Haltestelle»" },
+              lemma: { type: "string", description: "Base form without the article" },
+              translation: { type: "string", description: "Into the learner's native language" },
+              part_of_speech: { type: "string", description: "In the learner's language: «существительное», «глагол», …" },
+              gender: { type: "string", description: "m / f / n / pl for nouns" },
+              article: { type: "string" },
+              plural: { type: "string", description: "Written out in full: «die Haltestellen»" },
+              forms: { type: "object", description: "Irregular verb parts: praeteritum, partizip2, hilfsverb, trennbar" },
+              cefr: { type: "string", enum: ["A1", "A2", "B1", "B2", "C1", "C2"] },
+              note: { type: "string", description: "One short warning if the word has a trap (a case, a false friend)" },
+              example: { type: "string" },
+              example_translation: { type: "string" },
+            },
+            required: ["headword", "translation"],
+          },
+        },
+      },
+      required: ["title", "words"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_progress",
+    description:
+      "How the learning is actually going, from the spaced-repetition record: which words the learner knows confidently, which are in progress, and which they keep forgetting (repeated lapses or an ease factor the algorithm has pushed down), plus totals by CEFR level. Use the confident words when practising a new construction — the sentence should test the grammar, not the vocabulary — and work the struggling ones into examples and stories.",
+    inputSchema: {
+      type: "object",
+      properties: { limit: { type: "number", description: "Words per list (default 40, max 200)" } },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "list_texts",
     description: "List the learner's own lessons («Мои уроки») with reading progress.",
     inputSchema: {
@@ -479,6 +744,10 @@ const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
   list_flashcards: listFlashcards,
   add_flashcards: addFlashcards,
   create_lesson: createLesson,
+  list_word_batches: (ctx) => listBatches(ctx),
+  list_batch_words: listBatchWords,
+  add_word_batch: addWordBatch,
+  get_progress: getProgress,
   list_texts: listTexts,
   get_text: getText,
 };

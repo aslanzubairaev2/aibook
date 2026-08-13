@@ -224,6 +224,8 @@ function AppInner() {
   // Set when arriving from "train this batch" so the card module opens on the
   // right tab with the batch filter already applied.
   const [cardsInitialTab, setCardsInitialTab] = useState<"all" | "train" | null>(null);
+  // Which book is having its text fetched, so the shelf can show a spinner.
+  const [openingBookId, setOpeningBookId] = useState<string | null>(null);
   const [isLiveChatOpen, setIsLiveChatOpen] = useState(false);
   const [liveChatTextContext, setLiveChatTextContext] = useState<{ text: string } | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -401,18 +403,21 @@ function AppInner() {
         saveLocalProgressAnchor(progress.book_id, progress.paragraph_index, progress.char_offset ?? 0);
         if (progress.selection_state) saveLocalReaderSelection(progress.book_id, progress.selection_state);
       });
-      const fullBooks: Book[] = await Promise.all(
-        dbBooks.map(async (db) => {
-          const prog = progressMap.get(db.id);
-          const chapters = await sbGetChapters(db.id);
-          const paragraphs = chapters.flatMap((c) => c.paragraphs);
-          return dbBookToBook(db, paragraphs, prog?.paragraph_index ?? 0, prog?.percentage ?? 0);
-        })
-      );
-      setBooks(fullBooks);
+      // Metadata only. Pulling every chapter of every book on start-up meant
+      // a library of real books arrived as tens of megabytes of text — held in
+      // state, written to IndexedDB, and parsed again on the next launch. The
+      // text of a book is fetched when that book is opened (openBookById), and
+      // a locally cached copy is reused when there is one.
+      const cachedById = new Map(localBooks.map((b) => [b.id, b]));
+      const shelfBooks: Book[] = dbBooks.map((db) => {
+        const prog = progressMap.get(db.id);
+        const cached = cachedById.get(db.id);
+        return dbBookToBook(db, cached?.paragraphs ?? [], prog?.paragraph_index ?? 0, prog?.percentage ?? 0);
+      });
+      setBooks(shelfBooks);
       // Keep cached shared lessons so "continue reading" works instantly and offline.
-      await saveLocalBooks([...fullBooks, ...localBooks.filter((b) => b.sharedBookId)]);
-      applySyncedLastView(dbSettings, dbProgress, fullBooks, lessonProgress);
+      await saveLocalBooks([...shelfBooks, ...localBooks.filter((b) => b.sharedBookId)]);
+      applySyncedLastView(dbSettings, dbProgress, shelfBooks, lessonProgress);
     } else {
       applySyncedLastView(dbSettings, dbProgress, localBooks, lessonProgress);
     }
@@ -507,10 +512,40 @@ function AppInner() {
 
   // ─── Handlers ─────────────────────────────────────────────────────────────
 
-  function handleOpenBook(book: Book) {
+  /**
+   * Open a book, fetching its text if the shelf only holds its metadata.
+   *
+   * The shelf deliberately carries no paragraphs (see loadUserData), so this is
+   * where a book actually becomes readable. The fetched text is cached both in
+   * state and in IndexedDB, so re-opening it later — or opening it offline —
+   * costs nothing.
+   */
+  async function handleOpenBook(book: Book) {
     setReaderOrigin(section === "reader" ? readerOrigin : section);
-    setActiveBook(book);
-    setSection("reader");
+
+    if (book.paragraphs.length > 0) {
+      setActiveBook(book);
+      setSection("reader");
+      return;
+    }
+
+    setOpeningBookId(book.id);
+    try {
+      const chapters = await sbGetChapters(book.id);
+      const paragraphs = chapters.flatMap((c) => c.paragraphs);
+      const loaded: Book = { ...book, paragraphs };
+      setBooks((prev) => prev.map((b) => (b.id === book.id ? loaded : b)));
+      void saveLocalBook(loaded);
+      setActiveBook(loaded);
+      setSection("reader");
+    } catch (err) {
+      console.error("handleOpenBook:", err);
+      // Better an empty reader with a retry than a dead tap.
+      setActiveBook(book);
+      setSection("reader");
+    } finally {
+      setOpeningBookId(null);
+    }
   }
 
   /**
@@ -854,7 +889,8 @@ function AppInner() {
           profile={profile}
           cards={cards}
           onBooksChange={handleBooksChange}
-          onOpenBook={handleOpenBook}
+          onOpenBook={(book) => void handleOpenBook(book)}
+          openingBookId={openingBookId}
           downloadTasks={downloadTasks}
           onDownloadBook={(book) => void handleCatalogDownload(book)}
           onContinueReading={() => {
@@ -871,9 +907,10 @@ function AppInner() {
       {section === "books" && (
         <LibraryView
           books={books}
+          openingBookId={openingBookId}
           activeBookId={activeBook?.id ?? null}
           onBooksChange={handleBooksChange}
-          onOpenBook={handleOpenBook}
+          onOpenBook={(book) => void handleOpenBook(book)}
           onNavigate={setSection}
           defaultLanguage={profile.targetLanguage}
         />
@@ -885,7 +922,8 @@ function AppInner() {
           cards={cards}
           profile={profile}
           onBooksChange={handleBooksChange}
-          onOpenBook={handleOpenBook}
+          onOpenBook={(book) => void handleOpenBook(book)}
+          openingBookId={openingBookId}
           downloadTasks={downloadTasks}
           onDownloadBook={(book) => void handleCatalogDownload(book)}
           onAddCard={handleAddCard}

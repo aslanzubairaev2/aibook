@@ -13,6 +13,8 @@ type Props = {
   cards: Flashcard[];
   onBooksChange: (books: Book[]) => void;
   onOpenBook: (book: Book) => void;
+  /** Book whose text is being fetched right now, so its tile can show a spinner. */
+  openingBookId?: string | null;
   downloadTasks: Record<number, DownloadTask>;
   onDownloadBook: (book: GutendexBook) => void;
   onContinueReading: () => void;

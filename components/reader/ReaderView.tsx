@@ -207,6 +207,10 @@ export function ReaderView({
   // Both cost money per text, so both go through a confirmation sheet that
   // states the size and the estimated price before anything is spent.
   const [bulkAction, setBulkAction] = useState<BulkAction | null>(null);
+  // Set once the whole text has a joined recording waiting, which turns the
+  // sheet's action button into Play. Declared here because the lazy wholeText
+  // below depends on it.
+  const [audioReady, setAudioReady] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
@@ -217,7 +221,14 @@ export function ReaderView({
   const bulkCancelRef = useRef(false);
   const hasTranslations = Object.keys(translations).length > 0;
 
-  const wholeText = useMemo(() => book.paragraphs.join("\n"), [book.paragraphs]);
+  // Built only when something actually needs the whole book as one string
+  // (the cost estimate, the full-text audio, the full-text translation).
+  // Doing it eagerly meant every open of a large book allocated a megabyte-plus
+  // string that nothing had asked for.
+  const wholeText = useMemo(
+    () => (bulkAction || audioReady ? book.paragraphs.join("\n") : ""),
+    [book.paragraphs, bulkAction, audioReady],
+  );
   const bulkEstimate = useMemo(
     () => (bulkAction === "audio" ? estimateAudioCost(wholeText) : estimateTranslationCost(wholeText)),
     [bulkAction, wholeText],
@@ -276,10 +287,6 @@ export function ReaderView({
       setBulkProgress(null);
     }
   }, [book.paragraphs, book.language, profile.nativeLanguage]);
-
-  // Set once the whole text has a joined recording waiting, which turns the
-  // sheet's action button into Play.
-  const [audioReady, setAudioReady] = useState(false);
 
   const runAudioAll = useCallback(async () => {
     setBulkBusy(true);

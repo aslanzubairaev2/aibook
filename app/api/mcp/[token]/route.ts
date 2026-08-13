@@ -32,12 +32,19 @@ const SERVER_INFO = { name: "aibook", version: "1.0.0" };
 
 const INSTRUCTIONS = `aibook is a language-learning reader app. The connected account belongs to one learner (their target and native language come from get_overview).
 
-You can: see their vocabulary and progress (get_overview, get_study_words, list_flashcards, list_texts, get_text), add flashcards to their spaced-repetition deck (add_flashcards), and save reading texts you write into their lesson catalogue (create_lesson).
+What you can see: their state and vocabulary (get_overview, get_study_words, list_flashcards, list_texts, get_text), how the learning is going (get_progress — confident words, words in progress, words they keep forgetting), and the vocabulary batches their course set them (list_word_batches, list_batch_words).
+
+What you can add: flashcards (add_flashcards), a whole themed batch of words (add_word_batch), and reading texts you write (create_lesson).
+
+Two ideas worth understanding:
+- A "batch" («пачка») is one page of vocabulary kept together — usually photographed from a coursebook — with its own progress and its own training button in the app. When a conversation produces a themed set of words, add_word_batch is the right tool; add_flashcards is for a few loose words.
+- The learner's words are not equal. get_progress separates the ones they know confidently from the ones they keep forgetting. Practise new grammar with confident words, so the sentence tests the construction and not the vocabulary; weave the struggling ones into examples as often as you naturally can.
 
 Typical flows:
-- "добавь эти фразы мне как карточки" → add_flashcards with front = target-language phrase, back = native-language translation.
-- "напиши рассказ из моих выученных слов" → get_study_words, write the story yourself at their level, then create_lesson.
-- Discussing a text they are reading → list_texts, then get_text.`;
+- "добавь эти фразы мне как карточки" → add_flashcards.
+- "сохрани слова по сегодняшней теме" → add_word_batch with a title and topic.
+- "напиши рассказ из моих выученных слов" → get_progress (or get_study_words), write the story yourself at their level, then create_lesson.
+- "что у меня плохо запоминается?" → get_progress, then work those words into practice.`;
 
 type JsonRpcRequest = {
   jsonrpc?: string;

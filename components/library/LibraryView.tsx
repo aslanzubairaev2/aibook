@@ -16,6 +16,8 @@ type Props = {
   activeBookId: string | null;
   onBooksChange: (books: Book[]) => void;
   onOpenBook: (book: Book) => void;
+  /** Book whose text is being fetched right now, so its tile can show a spinner. */
+  openingBookId?: string | null;
   onNavigate: (section: AppSection) => void;
   defaultLanguage: string;
 };
@@ -35,7 +37,7 @@ function pickColor(title: string) {
   return COVER_COLORS[hash % COVER_COLORS.length];
 }
 
-export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, onNavigate, defaultLanguage }: Props) {
+export function LibraryView({ books, activeBookId, openingBookId, onBooksChange, onOpenBook, onNavigate, defaultLanguage }: Props) {
   const { user } = useAuth();
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -248,7 +250,7 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, on
               key={book.id}
               role="button"
               tabIndex={0}
-              className={`book-card${book.id === activeBookId ? " active" : ""}`}
+              className={`book-card${book.id === activeBookId ? " active" : ""}${book.id === openingBookId ? " opening" : ""}`}
               onClick={() => onOpenBook(book)}
               onKeyDown={(e) => { if (e.key === "Enter") onOpenBook(book); }}
             >
@@ -259,7 +261,12 @@ export function LibraryView({ books, activeBookId, onBooksChange, onOpenBook, on
                 {!book.coverUrl && book.language.toUpperCase()}
               </span>
               <span className="book-info">
-                <span className="book-info-title">{book.title}</span>
+                <span className="book-info-title">
+                  {book.title}
+                  {/* The text is fetched on open, so a big book takes a moment
+                      — say so rather than leaving the tap looking ignored. */}
+                  {book.id === openingBookId && <span className="book-opening-note"> · открываю…</span>}
+                </span>
                 <span className="book-info-author">{book.author}</span>
                 <span className="progress-bar">
                   <span className="progress-bar-fill" style={{ width: `${book.progress}%` }} />
