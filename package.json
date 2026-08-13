@@ -24,7 +24,7 @@
     "epubjs": "^0.3.93",
     "franc-min": "^6.2.0",
     "lucide-react": "^1.16.0",
-    "next": "^16.2.6",
+    "next": "^16.3.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
@@ -34,9 +34,13 @@
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.6",
+    "eslint-config-next": "^16.3.0",
     "playwright": "^1.62.1",
     "typescript": "^6.0.3",
     "ws": "^8.21.3"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.9.11",
+    "serialize-javascript": "7.0.5"
   }
 }
