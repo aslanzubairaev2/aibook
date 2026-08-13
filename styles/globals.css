@@ -1849,3 +1849,24 @@ textarea,
 .filter-chip.active { background: rgba(212, 168, 71, 0.15); border-color: var(--accent); color: var(--accent); }
 .filter-reset-btn { align-self: flex-start; font-size: 12px; font-weight: 700; color: var(--text-muted); background: transparent; border: none; cursor: pointer; padding: 4px 0; text-decoration: underline; }
 .filter-reset-btn:hover { color: var(--accent); }
+
+/* ── Card markers ──────────────────────────────────────────────────────────
+   Type, part of speech and level, stacked top-left like the badges on a shop
+   tile: the lead marker keeps the familiar size, the rest are smaller so the
+   column costs almost no room. */
+.card-marker-stack {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  flex-shrink: 0;
+}
+.card-marker {
+  display: inline-block; padding: 2px 6px; border-radius: 5px;
+  font-size: 9px; font-weight: 800; letter-spacing: 0.04em;
+  text-transform: uppercase; white-space: nowrap;
+  background: var(--bg-elevated); color: var(--text-muted);
+}
+.card-marker.lead { font-size: 11px; padding: 3px 9px; border-radius: 6px; }
+.card-marker.word     { background: rgba(212, 168, 71, 0.15); color: var(--accent); }
+.card-marker.phrase   { background: rgba(106, 152, 196, 0.15); color: var(--blue); }
+.card-marker.sentence { background: rgba(122, 171, 106, 0.15); color: var(--green); }
+.card-marker.pos      { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); text-transform: none; letter-spacing: 0; }
+.card-marker.level    { background: rgba(122, 171, 106, 0.12); color: var(--green); }

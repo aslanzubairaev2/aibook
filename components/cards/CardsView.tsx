@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, MessageCircle, SlidersHorizontal, Volume2 } from "lucide-react";
+import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2 } from "lucide-react";
 import type { AiAnalysis, CardFilters, DiscussMessage, Flashcard, TrainVariant, TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields, createDefaultSkillProgress } from "@/lib/srs/sm2";
 import { findDuplicateCard } from "@/lib/cards";
@@ -11,7 +11,7 @@ import { speak } from "@/lib/tts";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardVariantState, saveCardVariantProgress } from "@/lib/db/local";
-import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertSettings } from "@/lib/db/supabase";
+import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
@@ -27,6 +27,31 @@ type Props = {
   onUpdateCard: (card: Flashcard) => void;
   onDeleteCard: (id: string) => void;
 };
+
+function normalizeFront(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+const POS_SHORT: Record<string, string> = {
+  "существительное": "сущ.", "глагол": "гл.", "прилагательное": "прил.",
+  "наречие": "нар.", "предлог": "предл.", "союз": "союз",
+  "местоимение": "мест.", "числительное": "числ.", "выражение": "выраж.",
+};
+function shortPos(pos: string): string {
+  return POS_SHORT[pos.trim().toLowerCase()] ?? "";
+}
+
+/**
+ * For cards that predate the dictionary: German spelling gives away the two
+ * cases worth marking. Anything less certain shows no chip at all rather than
+ * a guess the learner would have to double-check.
+ */
+function guessPos(front: string): string {
+  const text = front.trim();
+  if (/^(der|die|das)\s+\S/i.test(text)) return "сущ.";
+  if (/^[a-zäöüß]+(en|ern|eln)$/i.test(text)) return "гл.";
+  return "";
+}
 
 type FilterStatus = "all" | "new" | "learning" | "review" | "relearning";
 type FilterType = "all" | "word" | "phrase" | "sentence";
@@ -446,6 +471,83 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   }
 
   // --- Word tap → WordModal ---
+  // The dictionary knows each word's part of speech and level; cards do not
+  // carry them. Fetched once when the module opens, matched by the card's
+  // front, so a card made from a photographed page shows «сущ. · A1» without a
+  // schema change. Cards from the reader fall back to the heuristic below.
+  const [wordFacts, setWordFacts] = useState<Map<string, { pos: string; cefr: string }>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/dictionary", { headers: await sbAuthHeaders() });
+        if (!res.ok) return;
+        const data = await res.json() as { entries?: { headword: string; lemma: string; part_of_speech: string; cefr: string }[] };
+        if (cancelled) return;
+        const map = new Map<string, { pos: string; cefr: string }>();
+        for (const e of data.entries ?? []) {
+          const fact = { pos: e.part_of_speech ?? "", cefr: e.cefr ?? "" };
+          map.set(normalizeFront(e.headword), fact);
+          map.set(normalizeFront(e.lemma), fact);
+        }
+        setWordFacts(map);
+      } catch {
+        // Chips simply fall back to the heuristic.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // Which card's story is being written, so its button can spin.
+  const [miniStory, setMiniStory] = useState<string | null>(null);
+
+  /**
+   * A short text built around the card's word, saved into «Мои уроки».
+   *
+   * It does not open the text: this fires mid-training, and yanking the
+   * learner out of a session they are halfway through would cost more than
+   * the text is worth. The toast says where it went.
+   */
+  async function createMiniStory(card: Flashcard) {
+    if (miniStory) return;
+    setMiniStory(card.id);
+    try {
+      const res = await fetch("/api/lessons/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+        body: JSON.stringify({
+          level: ["A1", "A2", "B1", "B2", "C1", "C2"].includes(card.cefr ?? "") ? card.cefr : "A2",
+          topic: `Слово «${card.front}»`,
+          targetLanguage,
+          nativeLanguage,
+          reviewWords: [card.front],
+          length: "short",
+          context: `Короткий рассказ вокруг слова «${card.front}» (${card.back.split("\n")[0]}): показать его в нескольких типичных ситуациях и формах.`,
+        }),
+      });
+      const data = await res.json() as { id?: string; error?: string };
+      if (!res.ok || !data.id) throw new Error(data.error ?? "Не удалось создать рассказ.");
+      showToast("✓ Рассказ сохранён в «Мои уроки»");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Не удалось создать рассказ.");
+    } finally {
+      setMiniStory(null);
+    }
+  }
+
+  /** The markers for one card: type, part of speech, level — in that order. */
+  function cardMarkers(card: Flashcard): { text: string; kind: string }[] {
+    const marks: { text: string; kind: string }[] = [
+      { text: TYPE_LABELS[card.type], kind: card.type },
+    ];
+    const fact = wordFacts.get(normalizeFront(card.front));
+    const pos = card.type === "word" ? shortPos(fact?.pos ?? "") || guessPos(card.front) : "";
+    if (pos) marks.push({ text: pos, kind: "pos" });
+    const level = card.cefr || fact?.cefr || "";
+    if (level) marks.push({ text: level, kind: "level" });
+    return marks;
+  }
+
   const openWordModalFor = useCallback(async (word: string) => {
     const norm = normalizeToken(word);
     if (!norm) return;
@@ -950,10 +1052,30 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                   {/* Front */}
                   <div className="flipper-face flipper-face-front" onClick={() => setIsFlipped((f) => !f)}>
                     <div className="card-face-row">
-                      <span className={`flash-card-type ${currentCard.type}`}>{TYPE_LABELS[currentCard.type]}{isAudio ? " · Аудио" : ""}</span>
+                      {/* Markers stack top-left, smallest first — type, part of
+                          speech, level — the way a product tile carries its
+                          badges: one glance, no horizontal sprawl. */}
+                      <div className="card-marker-stack">
+                        {cardMarkers(currentCard).map((m, i) => (
+                          <span key={i} className={`card-marker ${m.kind}${i === 0 ? " lead" : ""}`}>
+                            {m.text}{i === 0 && isAudio ? " · Аудио" : ""}
+                          </span>
+                        ))}
+                      </div>
                       <button
                         className="icon-btn"
                         style={{ width: 32, height: 32, marginLeft: "auto", marginRight: 4 }}
+                        type="button"
+                        aria-label="Мини-рассказ с этим словом"
+                        title="Мини-рассказ с этим словом — сохранится в «Мои уроки»"
+                        disabled={miniStory === currentCard.id}
+                        onClick={(e) => { e.stopPropagation(); void createMiniStory(currentCard); }}
+                      >
+                        {miniStory === currentCard.id ? <Loader2 size={16} className="spin" /> : <FileText size={16} />}
+                      </button>
+                      <button
+                        className="icon-btn"
+                        style={{ width: 32, height: 32, marginRight: 4 }}
                         type="button"
                         aria-label="Обсудить с AI"
                         title="Обсудить с AI"
@@ -1195,8 +1317,10 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
               {visibleCards.map((card) => (
                 <div key={card.id} className="flash-card" style={{ display: "flex", gap: 12, alignItems: "flex-start", justifyContent: "space-between" }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                      <span className={`flash-card-type ${card.type}`}>{TYPE_LABELS[card.type]}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, flexWrap: "wrap" }}>
+                      {cardMarkers(card).map((m, i) => (
+                        <span key={i} className={`card-marker ${m.kind}${i === 0 ? " lead" : ""}`}>{m.text}</span>
+                      ))}
                       <span style={{ fontSize: 10, background: `${STATUS_COLORS[card.status] ?? "var(--accent)"}18`, color: STATUS_COLORS[card.status] ?? "var(--accent)", padding: "2px 6px", borderRadius: 4, fontWeight: 800 }}>
                         {STATUS_LABELS[card.status] ?? card.status}
                         {card.intervalDays > 0 ? ` · ${card.intervalDays}дн` : ""}
@@ -1208,10 +1332,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                       <SpeakButton text={card.front} lang={targetLanguage} size={15} />
                     </div>
                     <TokenizedText text={card.back} style={{ fontSize: 13, color: "var(--text-muted)" }} />
-                    <div className="flash-card-source" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      из «{card.sourceBookTitle || card.source}»
-                      {card.cefr && <span style={{ fontSize: 9.5, fontWeight: 800, color: "var(--green)", border: "1px solid rgba(122,171,106,0.4)", borderRadius: 4, padding: "1px 4px" }}>{card.cefr}</span>}
-                    </div>
+                    <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
                     <button
