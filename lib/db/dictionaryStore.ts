@@ -56,6 +56,17 @@ export async function saveDictionaryEntries(
   if (drafts.length === 0) return { ok: true, added: 0, updated: 0 };
 
   const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+
+  // Deduplicate drafts within this batch by normalized lemma/headword
+  const seenDraftKeys = new Set<string>();
+  const uniqueDrafts: DictionaryEntryDraft[] = [];
+  for (const d of drafts) {
+    const k = norm(d.lemma || d.headword);
+    if (!k || seenDraftKeys.has(k)) continue;
+    seenDraftKeys.add(k);
+    uniqueDrafts.push(d);
+  }
+
   const { data: existingRows, error: readError } = await admin
     .from("dictionary_entries")
     .select("id, lemma, headword, plural, forms, example, example_translation, note, cefr, translation")
@@ -74,19 +85,27 @@ export async function saveDictionaryEntries(
 
   let addedCount = 0;
   let updatedCount = 0;
+  const usedIds = new Set<string>();
 
-  const rows = drafts.map((d) => {
+  const rows = uniqueDrafts.map((d) => {
     const key = norm(d.lemma || d.headword);
     const prior = existingMap.get(key) || existingMap.get(norm(d.headword));
-    if (prior) {
+
+    let targetId: string;
+    if (prior?.id && !usedIds.has(String(prior.id))) {
+      targetId = String(prior.id);
+      usedIds.add(targetId);
       updatedCount++;
     } else {
+      targetId = crypto.randomUUID();
+      usedIds.add(targetId);
       addedCount++;
     }
+
     // Prefer what this reading found; fall back to what was already known.
     const keep = (next: string, old: unknown) => next || String(old ?? "");
     return {
-      id: prior?.id ? String(prior.id) : crypto.randomUUID(),
+      id: targetId,
       user_id: userId,
       language,
       batch_id: batchId,

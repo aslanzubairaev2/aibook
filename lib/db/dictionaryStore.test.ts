@@ -104,6 +104,20 @@ test("saveDictionaryEntries updates existing entries without creating duplicates
   assert.equal(mockDb.dictionaryEntries[0].batch_id, "batch-2");
 });
 
+test("saveDictionaryEntries deduplicates duplicate drafts inside the same photo payload", async () => {
+  const mockDb = createMockSupabase();
+
+  const duplicateDrafts: DictionaryEntryDraft[] = [
+    { headword: "der Ball", lemma: "Ball", translation: "мяч", partOfSpeech: "существительное", gender: "m", article: "der", plural: "Bälle", cefr: "A1" },
+    { headword: "Ball", lemma: "Ball", translation: "мяч (дубликат в том же снимке)", partOfSpeech: "существительное", gender: "m", article: "der", plural: "Bälle", cefr: "A1" },
+  ];
+
+  const res = await saveDictionaryEntries(mockDb as never, "user-1", "de", duplicateDrafts, "Batch Dupes", "batch-dupes");
+  assert.equal(res.ok, true);
+  // Only 1 entry saved
+  assert.equal(mockDb.dictionaryEntries.length, 1);
+});
+
 test("createCardsForEntries re-links existing cards without creating duplicate cards or resetting SRS", async () => {
   const mockDb = createMockSupabase();
 
