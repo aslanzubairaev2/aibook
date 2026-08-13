@@ -670,7 +670,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   return (
     <section className="screen" onClick={() => { setShowFilterPanel(false); setShowTtsMenu(false); }}>
       <style>{`
-        .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; background: var(--bg-primary); border-bottom: 1px solid var(--border); }
+        .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; border-bottom: 1px solid var(--border); }
         @media (min-width: 640px) { .srs-sticky-header { margin: -28px -24px 16px; padding: 24px 24px 10px; } }
         .srs-tabs-container { display: flex; gap: 4px; padding: 4px; margin-bottom: 14px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-lg); }
         .srs-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 4px; background: transparent; border: none; border-radius: var(--radius-md); font-weight: 700; font-size: 13px; color: var(--text-muted); transition: all 0.2s; cursor: pointer; }
