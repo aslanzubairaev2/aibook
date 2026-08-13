@@ -1716,6 +1716,30 @@ textarea,
 
 /* Toolbar: filters toggle left, count centre, magnifier right. The search
    input floats over the row so opening it never shifts the layout. */
+.dict-toolbar-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  background: transparent;
+  padding: 8px 0 4px;
+  margin-bottom: 8px;
+}
+.dict-toolbar-sticky.stuck {
+  padding-bottom: 12px;
+}
+.dict-toolbar-sticky.stuck::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  backdrop-filter: blur(16px);
+  background-color: #2c2820;
+  -webkit-backdrop-filter: blur(16px);
+  /* The blur mask fades out at bottom, but ONLY on the background blur layer behind the buttons */
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 1) 60%, rgba(0, 0, 0, 0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 1) 60%, rgba(0, 0, 0, 0) 100%);
+}
 .dict-toolbar-row {
   position: relative;
   display: flex; align-items: center; gap: 10px;
@@ -1752,6 +1776,13 @@ textarea,
 /* Edge/IE clear button */
 .dict-search-float input::-ms-clear,
 .dict-search-float input::-ms-reveal { display: none; width: 0; height: 0; }
+.dict-search-clear-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border: none; border-radius: 50%;
+  background: var(--bg-elevated); color: var(--text-muted); cursor: pointer;
+  padding: 0; flex-shrink: 0; transition: all 0.2s;
+}
+.dict-search-clear-btn:hover { background: rgba(212, 168, 71, 0.2); color: var(--accent); }
 
 /* Batches */
 .dict-batches { display: flex; flex-direction: column; gap: 10px; padding-bottom: 90px; }

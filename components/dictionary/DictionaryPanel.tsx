@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookA, Camera, ChevronDown, Dumbbell, Loader2, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
@@ -75,6 +75,46 @@ type Props = {
  * Search and filters cut across every batch at once; a batch with nothing left
  * to show disappears rather than sitting there empty.
  */
+const GERMAN_IRREGULAR_VERB_STEMS = new Set([
+  "sein", "haben", "werden", "können", "müssen", "wollen", "sollen", "dürfen", "mögen", "wissen", "tun",
+  "backen", "befehlen", "beginnen", "beißen", "bergen", "bersten", "bewegen", "biegen", "bieten", "binden",
+  "bitten", "blasen", "bleiben", "braten", "brechen", "brennen", "bringen", "denken", "dreschen", "dringen",
+  "empfehlen", "erlöschen", "erschrecken", "essen", "fahren", "fallen", "fangen", "fechten", "finden",
+  "flechten", "fliegen", "fliehen", "fließen", "fressen", "frieren", "gären", "gebären", "geben", "gedeihen",
+  "gehen", "gelingen", "gelten", "genesen", "genießen", "geschehen", "gewinnen", "gießen", "gleichen",
+  "gleiten", "glimmen", "graben", "greifen", "halten", "hängen", "hauen", "heben", "heißen", "helfen",
+  "kennen", "klingen", "kneifen", "kommen", "kriechen", "laden", "lassen", "laufen", "leiden", "leihen",
+  "lesen", "liegen", "lügen", "mahlen", "meiden", "melken", "messen", "misslingen", "nehmen", "nennen",
+  "pfeifen", "preisen", "quellen", "raten", "reiben", "reißen", "reiten", "rennen", "riechen", "ringen",
+  "rinnen", "rufen", "salzen", "saufen", "saugen", "schaffen", "scheiden", "scheinen", "schelten", "scheren",
+  "schieben", "schießen", "schlafen", "schlagen", "schleichen", "schleifen", "schließen", "schlingen",
+  "schmeißen", "schmelzen", "schneiden", "schreiben", "schreien", "schreiten", "schweigen", "schwellen",
+  "schwimmen", "schwinden", "schwingen", "schwören", "sehen", "senden", "singen", "sinken", "sinnen",
+  "sitzen", "spinnen", "sprechen", "sprießen", "springen", "stechen", "stehen", "stehlen", "steigen",
+  "sterben", "stinken", "stoßen", "streichen", "streiten", "tragen", "treffen", "treiben", "treten",
+  "triefen", "trinken", "trügen", "verbieten", "verbleiben", "vergessen", "vergleichen", "verlassen",
+  "verlieren", "vermeiden", "verstehen", "verschwinden", "verzeihen", "wachsen", "wägen", "waschen",
+  "weichen", "weisen", "wenden", "werben", "werden", "werfen", "wiegen", "winden", "winken", "wissen",
+  "ziehen", "zwingen", "fernsehen"
+]);
+
+function isIrregularGermanVerb(lemma: string, headword: string, forms: Record<string, string> = {}): boolean {
+  const norm = (lemma || headword || "").toLowerCase().trim();
+  if (!norm) return false;
+
+  for (const stem of GERMAN_IRREGULAR_VERB_STEMS) {
+    if (norm === stem || norm.endsWith(stem)) return true;
+  }
+
+  const p2 = (forms.partizip2 || "").toLowerCase().trim();
+  const pr = (forms.praeteritum || "").toLowerCase().trim();
+
+  if (p2.endsWith("en") && !p2.endsWith("ten")) return true;
+  if (pr && !pr.endsWith("te") && !pr.endsWith("ten")) return true;
+
+  return false;
+}
+
 export function DictionaryPanel({
   entries, batches, cards, isLoading, error, language,
   onPhotograph, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch,
@@ -84,20 +124,30 @@ export function DictionaryPanel({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [level, setLevel] = useState<string>("all");
   const [pos, setPos] = useState<string>("all");
+  const [verbType, setVerbType] = useState<"all" | "regular" | "irregular">("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [isStuck, setIsStuck] = useState(false);
+  const stickyRef = useRef<HTMLDivElement>(null);
 
-  // Tapping anywhere else closes the floating search and the filter panel.
-  //
-  // On pointerdown, not click, and not out of preference: React (App Router)
-  // delegates events on `document`, so a click on the toggle re-renders the
-  // icon synchronously *before* this document-level listener sees the same
-  // event — whose target, the old icon, is by then detached, `closest` finds
-  // nothing, and the panel closes in the same instant it opened. At
-  // pointerdown time the pressed element is still in the document.
+  useEffect(() => {
+    const handleScroll = () => {
+      if (!stickyRef.current) return;
+      const rect = stickyRef.current.getBoundingClientRect();
+      setIsStuck(rect.top <= 12);
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
   useEffect(() => {
     const handler = (e: PointerEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest(".dict-search-float, .dict-search-toggle")) setSearchOpen(false);
+      if (!target.closest(".dict-search-float, .dict-search-toggle")) {
+        setSearchOpen(false);
+        setQuery("");
+      }
       if (!target.closest(".all-filter-panel, .dict-filter-toggle")) setFiltersOpen(false);
     };
     document.addEventListener("pointerdown", handler);
@@ -118,12 +168,17 @@ export function DictionaryPanel({
     [entries],
   );
 
-  const activeFilterCount = (level !== "all" ? 1 : 0) + (pos !== "all" ? 1 : 0);
+  const activeFilterCount = (level !== "all" ? 1 : 0) + (pos !== "all" ? 1 : 0) + (pos === "глагол" && verbType !== "all" ? 1 : 0);
   const isNarrowed = activeFilterCount > 0 || query.trim().length > 0;
 
   const matches = (e: DictionaryEntry): boolean => {
     if (level !== "all" && e.cefr !== level) return false;
     if (pos !== "all" && normalizePos(e.part_of_speech) !== pos) return false;
+    if (pos === "глагол" && verbType !== "all") {
+      const irr = isIrregularGermanVerb(e.lemma, e.headword, e.forms);
+      if (verbType === "regular" && irr) return false;
+      if (verbType === "irregular" && !irr) return false;
+    }
     const q = query.trim().toLowerCase();
     if (!q) return true;
     return (
@@ -166,7 +221,7 @@ export function DictionaryPanel({
     if (loose.length > 0) result.push({ batch: null, entries: loose, progress: null });
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, batches, cards, query, level, pos]);
+  }, [entries, batches, cards, query, level, pos, verbType]);
 
   const shownWordCount = groups.reduce((sum, g) => sum + g.entries.length, 0);
 
@@ -212,100 +267,127 @@ export function DictionaryPanel({
 
   return (
     <>
-      {/* Toolbar: compact filters on the left, the search magnifier on the
-          right. The search input floats over this row instead of pushing it. */}
-      <div className="dict-toolbar-row">
-        <button
-          type="button"
-          className={`all-filter-toggle dict-filter-toggle ${filtersOpen || activeFilterCount > 0 ? "active" : ""}`}
-          onClick={(e) => { e.stopPropagation(); setFiltersOpen((v) => !v); }}
-        >
-          <SlidersHorizontal size={15} /> Фильтры
-          {activeFilterCount > 0 && <span className="all-filter-count">{activeFilterCount}</span>}
-          <ChevronDown size={12} />
-        </button>
+      {/* Sticky container: glass blur appears only when pinned to top edge on scroll */}
+      <div ref={stickyRef} className={`dict-toolbar-sticky ${isStuck ? "stuck" : ""}`}>
+        <div className="dict-toolbar-row">
+          <button
+            type="button"
+            className={`all-filter-toggle dict-filter-toggle ${filtersOpen || activeFilterCount > 0 ? "active" : ""}`}
+            onClick={(e) => { e.stopPropagation(); setFiltersOpen((v) => !v); }}
+          >
+            <SlidersHorizontal size={15} /> Фильтры
+            {activeFilterCount > 0 && <span className="all-filter-count">{activeFilterCount}</span>}
+            <ChevronDown size={12} />
+          </button>
 
-        <span className="dict-toolbar-count">
-          {shownWordCount} {wordNoun(shownWordCount)}
-        </span>
+          <span className="dict-toolbar-count">
+            {shownWordCount} {wordNoun(shownWordCount)}
+          </span>
 
-        <button
-          type="button"
-          className={`icon-btn dict-search-toggle${searchOpen || query ? " active" : ""}`}
-          aria-label={searchOpen ? "Закрыть поиск" : "Поиск по словарю"}
-          onClick={(e) => {
-            e.stopPropagation();
-            // No side effects inside an updater: concurrent React may replay
-            // updaters, and a setQuery hidden in one made this toggle collapse
-            // back to closed on real (trusted) clicks.
-            if (searchOpen) setQuery("");
-            setSearchOpen(!searchOpen);
-          }}
-        >
-          {searchOpen ? <X size={18} /> : <Search size={18} />}
-        </button>
+          <button
+            type="button"
+            className={`icon-btn dict-search-toggle${searchOpen || query ? " active" : ""}`}
+            aria-label={searchOpen ? "Закрыть поиск" : "Поиск по словарю"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setQuery("");
+              setSearchOpen(!searchOpen);
+            }}
+          >
+            {searchOpen ? <X size={18} /> : <Search size={18} />}
+          </button>
 
-        {searchOpen && (
-          <div className="dict-search-float" onClick={(e) => e.stopPropagation()}>
-            <Search size={15} />
-            {/* type="text": the browser's own ✕ on type="search" made three
-                crosses in one row. The yellow toggle on the right both closes
-                and clears — one cross is enough. */}
-            <input
-              autoFocus
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Слово или перевод — по всем пачкам"
-              aria-label="Поиск по словарю"
-              // Mobile browsers decorate a text field with their own clear
-              // button and a spellcheck underline once typing starts; both are
-              // noise next to the one yellow cross that already clears this.
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              enterKeyHint="search"
-            />
+          {searchOpen && (
+            <div className="dict-search-float" onClick={(e) => e.stopPropagation()}>
+              <Search size={15} />
+              <input
+                autoFocus
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Слово или перевод — по всем пачкам"
+                aria-label="Поиск по словарю"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                enterKeyHint="search"
+              />
+              {query.length > 0 && (
+                <button
+                  type="button"
+                  className="dict-search-clear-btn"
+                  aria-label="Очистить поле поиска"
+                  onClick={() => setQuery("")}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {filtersOpen && (
+          <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
+            {levelOptions.length > 0 && (
+              <div className="filter-group">
+                <div className="filter-group-label">Уровень</div>
+                <div className="filter-chips">
+                  <button type="button" className={`filter-chip ${level === "all" ? "active" : ""}`} onClick={() => setLevel("all")}>Все</button>
+                  {levelOptions.map((l) => (
+                    <button key={l} type="button" className={`filter-chip ${level === l ? "active" : ""}`} onClick={() => setLevel(level === l ? "all" : l)}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {posOptions.length > 1 && (
+              <div className="filter-group">
+                <div className="filter-group-label">Часть речи</div>
+                <div className="filter-chips">
+                  <button
+                    type="button"
+                    className={`filter-chip ${pos === "all" ? "active" : ""}`}
+                    onClick={() => { setPos("all"); setVerbType("all"); }}
+                  >
+                    Все
+                  </button>
+                  {posOptions.map(([norm, label]) => (
+                    <button
+                      key={norm}
+                      type="button"
+                      className={`filter-chip ${pos === norm ? "active" : ""}`}
+                      onClick={() => {
+                        const next = pos === norm ? "all" : norm;
+                        setPos(next);
+                        if (next !== "глагол") setVerbType("all");
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {pos === "глагол" && (
+              <div className="filter-group">
+                <div className="filter-group-label">Тип глаголов</div>
+                <div className="filter-chips">
+                  <button type="button" className={`filter-chip ${verbType === "all" ? "active" : ""}`} onClick={() => setVerbType("all")}>Все</button>
+                  <button type="button" className={`filter-chip ${verbType === "regular" ? "active" : ""}`} onClick={() => setVerbType("regular")}>Правильные</button>
+                  <button type="button" className={`filter-chip ${verbType === "irregular" ? "active" : ""}`} onClick={() => setVerbType("irregular")}>Неправильные</button>
+                </div>
+              </div>
+            )}
+            {activeFilterCount > 0 && (
+              <button type="button" className="filter-reset-btn" onClick={() => { setLevel("all"); setPos("all"); setVerbType("all"); }}>
+                Сбросить фильтры
+              </button>
+            )}
           </div>
         )}
       </div>
-
-      {filtersOpen && (
-        <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
-          {levelOptions.length > 0 && (
-            <div className="filter-group">
-              <div className="filter-group-label">Уровень</div>
-              <div className="filter-chips">
-                <button type="button" className={`filter-chip ${level === "all" ? "active" : ""}`} onClick={() => setLevel("all")}>Все</button>
-                {levelOptions.map((l) => (
-                  <button key={l} type="button" className={`filter-chip ${level === l ? "active" : ""}`} onClick={() => setLevel(level === l ? "all" : l)}>
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {posOptions.length > 1 && (
-            <div className="filter-group">
-              <div className="filter-group-label">Часть речи</div>
-              <div className="filter-chips">
-                <button type="button" className={`filter-chip ${pos === "all" ? "active" : ""}`} onClick={() => setPos("all")}>Все</button>
-                {posOptions.map(([norm, label]) => (
-                  <button key={norm} type="button" className={`filter-chip ${pos === norm ? "active" : ""}`} onClick={() => setPos(pos === norm ? "all" : norm)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {activeFilterCount > 0 && (
-            <button type="button" className="filter-reset-btn" onClick={() => { setLevel("all"); setPos("all"); }}>
-              Сбросить фильтры
-            </button>
-          )}
-        </div>
-      )}
 
       <div className="dict-batches">
         {groups.map((group) => {

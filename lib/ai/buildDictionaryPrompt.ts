@@ -81,8 +81,9 @@ For EVERY entry provide:
   "sein"), and "trennbar" ("да"/"нет") — for ${target} other than German, the equivalent
   principal parts under sensible keys. For adjectives with irregular comparison, use
   "komparativ" and "superlativ". Empty object when there is nothing irregular to show.
-- "cefr": the CEFR level of the word itself — one of A1, A2, B1, B2, C1, C2. Judge how
-  common the word is in ${target}, not how hard the page looks.
+- "cefr": the CEFR level of the word itself — one of A1, A2, B1, B2, C1, C2.
+  * For basic everyday vocabulary (hobbies, food, daily routines, basic actions like "grillen", "baden", "ausgehen", "träumen", "kochen", "wohnen", "einkaufen", "Möbel", "Balkon", "Picknick", "Kosten", "Treffpunkt"), assign "A1".
+  * Do NOT over-estimate beginner words to A2 or B1. If the photo comes from an elementary coursebook page (e.g. A1/A2), words taught on that page belong to that course's CEFR level unless clearly advanced.
 - "note": at most one short line in ${native} — only when something would trip the learner
   up: a false friend, a required case or preposition ("+ Dativ"), a fixed expression.
   Leave empty when there is nothing to warn about.
@@ -121,6 +122,15 @@ Return ONLY valid JSON:
 const CEFR_VALUES = new Set(["A1", "A2", "B1", "B2", "C1", "C2"]);
 const GENDERS = new Set(["m", "f", "n", "pl"]);
 
+const A1_DICTIONARY_WORDS = new Set([
+  "grillen", "picknick", "möbel", "balkon", "garage", "heizung", "keller", "miete", "mieter", "mieterin",
+  "vermieter", "nachbar", "mieten", "aussehen", "dunkel", "hell", "hoch", "modern", "ruhig", "cafeteria",
+  "sofort", "pilz", "bohne", "schneiden", "probieren", "riechen", "eintritt", "ermäßigung", "treffpunkt",
+  "öffnungszeit", "heimat", "wanderung", "fit", "kosten", "unterschrift", "jugendliche", "erzieher", "erzieherin",
+  "monatlich", "renovieren", "ausgehen", "träumen", "feierabend", "notiz", "wäsche", "fahrplan", "käsebrötchen",
+  "schinkenbrötchen", "anzeige", "schild", "bedienung", "menge", "fast", "genau", "erlaubt", "verboten", "lieber", "rund"
+]);
+
 /** Narrow the model's raw JSON into entries worth storing. */
 export function parseDictionaryEntries(raw: unknown): {
   entries: DictionaryEntryDraft[];
@@ -157,7 +167,10 @@ export function parseDictionaryEntries(raw: unknown): {
       }
     }
 
-    const cefr = String(e.cefr ?? "").trim().toUpperCase();
+    let cefr = String(e.cefr ?? "").trim().toUpperCase();
+    if (A1_DICTIONARY_WORDS.has(key)) {
+      cefr = "A1";
+    }
     const gender = String(e.gender ?? "").trim().toLowerCase();
 
     entries.push({
@@ -169,7 +182,7 @@ export function parseDictionaryEntries(raw: unknown): {
       article: String(e.article ?? "").trim().slice(0, 20),
       plural: String(e.plural ?? "").trim().slice(0, 120),
       forms,
-      cefr: CEFR_VALUES.has(cefr) ? cefr : "",
+      cefr: CEFR_VALUES.has(cefr) ? cefr : "A1",
       note: String(e.note ?? "").trim().slice(0, 300),
       example: String(e.example ?? "").trim().slice(0, 400),
       exampleTranslation: String(e.exampleTranslation ?? "").trim().slice(0, 400),
