@@ -48,22 +48,42 @@ export function getSpeechifyModel(lang: string) {
   return SIMBA_3_LANGUAGES.has(normalizeLanguageCode(lang)) ? "simba-3.0" : "simba-multilingual";
 }
 
+/** Widen a bare language code to the BCP-47 tag the voice APIs expect. */
+export function getBcp47Locale(lang: string) {
+  // A caller that already passed a full locale ("de-AT") knows better than the table.
+  if (/^[a-z]{2}-[A-Za-z]{2,4}$/.test(lang.trim())) return lang.trim();
+  return SPEECHIFY_LOCALES[normalizeLanguageCode(lang)] ?? null;
+}
+
 /** The locale string Speechify expects, or null when we have no mapping. */
 export function getSpeechifyLocale(lang: string) {
-  const code = normalizeLanguageCode(lang);
-  // A caller that already passed a full locale ("de-AT") knows better than the table.
-  if (/^[a-z]{2}-[A-Z]{2}$/.test(lang.trim())) return lang.trim();
-  return SPEECHIFY_LOCALES[code] ?? null;
+  return getBcp47Locale(lang);
 }
 
 export function isSpeechifyTtsSupported(lang: string) {
   return Boolean(getSpeechifyLocale(lang));
 }
 
+// ─── Inworld ─────────────────────────────────────────────────────────────────
+//
+// inworld-tts-2 takes a BCP-47 language tag and picks the accent from it, so a
+// single voice covers every language it was trained on — there is no per-
+// language model or voice table to maintain here.
+
+export const INWORLD_MODEL = "inworld-tts-2";
+
+/** Inworld's own sample default; overridable per deployment. */
+export const INWORLD_DEFAULT_VOICE = "Matthias";
+
+export function isInworldTtsSupported(lang: string) {
+  return Boolean(getBcp47Locale(lang));
+}
+
 export function getAvailableTtsProviders(lang: string): TtsProvider[] {
   const providers: TtsProvider[] = ["local", "gemini"];
   if (isDeepgramTtsSupported(lang)) providers.push("deepgram");
   if (isSpeechifyTtsSupported(lang)) providers.push("speechify");
+  if (isInworldTtsSupported(lang)) providers.push("inworld");
   return providers;
 }
 
@@ -71,5 +91,6 @@ export function getTtsProviderLabel(provider: TtsProvider) {
   if (provider === "gemini") return "Gemini TTS";
   if (provider === "deepgram") return "Deepgram Aura";
   if (provider === "speechify") return "Speechify Simba";
+  if (provider === "inworld") return "Inworld TTS";
   return "Локальный";
 }

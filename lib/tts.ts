@@ -5,7 +5,9 @@ import {
   getDeepgramTtsModel,
   getSpeechifyModel,
   isDeepgramTtsSupported,
+  isInworldTtsSupported,
   isSpeechifyTtsSupported,
+  INWORLD_MODEL,
   normalizeLanguageCode,
 } from "./ttsProviders";
 
@@ -130,7 +132,7 @@ let playSegmentFn: ((offset: number) => void) | null = null;
 
 /** Providers whose audio plays through the Web Audio path rather than the browser voice. */
 function isRemoteProvider(provider: string | undefined): boolean {
-  return provider === "gemini" || provider === "deepgram" || provider === "speechify";
+  return provider === "gemini" || provider === "deepgram" || provider === "speechify" || provider === "inworld";
 }
 
 export function pauseTTS() {
@@ -194,8 +196,42 @@ export function seekTTS(time: number) {
   }
 }
 
-/** Headerless PCM plus the rate it has to be played back at. */
-type Recording = { audioBase64: string; sampleRate: number };
+/**
+ * One recording, in whichever shape its provider speaks.
+ *
+ * Most providers emit headerless PCM, which needs the rate stated separately.
+ * Inworld emits MP3, which carries its own — so the format decides which of the
+ * two decode paths runs.
+ */
+type Recording = { audioBase64: string; sampleRate: number; format: "pcm" | "mp3" };
+
+/** Cached MP3 is flagged by this header; its absence means the older PCM shape. */
+const FORMAT_HEADER = "X-Audio-Format";
+
+function base64ToBytes(base64: string): Uint8Array {
+  return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+}
+
+/** Turn a recording into a buffer the player can schedule. */
+async function decodeRecording(ctx: AudioContext, recording: Recording): Promise<AudioBuffer> {
+  const bytes = base64ToBytes(recording.audioBase64);
+
+  if (recording.format === "mp3") {
+    // decodeAudioData detaches the buffer it is handed, so give it a copy.
+    return await ctx.decodeAudioData(bytes.buffer.slice(0) as ArrayBuffer);
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const floatArray = new Float32Array(Math.floor(bytes.byteLength / 2));
+  for (let i = 0; i < floatArray.length; i++) {
+    const int16 = view.getInt16(i * 2, true);
+    floatArray[i] = int16 / (int16 < 0 ? 32768 : 32767);
+  }
+
+  const buffer = ctx.createBuffer(1, floatArray.length, recording.sampleRate);
+  buffer.copyToChannel(floatArray, 0);
+  return buffer;
+}
 
 /**
  * The provider that can actually speak this language.
@@ -207,6 +243,7 @@ type Recording = { audioBase64: string; sampleRate: number };
 function resolveProvider(requested: string, lang: string): string {
   if (requested === "deepgram" && !isDeepgramTtsSupported(lang)) return "local";
   if (requested === "speechify" && !isSpeechifyTtsSupported(lang)) return "local";
+  if (requested === "inworld" && !isInworldTtsSupported(lang)) return "local";
   return requested;
 }
 
@@ -214,6 +251,7 @@ function resolveProvider(requested: string, lang: string): string {
 function voiceKeyFor(provider: string, lang: string): string {
   if (provider === "deepgram") return getDeepgramTtsModel(lang) ?? "default";
   if (provider === "speechify") return getSpeechifyModel(lang);
+  if (provider === "inworld") return INWORLD_MODEL;
   return "Algenib";
 }
 
@@ -243,19 +281,27 @@ async function requestTts(
       return null;
     }
 
-    const data = await res.json() as { audioBase64?: string; reason?: string; sampleRate?: number };
+    const data = await res.json() as {
+      audioBase64?: string; reason?: string; sampleRate?: number; format?: "mp3";
+    };
     // A quota fallback still produces audio, but the learner deserves to know
     // the voice changed and why.
     lastTtsError = data.reason ?? null;
     if (!data.audioBase64) return null;
 
-    const recording = { audioBase64: data.audioBase64, sampleRate: data.sampleRate ?? DEEPGRAM_TTS_SAMPLE_RATE };
+    const recording: Recording = {
+      audioBase64: data.audioBase64,
+      sampleRate: data.sampleRate ?? DEEPGRAM_TTS_SAMPLE_RATE,
+      format: data.format === "mp3" ? "mp3" : "pcm",
+    };
     try {
       const cache = await caches.open("aibook-tts-cache");
-      await cache.put(
-        cacheKey,
-        new Response(recording.audioBase64, { headers: { [SAMPLE_RATE_HEADER]: String(recording.sampleRate) } }),
-      );
+      await cache.put(cacheKey, new Response(recording.audioBase64, {
+        headers: {
+          [SAMPLE_RATE_HEADER]: String(recording.sampleRate),
+          [FORMAT_HEADER]: recording.format,
+        },
+      }));
     } catch (e) {}
     return recording;
   } catch (e) {
@@ -276,7 +322,7 @@ export async function speak(
 
   updateState({ status: "loading", text, currentTime: 0, duration: 0 });
 
-  if (provider === "gemini" || provider === "deepgram" || provider === "speechify") {
+  if (isRemoteProvider(provider)) {
     stopRemoteAudio(true); // silent stop
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
@@ -292,8 +338,9 @@ export async function speak(
       if (cachedResponse) {
         recording = {
           audioBase64: await cachedResponse.text(),
-          // Entries cached before providers could differ carry no header.
+          // Entries cached before providers could differ carry neither header.
           sampleRate: Number(cachedResponse.headers.get(SAMPLE_RATE_HEADER)) || DEEPGRAM_TTS_SAMPLE_RATE,
+          format: cachedResponse.headers.get(FORMAT_HEADER) === "mp3" ? "mp3" : "pcm",
         };
       }
     } catch(e) {}
@@ -309,7 +356,6 @@ export async function speak(
     }
 
     if (recording) {
-      const { audioBase64, sampleRate } = recording;
       if (!currentAudioCtx) {
         currentAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
@@ -317,17 +363,17 @@ export async function speak(
         await currentAudioCtx.resume();
       }
 
-      const arrayBuffer = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0)).buffer;
-      const view = new DataView(arrayBuffer);
-      const floatArray = new Float32Array(arrayBuffer.byteLength / 2);
-      for (let i = 0; i < floatArray.length; i++) {
-        const int16 = view.getInt16(i * 2, true);
-        floatArray[i] = int16 / (int16 < 0 ? 32768 : 32767);
+      try {
+        currentBuffer = await decodeRecording(currentAudioCtx, recording);
+      } catch (e) {
+        // Audio we cannot decode is worth the browser voice, not silence.
+        console.error("TTS decode failed", e);
+        lastTtsError = "Не удалось декодировать аудио. Использую голос браузера.";
+        currentBuffer = null;
       }
-      
-      currentBuffer = currentAudioCtx.createBuffer(1, floatArray.length, sampleRate);
-      currentBuffer.copyToChannel(floatArray, 0);
-      
+    }
+
+    if (recording && currentBuffer) {
       updateState({ duration: currentBuffer.duration });
 
       playSegmentFn = (offset: number) => {
@@ -544,9 +590,10 @@ export async function prepareFullTextAudio(
   let done = 0;
   let failed = 0;
   let quotaError: string | undefined;
-  // Every passage comes from one provider and one voice, so one rate covers the
-  // joined recording; the first passage to arrive settles it.
+  // Every passage comes from one provider and one voice, so one rate and one
+  // format cover the joined recording; the first passage to arrive settles them.
   let sampleRate = DEEPGRAM_TTS_SAMPLE_RATE;
+  let format: "pcm" | "mp3" = "pcm";
 
   for (let i = 0; i < chunks.length; i++) {
     if (opts.shouldCancel?.()) {
@@ -562,6 +609,7 @@ export async function prepareFullTextAudio(
       if (hit) {
         base64 = await hit.text();
         sampleRate = Number(hit.headers.get(SAMPLE_RATE_HEADER)) || sampleRate;
+        if (hit.headers.get(FORMAT_HEADER) === "mp3") format = "mp3";
       }
     } catch { /* no Cache API */ }
 
@@ -573,13 +621,16 @@ export async function prepareFullTextAudio(
           body: JSON.stringify({ text: chunks[i], lang, provider }),
         });
         if (res.ok) {
-          const data = await res.json() as { audioBase64?: string; sampleRate?: number };
+          const data = await res.json() as { audioBase64?: string; sampleRate?: number; format?: "mp3" };
           base64 = data.audioBase64 ?? null;
           sampleRate = data.sampleRate ?? sampleRate;
+          if (data.format === "mp3") format = "mp3";
           if (base64) {
             try {
               const cache = await caches.open("aibook-tts-cache");
-              await cache.put(key, new Response(base64, { headers: { [SAMPLE_RATE_HEADER]: String(sampleRate) } }));
+              await cache.put(key, new Response(base64, {
+                headers: { [SAMPLE_RATE_HEADER]: String(sampleRate), [FORMAT_HEADER]: format },
+              }));
             } catch { /* cache full or unavailable */ }
           }
         } else if (res.status === 429) {
@@ -615,12 +666,21 @@ export async function prepareFullTextAudio(
       const cache = await caches.open("aibook-tts-cache");
       await cache.put(
         ttsCacheKey(fullText, provider, lang),
-        new Response(bytesToBase64(joined), { headers: { [SAMPLE_RATE_HEADER]: String(sampleRate) } }),
+        new Response(bytesToBase64(joined), {
+          headers: { [SAMPLE_RATE_HEADER]: String(sampleRate), [FORMAT_HEADER]: format },
+        }),
       );
     } catch { /* cache full — playback falls back to per-passage */ }
   }
 
-  return { done, failed, cancelled: false, seconds: totalSeconds(parts, sampleRate), quotaError };
+  return {
+    done,
+    failed,
+    cancelled: false,
+    // Byte counting only measures raw PCM; an MP3 run reports no duration.
+    seconds: format === "pcm" ? totalSeconds(parts, sampleRate) : 0,
+    quotaError,
+  };
 }
 
 function concatBytes(parts: Uint8Array[]): Uint8Array {

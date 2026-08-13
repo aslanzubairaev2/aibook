@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/local";
 import { sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
-import { getAvailableTtsProviders, getTtsProviderLabel, isDeepgramTtsSupported, isSpeechifyTtsSupported } from "@/lib/ttsProviders";
+import { getAvailableTtsProviders, getTtsProviderLabel, isDeepgramTtsSupported, isInworldTtsSupported, isSpeechifyTtsSupported } from "@/lib/ttsProviders";
 import type { TtsProvider, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -292,6 +292,9 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
             )}
             {isSpeechifyTtsSupported(profile.targetLanguage) && (
               <option value="speechify">Speechify Simba</option>
+            )}
+            {isInworldTtsSupported(profile.targetLanguage) && (
+              <option value="inworld">Inworld TTS</option>
             )}
           </select>
         </div>

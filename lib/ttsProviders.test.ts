@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   getAvailableTtsProviders,
+  getBcp47Locale,
   getSpeechifyLocale,
   getSpeechifyModel,
+  isInworldTtsSupported,
   isSpeechifyTtsSupported,
   getTtsProviderLabel,
 } from "./ttsProviders.ts";
@@ -39,18 +41,24 @@ test("reports no support for a language with no locale mapping", () => {
   assert.equal(isSpeechifyTtsSupported("de"), true);
 });
 
-test("offers Speechify for German alongside the other voices", () => {
-  const german = getAvailableTtsProviders("de");
-  assert.deepEqual(german, ["local", "gemini", "deepgram", "speechify"]);
+test("offers every voice that can speak German", () => {
+  assert.deepEqual(getAvailableTtsProviders("de"), ["local", "gemini", "deepgram", "speechify", "inworld"]);
 
-  // Polish has a Speechify locale but no Deepgram voice.
-  const polish = getAvailableTtsProviders("pl");
-  assert.deepEqual(polish, ["local", "gemini", "speechify"]);
+  // Polish has a locale for the paid voices but no Deepgram model.
+  assert.deepEqual(getAvailableTtsProviders("pl"), ["local", "gemini", "speechify", "inworld"]);
 
-  // A language neither provider knows leaves only the browser and Gemini.
+  // A language with no locale mapping leaves only the browser and Gemini.
   assert.deepEqual(getAvailableTtsProviders("xx"), ["local", "gemini"]);
 });
 
-test("labels the new provider", () => {
+test("labels the new providers", () => {
   assert.equal(getTtsProviderLabel("speechify"), "Speechify Simba");
+  assert.equal(getTtsProviderLabel("inworld"), "Inworld TTS");
+});
+
+test("Inworld takes the same locale tags, since one voice covers many languages", () => {
+  assert.equal(isInworldTtsSupported("de"), true);
+  assert.equal(isInworldTtsSupported("ru"), true);
+  assert.equal(isInworldTtsSupported("xx"), false);
+  assert.equal(getBcp47Locale("de"), "de-DE");
 });

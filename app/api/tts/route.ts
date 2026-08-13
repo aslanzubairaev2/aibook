@@ -2,9 +2,12 @@ import { NextResponse } from "next/server";
 import { sbGetCachedTts, sbSaveCachedTts } from "@/lib/db/supabase";
 import {
   DEEPGRAM_TTS_SAMPLE_RATE,
+  getBcp47Locale,
   getDeepgramTtsModel,
   getSpeechifyLocale,
   getSpeechifyModel,
+  INWORLD_DEFAULT_VOICE,
+  INWORLD_MODEL,
   normalizeLanguageCode,
 } from "@/lib/ttsProviders";
 import { diagnoseQuotaError, quotaMessageRu } from "@/lib/ttsQuota";
@@ -25,7 +28,7 @@ export async function POST(req: Request) {
     const { text, lang, provider = "gemini" } = await req.json() as {
       text: string;
       lang: string;
-      provider?: "gemini" | "deepgram" | "speechify";
+      provider?: "gemini" | "deepgram" | "speechify" | "inworld";
     };
 
     if (!text || typeof text !== "string") {
@@ -33,6 +36,22 @@ export async function POST(req: Request) {
     }
     if (text.length > MAX_TTS_TEXT_LENGTH) {
       return NextResponse.json({ error: `TTS text exceeds ${MAX_TTS_TEXT_LENGTH} character limit` }, { status: 413 });
+    }
+
+    if (provider === "inworld") {
+      const locale = getBcp47Locale(lang);
+      if (!locale) {
+        return NextResponse.json({ error: "Inworld TTS does not support this language" }, { status: 400 });
+      }
+      if (!process.env.INWORLD_API_KEY) {
+        return NextResponse.json({ error: "Не задан ключ Inworld (INWORLD_API_KEY)." }, { status: 500 });
+      }
+
+      const spoken = await speakWithInworld(text, lang, locale);
+      if ("error" in spoken) {
+        return NextResponse.json({ error: spoken.error }, { status: spoken.status });
+      }
+      return NextResponse.json({ ...spoken, provider, model: INWORLD_MODEL });
     }
 
     if (provider === "speechify") {
@@ -201,8 +220,67 @@ export async function POST(req: Request) {
 }
 
 type Spoken =
-  | { audioBase64: string; source: "api" | "db_cache"; sampleRate?: number }
+  | { audioBase64: string; source: "api" | "db_cache"; sampleRate?: number; format?: "mp3" }
   | { error: string; status: number };
+
+/**
+ * Synthesise through Inworld.
+ *
+ * Inworld hands back base64 MP3 rather than the raw PCM the other providers
+ * emit, so the format is reported alongside the audio and the player decodes it
+ * with the browser's own decoder. MP3 also means the cache stores exactly what
+ * the API returned — no header to strip, no sample rate to carry.
+ */
+async function speakWithInworld(text: string, lang: string, locale: string): Promise<Spoken> {
+  const apiKey = process.env.INWORLD_API_KEY;
+  if (!apiKey) return { error: "Missing Inworld API key", status: 500 };
+
+  const voiceId = process.env.INWORLD_VOICE_ID || INWORLD_DEFAULT_VOICE;
+  // Voice and language both shape the recording, so both belong in the key.
+  const cacheVoiceKey = `${INWORLD_MODEL}:${voiceId}`;
+  const language = normalizeLanguageCode(lang);
+
+  const cached = await sbGetCachedTts(text, language, cacheVoiceKey);
+  if (cached) return { audioBase64: cached, source: "db_cache", format: "mp3" };
+
+  const response = await fetch("https://api.inworld.ai/tts/v1/voice", {
+    method: "POST",
+    headers: {
+      // Inworld's key is already base64(apiKey:) — it is passed through as-is.
+      "Authorization": `Basic ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      text,
+      voiceId,
+      modelId: INWORLD_MODEL,
+      audioConfig: { audioEncoding: "MP3", speakingRate: 1 },
+      deliveryMode: "BALANCED",
+      language: locale,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    console.error(`Inworld TTS API error (${response.status}, voice=${voiceId}, locale=${locale}):`, err);
+    if (response.status === 401 || response.status === 403) {
+      return { error: "Inworld не принял ключ. Проверьте INWORLD_API_KEY.", status: response.status };
+    }
+    if (response.status === 429) {
+      return { error: "Inworld ограничил запросы. Проверьте баланс кредитов.", status: 429 };
+    }
+    if (/voice/i.test(err) && response.status === 400) {
+      return { error: `Inworld не знает голос «${voiceId}». Выберите другой в разделе Voices.`, status: 400 };
+    }
+    return { error: "Inworld TTS failed", status: response.status };
+  }
+
+  const data = await response.json() as { audioContent?: string };
+  if (!data.audioContent) return { error: "Inworld returned no audio", status: 502 };
+
+  await sbSaveCachedTts(text, language, cacheVoiceKey, data.audioContent);
+  return { audioBase64: data.audioContent, source: "api", format: "mp3" };
+}
 
 /**
  * Synthesise through Speechify Simba.
