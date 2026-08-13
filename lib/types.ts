@@ -53,6 +53,8 @@ export type CardFilters = {
   trainStatus?: "all" | "new" | "learning" | "review" | "relearning" | "hard";
   /** Narrow training to one source — a book title or a dictionary batch title. */
   trainBook?: string;
+  /** Exact dictionary batch id; avoids mixing batches that share a title. */
+  trainSourceId?: string | null;
   trainVariants?: TrainVariant[];
   trainMode?: "recognize" | "active";
 };

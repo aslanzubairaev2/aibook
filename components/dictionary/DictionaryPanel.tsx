@@ -5,6 +5,8 @@ import {
   BookA, Camera, ChevronDown, Dumbbell, Loader2, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
+import { getCardVariantProgressMap } from "@/lib/db/local";
+import { getCardsVariantProgress } from "@/lib/cards";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import type { AiAnalysis, CefrLevel, Flashcard, PosTag } from "@/lib/types";
 
@@ -189,6 +191,7 @@ export function DictionaryPanel({
   };
 
   const groups = useMemo<BatchGroup[]>(() => {
+    const variantProgress = getCardVariantProgressMap();
     const byBatch = new Map<string, DictionaryEntry[]>();
     const loose: DictionaryEntry[] = [];
     for (const e of entries) {
@@ -214,7 +217,7 @@ export function DictionaryPanel({
         batch,
         entries: batchEntries,
         progress: batchCards.length > 0
-          ? { learned: batchCards.filter((c) => c.repetitions > 0).length, total: batchCards.length }
+          ? getCardsVariantProgress(batchCards, variantProgress)
           : null,
       });
     }

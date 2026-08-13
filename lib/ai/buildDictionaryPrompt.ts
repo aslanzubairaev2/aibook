@@ -182,7 +182,7 @@ export function parseDictionaryEntries(raw: unknown): {
       article: String(e.article ?? "").trim().slice(0, 20),
       plural: String(e.plural ?? "").trim().slice(0, 120),
       forms,
-      cefr: CEFR_VALUES.has(cefr) ? cefr : "A1",
+      cefr: CEFR_VALUES.has(cefr) ? cefr : "",
       note: String(e.note ?? "").trim().slice(0, 300),
       example: String(e.example ?? "").trim().slice(0, 400),
       exampleTranslation: String(e.exampleTranslation ?? "").trim().slice(0, 400),

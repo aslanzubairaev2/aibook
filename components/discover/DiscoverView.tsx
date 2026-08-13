@@ -41,6 +41,8 @@ type Props = {
   onAddCard?: (card: Flashcard) => void;
   /** Open the flashcard module narrowed to one batch's cards. */
   onTrainWords?: (batchId: string, batchTitle: string) => void;
+  /** Reload user flashcards from server when a batch is added/re-linked. */
+  onReloadCards?: () => void;
 };
 
 type GutendexBook = {
@@ -259,7 +261,7 @@ function mergeEntryWithAnalysis(entry: DictionaryEntry, base: AiAnalysis, full: 
   };
 }
 
-export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook, onAddCard, onTrainWords }: Props) {
+export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook, onAddCard, onTrainWords, onReloadCards }: Props) {
   const { user } = useAuth();
   const [prefs] = useState<DiscoverPrefs>(readPrefs);
   const [activeTab, setActiveTab] = useState<TabKey>(prefs.activeTab ?? "classic");
@@ -1500,6 +1502,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
           onWordsAdded={({ added, updated, warning }) => {
             setPhotoOpen(false);
             void loadDictionary();
+            onReloadCards?.();
             showToast(
               warning
                 ? warning

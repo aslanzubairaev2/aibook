@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2 } from "lucide-react";
 import type { AiAnalysis, CardFilters, DiscussMessage, Flashcard, TrainVariant, TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields, createDefaultSkillProgress } from "@/lib/srs/sm2";
-import { findDuplicateCard } from "@/lib/cards";
+import { ALL_TRAIN_VARIANTS, filterCardsByTrainingSource, findDuplicateCard } from "@/lib/cards";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { speak } from "@/lib/tts";
@@ -138,7 +138,12 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   // Narrows a training session to one source — a book, or a dictionary batch
   // («тренировать именно эти слова» from the dictionary lands here).
   const [trainBook, setTrainBook] = useState<string>(savedFilters?.trainBook ?? "all");
-  const [trainVariants, setTrainVariants] = useState<TrainVariant[]>(savedFilters?.trainVariants?.length ? savedFilters.trainVariants : DEFAULT_TRAIN_VARIANTS);
+  const [trainSourceId, setTrainSourceId] = useState<string | null>(savedFilters?.trainSourceId ?? null);
+  const [trainVariants, setTrainVariants] = useState<TrainVariant[]>(
+    arrivedForBatch
+      ? [...ALL_TRAIN_VARIANTS]
+      : savedFilters?.trainVariants?.length ? savedFilters.trainVariants : DEFAULT_TRAIN_VARIANTS,
+  );
   const [trainMode, setTrainMode] = useState<"recognize" | "active">(arrivedForBatch ? "recognize" : savedFilters?.trainMode ?? "recognize");
   // Snapshot of the cards being trained this session — built once per session
   // start/filter change rather than re-derived from the (mutating) `cards`
@@ -211,8 +216,8 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   useEffect(() => {
     if (!arrivedForBatch || batchSessionStartedRef.current) return;
     batchSessionStartedRef.current = true;
-    persistCardFilters({ trainFilter: "all", trainStatus: "all", trainMode: "recognize" });
-    startTrainingSession("all", "all", trainVariants, trainBook);
+    persistCardFilters({ trainFilter: "all", trainStatus: "all", trainVariants: [...ALL_TRAIN_VARIANTS], trainMode: "recognize" });
+    startTrainingSession("all", "all", ALL_TRAIN_VARIANTS, trainBook, trainSourceId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrivedForBatch]);
 
@@ -331,9 +336,15 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   // Each selected variant (forward/reverse/audio) carries its own independent
   // schedule (see getVariantProgress), so a card can be due in one variant and
   // produces its own queue item per due variant rather than a single coin-flip.
-  function buildTrainQueue(status: TrainStatus, filter: FilterType, variants: TrainVariant[], book: string = trainBook): TrainQueueItem[] {
+  function buildTrainQueue(
+    status: TrainStatus,
+    filter: FilterType,
+    variants: TrainVariant[],
+    book: string = trainBook,
+    sourceId: string | null = trainSourceId,
+  ): TrainQueueItem[] {
     let typed = filter === "all" ? cards : cards.filter((c) => c.type === filter);
-    if (book !== "all") typed = typed.filter((c) => (c.sourceBookTitle || c.source || "") === book);
+    typed = filterCardsByTrainingSource(typed, book, sourceId);
     const items: TrainQueueItem[] = [];
     for (const card of typed) {
       for (const variant of variants) {
@@ -361,12 +372,16 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
 
   // The productive trainer keeps its own schedule but must obey the same
   // narrowing: "train this batch" means this batch in either mode.
-  const trainCards = trainBook === "all"
-    ? cards
-    : cards.filter((c) => (c.sourceBookTitle || c.source || "") === trainBook);
+  const trainCards = filterCardsByTrainingSource(cards, trainBook, trainSourceId);
 
-  function startTrainingSession(status: TrainStatus, filter: FilterType, variants: TrainVariant[], book: string = trainBook) {
-    setTrainQueue(buildTrainQueue(status, filter, variants, book));
+  function startTrainingSession(
+    status: TrainStatus,
+    filter: FilterType,
+    variants: TrainVariant[],
+    book: string = trainBook,
+    sourceId: string | null = trainSourceId,
+  ) {
+    setTrainQueue(buildTrainQueue(status, filter, variants, book, sourceId));
     setCurrentTrainIndex(0);
     setReviewedIds([]);
     setIsFlipped(false);
@@ -933,8 +948,9 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                     onChange={(e) => {
                       const book = e.target.value;
                       setTrainBook(book);
-                      persistCardFilters({ trainBook: book });
-                      startTrainingSession(trainStatus, trainFilter, trainVariants, book);
+                      setTrainSourceId(null);
+                      persistCardFilters({ trainBook: book, trainSourceId: null });
+                      startTrainingSession(trainStatus, trainFilter, trainVariants, book, null);
                     }}
                   >
                     <option value="all">Все источники</option>
@@ -1014,7 +1030,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
               {activeTrainFilterCount > 0 && (
                 <button
                   className="filter-reset-btn"
-                  onClick={() => { setTrainFilter("all"); setTrainStatus("all"); setTrainBook("all"); setTrainVariants(DEFAULT_TRAIN_VARIANTS); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainBook: "all", trainVariants: DEFAULT_TRAIN_VARIANTS }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS, "all"); }}
+                  onClick={() => { setTrainFilter("all"); setTrainStatus("all"); setTrainBook("all"); setTrainSourceId(null); setTrainVariants(DEFAULT_TRAIN_VARIANTS); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainBook: "all", trainSourceId: null, trainVariants: DEFAULT_TRAIN_VARIANTS }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS, "all", null); }}
                   type="button"
                 >
                   Сбросить фильтры

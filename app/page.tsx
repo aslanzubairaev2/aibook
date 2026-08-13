@@ -625,6 +625,36 @@ function AppInner() {
     setProfile(updated);
   }
 
+  const handleReloadCards = useCallback(async () => {
+    if (!user) return;
+    try {
+      const dbCards = await sbGetFlashcards(user.id);
+      if (dbCards) {
+        const localCards: Flashcard[] = dbCards.map((c) => ({
+          id: c.id,
+          type: c.selection_type,
+          front: c.front,
+          back: c.back,
+          source: c.source_book_title ?? "",
+          addedAt: c.created_at,
+          status: (c.status as Flashcard["status"]) || "new",
+          repetitions: c.repetitions ?? 0,
+          lapses: c.lapses ?? 0,
+          intervalDays: c.interval_days ?? 0,
+          easeFactor: c.easiness_factor ?? 2.5,
+          dueAt: c.next_review_at || c.created_at || new Date().toISOString(),
+          lastReviewedAt: c.last_reviewed_at || null,
+          sourceBookId: c.source_book_id || null,
+          sourceBookTitle: c.source_book_title || null,
+          cefr: c.cefr ?? null,
+        }));
+        setCards(localCards);
+      }
+    } catch {
+      // ignore network errors
+    }
+  }, [user]);
+
   function handleProgressUpdate(updated: Book) {
     setBooks((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
     if (activeBook?.id === updated.id) setActiveBook(updated);
@@ -928,6 +958,7 @@ function AppInner() {
           onDownloadBook={(book) => void handleCatalogDownload(book)}
           onAddCard={handleAddCard}
           onTrainWords={handleTrainWords}
+          onReloadCards={handleReloadCards}
         />
       )}
 

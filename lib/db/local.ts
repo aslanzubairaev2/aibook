@@ -491,6 +491,11 @@ export function getCardVariantState(cardId: string): CardVariantState {
   return readVariantProgressMap()[cardId] ?? {};
 }
 
+/** Reads every card variant in one pass for aggregate progress displays. */
+export function getCardVariantProgressMap(): Record<string, CardVariantState> {
+  return readVariantProgressMap();
+}
+
 export function saveCardVariantProgress(cardId: string, variant: Exclude<TrainVariant, "forward">, progress: SkillProgress): void {
   if (typeof window === "undefined") return;
   try {

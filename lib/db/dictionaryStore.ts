@@ -55,23 +55,38 @@ export async function saveDictionaryEntries(
 ): Promise<SaveEntriesResult> {
   if (drafts.length === 0) return { ok: true, added: 0, updated: 0 };
 
-  const lemmas = drafts.map((d) => d.lemma);
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
   const { data: existingRows, error: readError } = await admin
     .from("dictionary_entries")
-    .select("id, lemma, plural, forms, example, example_translation, note, cefr, translation")
+    .select("id, lemma, headword, plural, forms, example, example_translation, note, cefr, translation")
     .eq("user_id", userId)
-    .eq("language", language)
-    .in("lemma", lemmas);
+    .eq("language", language);
 
   if (readError) return { ok: false, error: `Не удалось прочитать словарь: ${readError.message}` };
 
-  const existing = new Map((existingRows ?? []).map((row) => [row.lemma as string, row]));
+  const existingMap = new Map<string, Record<string, unknown>>();
+  for (const row of existingRows ?? []) {
+    const lemmaKey = norm(String(row.lemma ?? ""));
+    const headwordKey = norm(String(row.headword ?? ""));
+    if (lemmaKey) existingMap.set(lemmaKey, row);
+    if (headwordKey) existingMap.set(headwordKey, row);
+  }
+
+  let addedCount = 0;
+  let updatedCount = 0;
 
   const rows = drafts.map((d) => {
-    const prior = existing.get(d.lemma) as Record<string, unknown> | undefined;
+    const key = norm(d.lemma || d.headword);
+    const prior = existingMap.get(key) || existingMap.get(norm(d.headword));
+    if (prior) {
+      updatedCount++;
+    } else {
+      addedCount++;
+    }
     // Prefer what this reading found; fall back to what was already known.
     const keep = (next: string, old: unknown) => next || String(old ?? "");
     return {
+      ...(prior?.id ? { id: prior.id } : {}),
       user_id: userId,
       language,
       batch_id: batchId,
@@ -98,7 +113,7 @@ export async function saveDictionaryEntries(
 
   if (error) return { ok: false, error: `Не удалось сохранить слова: ${error.message}` };
 
-  return { ok: true, added: rows.length - existing.size, updated: existing.size };
+  return { ok: true, added: addedCount, updated: updatedCount };
 }
 
 /**
@@ -110,8 +125,9 @@ export async function saveDictionaryEntries(
  * narrowed to one page, and the CEFR level, which is what lets it be narrowed
  * by difficulty.
  *
- * Words that are already cards are left exactly as they are — re-adding one
- * would reset a schedule the learner has been building for weeks.
+ * Words that are already cards are re-linked to the new batch without resetting
+ * their SRS progress — re-adding one must not reset a schedule the learner has
+ * been building for weeks.
  */
 export async function createCardsForEntries(
   admin: SupabaseClient,
@@ -119,50 +135,73 @@ export async function createCardsForEntries(
   entries: DictionaryEntryDraft[],
   batchId: string,
   batchTitle: string,
-): Promise<{ created: number }> {
-  if (entries.length === 0) return { created: 0 };
+): Promise<{ created: number; relinked: number }> {
+  if (entries.length === 0) return { created: 0, relinked: 0 };
 
   const { data: existing } = await admin
     .from("flashcards")
-    .select("front")
+    .select("id, front, source_book_id")
     .eq("user_id", userId);
 
-  const known = new Set((existing ?? []).map((row) => normalizeFront(String(row.front ?? ""))));
+  const existingCardsMap = new Map(
+    (existing ?? []).map((row) => [normalizeFront(String(row.front ?? "")), row]),
+  );
 
   // Due at the end of today, so a freshly photographed page is ready to study
   // in the same sitting.
   const dueAt = new Date();
   dueAt.setHours(23, 59, 59, 999);
 
-  const rows = entries
-    .filter((e) => !known.has(normalizeFront(e.headword)))
-    .map((e) => ({
-      user_id: userId,
-      vocabulary_item_id: null,
-      front: e.headword,
-      back: cardBack(e),
-      source_book_title: batchTitle,
-      source_book_id: batchId,
-      selection_type: "word",
-      repetitions: 0,
-      lapses: 0,
-      easiness_factor: 2.5,
-      interval_days: 0,
-      next_review_at: dueAt.toISOString(),
-      last_reviewed_at: null,
-      status: "new",
-      cefr: e.cefr || null,
-    }));
+  const newRows: Record<string, unknown>[] = [];
+  const relinkIds: string[] = [];
 
-  if (rows.length === 0) return { created: 0 };
+  for (const e of entries) {
+    const key = normalizeFront(e.headword);
+    const matchedCard = existingCardsMap.get(key);
 
-  const { error } = await admin.from("flashcards").insert(rows);
-  if (error) {
-    // A dictionary that saved but could not make cards is still worth having.
-    console.error("createCardsForEntries:", error.message);
-    return { created: 0 };
+    if (matchedCard) {
+      if (matchedCard.id) relinkIds.push(String(matchedCard.id));
+    } else {
+      newRows.push({
+        user_id: userId,
+        vocabulary_item_id: null,
+        front: e.headword,
+        back: cardBack(e),
+        source_book_title: batchTitle,
+        source_book_id: batchId,
+        selection_type: "word",
+        repetitions: 0,
+        lapses: 0,
+        easiness_factor: 2.5,
+        interval_days: 0,
+        next_review_at: dueAt.toISOString(),
+        last_reviewed_at: null,
+        status: "new",
+        cefr: e.cefr || null,
+      });
+    }
   }
-  return { created: rows.length };
+
+  if (relinkIds.length > 0) {
+    const { error: relinkError } = await admin
+      .from("flashcards")
+      .update({ source_book_id: batchId, source_book_title: batchTitle })
+      .in("id", relinkIds);
+
+    if (relinkError) {
+      console.error("relinkCardsForEntries error:", relinkError.message);
+    }
+  }
+
+  if (newRows.length > 0) {
+    const { error } = await admin.from("flashcards").insert(newRows);
+    if (error) {
+      console.error("createCardsForEntries:", error.message);
+      return { created: 0, relinked: relinkIds.length };
+    }
+  }
+
+  return { created: newRows.length, relinked: relinkIds.length };
 }
 
 function normalizeFront(text: string): string {
