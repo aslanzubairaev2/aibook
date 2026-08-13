@@ -695,9 +695,17 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         .flipper-card.flipped { transform: rotateY(180deg); }
         .flipper-face { width: 100%; backface-visibility: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-strong); display: flex; flex-direction: column; padding: 18px 18px 14px; box-shadow: var(--shadow-sm); overflow: hidden; min-height: 180px; gap: 8px; }
         .flipper-face-back { position: absolute; top: 0; left: 0; }
-        .flipper-face-front { background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(212, 168, 71, 0.04) 100%); }
+        .flipper-face-front { position: relative; padding: 68px 16px 14px; background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(212, 168, 71, 0.04) 100%); }
         .flipper-face-back { background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(122, 171, 106, 0.04) 100%); transform: rotateY(180deg); }
-        .card-face-row { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+        .card-markers-left { position: absolute; top: 16px; left: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; z-index: 10; }
+        .card-actions-right { position: absolute; top: 16px; right: 16px; display: flex; align-items: center; gap: 8px; z-index: 10; }
+        .card-action-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--text-primary); cursor: pointer; transition: all 0.18s ease; padding: 0; box-shadow: var(--shadow-xs); }
+        .card-action-btn:hover:not(:disabled) { background: var(--bg-elevated); border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
+        .card-action-btn:active:not(:disabled) { transform: scale(0.95); }
+        .card-action-btn:disabled { opacity: 0.5; cursor: default; }
+        .card-actions-right .speak-btn { width: 44px; height: 44px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--accent); transition: all 0.18s ease; box-shadow: var(--shadow-xs); }
+        .card-actions-right .speak-btn:hover { background: var(--bg-elevated); border-color: var(--accent); transform: translateY(-1px); }
+        .card-actions-right .speak-btn:active { transform: scale(0.95); }
         .card-text-area { flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px 0; overflow: hidden; word-break: break-word; text-align: center; }
         .card-footer-row { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
         .card-footer-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
@@ -1051,10 +1059,8 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                 <div className={`flipper-card ${isFlipped ? "flipped" : ""}`}>
                   {/* Front */}
                   <div className="flipper-face flipper-face-front" onClick={() => setIsFlipped((f) => !f)}>
-                    <div className="card-face-row">
-                      {/* Markers stack top-left, smallest first — type, part of
-                          speech, level — the way a product tile carries its
-                          badges: one glance, no horizontal sprawl. */}
+                    {/* Left markers — independent absolute positioning */}
+                    <div className="card-markers-left">
                       <div className="card-marker-stack">
                         {cardMarkers(currentCard).map((m, i) => (
                           <span key={i} className={`card-marker ${m.kind}${i === 0 ? " lead" : ""}`}>
@@ -1062,26 +1068,28 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                           </span>
                         ))}
                       </div>
+                    </div>
+
+                    {/* Right action buttons — 2x larger, independent absolute positioning */}
+                    <div className="card-actions-right">
                       <button
-                        className="icon-btn"
-                        style={{ width: 32, height: 32, marginLeft: "auto", marginRight: 4 }}
+                        className="card-action-btn"
                         type="button"
                         aria-label="Мини-рассказ с этим словом"
                         title="Мини-рассказ с этим словом — сохранится в «Мои уроки»"
                         disabled={miniStory === currentCard.id}
                         onClick={(e) => { e.stopPropagation(); void createMiniStory(currentCard); }}
                       >
-                        {miniStory === currentCard.id ? <Loader2 size={16} className="spin" /> : <FileText size={16} />}
+                        {miniStory === currentCard.id ? <Loader2 size={22} className="spin" /> : <FileText size={22} />}
                       </button>
                       <button
-                        className="icon-btn"
-                        style={{ width: 32, height: 32, marginRight: 4 }}
+                        className="card-action-btn"
                         type="button"
                         aria-label="Обсудить с AI"
                         title="Обсудить с AI"
                         onClick={(e) => { e.stopPropagation(); void openDiscussForCard(currentCard); }}
                       >
-                        <MessageCircle size={16} />
+                        <MessageCircle size={22} />
                       </button>
                       {/* TTS button — long press or right-click to change provider.
                           Hidden when the prompt is native-language text (speaking it
@@ -1095,7 +1103,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                           onPointerLeave={() => { if (longPressRef.current) clearTimeout(longPressRef.current); }}
                           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setShowTtsMenu(true); }}
                         >
-                          <SpeakButton text={promptText} lang={promptLang} size={15} />
+                          <SpeakButton text={promptText} lang={promptLang} size={22} />
                           {showTtsMenu && (
                             <div className="tts-menu" onClick={(e) => e.stopPropagation()}>
                               {TTS_PROVIDERS.map((p) => (
