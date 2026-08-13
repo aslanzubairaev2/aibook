@@ -8,8 +8,14 @@
 // clients accept it.
 //
 // Implemented by hand rather than with an SDK on purpose: the protocol surface
-// a tools-only stateless server needs is four methods, and a dependency-free
-// route is one less thing to break on the Hobby build.
+// a stateless server needs is a handful of methods, and a dependency-free route
+// is one less thing to break on the Hobby build.
+//
+// Tools, prompts and resources are all served, because clients disagree about
+// which of them the model ever sees: ChatGPT's connector UI drops the server's
+// instructions, some clients never fetch resources, and a few show prompts to
+// the user as a menu. The same description of the app therefore reaches the
+// other side by three routes — see lib/mcp/capabilities.ts.
 //
 // Auth: the personal token lives in the URL path (/api/mcp/<token>) because
 // ChatGPT's and Claude's connector UIs accept a bare URL but not custom
@@ -19,7 +25,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import { verifyMcpToken } from "@/lib/mcp/token";
-import { MCP_TOOLS, callMcpTool } from "@/lib/mcp/tools";
+import { MCP_TOOLS, buildGuideMarkdown, callMcpTool } from "@/lib/mcp/tools";
+import { MCP_PROMPTS, getPrompt } from "@/lib/mcp/prompts";
+import { buildInstructions } from "@/lib/mcp/capabilities";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,23 +36,40 @@ export const maxDuration = 60;
 // latest of these back, which is how MCP version negotiation is defined.
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const SERVER_INFO = { name: "aibook", version: "1.0.0" };
+const SERVER_INFO = {
+  name: "aibook",
+  title: "aibook — карточки, словарь и тексты",
+  version: "1.2.0",
+};
 
-const INSTRUCTIONS = `aibook is a language-learning reader app. The connected account belongs to one learner (their target and native language come from get_overview).
+const INSTRUCTIONS = buildInstructions();
 
-What you can see: their state and vocabulary (get_overview, get_study_words, list_flashcards, list_texts, get_text), how the learning is going (get_progress — confident words, words in progress, words they keep forgetting), and the vocabulary batches their course set them (list_word_batches, list_batch_words).
-
-What you can add: flashcards (add_flashcards), a whole themed batch of words (add_word_batch), and reading texts you write (create_lesson).
-
-Two ideas worth understanding:
-- A "batch" («пачка») is one page of vocabulary kept together — usually photographed from a coursebook — with its own progress and its own training button in the app. When a conversation produces a themed set of words, add_word_batch is the right tool; add_flashcards is for a few loose words.
-- The learner's words are not equal. get_progress separates the ones they know confidently from the ones they keep forgetting. Practise new grammar with confident words, so the sentence tests the construction and not the vocabulary; weave the struggling ones into examples as often as you naturally can.
-
-Typical flows:
-- "добавь эти фразы мне как карточки" → add_flashcards.
-- "сохрани слова по сегодняшней теме" → add_word_batch with a title and topic.
-- "напиши рассказ из моих выученных слов" → get_progress (or get_study_words), write the story yourself at their level, then create_lesson.
-- "что у меня плохо запоминается?" → get_progress, then work those words into practice.`;
+// What the app can be asked for, served as documents as well as tools. Clients
+// differ in what they put in front of the model — some read resources, some
+// only ever call tools — so the same map is reachable three ways.
+const RESOURCES = [
+  {
+    uri: "aibook://guide",
+    name: "aibook_guide",
+    title: "Что умеет aibook",
+    description: "Every area of the app, the tools that reach it, and what this connection cannot do.",
+    mimeType: "text/markdown",
+  },
+  {
+    uri: "aibook://state",
+    name: "learner_state",
+    title: "Состояние ученика",
+    description: "Live snapshot: languages, deck and dictionary sizes, recent lessons, reading progress.",
+    mimeType: "application/json",
+  },
+  {
+    uri: "aibook://progress",
+    name: "learning_progress",
+    title: "Как идёт учёба",
+    description: "Live spaced-repetition record: confident words, words in progress, words being forgotten.",
+    mimeType: "application/json",
+  },
+];
 
 type JsonRpcRequest = {
   jsonrpc?: string;
@@ -86,7 +111,11 @@ async function handleMessage(msg: JsonRpcRequest, userId: string): Promise<unkno
       const asked = String(msg.params?.protocolVersion ?? "");
       return rpcResult(id, {
         protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
-        capabilities: { tools: { listChanged: false } },
+        capabilities: {
+          tools: { listChanged: false },
+          prompts: { listChanged: false },
+          resources: { listChanged: false, subscribe: false },
+        },
         serverInfo: SERVER_INFO,
         instructions: INSTRUCTIONS,
       });
@@ -112,12 +141,53 @@ async function handleMessage(msg: JsonRpcRequest, userId: string): Promise<unkno
         });
       }
     }
-    // Empty lists rather than "method not found": some clients probe for
-    // resources/prompts even when the capability is not advertised.
     case "resources/list":
-      return rpcResult(id, { resources: [] });
+      return rpcResult(id, { resources: RESOURCES });
+    case "resources/templates/list":
+      return rpcResult(id, { resourceTemplates: [] });
+    case "resources/read": {
+      const uri = String(msg.params?.uri ?? "");
+      if (uri === "aibook://guide") {
+        return rpcResult(id, {
+          contents: [{ uri, mimeType: "text/markdown", text: buildGuideMarkdown() }],
+        });
+      }
+      const toolForUri: Record<string, string> = {
+        "aibook://state": "get_overview",
+        "aibook://progress": "get_progress",
+      };
+      const tool = toolForUri[uri];
+      if (!tool) return rpcError(id, -32602, `Unknown resource: ${uri}`);
+      try {
+        const data = await callMcpTool(supabaseAdmin!, userId, tool, {});
+        return rpcResult(id, {
+          contents: [{ uri, mimeType: "application/json", text: JSON.stringify(data, null, 2) }],
+        });
+      } catch (err) {
+        return rpcError(id, -32603, err instanceof Error ? err.message : "Resource read failed.");
+      }
+    }
     case "prompts/list":
-      return rpcResult(id, { prompts: [] });
+      return rpcResult(id, {
+        prompts: MCP_PROMPTS.map((p) => ({
+          name: p.name,
+          title: p.title,
+          description: p.description,
+          arguments: p.arguments,
+        })),
+      });
+    case "prompts/get": {
+      const name = String(msg.params?.name ?? "");
+      const prompt = getPrompt(name);
+      if (!prompt) return rpcError(id, -32602, `Unknown prompt: ${name}`);
+      const args = (msg.params?.arguments ?? {}) as Record<string, string>;
+      return rpcResult(id, {
+        description: prompt.description,
+        messages: [
+          { role: "user", content: { type: "text", text: prompt.build(args) } },
+        ],
+      });
+    }
     default:
       return rpcError(id, -32601, `Method not found: ${method}`);
   }

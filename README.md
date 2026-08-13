@@ -78,6 +78,36 @@ An intelligent application for learning foreign languages through reading. Open 
 
 ---
 
+## Connecting an outside AI agent (MCP)
+
+**Settings → Подключение ИИ-агентов** issues a personal, HMAC-signed URL
+(`/api/mcp/<token>`) that turns the app into an MCP server. ChatGPT, Claude,
+Gemini CLI and anything else that speaks the protocol can then read the
+learner's state and write into their app. Every call is scoped to the token's
+owner and is plain database work — no Gemini spend.
+
+The agent on the other end is the language model: it writes the texts and picks
+the words, and these tools store them exactly the way the in-app generator does.
+
+| Area | Tools |
+|------|-------|
+| Discovery | `get_overview`, `get_capabilities` |
+| Flashcards | `list_flashcards`, `add_flashcards`, `update_flashcard`, `delete_flashcards`, `get_study_words` |
+| Dictionary & batches | `list_word_batches`, `list_batch_words`, `search_dictionary`, `add_word_batch`, `add_words_to_batch` |
+| Learning quality | `get_progress` |
+| Texts | `create_lesson`, `list_texts`, `get_text`, `list_catalogue` |
+
+Beyond tools, the server also serves **prompts** (ready-made flows the learner
+can pick from a menu: «рассказ из моих слов», «что я забываю») and **resources**
+(`aibook://guide`, `aibook://state`, `aibook://progress`). All three are built
+from one description of the app in `lib/mcp/capabilities.ts`, because clients
+disagree about which of them the model actually sees — ChatGPT's connector UI,
+for instance, drops the server's `instructions`. `lib/mcp/tools.test.ts` fails
+the build if a tool exists that the capability map does not mention, which is
+what keeps a newly shipped feature from being invisible to connected agents.
+
+---
+
 ## Architecture
 
 ```

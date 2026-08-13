@@ -179,8 +179,9 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
           <div className="settings-list" style={{ marginBottom: 20 }}>
             <div className="setting-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 10, padding: "14px 16px" }}>
               <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: "1.5", margin: 0 }}>
-                Личная ссылка, по которой ChatGPT, Claude или другой ИИ подключается к приложению:
-                сможет добавлять вам карточки, сохранять тексты в «Мои уроки» и видеть ваш прогресс.
+                Личная ссылка, по которой ChatGPT, Claude или другой ИИ подключается к приложению.
+                Он увидит ваш словарь, пачки слов и то, что вам плохо запоминается, — и сможет
+                добавлять карточки, собирать новые пачки и писать тексты прямо в «Мои уроки».
               </p>
 
               {!mcpUrl && (
