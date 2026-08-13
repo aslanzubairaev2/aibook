@@ -1,6 +1,10 @@
 node_modules
 .next
 out
+# TypeScript's incremental build cache: rewritten by every `tsc` run, and
+# different on every machine. Tracking it made the tree look dirty after any
+# type check.
+tsconfig.tsbuildinfo
 .env
 .env.local
 .npm-cache
