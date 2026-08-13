@@ -1,5 +1,19 @@
 import type { TtsProvider } from "@/lib/types";
 
+const TTS_PROVIDERS = new Set<TtsProvider>([
+  "local",
+  "gemini",
+  "deepgram",
+  "speechify",
+  "inworld",
+]);
+
+const LEGACY_TTS_PROVIDERS: Record<string, TtsProvider> = {
+  inword: "inworld",
+  inwords: "inworld",
+  simba: "speechify",
+};
+
 export const DEEPGRAM_TTS_SAMPLE_RATE = 24000;
 
 const DEEPGRAM_MODELS: Record<string, string> = {
@@ -78,6 +92,16 @@ export const INWORLD_DEFAULT_VOICE = "Matthias";
 export function isInworldTtsSupported(lang: string) {
   return Boolean(getBcp47Locale(lang));
 }
+export function normalizeTtsProvider(provider: unknown): TtsProvider {
+  if (typeof provider !== "string") return "inworld";
+
+  const normalized = provider.trim().toLowerCase();
+  if (TTS_PROVIDERS.has(normalized as TtsProvider)) {
+    return normalized as TtsProvider;
+  }
+
+  return LEGACY_TTS_PROVIDERS[normalized] ?? "local";
+}
 
 export function getAvailableTtsProviders(lang: string): TtsProvider[] {
   const providers: TtsProvider[] = ["local", "gemini"];
@@ -85,6 +109,10 @@ export function getAvailableTtsProviders(lang: string): TtsProvider[] {
   if (isSpeechifyTtsSupported(lang)) providers.push("speechify");
   if (isInworldTtsSupported(lang)) providers.push("inworld");
   return providers;
+}
+export function resolveTtsProvider(provider: unknown, lang: string): TtsProvider {
+  const normalized = normalizeTtsProvider(provider);
+  return getAvailableTtsProviders(lang).includes(normalized) ? normalized : "local";
 }
 
 export function getTtsProviderLabel(provider: TtsProvider) {

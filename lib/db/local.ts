@@ -1,4 +1,5 @@
 import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage, Flashcard, GrammarTable, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, TrainVariant, UserProfile } from "@/lib/types";
+import { normalizeTtsProvider } from "@/lib/ttsProviders";
 
 const BOOKS_KEY = "aibook_books";
 const CARDS_KEY = "aibook_cards";
@@ -235,21 +236,30 @@ const defaultProfile: UserProfile = {
   booksStarted: 0,
   booksFinished: 0,
   savedItems: 0,
-  ttsProvider: "local",
+  ttsProvider: "inworld",
 };
 
 export function getLocalProfile(): UserProfile {
   if (typeof window === "undefined") return defaultProfile;
   try {
     const stored = localStorage.getItem(getNsKey(PROFILE_KEY));
-    return stored ? (JSON.parse(stored) as UserProfile) : defaultProfile;
+    if (!stored) return defaultProfile;
+    const parsed = JSON.parse(stored) as Partial<UserProfile>;
+    return {
+      ...defaultProfile,
+      ...parsed,
+      ttsProvider: normalizeTtsProvider(parsed.ttsProvider),
+    };
   } catch {
     return defaultProfile;
   }
 }
 
 export function saveLocalProfile(profile: UserProfile): void {
-  localStorage.setItem(getNsKey(PROFILE_KEY), JSON.stringify(profile));
+  localStorage.setItem(getNsKey(PROFILE_KEY), JSON.stringify({
+    ...profile,
+    ttsProvider: normalizeTtsProvider(profile.ttsProvider),
+  }));
 }
 
 // --- Gemini API Key ---

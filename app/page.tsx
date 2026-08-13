@@ -24,6 +24,7 @@ import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLo
 import { freshFetch } from "@/lib/net/freshFetch";
 import { parseBook } from "@/lib/parser/index";
 import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress } from "@/lib/cards";
+import { normalizeTtsProvider } from "@/lib/ttsProviders";
 import type { AppSection, Book, CardVariantState, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
 
 // ─── Inner app (needs auth context) ─────────────────────────────────────────
@@ -485,7 +486,7 @@ function AppInner() {
         nativeLanguage: dbSettings.native_language,
         targetLanguage: dbSettings.active_target_lang,
         uiLanguage: dbSettings.ui_language,
-        ttsProvider: (dbSettings.tts_provider as UserProfile["ttsProvider"]) ?? "local",
+        ttsProvider: normalizeTtsProvider(dbSettings.tts_provider),
         readingMinutes: dbSettings.reading_minutes ?? 0,
         booksStarted: dbSettings.books_started ?? 0,
         booksFinished: dbSettings.books_finished ?? 0,

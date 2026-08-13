@@ -80,48 +80,29 @@
 
 .panel-tab:not(.active):hover { color: var(--text-primary); }
 
-.tts-toggle {
-  position: relative;
-  width: 54px;
+.tts-provider-select {
+  width: 112px;
   height: 30px;
+  flex-shrink: 1;
+  min-width: 76px;
+  padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: rgba(240, 230, 211, 0.07);
-  padding: 2px;
-  flex-shrink: 0;
-}
-
-.tts-toggle-thumb {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-elevated);
   color: var(--surface-dim);
-  transition: transform 0.18s ease, background 0.18s ease, color 0.18s ease;
+  background: var(--bg-elevated);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.tts-toggle.gemini .tts-toggle-thumb {
-  transform: translateX(24px);
-  background: var(--accent);
-  color: var(--text-dark);
+.tts-provider-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
-.tts-toggle.deepgram .tts-toggle-thumb {
-  transform: translateX(24px);
-  background: var(--green);
-  color: var(--text-dark);
-}
-
-.gemini-mark {
-  font-size: 10px;
-  font-weight: 900;
-  line-height: 1;
+.tts-provider-select option {
+  color: var(--text-primary);
+  background: var(--bg-card);
 }
 
 /* ─── Tab Content ────────────────────────────────────────────────────────── */

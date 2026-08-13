@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, MessageCircle, Plus, ChevronLeft, ChevronRight, Volume2, Zap } from "lucide-react";
+import { ChevronDown, MessageCircle, Plus, ChevronLeft, ChevronRight, Zap } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { normalizeToken } from "@/lib/selector/text";
 import { subscribeTTS, getTTSState, TTSState, toggleAutoNext, speak } from "@/lib/tts";
-import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
+import { getAvailableTtsProviders, getTtsProviderLabel, resolveTtsProvider } from "@/lib/ttsProviders";
 import type { AiAnalysis, Flashcard, UserProfile } from "@/lib/types";
 
 type Tab = "word" | "phrase" | "sentence";
@@ -82,10 +82,8 @@ export function AiPanel({
     { id: "phrase", label: "Фраза" },
     { id: "sentence", label: "Предложение" },
   ];
-  const provider = ttsProvider || "local";
   const availableProviders = getAvailableTtsProviders(lang);
-  const activeProvider = availableProviders.includes(provider) ? provider : "local";
-  const nextProvider = availableProviders[(availableProviders.indexOf(activeProvider) + 1) % availableProviders.length];
+  const activeProvider = resolveTtsProvider(ttsProvider, lang);
   const hasActiveAnalysis =
     activeTab === "word" ? Boolean(analysis?.word?.translation)
       : activeTab === "phrase" ? Boolean(analysis?.phrase?.translation)
@@ -111,17 +109,17 @@ export function AiPanel({
             >
               <Zap size={16} fill={tts.autoNext ? "currentColor" : "none"} />
             </button>
-            <button
-              className={`tts-toggle ${activeProvider}`}
-              type="button"
-              aria-label={`Переключить TTS на ${getTtsProviderLabel(nextProvider)}`}
+            <select
+              className="tts-provider-select"
+              aria-label="Голосовой движок"
               title={getTtsProviderLabel(activeProvider)}
-              onClick={() => onTtsProviderChange(nextProvider)}
+              value={activeProvider}
+              onChange={(event) => onTtsProviderChange(event.target.value as NonNullable<UserProfile["ttsProvider"]>)}
             >
-              <span className="tts-toggle-thumb">
-                {activeProvider === "local" ? <Volume2 size={14} /> : <span className="gemini-mark" aria-hidden>{activeProvider === "deepgram" ? "DG" : "✦"}</span>}
-              </span>
-            </button>
+              {availableProviders.map((provider) => (
+                <option key={provider} value={provider}>{getTtsProviderLabel(provider)}</option>
+              ))}
+            </select>
             {onPrev && (
               <button className="icon-btn" style={{ width: 34, height: 34 }} onClick={() => onPrev(activeTab)} type="button" aria-label="Предыдущее">
                 <ChevronLeft size={18} />
