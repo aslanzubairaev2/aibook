@@ -86,7 +86,7 @@ export async function saveDictionaryEntries(
     // Prefer what this reading found; fall back to what was already known.
     const keep = (next: string, old: unknown) => next || String(old ?? "");
     return {
-      ...(prior?.id ? { id: prior.id } : {}),
+      id: prior?.id ? String(prior.id) : crypto.randomUUID(),
       user_id: userId,
       language,
       batch_id: batchId,
