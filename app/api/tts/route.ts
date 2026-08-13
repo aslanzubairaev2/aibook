@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { sbGetCachedTts, sbSaveCachedTts } from "@/lib/db/supabase";
 import { DEEPGRAM_TTS_SAMPLE_RATE, getDeepgramTtsModel, normalizeLanguageCode } from "@/lib/ttsProviders";
+import { diagnoseQuotaError, quotaMessageRu } from "@/lib/ttsQuota";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 
 const MAX_TTS_TEXT_LENGTH = 2000;
+const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 
 export async function POST(req: Request) {
   try {
@@ -27,51 +29,21 @@ export async function POST(req: Request) {
     }
 
     if (provider === "deepgram") {
-      const apiKey = process.env.DEEPGRAM_API_KEY;
       const model = getDeepgramTtsModel(lang);
 
       if (!model) {
         return NextResponse.json({ error: "Deepgram TTS does not support this language" }, { status: 400 });
       }
 
-      if (!apiKey) {
+      if (!process.env.DEEPGRAM_API_KEY) {
         return NextResponse.json({ error: "Missing Deepgram API key" }, { status: 500 });
       }
 
-      if (text.length > 2000) {
-        return NextResponse.json({ error: "Deepgram TTS text exceeds 2000 character limit" }, { status: 413 });
+      const spoken = await speakWithDeepgram(text, lang, model);
+      if ("error" in spoken) {
+        return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
-
-      const language = normalizeLanguageCode(lang);
-      const cachedAudio = await sbGetCachedTts(text, language, model);
-      if (cachedAudio) {
-        return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider, model });
-      }
-
-      const url = new URL("https://api.deepgram.com/v1/speak");
-      url.searchParams.set("model", model);
-      url.searchParams.set("encoding", "linear16");
-      url.searchParams.set("sample_rate", String(DEEPGRAM_TTS_SAMPLE_RATE));
-      url.searchParams.set("container", "none");
-
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Authorization": `Token ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ text }),
-      });
-
-      if (!response.ok) {
-        const err = await response.text();
-        console.error("Deepgram TTS API error:", err);
-        return NextResponse.json({ error: "Deepgram TTS failed" }, { status: response.status });
-      }
-
-      const audioBase64 = Buffer.from(await response.arrayBuffer()).toString("base64");
-      await sbSaveCachedTts(text, language, model, audioBase64);
-      return NextResponse.json({ audioBase64, source: "api", provider, model });
+      return NextResponse.json({ ...spoken, provider, model });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -90,7 +62,7 @@ export async function POST(req: Request) {
     }
 
     const makeRequest = async (inputText: string) => {
-      return await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${apiKey}`, {
+      return await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${apiKey}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -125,6 +97,50 @@ export async function POST(req: Request) {
 
     if (!response.ok) {
       const err = await response.text();
+
+      // A rate limit is the one failure the learner can act on, so it gets
+      // named rather than flattened into "TTS failed" — and, when the language
+      // has a Deepgram voice, answered with that voice instead of silence.
+      if (response.status === 429) {
+        const quota = diagnoseQuotaError(err);
+        console.error(
+          `Gemini TTS quota hit [${quota.quotaId ?? "unknown quota"}] window=${quota.window} freeTier=${quota.freeTier} limit=${quota.limit ?? "?"}:`,
+          err,
+        );
+
+        const deepgramModel = getDeepgramTtsModel(lang);
+        if (deepgramModel && process.env.DEEPGRAM_API_KEY) {
+          const spoken = await speakWithDeepgram(text, lang, deepgramModel);
+          if (!("error" in spoken)) {
+            return NextResponse.json({
+              ...spoken,
+              provider: "deepgram",
+              model: deepgramModel,
+              fellBackFrom: "gemini",
+              reason: quotaMessageRu(quota),
+            });
+          }
+        }
+
+        return NextResponse.json(
+          {
+            error: quotaMessageRu(quota),
+            quota: {
+              window: quota.window,
+              freeTier: quota.freeTier,
+              limit: quota.limit,
+              quotaId: quota.quotaId,
+              model: GEMINI_TTS_MODEL,
+            },
+            retryAfterSeconds: quota.retryAfterSeconds,
+          },
+          {
+            status: 429,
+            headers: quota.retryAfterSeconds ? { "Retry-After": String(quota.retryAfterSeconds) } : undefined,
+          },
+        );
+      }
+
       console.error("Gemini TTS API error:", err);
       return NextResponse.json({ error: "TTS failed" }, { status: response.status });
     }
@@ -153,4 +169,47 @@ export async function POST(req: Request) {
     console.error("TTS Error:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
+}
+
+type Spoken = { audioBase64: string; source: "api" | "db_cache" } | { error: string; status: number };
+
+/**
+ * Synthesise through Deepgram, cache included.
+ *
+ * Shared by the Deepgram provider and by the Gemini quota fallback, so a
+ * rate-limited card is still read out in a real voice rather than dropping to
+ * the browser's robot.
+ */
+async function speakWithDeepgram(text: string, lang: string, model: string): Promise<Spoken> {
+  const apiKey = process.env.DEEPGRAM_API_KEY;
+  if (!apiKey) return { error: "Missing Deepgram API key", status: 500 };
+
+  const language = normalizeLanguageCode(lang);
+  const cachedAudio = await sbGetCachedTts(text, language, model);
+  if (cachedAudio) return { audioBase64: cachedAudio, source: "db_cache" };
+
+  const url = new URL("https://api.deepgram.com/v1/speak");
+  url.searchParams.set("model", model);
+  url.searchParams.set("encoding", "linear16");
+  url.searchParams.set("sample_rate", String(DEEPGRAM_TTS_SAMPLE_RATE));
+  url.searchParams.set("container", "none");
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Token ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    console.error("Deepgram TTS API error:", err);
+    return { error: "Deepgram TTS failed", status: response.status };
+  }
+
+  const audioBase64 = Buffer.from(await response.arrayBuffer()).toString("base64");
+  await sbSaveCachedTts(text, language, model, audioBase64);
+  return { audioBase64, source: "api" };
 }

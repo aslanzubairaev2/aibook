@@ -305,6 +305,9 @@ export function ReaderView({
 
     if (result.cancelled) {
       setBulkError(`Остановлено на ${result.done}. Озвученное сохранено — можно продолжить позже.`);
+    } else if (result.quotaError) {
+      setBulkError(`${result.quotaError} Озвучено ${result.done} из ${book.paragraphs.length} — готовое сохранено.`);
+      if (result.done > 0) setAudioReady(true);
     } else if (result.done === 0) {
       setBulkError("Не удалось озвучить текст. Проверьте соединение и попробуйте ещё раз.");
     } else if (result.failed > 0) {

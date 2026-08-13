@@ -41,6 +41,23 @@ let state: TTSState = {
   text: "",
 };
 
+/**
+ * Requests already on the wire, by cache key.
+ *
+ * An auto-playing card can ask for the same audio twice before the first
+ * answer lands (a re-render, a double tap), and each of those is a paid
+ * request against a quota that a preview TTS model measures in requests, not
+ * seconds. Sharing the promise makes the duplicate free.
+ */
+const inFlight = new Map<string, Promise<string | null>>();
+
+/** The last quota refusal from the server, so the UI can explain the robot voice. */
+let lastTtsError: string | null = null;
+
+export function getLastTtsError() {
+  return lastTtsError;
+}
+
 const listeners = new Set<TTSListener>();
 
 function emitState() {
@@ -162,9 +179,49 @@ export function seekTTS(time: number) {
   }
 }
 
+/** One trip to `/api/tts`, returning null (and recording why) on any failure. */
+async function requestTts(
+  text: string,
+  lang: string,
+  provider: string,
+  cacheKey: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+      body: JSON.stringify({ text, lang, provider }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null) as { error?: string } | null;
+      lastTtsError = detail?.error ?? `${provider} TTS: ошибка ${res.status}`;
+      console.warn(`${provider} TTS request failed with status ${res.status}: ${lastTtsError}; using local voice`);
+      return null;
+    }
+
+    const data = await res.json() as { audioBase64?: string; reason?: string };
+    // A quota fallback still produces audio, but the learner deserves to know
+    // the voice changed and why.
+    lastTtsError = data.reason ?? null;
+    const audioBase64 = data.audioBase64 ?? null;
+    if (audioBase64) {
+      try {
+        const cache = await caches.open("aibook-tts-cache");
+        await cache.put(cacheKey, new Response(audioBase64));
+      } catch (e) {}
+    }
+    return audioBase64;
+  } catch (e) {
+    console.error(`${provider} TTS API failed`, e);
+    lastTtsError = "Не удалось связаться с сервисом озвучки.";
+    return null;
+  }
+}
+
 export async function speak(
-  text: string, 
-  lang: string, 
+  text: string,
+  lang: string,
   onStart?: () => void, 
   onEnd?: () => void
 ): Promise<PlaybackController | null> {
@@ -195,25 +252,12 @@ export async function speak(
     } catch(e) {}
 
     if (!audioBase64) {
+      const pending = inFlight.get(cacheKey) ?? requestTts(text, lang, provider, cacheKey);
+      inFlight.set(cacheKey, pending);
       try {
-        const res = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
-          body: JSON.stringify({ text, lang, provider })
-        });
-        
-        if (res.ok) {
-          const data = await res.json();
-          audioBase64 = data.audioBase64;
-          try {
-            const cache = await caches.open("aibook-tts-cache");
-            await cache.put(cacheKey, new Response(audioBase64));
-          } catch(e) {}
-        } else {
-          console.warn(`${provider} TTS request failed with status ${res.status}; using local voice`);
-        }
-      } catch (e) {
-        console.error(`${provider} TTS API failed`, e);
+        audioBase64 = await pending;
+      } finally {
+        inFlight.delete(cacheKey);
       }
     }
 
@@ -416,6 +460,9 @@ function ttsCacheKey(text: string, provider: string, lang: string): string {
 
 export type NarrationProgress = { done: number; total: number };
 
+/** Gap between passage requests, so a whole book does not arrive as a burst. */
+const PASSAGE_REQUEST_SPACING_MS = 400;
+
 export type NarrationResult = {
   /** Passages that came back; the joined audio covers exactly these. */
   done: number;
@@ -423,6 +470,8 @@ export type NarrationResult = {
   cancelled: boolean;
   /** Seconds of audio produced, once anything was. */
   seconds: number;
+  /** Set when the run stopped early because the provider refused on quota. */
+  quotaError?: string;
 };
 
 /**
@@ -452,6 +501,7 @@ export async function prepareFullTextAudio(
   const parts: Uint8Array[] = [];
   let done = 0;
   let failed = 0;
+  let quotaError: string | undefined;
 
   for (let i = 0; i < chunks.length; i++) {
     if (opts.shouldCancel?.()) {
@@ -483,6 +533,13 @@ export async function prepareFullTextAudio(
               await cache.put(key, new Response(base64));
             } catch { /* cache full or unavailable */ }
           }
+        } else if (res.status === 429) {
+          // Once the provider is refusing on quota, the remaining passages are
+          // not going to fare better — and every one of them still counts as a
+          // request. Keep what was narrated and stop.
+          const detail = await res.json().catch(() => null) as { error?: string } | null;
+          quotaError = detail?.error ?? "Провайдер озвучки ограничил запросы (429).";
+          break;
         }
       } catch { /* connection dropped on this passage only */ }
     }
@@ -495,6 +552,12 @@ export async function prepareFullTextAudio(
     }
 
     opts.onProgress?.({ done: i + 1, total: chunks.length });
+
+    // A preview TTS model counts requests, not bytes. Spacing the passages out
+    // keeps a long book from spending the whole per-minute allowance in one go.
+    if (i + 1 < chunks.length) {
+      await new Promise((resolve) => setTimeout(resolve, PASSAGE_REQUEST_SPACING_MS));
+    }
   }
 
   if (parts.length > 0) {
@@ -505,7 +568,7 @@ export async function prepareFullTextAudio(
     } catch { /* cache full — playback falls back to per-passage */ }
   }
 
-  return { done, failed, cancelled: false, seconds: totalSeconds(parts) };
+  return { done, failed, cancelled: false, seconds: totalSeconds(parts), quotaError };
 }
 
 function concatBytes(parts: Uint8Array[]): Uint8Array {
