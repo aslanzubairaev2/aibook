@@ -16,6 +16,11 @@ export async function GET(req: NextRequest) {
   const language = searchParams.get("language") ?? "";
   const cefrLevel = searchParams.get("cefr_level") ?? "";
   const courseId = searchParams.get("course_id") ?? "";
+  // Title search. PostgREST parses the filter value itself, so characters that
+  // are syntax there — the wildcards and the list punctuation — are stripped
+  // rather than escaped; a reader typing them means them literally anyway.
+  const search = (searchParams.get("q") ?? "").trim().replace(/[%_*,()"]/g, " ").trim();
+  const orderBy = searchParams.get("order_by") ?? "";
 
   if (!supabaseAdmin) {
     return NextResponse.json({ books: [] });
@@ -29,11 +34,19 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(Math.max(Number(req.nextUrl.searchParams.get("limit")) || 500, 1), 500);
   const offset = Math.max(Number(req.nextUrl.searchParams.get("offset")) || 0, 0);
 
-  let query = supabaseAdmin
-    .from("shared_books")
-    .select("*", { count: "exact" })
-    .order("lesson_order", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: true });
+  let query = supabaseAdmin.from("shared_books").select("*", { count: "exact" });
+
+  // The CEFR shelf has no course and no lesson order, so import order — every
+  // German text, then every English one — decided what a page held. Ordering it
+  // the way the shelf draws it means a page is one stretch of one level.
+  query = orderBy === "level"
+    ? query
+        .order("cefr_level", { ascending: true, nullsFirst: false })
+        .order("language", { ascending: true })
+        .order("title", { ascending: true })
+    : query
+        .order("lesson_order", { ascending: true, nullsFirst: false })
+        .order("created_at", { ascending: true });
 
   query = user
     ? query.or(`owner_user_id.is.null,owner_user_id.eq.${user.id}`)
@@ -44,6 +57,7 @@ export async function GET(req: NextRequest) {
   if (language) query = query.eq("language", language);
   if (cefrLevel) query = query.eq("cefr_level", cefrLevel);
   if (courseId) query = query.eq("course_id", courseId);
+  if (search) query = query.ilike("title", `%${search}%`);
 
   const { data, error, count } = await query.range(offset, offset + limit - 1);
 
