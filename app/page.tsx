@@ -837,7 +837,16 @@ function AppInner() {
   const lastBook = activeBook ?? books[0] ?? null;
 
   return (
-    <AppShell activeSection={section} onSectionChange={setSection}>
+    <AppShell
+      activeSection={section}
+      onSectionChange={(next) => {
+        // Leaving the card module by any route clears the "arrived to train a
+        // batch" flag, so a later visit restores the learner's own filters
+        // instead of silently resetting them again.
+        if (next !== "cards") setCardsInitialTab(null);
+        setSection(next);
+      }}
+    >
       {section === "home" && (
         <HomeDashboard
           book={lastBook}

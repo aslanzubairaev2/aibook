@@ -1741,7 +1741,17 @@ textarea,
 .dict-search-float input {
   flex: 1; min-width: 0; background: none; border: none; outline: none;
   color: var(--text-primary); font-size: 14px;
+  /* Suppress the browser's own clear button and search decorations: the
+     yellow toggle on the right is the single cross in this row. */
+  appearance: none; -webkit-appearance: none;
 }
+.dict-search-float input::-webkit-search-cancel-button,
+.dict-search-float input::-webkit-search-decoration,
+.dict-search-float input::-webkit-search-results-button,
+.dict-search-float input::-webkit-search-results-decoration { display: none; -webkit-appearance: none; }
+/* Edge/IE clear button */
+.dict-search-float input::-ms-clear,
+.dict-search-float input::-ms-reveal { display: none; width: 0; height: 0; }
 
 /* Batches */
 .dict-batches { display: flex; flex-direction: column; gap: 10px; padding-bottom: 90px; }

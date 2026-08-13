@@ -258,6 +258,14 @@ export function DictionaryPanel({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Слово или перевод — по всем пачкам"
               aria-label="Поиск по словарю"
+              // Mobile browsers decorate a text field with their own clear
+              // button and a spellcheck underline once typing starts; both are
+              // noise next to the one yellow cross that already clears this.
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              enterKeyHint="search"
             />
           </div>
         )}

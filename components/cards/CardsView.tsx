@@ -104,13 +104,17 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const [currentTrainIndex, setCurrentTrainIndex] = useState(0);
   const [reviewedIds, setReviewedIds] = useState<string[]>([]);
   const [isFlipped, setIsFlipped] = useState(false);
-  const [trainFilter, setTrainFilter] = useState<FilterType>(savedFilters?.trainFilter ?? "all");
-  const [trainStatus, setTrainStatus] = useState<TrainStatus>(savedFilters?.trainStatus ?? "all");
+  // Arriving from «тренировать пачку»: whatever narrowing was left over from a
+  // previous session (a type, a status, the productive mode) would quietly hide
+  // most of the batch, so it starts clean — only the batch itself narrows.
+  const arrivedForBatch = initialTab === "train";
+  const [trainFilter, setTrainFilter] = useState<FilterType>(arrivedForBatch ? "all" : savedFilters?.trainFilter ?? "all");
+  const [trainStatus, setTrainStatus] = useState<TrainStatus>(arrivedForBatch ? "all" : savedFilters?.trainStatus ?? "all");
   // Narrows a training session to one source — a book, or a dictionary batch
   // («тренировать именно эти слова» from the dictionary lands here).
   const [trainBook, setTrainBook] = useState<string>(savedFilters?.trainBook ?? "all");
   const [trainVariants, setTrainVariants] = useState<TrainVariant[]>(savedFilters?.trainVariants?.length ? savedFilters.trainVariants : DEFAULT_TRAIN_VARIANTS);
-  const [trainMode, setTrainMode] = useState<"recognize" | "active">(savedFilters?.trainMode ?? "recognize");
+  const [trainMode, setTrainMode] = useState<"recognize" | "active">(arrivedForBatch ? "recognize" : savedFilters?.trainMode ?? "recognize");
   // Snapshot of the cards being trained this session — built once per session
   // start/filter change rather than re-derived from the (mutating) `cards`
   // prop on every render, so grading a card can't shrink the queue out from
@@ -175,10 +179,25 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
 
   const streak = calculateStreak(cards);
 
+  // Arriving straight on the training tab (from the dictionary's «тренировать»)
+  // never went through the tab button, which is what used to build the queue —
+  // so the session starts here instead, with the reset filters above.
+  const batchSessionStartedRef = useRef(false);
+  useEffect(() => {
+    if (!arrivedForBatch || batchSessionStartedRef.current) return;
+    batchSessionStartedRef.current = true;
+    persistCardFilters({ trainFilter: "all", trainStatus: "all", trainMode: "recognize" });
+    startTrainingSession("all", "all", trainVariants, trainBook);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrivedForBatch]);
+
   // --- Restore SRS session when dueCards become available ---
   const sessionRestoredRef = useRef(false);
   useEffect(() => {
     if (sessionRestoredRef.current) return;
+    // A batch session was just started deliberately; restoring the previous
+    // one over it would drop the learner back into unrelated cards.
+    if (arrivedForBatch) return;
     if (dueCards.length === 0) return;
     const saved = getSrsSession();
     if (saved && saved.reviewedIds.length > 0) {
@@ -314,6 +333,12 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   }
 
   const trainPool = buildTrainQueue(trainStatus, "all", trainVariants);
+
+  // The productive trainer keeps its own schedule but must obey the same
+  // narrowing: "train this batch" means this batch in either mode.
+  const trainCards = trainBook === "all"
+    ? cards
+    : cards.filter((c) => (c.sourceBookTitle || c.source || "") === trainBook);
 
   function startTrainingSession(status: TrainStatus, filter: FilterType, variants: TrainVariant[], book: string = trainBook) {
     setTrainQueue(buildTrainQueue(status, filter, variants, book));
@@ -781,7 +806,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
 
           {trainMode === "active" ? (
             <ProductiveTrainer
-              cards={cards}
+              cards={trainCards}
               targetLanguage={targetLanguage}
               onReviewed={(card) => onUpdateCard({ ...card, lastReviewedAt: new Date().toISOString() })}
             />
