@@ -19,15 +19,20 @@ import {
   discardDictionaryBatch,
   saveDictionaryEntries,
 } from "@/lib/db/dictionaryStore";
-import type { DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
+import { applyNounFieldRules, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import { estimateLevel } from "@/lib/text/readability";
-import { buildKnownWordSet, computeCoverage } from "@/lib/text/vocab";
+import { buildKnownWordSet, buildWordCounts, computeCoverage } from "@/lib/text/vocab";
 import type { GeneratedLesson } from "@/lib/ai/buildLessonPrompt";
 import type { CefrLevel } from "@/lib/types";
 import { AGENT_LIMITS, AGENT_TIPS, CAPABILITY_AREAS } from "@/lib/mcp/capabilities";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const CARD_TYPES = ["word", "phrase", "sentence"] as const;
+
+// How many catalogue texts may be word-counted inside one call when their
+// stored frequency data is missing. Enough to fill a page of suggestions,
+// small enough that the request still finishes inside the function's budget.
+const COUNTED_ON_THE_FLY = 30;
 
 // Hints defined by the MCP spec. They are what lets a client show a read tool
 // and a destructive one differently — and what stops a cautious agent from
@@ -684,7 +689,9 @@ function parseWordDrafts(raw: unknown): DictionaryEntryDraft[] {
           if (value) forms[k.slice(0, 30)] = value.slice(0, 120);
         }
       }
-      return {
+      // Agents slip a plural onto a verb exactly as the photo reader does, so
+      // the same rule applies to what comes in over MCP.
+      return applyNounFieldRules({
         headword,
         lemma,
         translation: String(w.translation ?? "").trim().slice(0, 400),
@@ -697,7 +704,7 @@ function parseWordDrafts(raw: unknown): DictionaryEntryDraft[] {
         note: String(w.note ?? "").trim().slice(0, 300),
         example: String(w.example ?? "").trim().slice(0, 400),
         exampleTranslation: String(w.example_translation ?? "").trim().slice(0, 400),
-      };
+      });
     })
     .filter((d) => d.headword && d.translation);
 
@@ -912,10 +919,37 @@ async function listCatalogue(ctx: Ctx, args: Args): Promise<unknown> {
 
   const known = buildKnownWordSet(cards.map((c) => c.front));
 
+  // Texts imported before coverage existed carry no frequency data, and the
+  // backfill behind it is an owner-only button in the app. Rather than reporting
+  // an empty percentage — which reads as "this text has nothing in common with
+  // what you know" — count the words here, from the text itself.
+  const missing = (books ?? [])
+    .filter((b) => !((b.metadata ?? {}) as Record<string, unknown>).token_total)
+    .slice(0, COUNTED_ON_THE_FLY)
+    .map((b) => b.id as string);
+
+  const countedNow = new Map<string, ReturnType<typeof buildWordCounts>>();
+  if (missing.length > 0) {
+    const { data: chapters } = await ctx.admin
+      .from("shared_book_chapters")
+      .select("shared_book_id, plain_text")
+      .in("shared_book_id", missing);
+    const textById = new Map<string, string>();
+    for (const chapter of chapters ?? []) {
+      const id = chapter.shared_book_id as string;
+      const text = String(chapter.plain_text ?? "");
+      textById.set(id, `${textById.get(id) ?? ""} ${text}`);
+    }
+    for (const [id, text] of textById) {
+      if (text.trim()) countedNow.set(id, buildWordCounts(text));
+    }
+  }
+
   const texts = (books ?? []).map((b) => {
     const meta = (b.metadata ?? {}) as Record<string, unknown>;
+    const fresh = countedNow.get(b.id as string);
     const coverage = computeCoverage(
-      {
+      fresh ?? {
         wordCounts: (meta.word_counts ?? null) as Record<string, number> | null,
         tokenTotal: (meta.token_total ?? null) as number | null,
       },
@@ -941,9 +975,16 @@ async function listCatalogue(ctx: Ctx, args: Args): Promise<unknown> {
     return (b.known_words_percent ?? 0) - (a.known_words_percent ?? 0);
   });
 
+  const unmeasured = texts.filter((t) => t.known_words_percent === null).length;
+
   return {
     texts: texts.slice(0, limit),
     note: "Public texts in the app's catalogue («Обзор»). 'comfortable' means the learner already knows 90–98% of the words — the band where reading teaches most. Open one with get_text.",
+    ...(unmeasured > 0
+      ? {
+          warning: `${unmeasured} of these texts could not be measured — their stored text is empty, so 'known_words_percent' is null for them. Judge those by CEFR level instead.`,
+        }
+      : {}),
   };
 }
 

@@ -88,6 +88,50 @@ describe("reading a vocabulary page into entries", () => {
     assert.equal(entries[0].gender, "", "an invalid gender is dropped");
   });
 
+  // Reading a two-column page, the model sometimes slips a row and hands a verb
+  // the plural of the noun printed above it. These cards reached a real deck:
+  // "ausgehen — выходить, мн. ч.: die Zeitungen".
+  test("a plural that slipped onto a verb is dropped", () => {
+    const { entries } = parseDictionaryEntries({
+      entries: [
+        {
+          headword: "ausgehen", lemma: "ausgehen", translation: "выходить",
+          partOfSpeech: "глагол", plural: "die Zeitungen", article: "die", gender: "f",
+          forms: { partizip2: "ausgegangen" }, cefr: "A1",
+        },
+        {
+          headword: "aufwachen", lemma: "aufwachen", translation: "просыпаться",
+          partOfSpeech: "", plural: "die Zeitungen", forms: { hilfsverb: "sein" }, cefr: "A1",
+        },
+        {
+          headword: "schnell", lemma: "schnell", translation: "быстрый",
+          partOfSpeech: "прилагательное", plural: "die Zeitungen", cefr: "A1",
+        },
+      ],
+    });
+
+    for (const entry of entries) {
+      assert.equal(entry.plural, "", `${entry.headword}: a non-noun must carry no plural`);
+      assert.equal(entry.article, "", `${entry.headword}: a non-noun must carry no article`);
+      assert.equal(entry.gender, "", `${entry.headword}: a non-noun must carry no gender`);
+    }
+    assert.equal(entries[0].forms?.partizip2, "ausgegangen", "the verb's own forms are kept");
+  });
+
+  test("nouns keep their plural however they were labelled", () => {
+    const { entries } = parseDictionaryEntries({
+      entries: [
+        // Part of speech named.
+        { headword: "die Zeitung", lemma: "Zeitung", translation: "газета", partOfSpeech: "существительное", plural: "die Zeitungen" },
+        // Part of speech missing — the article is what gives it away.
+        { headword: "das Mädchen", lemma: "Mädchen", translation: "девочка", article: "das", plural: "die Mädchen" },
+        // Neither, but the headword is printed with its article.
+        { headword: "der Ball", lemma: "Ball", translation: "мяч", plural: "die Bälle" },
+      ],
+    });
+    assert.deepEqual(entries.map((e) => e.plural), ["die Zeitungen", "die Mädchen", "die Bälle"]);
+  });
+
   test("an answer with no entries yields none, not a guess", () => {
     assert.deepEqual(parseDictionaryEntries({}).entries, []);
     assert.deepEqual(parseDictionaryEntries(null).entries, []);

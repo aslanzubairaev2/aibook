@@ -99,6 +99,9 @@ ${note.slice(0, 500)}
 Rules:
 - Transcribe from the photo only. Never guess at a word that is cut off or illegible —
   leave it out entirely rather than inventing a plausible one.
+- "plural", "article" and "gender" belong to nouns and to nothing else. On a verb, an
+  adjective or an adverb they must be empty strings. Read each row on its own: never carry
+  a value down from the row above, which is how a verb ends up with a noun's plural.
 - No duplicates: one entry per word.
 - "pageKind" describes what you decided the page is, in ${native} ("список слов из учебника",
   "страница книги").
@@ -121,6 +124,41 @@ Return ONLY valid JSON:
 
 const CEFR_VALUES = new Set(["A1", "A2", "B1", "B2", "C1", "C2"]);
 const GENDERS = new Set(["m", "f", "n", "pl"]);
+
+// Noun-only fields, and how to tell when the model has put one on a word that
+// cannot have it.
+//
+// Reading a two-column vocabulary page, the model sometimes slips a row: a verb
+// comes back carrying the plural of the noun printed above it ("ausgehen …
+// мн. ч.: die Zeitungen"). The learner then revises a card that teaches
+// something false, which is worse than a card with a field missing. The prompt
+// already says these belong to nouns; this is the part that does not depend on
+// the model obeying it.
+const VERB_FORM_KEYS = ["praeteritum", "partizip2", "hilfsverb", "trennbar", "infinitiv"];
+const NON_NOUN_POS = /глагол|прилаг|наречи|предлог|союз|местоим|числит|выражени|verb|adject|adverb|preposition|phrase/i;
+const NOUN_POS = /существ|noun|substantiv/i;
+const LEADING_ARTICLE = /^(der|die|das)\s+/i;
+
+function isNoun(entry: DictionaryEntryDraft): boolean {
+  // A word the model gave verb forms to is a verb, whatever else it said.
+  if (VERB_FORM_KEYS.some((key) => entry.forms?.[key])) return false;
+  if (NOUN_POS.test(entry.partOfSpeech)) return true;
+  if (NON_NOUN_POS.test(entry.partOfSpeech)) return false;
+  // No usable part of speech: fall back to what only a noun would carry.
+  return Boolean(entry.gender) || Boolean(entry.article) || LEADING_ARTICLE.test(entry.headword);
+}
+
+/**
+ * Clear noun-only fields on a word that is not a noun.
+ *
+ * Applied to every entry that reaches the dictionary, whether it was read from
+ * a photograph or handed over by a connected agent — both are language models,
+ * and both make this mistake.
+ */
+export function applyNounFieldRules(entry: DictionaryEntryDraft): DictionaryEntryDraft {
+  if (isNoun(entry)) return entry;
+  return { ...entry, gender: "", article: "", plural: "" };
+}
 
 const A1_DICTIONARY_WORDS = new Set([
   "grillen", "picknick", "möbel", "balkon", "garage", "heizung", "keller", "miete", "mieter", "mieterin",
@@ -173,7 +211,7 @@ export function parseDictionaryEntries(raw: unknown): {
     }
     const gender = String(e.gender ?? "").trim().toLowerCase();
 
-    entries.push({
+    entries.push(applyNounFieldRules({
       headword,
       lemma,
       translation: String(e.translation ?? "").trim().slice(0, 400),
@@ -186,7 +224,7 @@ export function parseDictionaryEntries(raw: unknown): {
       note: String(e.note ?? "").trim().slice(0, 300),
       example: String(e.example ?? "").trim().slice(0, 400),
       exampleTranslation: String(e.exampleTranslation ?? "").trim().slice(0, 400),
-    });
+    }));
   }
 
   return {

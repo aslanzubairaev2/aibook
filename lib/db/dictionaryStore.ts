@@ -6,7 +6,7 @@
 // erase the plural form the first one got right.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
+import { applyNounFieldRules, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 
 export type DictionaryBatch = {
   id: string;
@@ -113,6 +113,18 @@ export async function saveDictionaryEntries(
 
     // Prefer what this reading found; fall back to what was already known.
     const keep = (next: string, old: unknown) => next || String(old ?? "");
+
+    // The fallback has one exception. A verb that was once stored with a noun's
+    // plural — the row-slip a photograph occasionally produces — would inherit
+    // that plural back on every later reading, since the correct new value is
+    // the empty string. Re-applying the noun rule to the merged result is what
+    // lets a bad field actually be cleared.
+    const merged = applyNounFieldRules({
+      ...d,
+      plural: keep(d.plural, prior?.plural),
+      forms: Object.keys(d.forms ?? {}).length > 0 ? d.forms : ((prior?.forms ?? {}) as Record<string, string>),
+    });
+
     return {
       user_id: userId,
       language,
@@ -125,10 +137,10 @@ export async function saveDictionaryEntries(
       lemma: prior ? String(prior.lemma) : lemmaKey,
       translation: keep(d.translation, prior?.translation),
       part_of_speech: d.partOfSpeech,
-      gender: d.gender,
-      article: d.article,
-      plural: keep(d.plural, prior?.plural),
-      forms: Object.keys(d.forms ?? {}).length > 0 ? d.forms : (prior?.forms ?? {}),
+      gender: merged.gender,
+      article: merged.article,
+      plural: merged.plural,
+      forms: merged.forms ?? {},
       cefr: keep(d.cefr, prior?.cefr),
       note: keep(d.note ?? "", prior?.note),
       example: keep(d.example ?? "", prior?.example),

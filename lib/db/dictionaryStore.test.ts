@@ -137,6 +137,56 @@ test("saveDictionaryEntries updates existing entries without creating duplicates
   assert.equal(mockDb.dictionaryEntries[0].batch_id, "batch-2");
 });
 
+// "Never blank a field a blurrier photo missed" is right for a plural the first
+// reading got right — and wrong for one that was never the word's to begin
+// with. A verb stored with a noun's plural has to be able to lose it.
+test("saveDictionaryEntries lets a re-read clear a plural that never belonged to a verb", async () => {
+  const mockDb = createMockSupabase();
+  mockDb.dictionaryEntries.push({
+    id: "verb-id",
+    user_id: "user-1",
+    language: "de",
+    headword: "ausgehen",
+    lemma: "ausgehen",
+    translation: "выходить",
+    plural: "die Zeitungen",
+    forms: {},
+    cefr: "A1",
+  });
+
+  const reread: DictionaryEntryDraft[] = [
+    { headword: "ausgehen", lemma: "ausgehen", translation: "выходить", partOfSpeech: "глагол", gender: "", article: "", plural: "", cefr: "A1" },
+  ];
+
+  const res = await saveDictionaryEntries(mockDb as never, "user-1", "de", reread, "Batch 2", "batch-2");
+  assert.equal(res.ok, true);
+  assert.equal(mockDb.dictionaryEntries.length, 1);
+  assert.equal(mockDb.dictionaryEntries[0].plural, "", "the verb keeps no plural after a clean reading");
+});
+
+test("saveDictionaryEntries still restores a noun's plural that one photo missed", async () => {
+  const mockDb = createMockSupabase();
+  mockDb.dictionaryEntries.push({
+    id: "noun-id",
+    user_id: "user-1",
+    language: "de",
+    headword: "die Zeitung",
+    lemma: "Zeitung",
+    translation: "газета",
+    plural: "die Zeitungen",
+    forms: {},
+    cefr: "A1",
+  });
+
+  const blurry: DictionaryEntryDraft[] = [
+    { headword: "die Zeitung", lemma: "Zeitung", translation: "газета", partOfSpeech: "существительное", gender: "f", article: "die", plural: "", cefr: "A1" },
+  ];
+
+  const res = await saveDictionaryEntries(mockDb as never, "user-1", "de", blurry, "Batch 2", "batch-2");
+  assert.equal(res.ok, true);
+  assert.equal(mockDb.dictionaryEntries[0].plural, "die Zeitungen");
+});
+
 test("saveDictionaryEntries deduplicates duplicate drafts inside the same photo payload", async () => {
   const mockDb = createMockSupabase();
 
