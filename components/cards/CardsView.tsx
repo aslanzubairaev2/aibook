@@ -684,6 +684,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const answerText = isReversed ? currentCard?.front : currentCard?.back;
   const promptLang = isReversed ? nativeLanguage : targetLanguage;
   const currentProgress = currentCard ? getVariantProgress(currentCard, currentVariant) : null;
+  const currentMarkers = currentCard ? cardMarkers(currentCard) : [];
 
   return (
     <section className="screen" onClick={() => { setShowFilterPanel(false); setShowTtsMenu(false); }}>
@@ -711,8 +712,9 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         .flipper-perspective { perspective: 1000px; width: 100%; max-width: 420px; margin: 0 auto 16px; }
         .flipper-card { width: 100%; position: relative; display: grid; transform-style: preserve-3d; transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: pointer; }
         .flipper-card.flipped { transform: rotateY(180deg); }
-        .flipper-face { grid-area: 1 / 1; position: relative; width: 100%; min-width: 0; min-height: 180px; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-strong); display: grid; grid-template-rows: minmax(62px, 1fr) auto minmax(62px, 1fr); padding: 14px 18px; box-shadow: var(--shadow-sm); overflow: hidden; }
+        .flipper-face { --card-safe-zone: 62px; grid-area: 1 / 1; position: relative; width: 100%; min-width: 0; min-height: 180px; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-strong); display: grid; grid-template-rows: minmax(var(--card-safe-zone), 1fr) auto minmax(var(--card-safe-zone), 1fr); padding: 14px 18px; box-shadow: var(--shadow-sm); overflow: hidden; }
         .flipper-face-front { padding-inline: 16px; background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(212, 168, 71, 0.04) 100%); }
+        .flipper-face-front.has-stacked-markers { --card-safe-zone: 70px; }
         .flipper-face-back { pointer-events: none; background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(122, 171, 106, 0.04) 100%); transform: rotateY(180deg); }
         .flipper-card.flipped .flipper-face-front { pointer-events: none; }
         .flipper-card.flipped .flipper-face-back { pointer-events: auto; }
@@ -1078,11 +1080,11 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
               <div className="flipper-perspective" style={{ marginBottom: 16 }}>
                 <div className={`flipper-card ${isFlipped ? "flipped" : ""}`}>
                   {/* Front */}
-                  <div className="flipper-face flipper-face-front" onClick={() => setIsFlipped((f) => !f)}>
+                  <div className={`flipper-face flipper-face-front ${currentMarkers.length >= 3 ? "has-stacked-markers" : ""}`} onClick={() => setIsFlipped((f) => !f)}>
                     {/* Left markers — independent absolute positioning */}
                     <div className="card-markers-left">
                       <div className="card-marker-stack">
-                        {cardMarkers(currentCard).map((m, i) => (
+                        {currentMarkers.map((m, i) => (
                           <span key={i} className={`card-marker ${m.kind}${i === 0 ? " lead" : ""}`}>
                             {m.text}{i === 0 && isAudio ? " · Аудио" : ""}
                           </span>
