@@ -709,12 +709,13 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         .audio-play-btn:active { transform: scale(0.94); }
         .audio-prompt-lbl { font-size: 12px; color: var(--text-muted); font-weight: 700; }
         .flipper-perspective { perspective: 1000px; width: 100%; max-width: 420px; margin: 0 auto 16px; }
-        .flipper-card { width: 100%; position: relative; transform-style: preserve-3d; transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: pointer; }
+        .flipper-card { width: 100%; position: relative; display: grid; transform-style: preserve-3d; transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: pointer; }
         .flipper-card.flipped { transform: rotateY(180deg); }
-        .flipper-face { width: 100%; backface-visibility: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-strong); display: flex; flex-direction: column; padding: 18px 18px 14px; box-shadow: var(--shadow-sm); overflow: hidden; min-height: 180px; gap: 8px; }
-        .flipper-face-back { position: absolute; top: 0; left: 0; }
-        .flipper-face-front { position: relative; padding: 68px 16px 14px; background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(212, 168, 71, 0.04) 100%); }
-        .flipper-face-back { background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(122, 171, 106, 0.04) 100%); transform: rotateY(180deg); }
+        .flipper-face { grid-area: 1 / 1; position: relative; width: 100%; min-width: 0; min-height: 180px; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-strong); display: grid; grid-template-rows: minmax(62px, 1fr) auto minmax(62px, 1fr); padding: 14px 18px; box-shadow: var(--shadow-sm); overflow: hidden; }
+        .flipper-face-front { padding-inline: 16px; background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(212, 168, 71, 0.04) 100%); }
+        .flipper-face-back { pointer-events: none; background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(122, 171, 106, 0.04) 100%); transform: rotateY(180deg); }
+        .flipper-card.flipped .flipper-face-front { pointer-events: none; }
+        .flipper-card.flipped .flipper-face-back { pointer-events: auto; }
         .card-markers-left { position: absolute; top: 16px; left: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; z-index: 10; }
         .card-actions-right { position: absolute; top: 16px; right: 16px; display: flex; align-items: center; gap: 8px; z-index: 10; }
         .card-action-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--text-primary); cursor: pointer; transition: all 0.18s ease; padding: 0; box-shadow: var(--shadow-xs); }
@@ -724,10 +725,8 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         .card-actions-right .speak-btn { width: 44px; height: 44px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--accent); transition: all 0.18s ease; box-shadow: var(--shadow-xs); }
         .card-actions-right .speak-btn:hover { background: var(--bg-elevated); border-color: var(--accent); transform: translateY(-1px); }
         .card-actions-right .speak-btn:active { transform: scale(0.95); }
-        .card-text-area { flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px 0; overflow: hidden; word-break: break-word; text-align: center; }
-        .flipper-face-back .card-text-area { position: absolute; inset: 0; padding: 0 18px; }
-        .flipper-face-back .card-footer-row { position: absolute; right: 18px; bottom: 14px; left: 18px; }
-        .card-footer-row { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
+        .card-text-area { grid-row: 2; min-width: 0; width: 100%; display: flex; align-items: center; justify-content: center; padding: 8px 0; overflow-wrap: anywhere; word-break: break-word; hyphens: auto; text-align: center; }
+        .card-footer-row { grid-row: 3; align-self: end; width: 100%; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
         .card-footer-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
         .card-tts-wrap { position: relative; flex-shrink: 0; }
         .tts-menu { position: absolute; top: calc(100% + 6px); right: 0; background: var(--bg-card); border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: 4px; z-index: 200; min-width: 130px; box-shadow: var(--shadow-sm); }
