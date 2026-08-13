@@ -725,6 +725,8 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         .card-actions-right .speak-btn:hover { background: var(--bg-elevated); border-color: var(--accent); transform: translateY(-1px); }
         .card-actions-right .speak-btn:active { transform: scale(0.95); }
         .card-text-area { flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px 0; overflow: hidden; word-break: break-word; text-align: center; }
+        .flipper-face-back .card-text-area { position: absolute; inset: 0; padding: 0 18px; }
+        .flipper-face-back .card-footer-row { position: absolute; right: 18px; bottom: 14px; left: 18px; }
         .card-footer-row { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
         .card-footer-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
         .card-tts-wrap { position: relative; flex-shrink: 0; }
@@ -1174,14 +1176,16 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
 
                   {/* Back */}
                   <div className="flipper-face flipper-face-back" onClick={() => setIsFlipped((f) => !f)}>
-                    <div className="card-face-row">
+                    <div className="card-markers-left">
                       <span className="flash-card-type sentence" style={{ background: "rgba(122, 171, 106, 0.15)", color: "var(--green)" }}>{isAudio ? "Текст" : isReversed ? "Ответ" : "Перевод"}</span>
-                      {(isReversed || isAudio) && (
-                        <div className="card-tts-wrap" style={{ marginLeft: "auto" }} onClick={(e) => e.stopPropagation()}>
-                          <SpeakButton text={currentCard.front} lang={targetLanguage} size={15} />
-                        </div>
-                      )}
                     </div>
+                    {(isReversed || isAudio) && (
+                      <div className="card-actions-right">
+                        <div className="card-tts-wrap" onClick={(e) => e.stopPropagation()}>
+                          <SpeakButton text={currentCard.front} lang={targetLanguage} size={22} />
+                        </div>
+                      </div>
+                    )}
                     <div className="card-text-area">
                       {isAudio ? (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
