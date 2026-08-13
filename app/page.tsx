@@ -10,18 +10,21 @@ import { LibraryView } from "@/components/library/LibraryView";
 import { DiscoverView } from "@/components/discover/DiscoverView";
 import { ReaderView } from "@/components/reader/ReaderView";
 import { CardsView } from "@/components/cards/CardsView";
+import { createBatchTrainingFilters } from "@/lib/cards";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { AuthScreen } from "@/components/auth/AuthScreen";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import {
   sbGetBooks, sbGetChapters, sbGetFlashcards, sbGetSettings, sbGetProgress,
+  sbGetCardVariantProgress, sbUpsertCardVariantProgress,
   sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbUpsertFlashcard, sbDeleteFlashcard, sbAuthHeaders, supabase,
   type DbBook, type DbReadingProgress, type DbUserSettings, type DbFlashcard,
 } from "@/lib/db/supabase";
-import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace } from "@/lib/db/local";
+import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { parseBook } from "@/lib/parser/index";
-import type { AppSection, Book, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
+import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress } from "@/lib/cards";
+import type { AppSection, Book, CardVariantState, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
 
 // ─── Inner app (needs auth context) ─────────────────────────────────────────
 
@@ -376,13 +379,43 @@ function AppInner() {
     setIsHydrated(true);
 
     // Then fetch fresh data from Supabase in background
-    const [dbBooks, dbCards, dbSettings, dbProgress, lessonProgress] = await Promise.all([
+    const [dbBooks, dbCards, dbSettings, dbProgress, lessonProgress, dbVariantProgress] = await Promise.all([
       sbGetBooks(userId),
       sbGetFlashcards(userId),
       sbGetSettings(userId),
       sbGetProgress(userId),
       fetchLessonProgress(),
+      sbGetCardVariantProgress(userId),
     ]);
+
+    // Supabase is the cross-device source of truth, while the local mirror
+    // keeps reviews working offline. This also uploads progress created before
+    // server-side variant storage existed.
+    const remoteVariantProgress: Record<string, CardVariantState> = {};
+    for (const row of dbVariantProgress ?? []) {
+      const progress = {
+        status: row.status as Flashcard["status"],
+        repetitions: row.repetitions,
+        lapses: row.lapses,
+        intervalDays: row.interval_days,
+        easeFactor: row.easiness_factor,
+        dueAt: row.next_review_at,
+        lastReviewedAt: row.last_reviewed_at,
+      };
+      remoteVariantProgress[row.flashcard_id] = {
+        ...remoteVariantProgress[row.flashcard_id],
+        [row.variant]: progress,
+      };
+    }
+    const mergedVariantProgress = mergeCardVariantProgress(getCardVariantProgressMap(), remoteVariantProgress);
+    saveCardVariantProgressMap(mergedVariantProgress);
+    const remoteCardIds = new Set(dbCards.map((card) => card.id));
+    const variantWrites = Object.entries(mergedVariantProgress).flatMap(([cardId, state]) =>
+      (["reverse", "audio"] as const)
+        .filter((variant) => state[variant] && remoteCardIds.has(cardId))
+        .map((variant) => ({ cardId, variant, progress: state[variant]! })),
+    );
+    if (variantWrites.length > 0) await sbUpsertCardVariantProgress(userId, variantWrites);
     // Lesson (shared book) snapshots restore the exact sentence via char_offset;
     // own-book snapshots win on a (theoretically impossible) id collision.
     setReaderProgressByBook({
@@ -554,20 +587,13 @@ function AppInner() {
    * the profile, which is also how they normally persist, so CardsView picks
    * them up on mount without any new plumbing.
    */
-  function handleTrainWords(_batchId: string, batchTitle: string) {
+  function handleTrainWords(batchId: string, batchTitle: string) {
     const updated: UserProfile = {
       ...profile,
-      cardFilters: {
-        ...profile.cardFilters,
-        // The list tab and the trainer both open narrowed to this batch.
-        filterBook: batchTitle,
-        filterStatus: "all",
-        filterType: "all",
-        filterLevel: "all",
-        trainBook: batchTitle,
-        trainFilter: "all",
-        trainStatus: "all",
-      },
+      // Titles repeat (all photos taken on the same day can share one), so the
+      // UUID is the actual filter. Omitting it mixes unrelated batches and can
+      // reopen the previous session's first card.
+      cardFilters: createBatchTrainingFilters(profile.cardFilters, batchId, batchTitle),
     };
     saveLocalProfile(updated);
     setProfile(updated);

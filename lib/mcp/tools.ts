@@ -13,7 +13,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { normalizeCardText } from "@/lib/cards";
 import { saveGeneratedLesson } from "@/lib/db/lessonStore";
-import { saveDictionaryEntries, createCardsForEntries } from "@/lib/db/dictionaryStore";
+import {
+  createCardsForEntries,
+  dedupeDictionaryDrafts,
+  discardDictionaryBatch,
+  saveDictionaryEntries,
+} from "@/lib/db/dictionaryStore";
 import type { DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import { estimateLevel } from "@/lib/text/readability";
 import type { GeneratedLesson } from "@/lib/ai/buildLessonPrompt";
@@ -437,7 +442,7 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
     ? args.language.trim()
     : langs.target;
 
-  const drafts: DictionaryEntryDraft[] = rawWords
+  const parsedDrafts: DictionaryEntryDraft[] = rawWords
     .filter((w): w is Record<string, unknown> => typeof w === "object" && w !== null)
     .map((w) => {
       const headword = String(w.headword ?? "").trim().slice(0, 200);
@@ -466,6 +471,7 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
       };
     })
     .filter((d) => d.headword && d.translation);
+  const drafts = dedupeDictionaryDrafts(parsedDrafts);
 
   if (drafts.length === 0) {
     throw new Error("Every word needs at least 'headword' and 'translation'.");
@@ -486,9 +492,16 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
   if (error || !batch) throw new Error(`batch insert failed: ${error?.message ?? "no row"}`);
 
   const saved = await saveDictionaryEntries(ctx.admin, ctx.userId, language, drafts, title, batch.id as string);
-  if (!saved.ok) throw new Error(saved.error);
+  if (!saved.ok) {
+    const cleanupError = await discardDictionaryBatch(ctx.admin, ctx.userId, batch.id as string);
+    throw new Error(cleanupError ? `${saved.error}; batch cleanup failed: ${cleanupError}` : saved.error);
+  }
 
   const cards = await createCardsForEntries(ctx.admin, ctx.userId, drafts, batch.id as string, title);
+  if (!cards.ok) {
+    const cleanupError = await discardDictionaryBatch(ctx.admin, ctx.userId, batch.id as string);
+    throw new Error(cleanupError ? `${cards.error}; batch cleanup failed: ${cleanupError}` : cards.error);
+  }
 
   return {
     batch_id: batch.id,

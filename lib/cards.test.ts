@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, filterCardsByTrainingSource, getCardsVariantProgress } from "./cards.ts";
-import type { CardVariantState, Flashcard } from "./types.ts";
+import { ALL_TRAIN_VARIANTS, createBatchTrainingFilters, filterCardsByTrainingSource, getCardsVariantProgress, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import type { CardVariantState, Flashcard, SkillProgress } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
   return {
@@ -22,6 +22,18 @@ function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
   };
 }
 
+function progress(repetitions: number, lastReviewedAt: string): SkillProgress {
+  return {
+    status: "review",
+    repetitions,
+    lapses: 0,
+    intervalDays: repetitions,
+    easeFactor: 2.5,
+    dueAt: "2026-08-14T23:59:59.999Z",
+    lastReviewedAt,
+  };
+}
+
 test("dictionary batch training includes all three independent variants", () => {
   assert.deepEqual(ALL_TRAIN_VARIANTS, ["forward", "reverse", "audio"]);
 
@@ -39,4 +51,35 @@ test("dictionary batch filter uses its id when titles collide", () => {
     filterCardsByTrainingSource(cards, "Одинаковый заголовок", "batch-a").map((item) => item.id),
     ["one"],
   );
+});
+
+test("opening a dictionary batch persists its exact id, not only its non-unique title", () => {
+  const filters = createBatchTrainingFilters(
+    { trainBook: "Старая пачка", trainSourceId: "old-id", trainStatus: "hard" },
+    "new-id",
+    "Одинаковый заголовок",
+  );
+
+  assert.equal(filters.trainBook, "Одинаковый заголовок");
+  assert.equal(filters.trainSourceId, "new-id");
+  assert.equal(filters.trainStatus, "all");
+});
+
+test("reverse prompts separate the native meaning from dictionary grammar", () => {
+  assert.deepEqual(splitCardBack("имя\nмн. ч.: die Namen"), {
+    meaning: "имя",
+    details: "мн. ч.: die Namen",
+  });
+  assert.deepEqual(splitCardBack("приглашать"), { meaning: "приглашать", details: "" });
+});
+
+test("variant progress keeps whichever copy was reviewed most recently", () => {
+  const older = progress(2, "2026-08-12T10:00:00.000Z");
+  const newer = progress(3, "2026-08-13T10:00:00.000Z");
+  const merged = mergeCardVariantProgress(
+    { card1: { reverse: newer } },
+    { card1: { reverse: older, audio: older } },
+  );
+  assert.equal(merged.card1.reverse, newer);
+  assert.equal(merged.card1.audio, older);
 });

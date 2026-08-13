@@ -496,6 +496,16 @@ export function getCardVariantProgressMap(): Record<string, CardVariantState> {
   return readVariantProgressMap();
 }
 
+/** Replaces the local mirror after it has been merged with Supabase progress. */
+export function saveCardVariantProgressMap(progress: Record<string, CardVariantState>): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(getNsKey(VARIANT_PROGRESS_KEY), JSON.stringify(progress));
+  } catch {
+    // Keep the app usable when browser storage is unavailable.
+  }
+}
+
 export function saveCardVariantProgress(cardId: string, variant: Exclude<TrainVariant, "forward">, progress: SkillProgress): void {
   if (typeof window === "undefined") return;
   try {

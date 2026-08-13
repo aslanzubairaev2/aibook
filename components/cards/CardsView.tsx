@@ -4,14 +4,14 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2 } from "lucide-react";
 import type { AiAnalysis, CardFilters, DiscussMessage, Flashcard, TrainVariant, TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields, createDefaultSkillProgress } from "@/lib/srs/sm2";
-import { ALL_TRAIN_VARIANTS, filterCardsByTrainingSource, findDuplicateCard } from "@/lib/cards";
+import { ALL_TRAIN_VARIANTS, filterCardsByTrainingSource, findDuplicateCard, splitCardBack } from "@/lib/cards";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { speak } from "@/lib/tts";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardVariantState, saveCardVariantProgress } from "@/lib/db/local";
-import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
+import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertCardVariantProgress, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
@@ -397,7 +397,9 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
     if (variant === "forward") {
       onUpdateCard({ ...card, ...srsUpdate, lastReviewedAt: now });
     } else {
-      saveCardVariantProgress(card.id, variant, { ...srsUpdate, lastReviewedAt: now });
+      const progress = { ...srsUpdate, lastReviewedAt: now };
+      saveCardVariantProgress(card.id, variant, progress);
+      if (user) void sbUpsertCardVariantProgress(user.id, [{ cardId: card.id, variant, progress }]);
       // Bump lastReviewedAt only, so the streak counter sees today's activity
       // without disturbing the forward variant's own SRS fields.
       onUpdateCard({ ...card, lastReviewedAt: now });
@@ -677,7 +679,8 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const currentVariant: TrainVariant = currentItem?.variant ?? "forward";
   const isReversed = currentVariant === "reverse";
   const isAudio = currentVariant === "audio";
-  const promptText = isReversed ? currentCard?.back : currentCard?.front;
+  const backParts = splitCardBack(currentCard?.back ?? "");
+  const promptText = isReversed ? backParts.meaning : currentCard?.front;
   const answerText = isReversed ? currentCard?.front : currentCard?.back;
   const promptLang = isReversed ? nativeLanguage : targetLanguage;
   const currentProgress = currentCard ? getVariantProgress(currentCard, currentVariant) : null;
@@ -1189,10 +1192,17 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                           <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center" }}>{currentCard.back}</div>
                         </div>
                       ) : isReversed ? (
-                        <TokenizedText
-                          text={answerText}
-                          style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}
-                        />
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                          <TokenizedText
+                            text={answerText}
+                            style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}
+                          />
+                          {backParts.details && (
+                            <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
+                              {backParts.details}
+                            </div>
+                          )}
+                        </div>
                       ) : (
                         <div style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}>
                           {answerText}

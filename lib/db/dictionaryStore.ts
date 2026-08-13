@@ -45,6 +45,31 @@ export type SaveEntriesResult =
   | { ok: true; added: number; updated: number }
   | { ok: false; error: string };
 
+export type CreateCardsResult =
+  | { ok: true; created: number; relinked: number }
+  | { ok: false; error: string };
+
+function normalizeDictionaryKey(value: string): string {
+  // German capitalization is semantic: "Morgen" (morning) and "morgen"
+  // (tomorrow), or "Essen" (food) and "essen" (to eat), are different
+  // dictionary entries. Whitespace is formatting; case is data.
+  return value.trim().replace(/\s+/g, " ");
+}
+
+export function dedupeDictionaryDrafts(drafts: DictionaryEntryDraft[]): DictionaryEntryDraft[] {
+  const seen = new Set<string>();
+  const unique: DictionaryEntryDraft[] = [];
+
+  for (const draft of drafts) {
+    const key = normalizeDictionaryKey(draft.lemma || draft.headword);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(draft);
+  }
+
+  return unique;
+}
+
 export async function saveDictionaryEntries(
   admin: SupabaseClient,
   userId: string,
@@ -55,17 +80,7 @@ export async function saveDictionaryEntries(
 ): Promise<SaveEntriesResult> {
   if (drafts.length === 0) return { ok: true, added: 0, updated: 0 };
 
-  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
-
-  // Deduplicate drafts within this batch by normalized lemma/headword
-  const seenDraftKeys = new Set<string>();
-  const uniqueDrafts: DictionaryEntryDraft[] = [];
-  for (const d of drafts) {
-    const k = norm(d.lemma || d.headword);
-    if (!k || seenDraftKeys.has(k)) continue;
-    seenDraftKeys.add(k);
-    uniqueDrafts.push(d);
-  }
+  const uniqueDrafts = dedupeDictionaryDrafts(drafts);
 
   const { data: existingRows, error: readError } = await admin
     .from("dictionary_entries")
@@ -75,42 +90,39 @@ export async function saveDictionaryEntries(
 
   if (readError) return { ok: false, error: `Не удалось прочитать словарь: ${readError.message}` };
 
-  const existingMap = new Map<string, Record<string, unknown>>();
+  const existingByLemma = new Map<string, Record<string, unknown>>();
+  const existingByHeadword = new Map<string, Record<string, unknown>>();
   for (const row of existingRows ?? []) {
-    const lemmaKey = norm(String(row.lemma ?? ""));
-    const headwordKey = norm(String(row.headword ?? ""));
-    if (lemmaKey) existingMap.set(lemmaKey, row);
-    if (headwordKey) existingMap.set(headwordKey, row);
+    const lemmaKey = normalizeDictionaryKey(String(row.lemma ?? ""));
+    const headwordKey = normalizeDictionaryKey(String(row.headword ?? ""));
+    if (lemmaKey) existingByLemma.set(lemmaKey, row);
+    if (headwordKey && !existingByHeadword.has(headwordKey)) {
+      existingByHeadword.set(headwordKey, row);
+    }
   }
 
   let addedCount = 0;
   let updatedCount = 0;
-  const usedIds = new Set<string>();
 
   const rows = uniqueDrafts.map((d) => {
-    const key = norm(d.lemma || d.headword);
-    const prior = existingMap.get(key) || existingMap.get(norm(d.headword));
-
-    let targetId: string;
-    if (prior?.id && !usedIds.has(String(prior.id))) {
-      targetId = String(prior.id);
-      usedIds.add(targetId);
-      updatedCount++;
-    } else {
-      targetId = crypto.randomUUID();
-      usedIds.add(targetId);
-      addedCount++;
-    }
+    const lemmaKey = normalizeDictionaryKey(d.lemma || d.headword);
+    const headwordKey = normalizeDictionaryKey(d.headword);
+    const prior = existingByLemma.get(lemmaKey) || existingByHeadword.get(headwordKey);
+    if (prior) updatedCount++;
+    else addedCount++;
 
     // Prefer what this reading found; fall back to what was already known.
     const keep = (next: string, old: unknown) => next || String(old ?? "");
     return {
-      id: targetId,
       user_id: userId,
       language,
       batch_id: batchId,
       headword: d.headword,
-      lemma: d.lemma,
+      // If the model changed only capitalization on a later photo, retain the
+      // exact natural key already stored. Most importantly, never include the
+      // row id in an upsert resolved by this different natural key: doing so can
+      // move another row's primary key onto the conflicting row.
+      lemma: prior ? String(prior.lemma) : lemmaKey,
       translation: keep(d.translation, prior?.translation),
       part_of_speech: d.partOfSpeech,
       gender: d.gender,
@@ -154,17 +166,26 @@ export async function createCardsForEntries(
   entries: DictionaryEntryDraft[],
   batchId: string,
   batchTitle: string,
-): Promise<{ created: number; relinked: number }> {
-  if (entries.length === 0) return { created: 0, relinked: 0 };
+): Promise<CreateCardsResult> {
+  if (entries.length === 0) return { ok: true, created: 0, relinked: 0 };
 
-  const { data: existing } = await admin
+  const { data: existing, error: readError } = await admin
     .from("flashcards")
     .select("id, front, source_book_id")
     .eq("user_id", userId);
 
-  const existingCardsMap = new Map(
-    (existing ?? []).map((row) => [normalizeFront(String(row.front ?? "")), row]),
-  );
+  if (readError) {
+    return { ok: false, error: `Не удалось проверить существующие карточки: ${readError.message}` };
+  }
+
+  const existingCardsMap = new Map<string, Record<string, unknown>[]>();
+  for (const row of existing ?? []) {
+    const key = normalizeFront(String(row.front ?? ""));
+    if (!key) continue;
+    const matches = existingCardsMap.get(key) ?? [];
+    matches.push(row);
+    existingCardsMap.set(key, matches);
+  }
 
   // Due at the end of today, so a freshly photographed page is ready to study
   // in the same sitting.
@@ -172,16 +193,22 @@ export async function createCardsForEntries(
   dueAt.setHours(23, 59, 59, 999);
 
   const newRows: Record<string, unknown>[] = [];
-  const relinkIds: string[] = [];
+  const relinkIds = new Set<string>();
+  const seenFronts = new Set<string>();
 
   for (const e of entries) {
     const key = normalizeFront(e.headword);
-    const matchedCard = existingCardsMap.get(key);
+    if (!key || seenFronts.has(key)) continue;
+    seenFronts.add(key);
+    const matchedCards = existingCardsMap.get(key) ?? [];
 
-    if (matchedCard) {
-      if (matchedCard.id) relinkIds.push(String(matchedCard.id));
+    if (matchedCards.length > 0) {
+      for (const matchedCard of matchedCards) {
+        if (matchedCard.id) relinkIds.add(String(matchedCard.id));
+      }
     } else {
       newRows.push({
+        id: crypto.randomUUID(),
         user_id: userId,
         vocabulary_item_id: null,
         front: e.headword,
@@ -201,26 +228,48 @@ export async function createCardsForEntries(
     }
   }
 
-  if (relinkIds.length > 0) {
-    const { error: relinkError } = await admin
-      .from("flashcards")
-      .update({ source_book_id: batchId, source_book_title: batchTitle })
-      .in("id", relinkIds);
-
-    if (relinkError) {
-      console.error("relinkCardsForEntries error:", relinkError.message);
-    }
-  }
-
+  // Insert first. A failed insert leaves existing schedules untouched. If the
+  // following re-link fails, these known ids let us compensate safely.
   if (newRows.length > 0) {
     const { error } = await admin.from("flashcards").insert(newRows);
     if (error) {
-      console.error("createCardsForEntries:", error.message);
-      return { created: 0, relinked: relinkIds.length };
+      return { ok: false, error: `Не удалось создать карточки: ${error.message}` };
     }
   }
 
-  return { created: newRows.length, relinked: relinkIds.length };
+  if (relinkIds.size > 0) {
+    const { error: relinkError } = await admin
+      .from("flashcards")
+      .update({ source_book_id: batchId, source_book_title: batchTitle })
+      .in("id", [...relinkIds]);
+
+    if (relinkError) {
+      if (newRows.length > 0) {
+        const newIds = newRows.map((row) => String(row.id));
+        const { error: cleanupError } = await admin.from("flashcards").delete().in("id", newIds);
+        if (cleanupError) {
+          console.error("cleanupCardsForEntries error:", cleanupError.message);
+        }
+      }
+      return { ok: false, error: `Не удалось привязать прежние карточки к новой пачке: ${relinkError.message}` };
+    }
+  }
+
+  return { ok: true, created: newRows.length, relinked: relinkIds.size };
+}
+
+export async function discardDictionaryBatch(
+  admin: SupabaseClient,
+  userId: string,
+  batchId: string,
+): Promise<string | null> {
+  const { error } = await admin
+    .from("dictionary_batches")
+    .delete()
+    .eq("id", batchId)
+    .eq("user_id", userId);
+
+  return error?.message ?? null;
 }
 
 function normalizeFront(text: string): string {

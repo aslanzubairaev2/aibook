@@ -9,6 +9,7 @@ import { speak } from "@/lib/tts";
 import { startRecognition, isSpeechRecognitionSupported, type Recognizer } from "@/lib/speech/recognition";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { SkillBadges } from "@/components/cards/SkillBadges";
+import { splitCardBack } from "@/lib/cards";
 
 type Props = {
   cards: Flashcard[];
@@ -239,6 +240,7 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
   }
 
   const card = item.card;
+  const nativeMeaning = splitCardBack(card.back).meaning;
   const showInput = item.skill !== "produce";
 
   return (
@@ -260,7 +262,7 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
         </div>
 
         {/* Cue */}
-        {item.skill === "recall" && <div className="pt-cue">{card.back}</div>}
+        {item.skill === "recall" && <div className="pt-cue">{nativeMeaning}</div>}
 
         {item.skill === "listen" && !revealed && (
           <div className="pt-listen-orb">

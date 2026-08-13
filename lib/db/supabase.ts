@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { ReaderSelectionSnapshot, DiscussMessage, CardFilters } from "@/lib/types";
+import type { ReaderSelectionSnapshot, DiscussMessage, CardFilters, SkillProgress, TrainVariant } from "@/lib/types";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -89,6 +89,26 @@ export type DbFlashcard = {
   status: string;
   cefr?: string | null;
   created_at: string;
+};
+
+export type DbCardVariantProgress = {
+  user_id: string;
+  flashcard_id: string;
+  variant: Exclude<TrainVariant, "forward">;
+  status: string;
+  repetitions: number;
+  lapses: number;
+  interval_days: number;
+  easiness_factor: number;
+  next_review_at: string;
+  last_reviewed_at: string | null;
+  updated_at: string;
+};
+
+export type CardVariantProgressWrite = {
+  cardId: string;
+  variant: Exclude<TrainVariant, "forward">;
+  progress: SkillProgress;
 };
 
 export type DbUserSettings = {
@@ -229,6 +249,49 @@ export async function sbDeleteFlashcard(cardId: string): Promise<void> {
   if (!supabase) return;
   const { error } = await supabase.from("flashcards").delete().eq("id", cardId);
   if (error) console.error("sbDeleteFlashcard:", error.message);
+}
+
+export async function sbGetCardVariantProgress(userId: string): Promise<DbCardVariantProgress[] | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("flashcard_variant_progress")
+    .select("user_id, flashcard_id, variant, status, repetitions, lapses, interval_days, easiness_factor, next_review_at, last_reviewed_at, updated_at")
+    .eq("user_id", userId);
+  if (error) {
+    console.error("sbGetCardVariantProgress:", error.message);
+    return null;
+  }
+  return (data ?? []) as DbCardVariantProgress[];
+}
+
+/** One batch handles both a single review and the first upload of old local progress. */
+export async function sbUpsertCardVariantProgress(
+  userId: string,
+  updates: CardVariantProgressWrite[],
+): Promise<boolean> {
+  if (!supabase || updates.length === 0) return false;
+  const updatedAt = new Date().toISOString();
+  const rows = updates.map(({ cardId, variant, progress }) => ({
+    user_id: userId,
+    flashcard_id: cardId,
+    variant,
+    status: progress.status,
+    repetitions: progress.repetitions,
+    lapses: progress.lapses,
+    interval_days: progress.intervalDays,
+    easiness_factor: progress.easeFactor,
+    next_review_at: progress.dueAt,
+    last_reviewed_at: progress.lastReviewedAt,
+    updated_at: updatedAt,
+  }));
+  const { error } = await supabase
+    .from("flashcard_variant_progress")
+    .upsert(rows, { onConflict: "user_id,flashcard_id,variant" });
+  if (error) {
+    console.error("sbUpsertCardVariantProgress:", error.message);
+    return false;
+  }
+  return true;
 }
 
 

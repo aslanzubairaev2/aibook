@@ -4,7 +4,12 @@ import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import { runDictionaryPrompt } from "@/lib/ai/lessonModel";
 import { buildDictionaryFromImagePrompt, parseDictionaryEntries } from "@/lib/ai/buildDictionaryPrompt";
-import { saveDictionaryEntries, createCardsForEntries } from "@/lib/db/dictionaryStore";
+import {
+  createCardsForEntries,
+  dedupeDictionaryDrafts,
+  discardDictionaryBatch,
+  saveDictionaryEntries,
+} from "@/lib/db/dictionaryStore";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -72,7 +77,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  const { entries, pageKind, topic, pageLabel, isVocabularyList } = parseDictionaryEntries(result.data);
+  const {
+    entries: parsedEntries,
+    pageKind,
+    topic,
+    pageLabel,
+    isVocabularyList,
+  } = parseDictionaryEntries(result.data);
+  const entries = dedupeDictionaryDrafts(parsedEntries);
   if (entries.length === 0) {
     return NextResponse.json(
       { error: "На снимке не нашлось слов. Попробуйте кадр покрупнее или при лучшем свете." },
@@ -115,10 +127,17 @@ export async function POST(req: Request) {
     batch.id as string,
   );
   if (!saved.ok) {
-    return NextResponse.json({ error: saved.error }, { status: 500 });
+    const cleanupError = await discardDictionaryBatch(supabaseAdmin, user.id, batch.id as string);
+    const suffix = cleanupError ? `; не удалось убрать пустую пачку: ${cleanupError}` : "";
+    return NextResponse.json({ error: `${saved.error}${suffix}` }, { status: 500 });
   }
 
   const cards = await createCardsForEntries(supabaseAdmin, user.id, entries, batch.id as string, title);
+  if (!cards.ok) {
+    const cleanupError = await discardDictionaryBatch(supabaseAdmin, user.id, batch.id as string);
+    const suffix = cleanupError ? `; не удалось убрать неполную пачку: ${cleanupError}` : "";
+    return NextResponse.json({ error: `${cards.error}${suffix}` }, { status: 500 });
+  }
 
   return NextResponse.json({
     batchId: batch.id,

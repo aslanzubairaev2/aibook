@@ -26,11 +26,34 @@ function createMockSupabase() {
           },
           upsert(rows: Record<string, unknown>[]) {
             for (const row of rows) {
-              const id = row.id ? String(row.id) : `entry-${dictionaryEntries.length + 1}`;
-              const idx = dictionaryEntries.findIndex((e) => e.id === id || e.lemma === row.lemma);
-              if (idx >= 0) {
-                dictionaryEntries[idx] = { ...dictionaryEntries[idx], ...row, id };
+              const naturalKeyIndex = dictionaryEntries.findIndex(
+                (e) => e.user_id === row.user_id && e.lemma === row.lemma && e.language === row.language,
+              );
+              const requestedIdIndex = row.id
+                ? dictionaryEntries.findIndex((e) => e.id === row.id)
+                : -1;
+
+              // PostgreSQL resolves this upsert by the natural unique key. If
+              // the payload also supplies an id already owned by another row,
+              // updating the conflicting row would violate the primary key.
+              if (
+                naturalKeyIndex >= 0
+                && requestedIdIndex >= 0
+                && naturalKeyIndex !== requestedIdIndex
+              ) {
+                return Promise.resolve({
+                  error: { message: 'duplicate key value violates unique constraint "dictionary_entries_pkey"' },
+                });
+              }
+
+              if (naturalKeyIndex >= 0) {
+                dictionaryEntries[naturalKeyIndex] = {
+                  ...dictionaryEntries[naturalKeyIndex],
+                  ...row,
+                  id: dictionaryEntries[naturalKeyIndex].id,
+                };
               } else {
+                const id = row.id ? String(row.id) : `entry-${dictionaryEntries.length + 1}`;
                 dictionaryEntries.push({ ...row, id });
               }
             }
@@ -61,9 +84,19 @@ function createMockSupabase() {
           },
           insert(rows: Record<string, unknown>[]) {
             for (const r of rows) {
-              flashcards.push({ ...r, id: `card-${flashcards.length + 1}` });
+              flashcards.push({ ...r, id: r.id ?? `card-${flashcards.length + 1}` });
             }
             return Promise.resolve({ error: null });
+          },
+          delete() {
+            return {
+              in(_column: string, ids: string[]) {
+                for (let i = flashcards.length - 1; i >= 0; i--) {
+                  if (ids.includes(String(flashcards[i].id))) flashcards.splice(i, 1);
+                }
+                return Promise.resolve({ error: null });
+              },
+            };
           },
         };
       }
@@ -118,6 +151,55 @@ test("saveDictionaryEntries deduplicates duplicate drafts inside the same photo 
   assert.equal(mockDb.dictionaryEntries.length, 1);
 });
 
+test("saveDictionaryEntries never moves a primary key between case-sensitive German lemmas", async () => {
+  const mockDb = createMockSupabase();
+  mockDb.dictionaryEntries.push(
+    {
+      id: "noun-id",
+      user_id: "user-1",
+      language: "de",
+      lemma: "Morgen",
+      headword: "der Morgen",
+      translation: "утро",
+      part_of_speech: "существительное",
+    },
+    {
+      id: "adverb-id",
+      user_id: "user-1",
+      language: "de",
+      lemma: "morgen",
+      headword: "morgen",
+      translation: "завтра",
+      part_of_speech: "наречие",
+    },
+  );
+
+  const result = await saveDictionaryEntries(
+    mockDb as never,
+    "user-1",
+    "de",
+    [{
+      headword: "der Morgen",
+      lemma: "Morgen",
+      translation: "утро",
+      partOfSpeech: "существительное",
+      gender: "m",
+      article: "der",
+      plural: "Morgen",
+      cefr: "A1",
+    }],
+    "Повторное фото",
+    "batch-2",
+  );
+
+  assert.deepEqual(result, { ok: true, added: 0, updated: 1 });
+  assert.equal(mockDb.dictionaryEntries.length, 2);
+  assert.equal(mockDb.dictionaryEntries[0].id, "noun-id");
+  assert.equal(mockDb.dictionaryEntries[0].batch_id, "batch-2");
+  assert.equal(mockDb.dictionaryEntries[1].id, "adverb-id");
+  assert.equal(mockDb.dictionaryEntries[1].translation, "завтра");
+});
+
 test("createCardsForEntries re-links existing cards without creating duplicate cards or resetting SRS", async () => {
   const mockDb = createMockSupabase();
 
@@ -127,8 +209,7 @@ test("createCardsForEntries re-links existing cards without creating duplicate c
 
   // Initial creation of card for batch-1
   const res1 = await createCardsForEntries(mockDb as never, "user-1", drafts, "batch-1", "Batch 1");
-  assert.equal(res1.created, 1);
-  assert.equal(res1.relinked, 0);
+  assert.deepEqual(res1, { ok: true, created: 1, relinked: 0 });
   assert.equal(mockDb.flashcards.length, 1);
   assert.equal(mockDb.flashcards[0].source_book_id, "batch-1");
 
@@ -137,8 +218,7 @@ test("createCardsForEntries re-links existing cards without creating duplicate c
 
   // Re-photographing page creates batch-2
   const res2 = await createCardsForEntries(mockDb as never, "user-1", drafts, "batch-2", "Batch 2");
-  assert.equal(res2.created, 0);
-  assert.equal(res2.relinked, 1);
+  assert.deepEqual(res2, { ok: true, created: 0, relinked: 1 });
 
   // Flashcards count remains 1
   assert.equal(mockDb.flashcards.length, 1);
