@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/local";
 import { sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
-import { getTtsProviderLabel, isDeepgramTtsSupported } from "@/lib/ttsProviders";
+import { getAvailableTtsProviders, getTtsProviderLabel, isDeepgramTtsSupported, isSpeechifyTtsSupported } from "@/lib/ttsProviders";
 import type { TtsProvider, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -70,7 +70,9 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
 
   async function setLang(field: "nativeLanguage" | "targetLanguage" | "ttsProvider" | "uiLanguage", value: string) {
     const updated: UserProfile = { ...profile, [field]: value };
-    if (field === "targetLanguage" && updated.ttsProvider === "deepgram" && !isDeepgramTtsSupported(value)) {
+    // A voice the new target language has no support for would silently do
+    // nothing; drop back to the browser voice instead.
+    if (field === "targetLanguage" && !getAvailableTtsProviders(value).includes(updated.ttsProvider ?? "local")) {
       updated.ttsProvider = "local";
     }
     saveLocalProfile(updated);
@@ -280,13 +282,16 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
           </div>
           <select
             className="lang-select"
-            value={profile.ttsProvider === "deepgram" && !isDeepgramTtsSupported(profile.targetLanguage) ? "local" : profile.ttsProvider || "local"}
+            value={getAvailableTtsProviders(profile.targetLanguage).includes(profile.ttsProvider ?? "local") ? profile.ttsProvider || "local" : "local"}
             onChange={(e) => void setLang("ttsProvider", e.target.value as TtsProvider)}
           >
             <option value="local">Локальный</option>
             <option value="gemini">Gemini TTS</option>
             {isDeepgramTtsSupported(profile.targetLanguage) && (
               <option value="deepgram">Deepgram Aura</option>
+            )}
+            {isSpeechifyTtsSupported(profile.targetLanguage) && (
+              <option value="speechify">Speechify Simba</option>
             )}
           </select>
         </div>

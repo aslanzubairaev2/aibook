@@ -24,14 +24,52 @@ export function isDeepgramTtsSupported(lang: string) {
   return Boolean(getDeepgramTtsModel(lang));
 }
 
+// ─── Speechify ───────────────────────────────────────────────────────────────
+//
+// Simba 3.2 tops the quality leaderboards but is English-only: a non-English
+// request to it is rejected outright. Simba 3.0 is the streaming-native model
+// for the handful of European languages it covers, and Simba Multilingual is
+// the catch-all for everything else. Pick by language rather than making the
+// learner understand the difference.
+
+const SIMBA_3_LANGUAGES = new Set(["en", "de", "es", "fr", "it", "pt"]);
+
+/** Speechify wants a full locale ("de-DE"), not a bare language code. */
+const SPEECHIFY_LOCALES: Record<string, string> = {
+  de: "de-DE", en: "en-US", es: "es-ES", fr: "fr-FR", it: "it-IT",
+  pt: "pt-BR", ru: "ru-RU", nl: "nl-NL", ja: "ja-JP", pl: "pl-PL",
+  tr: "tr-TR", uk: "uk-UA", sv: "sv-SE", da: "da-DK", nb: "nb-NO",
+  fi: "fi-FI", cs: "cs-CZ", el: "el-GR", he: "he-IL", hi: "hi-IN",
+  ar: "ar-AE", zh: "zh-CN", ko: "ko-KR", vi: "vi-VN", id: "id-ID",
+  ro: "ro-RO", hu: "hu-HU", bg: "bg-BG", sk: "sk-SK", hr: "hr-HR",
+};
+
+export function getSpeechifyModel(lang: string) {
+  return SIMBA_3_LANGUAGES.has(normalizeLanguageCode(lang)) ? "simba-3.0" : "simba-multilingual";
+}
+
+/** The locale string Speechify expects, or null when we have no mapping. */
+export function getSpeechifyLocale(lang: string) {
+  const code = normalizeLanguageCode(lang);
+  // A caller that already passed a full locale ("de-AT") knows better than the table.
+  if (/^[a-z]{2}-[A-Z]{2}$/.test(lang.trim())) return lang.trim();
+  return SPEECHIFY_LOCALES[code] ?? null;
+}
+
+export function isSpeechifyTtsSupported(lang: string) {
+  return Boolean(getSpeechifyLocale(lang));
+}
+
 export function getAvailableTtsProviders(lang: string): TtsProvider[] {
   const providers: TtsProvider[] = ["local", "gemini"];
   if (isDeepgramTtsSupported(lang)) providers.push("deepgram");
+  if (isSpeechifyTtsSupported(lang)) providers.push("speechify");
   return providers;
 }
 
 export function getTtsProviderLabel(provider: TtsProvider) {
   if (provider === "gemini") return "Gemini TTS";
   if (provider === "deepgram") return "Deepgram Aura";
+  if (provider === "speechify") return "Speechify Simba";
   return "Локальный";
 }

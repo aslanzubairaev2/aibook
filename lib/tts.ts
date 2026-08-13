@@ -1,6 +1,16 @@
 import { getLocalProfile } from "./db/local";
 import { sbAuthHeaders } from "./db/supabase";
-import { DEEPGRAM_TTS_SAMPLE_RATE, getDeepgramTtsModel, isDeepgramTtsSupported, normalizeLanguageCode } from "./ttsProviders";
+import {
+  DEEPGRAM_TTS_SAMPLE_RATE,
+  getDeepgramTtsModel,
+  getSpeechifyModel,
+  isDeepgramTtsSupported,
+  isSpeechifyTtsSupported,
+  normalizeLanguageCode,
+} from "./ttsProviders";
+
+/** Cached audio is headerless PCM, so its rate rides along as a response header. */
+const SAMPLE_RATE_HEADER = "X-Sample-Rate";
 
 const LANG_MAP: Record<string, string> = {
   de: "de-DE", en: "en-US", fr: "fr-FR", es: "es-ES", ru: "ru-RU",
@@ -49,7 +59,7 @@ let state: TTSState = {
  * request against a quota that a preview TTS model measures in requests, not
  * seconds. Sharing the promise makes the duplicate free.
  */
-const inFlight = new Map<string, Promise<string | null>>();
+const inFlight = new Map<string, Promise<Recording | null>>();
 
 /** The last quota refusal from the server, so the UI can explain the robot voice. */
 let lastTtsError: string | null = null;
@@ -118,10 +128,15 @@ function stopRemoteAudio(silent = false) {
 
 let playSegmentFn: ((offset: number) => void) | null = null;
 
+/** Providers whose audio plays through the Web Audio path rather than the browser voice. */
+function isRemoteProvider(provider: string | undefined): boolean {
+  return provider === "gemini" || provider === "deepgram" || provider === "speechify";
+}
+
 export function pauseTTS() {
   if (state.status !== "playing") return;
   const profile = getLocalProfile();
-  if (profile.ttsProvider === "gemini" || profile.ttsProvider === "deepgram") {
+  if (isRemoteProvider(profile.ttsProvider)) {
     if (!isPaused && currentSource && currentAudioCtx) {
       isPaused = true;
       const elapsed = currentAudioCtx.currentTime - startTime;
@@ -140,7 +155,7 @@ export function pauseTTS() {
 export function resumeTTS() {
   if (state.status !== "paused") return;
   const profile = getLocalProfile();
-  if (profile.ttsProvider === "gemini" || profile.ttsProvider === "deepgram") {
+  if (isRemoteProvider(profile.ttsProvider)) {
     if (isPaused && currentAudioCtx) {
       isPaused = false;
       if (playSegmentFn) playSegmentFn(startOffset);
@@ -154,7 +169,7 @@ export function resumeTTS() {
 export function stopTTS() {
   if (state.status === "idle") return;
   const profile = getLocalProfile();
-  if (profile.ttsProvider === "gemini" || profile.ttsProvider === "deepgram") {
+  if (isRemoteProvider(profile.ttsProvider)) {
     stopRemoteAudio();
   } else if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
@@ -179,13 +194,41 @@ export function seekTTS(time: number) {
   }
 }
 
+/** Headerless PCM plus the rate it has to be played back at. */
+type Recording = { audioBase64: string; sampleRate: number };
+
+/**
+ * The provider that can actually speak this language.
+ *
+ * Deepgram covers seven languages and Speechify rather more; asking either for
+ * one it does not have would fail server-side, so fall back to the browser
+ * voice here instead of spending the round trip to find out.
+ */
+function resolveProvider(requested: string, lang: string): string {
+  if (requested === "deepgram" && !isDeepgramTtsSupported(lang)) return "local";
+  if (requested === "speechify" && !isSpeechifyTtsSupported(lang)) return "local";
+  return requested;
+}
+
+/** The voice that defines a recording's identity, per provider. */
+function voiceKeyFor(provider: string, lang: string): string {
+  if (provider === "deepgram") return getDeepgramTtsModel(lang) ?? "default";
+  if (provider === "speechify") return getSpeechifyModel(lang);
+  return "Algenib";
+}
+
+/** Cache key for one recording. Shared by `speak()` and the whole-text narration. */
+function ttsCacheKey(text: string, provider: string, lang: string): string {
+  return `tts-${provider}-${voiceKeyFor(provider, lang)}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
+}
+
 /** One trip to `/api/tts`, returning null (and recording why) on any failure. */
 async function requestTts(
   text: string,
   lang: string,
   provider: string,
   cacheKey: string,
-): Promise<string | null> {
+): Promise<Recording | null> {
   try {
     const res = await fetch("/api/tts", {
       method: "POST",
@@ -200,18 +243,21 @@ async function requestTts(
       return null;
     }
 
-    const data = await res.json() as { audioBase64?: string; reason?: string };
+    const data = await res.json() as { audioBase64?: string; reason?: string; sampleRate?: number };
     // A quota fallback still produces audio, but the learner deserves to know
     // the voice changed and why.
     lastTtsError = data.reason ?? null;
-    const audioBase64 = data.audioBase64 ?? null;
-    if (audioBase64) {
-      try {
-        const cache = await caches.open("aibook-tts-cache");
-        await cache.put(cacheKey, new Response(audioBase64));
-      } catch (e) {}
-    }
-    return audioBase64;
+    if (!data.audioBase64) return null;
+
+    const recording = { audioBase64: data.audioBase64, sampleRate: data.sampleRate ?? DEEPGRAM_TTS_SAMPLE_RATE };
+    try {
+      const cache = await caches.open("aibook-tts-cache");
+      await cache.put(
+        cacheKey,
+        new Response(recording.audioBase64, { headers: { [SAMPLE_RATE_HEADER]: String(recording.sampleRate) } }),
+      );
+    } catch (e) {}
+    return recording;
   } catch (e) {
     console.error(`${provider} TTS API failed`, e);
     lastTtsError = "Не удалось связаться с сервисом озвучки.";
@@ -226,42 +272,44 @@ export async function speak(
   onEnd?: () => void
 ): Promise<PlaybackController | null> {
   const profile = getLocalProfile();
-  const requestedProvider = profile.ttsProvider ?? "local";
-  const provider = requestedProvider === "deepgram" && !isDeepgramTtsSupported(lang) ? "local" : requestedProvider;
-  
+  const provider = resolveProvider(profile.ttsProvider ?? "local", lang);
+
   updateState({ status: "loading", text, currentTime: 0, duration: 0 });
-  
-  if (provider === "gemini" || provider === "deepgram") {
+
+  if (provider === "gemini" || provider === "deepgram" || provider === "speechify") {
     stopRemoteAudio(true); // silent stop
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
-    
-    let audioBase64: string | null = null;
-    const voiceKey = provider === "deepgram" ? getDeepgramTtsModel(lang) : "Algenib";
-    const cacheLang = normalizeLanguageCode(lang);
-    
+
+    let recording: Recording | null = null;
+    const cacheKey = ttsCacheKey(text, provider, lang);
+
     // Check local Browser Cache API
-    const cacheKey = `tts-${provider}-${voiceKey ?? "default"}-${cacheLang}-${encodeURIComponent(text)}`;
     try {
       const cache = await caches.open("aibook-tts-cache");
       const cachedResponse = await cache.match(cacheKey);
       if (cachedResponse) {
-        audioBase64 = await cachedResponse.text();
+        recording = {
+          audioBase64: await cachedResponse.text(),
+          // Entries cached before providers could differ carry no header.
+          sampleRate: Number(cachedResponse.headers.get(SAMPLE_RATE_HEADER)) || DEEPGRAM_TTS_SAMPLE_RATE,
+        };
       }
     } catch(e) {}
 
-    if (!audioBase64) {
+    if (!recording) {
       const pending = inFlight.get(cacheKey) ?? requestTts(text, lang, provider, cacheKey);
       inFlight.set(cacheKey, pending);
       try {
-        audioBase64 = await pending;
+        recording = await pending;
       } finally {
         inFlight.delete(cacheKey);
       }
     }
 
-    if (audioBase64) {
+    if (recording) {
+      const { audioBase64, sampleRate } = recording;
       if (!currentAudioCtx) {
         currentAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
@@ -277,7 +325,7 @@ export async function speak(
         floatArray[i] = int16 / (int16 < 0 ? 32768 : 32767);
       }
       
-      currentBuffer = currentAudioCtx.createBuffer(1, floatArray.length, DEEPGRAM_TTS_SAMPLE_RATE);
+      currentBuffer = currentAudioCtx.createBuffer(1, floatArray.length, sampleRate);
       currentBuffer.copyToChannel(floatArray, 0);
       
       updateState({ duration: currentBuffer.duration });
@@ -452,12 +500,6 @@ export async function speak(
 // `speak()` looks up for the *whole* text means the existing player then treats
 // the entire text as one recording — no change to playback at all.
 
-/** Must match the key `speak()` builds, or the joined audio would never be found. */
-function ttsCacheKey(text: string, provider: string, lang: string): string {
-  const voiceKey = provider === "deepgram" ? getDeepgramTtsModel(lang) : "Algenib";
-  return `tts-${provider}-${voiceKey ?? "default"}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
-}
-
 export type NarrationProgress = { done: number; total: number };
 
 /** Gap between passage requests, so a whole book does not arrive as a burst. */
@@ -492,20 +534,23 @@ export async function prepareFullTextAudio(
   },
 ): Promise<NarrationResult> {
   const profile = getLocalProfile();
-  const requested = profile.ttsProvider ?? "gemini";
   // Local browser speech cannot be captured as data, so joining needs a server
   // voice; fall back to Gemini rather than producing nothing.
-  const provider = requested === "local" ? "gemini" : requested;
+  const resolved = resolveProvider(profile.ttsProvider ?? "gemini", lang);
+  const provider = resolved === "local" ? "gemini" : resolved;
 
   const chunks = passages.map((p) => p.slice(0, 2000)).filter((p) => p.trim().length > 0);
   const parts: Uint8Array[] = [];
   let done = 0;
   let failed = 0;
   let quotaError: string | undefined;
+  // Every passage comes from one provider and one voice, so one rate covers the
+  // joined recording; the first passage to arrive settles it.
+  let sampleRate = DEEPGRAM_TTS_SAMPLE_RATE;
 
   for (let i = 0; i < chunks.length; i++) {
     if (opts.shouldCancel?.()) {
-      return { done, failed, cancelled: true, seconds: totalSeconds(parts) };
+      return { done, failed, cancelled: true, seconds: totalSeconds(parts, sampleRate) };
     }
 
     let base64: string | null = null;
@@ -514,7 +559,10 @@ export async function prepareFullTextAudio(
     try {
       const cache = await caches.open("aibook-tts-cache");
       const hit = await cache.match(key);
-      if (hit) base64 = await hit.text();
+      if (hit) {
+        base64 = await hit.text();
+        sampleRate = Number(hit.headers.get(SAMPLE_RATE_HEADER)) || sampleRate;
+      }
     } catch { /* no Cache API */ }
 
     if (!base64) {
@@ -525,12 +573,13 @@ export async function prepareFullTextAudio(
           body: JSON.stringify({ text: chunks[i], lang, provider }),
         });
         if (res.ok) {
-          const data = await res.json() as { audioBase64?: string };
+          const data = await res.json() as { audioBase64?: string; sampleRate?: number };
           base64 = data.audioBase64 ?? null;
+          sampleRate = data.sampleRate ?? sampleRate;
           if (base64) {
             try {
               const cache = await caches.open("aibook-tts-cache");
-              await cache.put(key, new Response(base64));
+              await cache.put(key, new Response(base64, { headers: { [SAMPLE_RATE_HEADER]: String(sampleRate) } }));
             } catch { /* cache full or unavailable */ }
           }
         } else if (res.status === 429) {
@@ -564,11 +613,14 @@ export async function prepareFullTextAudio(
     const joined = concatBytes(parts);
     try {
       const cache = await caches.open("aibook-tts-cache");
-      await cache.put(ttsCacheKey(fullText, provider, lang), new Response(bytesToBase64(joined)));
+      await cache.put(
+        ttsCacheKey(fullText, provider, lang),
+        new Response(bytesToBase64(joined), { headers: { [SAMPLE_RATE_HEADER]: String(sampleRate) } }),
+      );
     } catch { /* cache full — playback falls back to per-passage */ }
   }
 
-  return { done, failed, cancelled: false, seconds: totalSeconds(parts), quotaError };
+  return { done, failed, cancelled: false, seconds: totalSeconds(parts, sampleRate), quotaError };
 }
 
 function concatBytes(parts: Uint8Array[]): Uint8Array {
@@ -583,9 +635,9 @@ function concatBytes(parts: Uint8Array[]): Uint8Array {
 }
 
 /** 16-bit samples at the provider rate. */
-function totalSeconds(parts: Uint8Array[]): number {
+function totalSeconds(parts: Uint8Array[], sampleRate: number): number {
   const bytes = parts.reduce((sum, p) => sum + p.byteLength, 0);
-  return bytes / 2 / DEEPGRAM_TTS_SAMPLE_RATE;
+  return bytes / 2 / sampleRate;
 }
 
 /** btoa cannot take a whole book at once; chunk it to stay under the arg limit. */

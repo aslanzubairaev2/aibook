@@ -8,6 +8,7 @@ import { ALL_TRAIN_VARIANTS, filterCardsByTrainingSource, findDuplicateCard, get
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { speak } from "@/lib/tts";
+import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardVariantState, saveCardVariantProgress } from "@/lib/db/local";
@@ -99,11 +100,13 @@ function getVariantProgress(card: Flashcard, variant: TrainVariant): VariantProg
   return getCardVariantState(card.id)[variant] ?? createDefaultSkillProgress();
 }
 
-const TTS_PROVIDERS: { value: TtsProvider; label: string }[] = [
-  { value: "local", label: "Браузер" },
-  { value: "gemini", label: "Gemini TTS" },
-  { value: "deepgram", label: "Deepgram" },
-];
+/** Offer only the voices that can actually speak the deck's language. */
+function ttsProvidersFor(lang: string): { value: TtsProvider; label: string }[] {
+  return getAvailableTtsProviders(lang).map((value) => ({
+    value,
+    label: value === "local" ? "Браузер" : getTtsProviderLabel(value),
+  }));
+}
 
 export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, onDeleteCard }: Props) {
   const { user } = useAuth();
@@ -1235,7 +1238,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                           <SpeakButton text={promptText} lang={promptLang} size={22} />
                           {showTtsMenu && (
                             <div className="tts-menu" onClick={(e) => e.stopPropagation()}>
-                              {TTS_PROVIDERS.map((p) => (
+                              {ttsProvidersFor(targetLanguage).map((p) => (
                                 <div
                                   key={p.value}
                                   className={`tts-menu-item ${profile.ttsProvider === p.value ? "active" : ""}`}
