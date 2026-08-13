@@ -89,18 +89,24 @@ export const INWORLD_MODEL = "inworld-tts-2";
 /** Inworld's own sample default; overridable per deployment. */
 export const INWORLD_DEFAULT_VOICE = "Matthias";
 
+export function getInworldAuthorizationHeader(apiKey: string) {
+  const value = apiKey.trim();
+  return /^Basic\s+/i.test(value) ? value : `Basic ${value}`;
+}
+
 export function isInworldTtsSupported(lang: string) {
   return Boolean(getBcp47Locale(lang));
 }
+
 export function normalizeTtsProvider(provider: unknown): TtsProvider {
-  if (typeof provider !== "string") return "inworld";
+  if (typeof provider !== "string") return "gemini";
 
   const normalized = provider.trim().toLowerCase();
   if (TTS_PROVIDERS.has(normalized as TtsProvider)) {
     return normalized as TtsProvider;
   }
 
-  return LEGACY_TTS_PROVIDERS[normalized] ?? "local";
+  return LEGACY_TTS_PROVIDERS[normalized] ?? "gemini";
 }
 
 export function getAvailableTtsProviders(lang: string): TtsProvider[] {
@@ -113,6 +119,16 @@ export function getAvailableTtsProviders(lang: string): TtsProvider[] {
 export function resolveTtsProvider(provider: unknown, lang: string): TtsProvider {
   const normalized = normalizeTtsProvider(provider);
   return getAvailableTtsProviders(lang).includes(normalized) ? normalized : "local";
+}
+
+export function getTtsProviderChain(provider: unknown, lang: string): TtsProvider[] {
+  const primary = resolveTtsProvider(provider, lang);
+  if (primary !== "gemini") return [primary];
+
+  const chain: TtsProvider[] = ["gemini"];
+  if (isSpeechifyTtsSupported(lang)) chain.push("speechify");
+  if (isInworldTtsSupported(lang)) chain.push("inworld");
+  return chain;
 }
 
 export function getTtsProviderLabel(provider: TtsProvider) {

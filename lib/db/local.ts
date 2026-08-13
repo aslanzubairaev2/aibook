@@ -236,7 +236,7 @@ const defaultProfile: UserProfile = {
   booksStarted: 0,
   booksFinished: 0,
   savedItems: 0,
-  ttsProvider: "inworld",
+  ttsProvider: "gemini",
 };
 
 export function getLocalProfile(): UserProfile {

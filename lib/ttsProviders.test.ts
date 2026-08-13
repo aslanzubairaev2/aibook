@@ -8,6 +8,8 @@ import {
   isInworldTtsSupported,
   isSpeechifyTtsSupported,
   getTtsProviderLabel,
+  getTtsProviderChain,
+  getInworldAuthorizationHeader,
 } from "./ttsProviders.ts";
 
 test("picks Simba 3.0 for the languages it covers", () => {
@@ -61,4 +63,19 @@ test("Inworld takes the same locale tags, since one voice covers many languages"
   assert.equal(isInworldTtsSupported("ru"), true);
   assert.equal(isInworldTtsSupported("xx"), false);
   assert.equal(getBcp47Locale("de"), "de-DE");
+});
+
+test("builds the automatic Gemini fallback chain", () => {
+  assert.deepEqual(getTtsProviderChain(undefined, "de"), ["gemini", "speechify", "inworld"]);
+  assert.deepEqual(getTtsProviderChain("gemini", "xx"), ["gemini"]);
+  assert.deepEqual(getTtsProviderChain("speechify", "de"), ["speechify"]);
+});
+
+test("normalizes a missing provider to Gemini", () => {
+  assert.equal(getTtsProviderChain(undefined, "de")[0], "gemini");
+});
+
+test("accepts both supported Inworld key shapes", () => {
+  assert.equal(getInworldAuthorizationHeader("abc123"), "Basic abc123");
+  assert.equal(getInworldAuthorizationHeader(" Basic abc123 "), "Basic abc123");
 });

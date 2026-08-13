@@ -3,9 +3,11 @@ import { sbGetCachedTts, sbSaveCachedTts } from "@/lib/db/supabase";
 import {
   DEEPGRAM_TTS_SAMPLE_RATE,
   getBcp47Locale,
+  getInworldAuthorizationHeader,
   getDeepgramTtsModel,
   getSpeechifyLocale,
   getSpeechifyModel,
+  getTtsProviderChain,
   INWORLD_DEFAULT_VOICE,
   INWORLD_MODEL,
   normalizeLanguageCode,
@@ -97,7 +99,10 @@ export async function POST(req: Request) {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return NextResponse.json({ error: "Missing API key" }, { status: 500 });
+      const reason = "Gemini TTS не настроен: отсутствует GEMINI_API_KEY.";
+      const fallback = await speakWithAutomaticFallback(text, lang, reason);
+      if (fallback) return NextResponse.json(fallback);
+      return NextResponse.json({ error: reason }, { status: 500 });
     }
 
     // Use Algenib voice as requested
@@ -106,7 +111,7 @@ export async function POST(req: Request) {
     // 1. Check database cache
     const cachedAudio = await sbGetCachedTts(text, lang, voiceName);
     if (cachedAudio) {
-      return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache" });
+      return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider: "gemini", model: GEMINI_TTS_MODEL });
     }
 
     const makeRequest = async (inputText: string) => {
@@ -141,14 +146,23 @@ export async function POST(req: Request) {
       });
     };
 
-    let response = await makeRequest(text);
+    let response: Response;
+    try {
+      response = await makeRequest(text);
+    } catch (error) {
+      console.error("Gemini TTS request failed:", error);
+      const reason = "Не удалось связаться с Gemini TTS.";
+      const fallback = await speakWithAutomaticFallback(text, lang, reason);
+      if (fallback) return NextResponse.json(fallback);
+      throw error;
+    }
 
     if (!response.ok) {
       const err = await response.text();
 
       // A rate limit is the one failure the learner can act on, so it gets
-      // named rather than flattened into "TTS failed" — and, when the language
-      // has a Deepgram voice, answered with that voice instead of silence.
+      // named rather than flattened into "TTS failed", then tried through the
+      // configured Speechify and Inworld fallbacks.
       if (response.status === 429) {
         const quota = diagnoseQuotaError(err);
         console.error(
@@ -156,19 +170,8 @@ export async function POST(req: Request) {
           err,
         );
 
-        const deepgramModel = getDeepgramTtsModel(lang);
-        if (deepgramModel && process.env.DEEPGRAM_API_KEY) {
-          const spoken = await speakWithDeepgram(text, lang, deepgramModel);
-          if (!("error" in spoken)) {
-            return NextResponse.json({
-              ...spoken,
-              provider: "deepgram",
-              model: deepgramModel,
-              fellBackFrom: "gemini",
-              reason: quotaMessageRu(quota),
-            });
-          }
-        }
+        const fallback = await speakWithAutomaticFallback(text, lang, quotaMessageRu(quota));
+        if (fallback) return NextResponse.json(fallback);
 
         return NextResponse.json(
           {
@@ -190,7 +193,10 @@ export async function POST(req: Request) {
       }
 
       console.error("Gemini TTS API error:", err);
-      return NextResponse.json({ error: "TTS failed" }, { status: response.status });
+      const reason = `Gemini TTS недоступен (ошибка ${response.status}).`;
+      const fallback = await speakWithAutomaticFallback(text, lang, reason);
+      if (fallback) return NextResponse.json(fallback);
+      return NextResponse.json({ error: reason }, { status: response.status });
     }
 
     let data = await response.json();
@@ -209,10 +215,13 @@ export async function POST(req: Request) {
     if (inlineData?.data) {
       // 2. Save to database cache
       await sbSaveCachedTts(text, lang, voiceName, inlineData.data);
-      return NextResponse.json({ audioBase64: inlineData.data, source: "api" });
+      return NextResponse.json({ audioBase64: inlineData.data, source: "api", provider: "gemini", model: GEMINI_TTS_MODEL });
     }
 
-    return NextResponse.json({ error: "No audio data received" }, { status: 500 });
+    const reason = "Gemini TTS не вернул аудио.";
+    const fallback = await speakWithAutomaticFallback(text, lang, reason);
+    if (fallback) return NextResponse.json(fallback);
+    return NextResponse.json({ error: reason }, { status: 500 });
   } catch (error) {
     console.error("TTS Error:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
@@ -222,6 +231,62 @@ export async function POST(req: Request) {
 type Spoken =
   | { audioBase64: string; source: "api" | "db_cache"; sampleRate?: number; format?: "mp3" }
   | { error: string; status: number };
+
+type AutomaticFallback = Exclude<Spoken, { error: string; status: number }> & {
+  provider: "speechify" | "inworld";
+  model: string;
+  fellBackFrom: "gemini";
+  reason: string;
+};
+
+async function speakWithAutomaticFallback(
+  text: string,
+  lang: string,
+  reason: string,
+): Promise<AutomaticFallback | null> {
+  for (const provider of getTtsProviderChain("gemini", lang).slice(1)) {
+    try {
+      if (provider === "speechify") {
+        const locale = getSpeechifyLocale(lang);
+        if (!locale || !process.env.SPEECHIFY_API_KEY || !process.env.SPEECHIFY_VOICE_ID) continue;
+
+        const spoken = await speakWithSpeechify(text, lang, locale);
+        if (!("error" in spoken)) {
+          return {
+            ...spoken,
+            provider: "speechify",
+            model: getSpeechifyModel(lang),
+            fellBackFrom: "gemini",
+            reason,
+          };
+        }
+        console.warn(`Speechify fallback failed with status ${spoken.status}: ${spoken.error}`);
+        continue;
+      }
+
+      if (provider === "inworld") {
+        const locale = getBcp47Locale(lang);
+        if (!locale || !process.env.INWORLD_API_KEY) continue;
+
+        const spoken = await speakWithInworld(text, lang, locale);
+        if (!("error" in spoken)) {
+          return {
+            ...spoken,
+            provider: "inworld",
+            model: INWORLD_MODEL,
+            fellBackFrom: "gemini",
+            reason,
+          };
+        }
+        console.warn(`Inworld fallback failed with status ${spoken.status}: ${spoken.error}`);
+      }
+    } catch (error) {
+      console.error(`${provider} fallback threw:`, error);
+    }
+  }
+
+  return null;
+}
 
 /**
  * Synthesise through Inworld.
@@ -246,8 +311,8 @@ async function speakWithInworld(text: string, lang: string, locale: string): Pro
   const response = await fetch("https://api.inworld.ai/tts/v1/voice", {
     method: "POST",
     headers: {
-      // Inworld's key is already base64(apiKey:) — it is passed through as-is.
-      "Authorization": `Basic ${apiKey}`,
+      // Accept either the Base64 signature alone or a full "Basic …" value.
+      "Authorization": getInworldAuthorizationHeader(apiKey),
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -257,6 +322,7 @@ async function speakWithInworld(text: string, lang: string, locale: string): Pro
       audioConfig: { audioEncoding: "MP3", speakingRate: 1 },
       deliveryMode: "BALANCED",
       language: locale,
+      applyTextNormalization: "ON",
     }),
   });
 

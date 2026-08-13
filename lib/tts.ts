@@ -282,7 +282,7 @@ async function requestTts(
     }
 
     const data = await res.json() as {
-      audioBase64?: string; reason?: string; sampleRate?: number; format?: "mp3";
+      audioBase64?: string; reason?: string; sampleRate?: number; format?: "mp3"; provider?: string;
     };
     // A quota fallback still produces audio, but the learner deserves to know
     // the voice changed and why.
@@ -296,7 +296,10 @@ async function requestTts(
     };
     try {
       const cache = await caches.open("aibook-tts-cache");
-      await cache.put(cacheKey, new Response(recording.audioBase64, {
+      const actualCacheKey = data.provider && isRemoteProvider(data.provider)
+        ? ttsCacheKey(text, data.provider, lang)
+        : cacheKey;
+      await cache.put(actualCacheKey, new Response(recording.audioBase64, {
         headers: {
           [SAMPLE_RATE_HEADER]: String(recording.sampleRate),
           [FORMAT_HEADER]: recording.format,
