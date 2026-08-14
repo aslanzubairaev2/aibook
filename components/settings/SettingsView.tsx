@@ -16,12 +16,6 @@ import {
   getAvailableTtsProviders,
   getStaticTtsVoices,
   getTtsProviderLabel,
-  isCartesiaTtsSupported,
-  isDeepgramTtsSupported,
-  isElevenLabsTtsSupported,
-  isInworldTtsSupported,
-  isOpenAiTtsSupported,
-  isSpeechifyTtsSupported,
   supportsVoiceChoice,
   type TtsVoiceOption,
 } from "@/lib/ttsProviders";
@@ -408,23 +402,11 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
             value={activeProvider}
             onChange={(e) => void setLang("ttsProvider", e.target.value as TtsProvider)}
           >
-            <option value="gemini">Gemini TTS</option>
-            {isOpenAiTtsSupported(profile.targetLanguage) && (
-              <option value="openai">OpenAI GPT-4o</option>
-            )}
-            {isCartesiaTtsSupported(profile.targetLanguage) && (
-              <option value="cartesia">Cartesia Sonic</option>
-            )}
-            {isDeepgramTtsSupported(profile.targetLanguage) && (
-              <option value="deepgram">Deepgram Aura</option>
-            )}
-            {isSpeechifyTtsSupported(profile.targetLanguage) && (
-              <option value="speechify">Speechify Simba</option>
-            )}
-            {isInworldTtsSupported(profile.targetLanguage) && (
-              <option value="inworld">Inworld TTS</option>
-            )}
-            <option value="local">Локальный</option>
+            {/* Derived rather than written out: a hand-kept copy of this list
+                is how ElevenLabs came to be missing from it. */}
+            {availableProviders.map((provider) => (
+              <option key={provider} value={provider}>{getTtsProviderLabel(provider)}</option>
+            ))}
           </select>
         </div>
 
