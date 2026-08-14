@@ -7,6 +7,7 @@ import {
   formatInterval,
   isSkillDue,
   previewIntervalDays,
+  shouldSpeakOnReveal,
 } from "./activeTraining.ts";
 import type { Flashcard, ProductiveSkill, SkillProgress } from "../types.ts";
 
@@ -132,4 +133,16 @@ test("grade buttons can say when the word comes back", () => {
   assert.equal(formatInterval(0), "сегодня");
   assert.equal(formatInterval(1), "завтра");
   assert.equal(formatInterval(6), "через 6 дн.");
+});
+
+test("answering a listening prompt does not replay it back at the learner", () => {
+  // The word was the question. Writing down what you just heard and being told
+  // it again teaches nothing, so the replay is left to the button.
+  assert.equal(shouldSpeakOnReveal("listen"), false);
+
+  // The other two cue from written text, so the reveal is the first time the
+  // word is heard — after writing it, that is the pronunciation; after saying
+  // it aloud, it is what the learner checks their own attempt against.
+  assert.equal(shouldSpeakOnReveal("recall"), true);
+  assert.equal(shouldSpeakOnReveal("produce"), true);
 });

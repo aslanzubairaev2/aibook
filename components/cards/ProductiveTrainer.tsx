@@ -15,6 +15,7 @@ import {
   checkTypedAnswer,
   formatInterval,
   previewIntervalDays,
+  shouldSpeakOnReveal,
   type ActiveItem,
   type AnswerVerdict,
 } from "@/lib/srs/activeTraining";
@@ -81,8 +82,8 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
   const reveal = useCallback((next: Result) => {
     stopVoice();
     setResult(next);
-    if (card) void speak(card.front, targetLanguage);
-  }, [card, targetLanguage]);
+    if (card && skill && shouldSpeakOnReveal(skill)) void speak(card.front, targetLanguage);
+  }, [card, skill, targetLanguage]);
 
   const submitTyped = useCallback((text: string) => {
     if (!card || !text.trim()) return;

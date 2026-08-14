@@ -204,6 +204,21 @@ export function checkTypedAnswer(input: string, expected: string): AnswerCheck {
 // ─── Schedule preview ───────────────────────────────────────────────────────
 
 /** Days until the next review if the learner picks this grade — shown on the buttons. */
+/**
+ * Whether revealing the answer should play it.
+ *
+ * A listening exercise already played the word — that audio was the question.
+ * Playing it again the moment the learner has written down what they heard
+ * tells them nothing they did not just prove they knew, so it stays silent and
+ * leaves the replay to the button beside the answer. The other two exercises
+ * cue from written text, so this is the first time the word is heard: after
+ * writing it, that is the pronunciation they could not check any other way,
+ * and after saying it aloud, it is the model to compare their own attempt to.
+ */
+export function shouldSpeakOnReveal(skill: ProductiveSkill): boolean {
+  return skill !== "listen";
+}
+
 export function previewIntervalDays(score: SrsScore, progress?: SkillProgress): number {
   const prev = progress ?? createDefaultSkillProgress();
   return calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor).intervalDays;
