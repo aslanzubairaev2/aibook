@@ -487,6 +487,9 @@ function AppInner() {
         targetLanguage: dbSettings.active_target_lang,
         uiLanguage: dbSettings.ui_language,
         ttsProvider: normalizeTtsProvider(dbSettings.tts_provider),
+        // Before the column exists the account has no voices to speak of, so
+        // whatever this device already chose stands.
+        ttsVoices: dbSettings.tts_voices ?? getLocalProfile().ttsVoices,
         readingMinutes: dbSettings.reading_minutes ?? 0,
         booksStarted: dbSettings.books_started ?? 0,
         booksFinished: dbSettings.books_finished ?? 0,

@@ -12,6 +12,7 @@
 import { NextResponse } from "next/server";
 import {
   CARTESIA_API_VERSION,
+  ELEVENLABS_MALE_VOICES,
   getStaticTtsVoices,
   normalizeTtsProvider,
   supportsVoiceChoice,
@@ -57,14 +58,16 @@ async function listElevenLabsVoices(): Promise<VoiceList> {
   });
   if (!response.ok) {
     console.error(`ElevenLabs voice list failed (${response.status}):`, await response.text());
-    return { error: `ElevenLabs вернул ошибку ${response.status}.`, status: 502 };
+    // A key scoped to text-to-speech alone cannot read the library, and that is
+    // no reason to offer nothing: the premade voices work with any key.
+    return { voices: ELEVENLABS_MALE_VOICES };
   }
 
   const payload = await response.json() as {
     voices?: { voice_id?: string; name?: string; labels?: Record<string, string> }[];
   };
 
-  const voices = (payload.voices ?? [])
+  const fromAccount = (payload.voices ?? [])
     .filter((voice) => voice.voice_id && voice.name)
     // The label is the account's own, so trust it; a voice with no gender label
     // is kept rather than hidden, since silence there is not "female".
@@ -75,7 +78,12 @@ async function listElevenLabsVoices(): Promise<VoiceList> {
       hint: [voice.labels?.accent, voice.labels?.description].filter(Boolean).join(", ") || undefined,
     }));
 
-  return { voices };
+  // An account that has not starred the premade voices would otherwise not be
+  // offered Roger at all, though every key can speak with him.
+  const seen = new Set(fromAccount.map((voice) => voice.id));
+  const premade = ELEVENLABS_MALE_VOICES.filter((voice) => !seen.has(voice.id));
+
+  return { voices: [...premade, ...fromAccount] };
 }
 
 /** Male voices from the Cartesia library. */

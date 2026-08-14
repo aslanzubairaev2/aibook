@@ -198,10 +198,44 @@ export function isCartesiaTtsSupported(lang: string) {
 // on a single card. Voices are addressed by id, and the library shows names, so
 // a name is resolved the same way Cartesia's is.
 
-export const ELEVENLABS_MODEL = "eleven_multilingual_v2";
+/**
+ * Flash 2.5 by default: the cheapest of the models that still covers the
+ * languages this app teaches. ELEVENLABS_MODEL_ID overrides it — that variable
+ * wins over this constant, which only fills in when it is unset.
+ */
+export const ELEVENLABS_MODEL = "eleven_flash_v2_5";
 
-/** Roger, by name: the id is looked up once against the account's voices. */
-export const ELEVENLABS_DEFAULT_VOICE = "Roger";
+/** Roger, by id — see ELEVENLABS_MALE_VOICES for why the id and not the name. */
+export const ELEVENLABS_DEFAULT_VOICE = "CwhRBWXzGAHq8TQ4Fs17";
+
+/**
+ * The premade male voices, by id.
+ *
+ * An ElevenLabs key carries granular permissions, and a key scoped to
+ * text-to-speech alone cannot read the voice list — asking it to would answer
+ * 401 and take the whole engine down with it. These ids are stable and public,
+ * so the common case needs no lookup at all; the account's own voices are still
+ * fetched on top of this when the key is allowed to see them.
+ */
+export const ELEVENLABS_MALE_VOICES: TtsVoiceOption[] = [
+  { id: "CwhRBWXzGAHq8TQ4Fs17", name: "Roger", hint: "уверенный" },
+  { id: "JBFqnCBsd6RMkjVDRZzb", name: "George", hint: "рассказчик" },
+  { id: "onwK4e9ZLuTAKqWW03F9", name: "Daniel", hint: "дикторский" },
+  { id: "nPczCjzI2devNBz1zQrb", name: "Brian", hint: "глубокий" },
+  { id: "iP95p4xoKVk53GoZ742B", name: "Chris", hint: "разговорный" },
+  { id: "cjVigY5qzO86Huf0OWal", name: "Eric", hint: "ровный" },
+  { id: "bIHbv24MWmeRgasZH58o", name: "Will", hint: "дружелюбный" },
+  { id: "TX3LPaxmHKxFdv7VOQHJ", name: "Liam", hint: "молодой" },
+  { id: "N2lVS1w4EtoT3dr4eOWO", name: "Callum", hint: "с характером" },
+  { id: "IKne3meq5aSn9XLyUdCD", name: "Charlie", hint: "живой" },
+  { id: "pqHfZKP75CvOlQylNhV4", name: "Bill", hint: "взрослый" },
+];
+
+/** The id for a premade voice name, so a name needs no API call to resolve. */
+export function getElevenLabsVoiceIdByName(name: string): string | null {
+  const wanted = name.trim().toLowerCase();
+  return ELEVENLABS_MALE_VOICES.find((voice) => voice.name.toLowerCase() === wanted)?.id ?? null;
+}
 
 /**
  * Raw PCM, not MP3.

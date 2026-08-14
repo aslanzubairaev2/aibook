@@ -484,6 +484,23 @@ textarea,
 }
 .lang-select:focus { border-color: var(--accent); }
 
+/* Sits next to a .lang-select in the same row, so it matches its shape. */
+.voice-sample-btn {
+  padding: 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--bg-card);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+.voice-sample-btn:hover { border-color: var(--accent); color: var(--accent); }
+.voice-sample-btn:disabled { opacity: 0.45; pointer-events: none; }
+
 /* ─── API Key Input ──────────────────────────────────────────────────────── */
 .api-key-input {
   width: 100%;

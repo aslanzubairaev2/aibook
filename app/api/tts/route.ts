@@ -13,6 +13,7 @@ import {
   ELEVENLABS_PCM_SAMPLE_RATE,
   GEMINI_MALE_VOICES,
   getBcp47Locale,
+  getElevenLabsVoiceIdByName,
   isCartesiaTtsSupported,
   isCartesiaVoiceId,
   isElevenLabsTtsSupported,
@@ -597,6 +598,11 @@ async function resolveElevenLabsVoice(
   // ElevenLabs ids are 20 characters of base62; anything that shape is an id.
   if (/^[A-Za-z0-9]{20}$/.test(configured)) return { id: configured };
 
+  // A premade name resolves from the table, so a key scoped to text-to-speech
+  // alone — one that may not read the voice list — still works.
+  const premade = getElevenLabsVoiceIdByName(configured);
+  if (premade) return { id: premade };
+
   const wanted = configured.toLowerCase();
   const remembered = elevenLabsVoiceIds.get(wanted);
   if (remembered) return { id: remembered };
@@ -627,7 +633,11 @@ async function listElevenLabsVoices(
     const err = await response.text();
     console.error(`ElevenLabs voice list failed (${response.status}):`, err);
     if (response.status === 401) {
-      return { error: "ElevenLabs не принял ключ. Проверьте ELEVENLABS_API_KEY.", status: 401 };
+      // Distinct from a TTS 401: the key works, it just may not read voices.
+      return {
+        error: "Ключу ElevenLabs не разрешено читать список голосов (нужно право voices_read).",
+        status: 401,
+      };
     }
     return { error: `Не удалось получить список голосов ElevenLabs (${response.status}).`, status: 502 };
   }

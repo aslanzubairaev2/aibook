@@ -338,6 +338,25 @@ async function requestTts(
   }
 }
 
+/**
+ * A line to judge a voice by.
+ *
+ * Long enough to hear the rhythm and a couple of consonant clusters, short
+ * enough that comparing six voices is not a chore — and in the language being
+ * learned, since that is the one the voice has to get right.
+ */
+const VOICE_SAMPLES: Record<string, string> = {
+  de: "Guten Tag! Heute lernen wir zusammen ein paar neue Wörter.",
+  en: "Good afternoon! Today we are going to learn a few new words together.",
+  fr: "Bonjour ! Aujourd'hui, nous allons apprendre quelques mots nouveaux.",
+  es: "¡Buenos días! Hoy vamos a aprender algunas palabras nuevas.",
+  ru: "Добрый день! Сегодня мы выучим несколько новых слов.",
+};
+
+export function getVoiceSample(lang: string): string {
+  return VOICE_SAMPLES[normalizeLanguageCode(lang)] ?? VOICE_SAMPLES.en;
+}
+
 export async function speak(
   text: string,
   lang: string,

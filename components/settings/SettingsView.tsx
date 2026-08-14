@@ -10,6 +10,7 @@ import {
   saveLocalGeminiKey 
 } from "@/lib/db/local";
 import { sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
+import { getLastTtsError, getVoiceSample, speak } from "@/lib/tts";
 import { useAuth } from "@/lib/auth/useAuth";
 import {
   getAvailableTtsProviders,
@@ -49,6 +50,8 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
   const [voices, setVoices] = useState<TtsVoiceOption[]>([]);
   const [voicesError, setVoicesError] = useState<string | null>(null);
   const [voicesLoading, setVoicesLoading] = useState(false);
+  const [samplePlaying, setSamplePlaying] = useState(false);
+  const [sampleError, setSampleError] = useState<string | null>(null);
 
   useEffect(() => {
     setVoicesError(null);
@@ -153,6 +156,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
         active_target_lang: updated.targetLanguage,
         ui_language: updated.uiLanguage,
         tts_provider: updated.ttsProvider ?? "local",
+        tts_voices: (updated.ttsVoices ?? {}) as Record<string, string>,
         reading_minutes: updated.readingMinutes,
         books_started: updated.booksStarted,
         books_finished: updated.booksFinished,
@@ -166,14 +170,51 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
   const storedVoice = profile.ttsVoices?.[activeProvider];
   const selectedVoice = voices.some((v) => v.id === storedVoice) ? storedVoice! : voices[0]?.id ?? "";
 
+  /**
+   * Play the sample line in whichever voice is selected.
+   *
+   * `speak()` reads the choice back out of the saved profile, so this runs
+   * after the save rather than beside it.
+   */
+  async function playSample() {
+    setSampleError(null);
+    setSamplePlaying(true);
+    try {
+      await speak(getVoiceSample(profile.targetLanguage), profile.targetLanguage);
+      // A refusal still ends in the browser voice, so say what went wrong.
+      setSampleError(getLastTtsError());
+    } catch {
+      setSampleError("Не удалось воспроизвести пример.");
+    } finally {
+      setSamplePlaying(false);
+    }
+  }
+
   /** Remember the voice for this engine only — each engine has its own cast. */
-  function setVoice(voiceId: string) {
-    const updated: UserProfile = {
-      ...profile,
-      ttsVoices: { ...profile.ttsVoices, [activeProvider]: voiceId },
-    };
+  async function setVoice(voiceId: string) {
+    const ttsVoices = { ...profile.ttsVoices, [activeProvider]: voiceId };
+    const updated: UserProfile = { ...profile, ttsVoices };
     saveLocalProfile(updated);
     onProfileChange(updated);
+
+    // Hearing it immediately is the point of the picker: the names mean
+    // nothing until you have heard them next to each other.
+    void playSample();
+
+    if (user) {
+      await sbUpsertSettings({
+        user_id: user.id,
+        native_language: updated.nativeLanguage,
+        active_target_lang: updated.targetLanguage,
+        ui_language: updated.uiLanguage,
+        tts_provider: updated.ttsProvider ?? "local",
+        tts_voices: ttsVoices as Record<string, string>,
+        reading_minutes: updated.readingMinutes,
+        books_started: updated.booksStarted,
+        books_finished: updated.booksFinished,
+        updated_at: new Date().toISOString(),
+      });
+    }
   }
 
   return (
@@ -403,13 +444,32 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
               className="lang-select"
               value={selectedVoice}
               disabled={voicesLoading || voices.length === 0}
-              onChange={(e) => setVoice(e.target.value)}
+              onChange={(e) => void setVoice(e.target.value)}
             >
               {voices.length === 0 && <option value="">—</option>}
               {voices.map((voice) => (
                 <option key={voice.id} value={voice.id}>{voice.name}</option>
               ))}
             </select>
+          </div>
+        )}
+
+        {supportsVoiceChoice(activeProvider) && voices.length > 0 && (
+          <div className="setting-row">
+            <div>
+              <div className="setting-row-label">Пример</div>
+              <div className="setting-row-value">
+                {sampleError ?? (samplePlaying ? "Звучит…" : getVoiceSample(profile.targetLanguage))}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="voice-sample-btn"
+              disabled={samplePlaying}
+              onClick={() => void playSample()}
+            >
+              {samplePlaying ? "…" : "▶ Послушать"}
+            </button>
           </div>
         )}
       </div>
