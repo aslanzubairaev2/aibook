@@ -5,6 +5,8 @@ import {
   getBcp47Locale,
   getSpeechifyLocale,
   getSpeechifyModel,
+  isCartesiaTtsSupported,
+  isCartesiaVoiceId,
   isInworldTtsSupported,
   isOpenAiTtsSupported,
   isSpeechifyTtsSupported,
@@ -46,14 +48,20 @@ test("reports no support for a language with no locale mapping", () => {
   assert.equal(isSpeechifyTtsSupported("de"), true);
 });
 
-test("offers every voice that can speak German", () => {
+test("offers every voice that can speak German, best first", () => {
   assert.deepEqual(
     getAvailableTtsProviders("de"),
-    ["local", "gemini", "deepgram", "speechify", "inworld", "openai"],
+    ["local", "gemini", "openai", "cartesia", "deepgram", "speechify", "inworld"],
   );
 
   // Polish has a locale for the paid voices but no Deepgram model.
-  assert.deepEqual(getAvailableTtsProviders("pl"), ["local", "gemini", "speechify", "inworld", "openai"]);
+  assert.deepEqual(
+    getAvailableTtsProviders("pl"),
+    ["local", "gemini", "openai", "cartesia", "speechify", "inworld"],
+  );
+
+  // Greek is outside Sonic 2's language list but still has a Speechify locale.
+  assert.deepEqual(getAvailableTtsProviders("el"), ["local", "gemini", "openai", "speechify", "inworld"]);
 
   // A language with no locale mapping leaves the browser, Gemini, and GPT-4o —
   // the last of which reads the language off the text and so never opts out.
@@ -64,6 +72,24 @@ test("labels the new providers", () => {
   assert.equal(getTtsProviderLabel("speechify"), "Speechify Simba");
   assert.equal(getTtsProviderLabel("inworld"), "Inworld TTS");
   assert.equal(getTtsProviderLabel("openai"), "OpenAI GPT-4o");
+  assert.equal(getTtsProviderLabel("cartesia"), "Cartesia Sonic");
+});
+
+test("Sonic 2 speaks its own list of languages and no others", () => {
+  for (const lang of ["de", "ru", "ja", "pl", "sv"]) {
+    assert.equal(isCartesiaTtsSupported(lang), true, lang);
+  }
+  // Greek, Hebrew and the rest are outside Sonic 2's list.
+  for (const lang of ["el", "he", "uk", "xx"]) {
+    assert.equal(isCartesiaTtsSupported(lang), false, lang);
+  }
+});
+
+test("tells a Cartesia voice id from a voice name", () => {
+  assert.equal(isCartesiaVoiceId("a0e99841-438c-4a64-b679-ae501e7d6091"), true);
+  // The library shows names; those need looking up before they can be used.
+  assert.equal(isCartesiaVoiceId("Jameson"), false);
+  assert.equal(isCartesiaVoiceId(""), false);
 });
 
 test("GPT-4o needs no locale, so it speaks every language", () => {
@@ -94,12 +120,16 @@ test("Inworld takes the same locale tags, since one voice covers many languages"
   assert.equal(getBcp47Locale("de"), "de-DE");
 });
 
-test("builds the automatic Gemini fallback chain", () => {
-  assert.deepEqual(getTtsProviderChain(undefined, "de"), ["gemini", "speechify", "inworld", "openai"]);
+test("builds the automatic Gemini fallback chain in preference order", () => {
+  assert.deepEqual(
+    getTtsProviderChain(undefined, "de"),
+    ["gemini", "openai", "cartesia", "speechify", "inworld"],
+  );
   // Even with no locale mapping, GPT-4o can still answer for Gemini.
   assert.deepEqual(getTtsProviderChain("gemini", "xx"), ["gemini", "openai"]);
   assert.deepEqual(getTtsProviderChain("speechify", "de"), ["speechify"]);
   assert.deepEqual(getTtsProviderChain("openai", "de"), ["openai"]);
+  assert.deepEqual(getTtsProviderChain("cartesia", "de"), ["cartesia"]);
 });
 
 test("normalizes a missing provider to Gemini", () => {

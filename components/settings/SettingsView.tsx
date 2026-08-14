@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/local";
 import { sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
-import { getAvailableTtsProviders, getTtsProviderLabel, isDeepgramTtsSupported, isInworldTtsSupported, isOpenAiTtsSupported, isSpeechifyTtsSupported } from "@/lib/ttsProviders";
+import { getAvailableTtsProviders, getTtsProviderLabel, isCartesiaTtsSupported, isDeepgramTtsSupported, isInworldTtsSupported, isOpenAiTtsSupported, isSpeechifyTtsSupported } from "@/lib/ttsProviders";
 import type { TtsProvider, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -287,6 +287,12 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
           >
             <option value="local">Локальный</option>
             <option value="gemini">Gemini TTS</option>
+            {isOpenAiTtsSupported(profile.targetLanguage) && (
+              <option value="openai">OpenAI GPT-4o</option>
+            )}
+            {isCartesiaTtsSupported(profile.targetLanguage) && (
+              <option value="cartesia">Cartesia Sonic</option>
+            )}
             {isDeepgramTtsSupported(profile.targetLanguage) && (
               <option value="deepgram">Deepgram Aura</option>
             )}
@@ -295,9 +301,6 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
             )}
             {isInworldTtsSupported(profile.targetLanguage) && (
               <option value="inworld">Inworld TTS</option>
-            )}
-            {isOpenAiTtsSupported(profile.targetLanguage) && (
-              <option value="openai">OpenAI GPT-4o</option>
             )}
           </select>
         </div>

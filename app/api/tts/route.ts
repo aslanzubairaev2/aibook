@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { sbGetCachedTts, sbSaveCachedTts } from "@/lib/db/supabase";
 import {
+  CARTESIA_API_VERSION,
+  CARTESIA_DEFAULT_VOICE,
+  CARTESIA_MODEL,
+  CARTESIA_SAMPLE_RATE,
   DEEPGRAM_TTS_SAMPLE_RATE,
   getBcp47Locale,
+  isCartesiaTtsSupported,
+  isCartesiaVoiceId,
   getInworldAuthorizationHeader,
   getDeepgramTtsModel,
   getSpeechifyLocale,
@@ -34,7 +40,7 @@ export async function POST(req: Request) {
     const { text, lang, provider = "gemini" } = await req.json() as {
       text: string;
       lang: string;
-      provider?: "gemini" | "deepgram" | "speechify" | "inworld" | "openai";
+      provider?: "gemini" | "deepgram" | "speechify" | "inworld" | "openai" | "cartesia";
     };
 
     if (!text || typeof text !== "string") {
@@ -54,6 +60,21 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
       return NextResponse.json({ ...spoken, provider, model: OPENAI_TTS_MODEL });
+    }
+
+    if (provider === "cartesia") {
+      if (!isCartesiaTtsSupported(lang)) {
+        return NextResponse.json({ error: "Cartesia TTS does not support this language" }, { status: 400 });
+      }
+      if (!process.env.CARTESIA_API_KEY) {
+        return NextResponse.json({ error: "Не задан ключ Cartesia (CARTESIA_API_KEY)." }, { status: 500 });
+      }
+
+      const spoken = await speakWithCartesia(text, lang);
+      if ("error" in spoken) {
+        return NextResponse.json({ error: spoken.error }, { status: spoken.status });
+      }
+      return NextResponse.json({ ...spoken, provider, model: CARTESIA_MODEL });
     }
 
     if (provider === "inworld") {
@@ -249,7 +270,7 @@ type Spoken =
   | { error: string; status: number };
 
 type AutomaticFallback = Exclude<Spoken, { error: string; status: number }> & {
-  provider: "speechify" | "inworld" | "openai";
+  provider: "speechify" | "inworld" | "openai" | "cartesia";
   model: string;
   fellBackFrom: "gemini";
   reason: string;
@@ -312,6 +333,23 @@ async function speakWithAutomaticFallback(
           };
         }
         console.warn(`OpenAI fallback failed with status ${spoken.status}: ${spoken.error}`);
+        continue;
+      }
+
+      if (provider === "cartesia") {
+        if (!process.env.CARTESIA_API_KEY) continue;
+
+        const spoken = await speakWithCartesia(text, lang);
+        if (!("error" in spoken)) {
+          return {
+            ...spoken,
+            provider: "cartesia",
+            model: CARTESIA_MODEL,
+            fellBackFrom: "gemini",
+            reason,
+          };
+        }
+        console.warn(`Cartesia fallback failed with status ${spoken.status}: ${spoken.error}`);
       }
     } catch (error) {
       console.error(`${provider} fallback threw:`, error);
@@ -319,6 +357,133 @@ async function speakWithAutomaticFallback(
   }
 
   return null;
+}
+
+/**
+ * Voice name → id, remembered for the life of the process.
+ *
+ * Cartesia addresses voices by UUID while its library shows them by name, so a
+ * configured name costs one lookup. The account's voices do not move between
+ * requests, so that lookup is worth doing once rather than per card.
+ */
+const cartesiaVoiceIds = new Map<string, string>();
+
+type CartesiaVoice = { id?: string; name?: string };
+
+/** Resolve the configured Cartesia voice to the id the synthesis call needs. */
+async function resolveCartesiaVoice(apiKey: string): Promise<{ id: string } | { error: string; status: number }> {
+  const configured = (process.env.CARTESIA_VOICE_ID || process.env.CARTESIA_VOICE || "").trim()
+    || CARTESIA_DEFAULT_VOICE;
+
+  // Already an id: nothing to look up.
+  if (isCartesiaVoiceId(configured)) return { id: configured };
+
+  const wanted = configured.toLowerCase();
+  const remembered = cartesiaVoiceIds.get(wanted);
+  if (remembered) return { id: remembered };
+
+  // The library is paged, and a name can sit past the first page.
+  let cursor: string | undefined;
+  for (let page = 0; page < 5; page++) {
+    const url = new URL("https://api.cartesia.ai/voices");
+    url.searchParams.set("limit", "100");
+    if (cursor) url.searchParams.set("starting_after", cursor);
+
+    const response = await fetch(url, {
+      headers: { "X-API-Key": apiKey, "Cartesia-Version": CARTESIA_API_VERSION },
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.error(`Cartesia voice list failed (${response.status}):`, err);
+      if (response.status === 401 || response.status === 403) {
+        return { error: "Cartesia не принял ключ. Проверьте CARTESIA_API_KEY.", status: response.status };
+      }
+      return {
+        error: `Не удалось получить список голосов Cartesia (${response.status}). Укажите UUID в CARTESIA_VOICE_ID.`,
+        status: 502,
+      };
+    }
+
+    const payload = await response.json() as CartesiaVoice[] | { data?: CartesiaVoice[]; has_more?: boolean };
+    const voices = Array.isArray(payload) ? payload : payload.data ?? [];
+    const match = voices.find((voice) => voice.name?.trim().toLowerCase() === wanted);
+    if (match?.id) {
+      cartesiaVoiceIds.set(wanted, match.id);
+      return { id: match.id };
+    }
+
+    const hasMore = !Array.isArray(payload) && payload.has_more;
+    const last = voices[voices.length - 1]?.id;
+    if (!hasMore || !last) break;
+    cursor = last;
+  }
+
+  return {
+    error: `Cartesia не знает голос «${configured}». Скопируйте его UUID из библиотеки в CARTESIA_VOICE_ID.`,
+    status: 400,
+  };
+}
+
+/**
+ * Synthesise through Cartesia Sonic 2.
+ *
+ * One multilingual model over a fixed language list, taking the bare two-letter
+ * code. MP3 is asked for so the audio travels the same path Inworld and GPT-4o
+ * already use.
+ */
+async function speakWithCartesia(text: string, lang: string): Promise<Spoken> {
+  const apiKey = (process.env.CARTESIA_API_KEY || "").trim();
+  if (!apiKey) return { error: "Missing Cartesia API key", status: 500 };
+
+  const voice = await resolveCartesiaVoice(apiKey);
+  if ("error" in voice) return voice;
+
+  const language = normalizeLanguageCode(lang);
+  // The voice is part of the recording's identity, so it belongs in the key.
+  const cacheVoiceKey = `${CARTESIA_MODEL}:${voice.id}`;
+
+  const cached = await sbGetCachedTts(text, language, cacheVoiceKey);
+  if (cached) return { audioBase64: cached, source: "db_cache", format: "mp3" };
+
+  const response = await fetch("https://api.cartesia.ai/tts/bytes", {
+    method: "POST",
+    headers: {
+      "X-API-Key": apiKey,
+      "Cartesia-Version": CARTESIA_API_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model_id: CARTESIA_MODEL,
+      transcript: text,
+      voice: { mode: "id", id: voice.id },
+      language,
+      output_format: { container: "mp3", sample_rate: CARTESIA_SAMPLE_RATE, bit_rate: 128000 },
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    console.error(`Cartesia TTS API error (${response.status}, voice=${voice.id}, lang=${language}):`, err);
+    if (response.status === 401 || response.status === 403) {
+      return { error: "Cartesia не приняла ключ. Проверьте CARTESIA_API_KEY.", status: response.status };
+    }
+    if (response.status === 402 || response.status === 429) {
+      return { error: "Cartesia ограничила запросы. Проверьте баланс кредитов.", status: response.status };
+    }
+    if (response.status === 400 && /voice/i.test(err)) {
+      // A stale id in the cache is worth forgetting, so the next call re-resolves.
+      cartesiaVoiceIds.clear();
+      return { error: "Cartesia отклонила голос. Проверьте CARTESIA_VOICE_ID.", status: 400 };
+    }
+    return { error: "Cartesia TTS failed", status: response.status };
+  }
+
+  const audioBase64 = Buffer.from(await response.arrayBuffer()).toString("base64");
+  if (!audioBase64) return { error: "Cartesia returned no audio", status: 502 };
+
+  await sbSaveCachedTts(text, language, cacheVoiceKey, audioBase64);
+  return { audioBase64, source: "api", format: "mp3" };
 }
 
 /**

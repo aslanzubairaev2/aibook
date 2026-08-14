@@ -1,8 +1,10 @@
 import { getLocalProfile } from "./db/local";
 import { sbAuthHeaders } from "./db/supabase";
 import {
+  CARTESIA_MODEL,
   DEEPGRAM_TTS_SAMPLE_RATE,
   getDeepgramTtsModel,
+  isCartesiaTtsSupported,
   getSpeechifyModel,
   isDeepgramTtsSupported,
   isInworldTtsSupported,
@@ -135,7 +137,7 @@ let playSegmentFn: ((offset: number) => void) | null = null;
 /** Providers whose audio plays through the Web Audio path rather than the browser voice. */
 function isRemoteProvider(provider: string | undefined): boolean {
   return provider === "gemini" || provider === "deepgram" || provider === "speechify"
-    || provider === "inworld" || provider === "openai";
+    || provider === "inworld" || provider === "openai" || provider === "cartesia";
 }
 
 export function pauseTTS() {
@@ -248,6 +250,7 @@ function resolveProvider(requested: string, lang: string): string {
   if (requested === "speechify" && !isSpeechifyTtsSupported(lang)) return "local";
   if (requested === "inworld" && !isInworldTtsSupported(lang)) return "local";
   if (requested === "openai" && !isOpenAiTtsSupported(lang)) return "local";
+  if (requested === "cartesia" && !isCartesiaTtsSupported(lang)) return "local";
   return requested;
 }
 
@@ -257,6 +260,7 @@ function voiceKeyFor(provider: string, lang: string): string {
   if (provider === "speechify") return getSpeechifyModel(lang);
   if (provider === "inworld") return INWORLD_MODEL;
   if (provider === "openai") return OPENAI_TTS_MODEL;
+  if (provider === "cartesia") return CARTESIA_MODEL;
   return "Algenib";
 }
 

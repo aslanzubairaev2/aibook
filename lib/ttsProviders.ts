@@ -7,6 +7,7 @@ const TTS_PROVIDERS = new Set<TtsProvider>([
   "speechify",
   "inworld",
   "openai",
+  "cartesia",
 ]);
 
 const LEGACY_TTS_PROVIDERS: Record<string, TtsProvider> = {
@@ -18,6 +19,7 @@ const LEGACY_TTS_PROVIDERS: Record<string, TtsProvider> = {
   "gpt-4o": "openai",
   "gpt_4o": "openai",
   "openai-tts": "openai",
+  sonic: "cartesia",
 };
 
 export const DEEPGRAM_TTS_SAMPLE_RATE = 24000;
@@ -141,6 +143,44 @@ export function isOpenAiTtsSupported(_lang: string) {
   return true;
 }
 
+// ─── Cartesia ────────────────────────────────────────────────────────────────
+//
+// Sonic 2 is one multilingual model over a fixed list of languages, and it takes
+// the bare two-letter code rather than a locale. The voice, though, is a UUID
+// from the account's own library — there is no name to guess at — so it is read
+// from the environment, and looked up from the account when unset.
+
+export const CARTESIA_MODEL = "sonic-2";
+
+/** The API version this integration was written against; Cartesia requires it. */
+export const CARTESIA_API_VERSION = "2024-11-13";
+
+/** MP3 out of Cartesia is 44.1 kHz; the player is told so by the container. */
+export const CARTESIA_SAMPLE_RATE = 44100;
+
+const CARTESIA_LANGUAGES = new Set([
+  "en", "fr", "de", "es", "pt", "zh", "ja",
+  "hi", "it", "ko", "nl", "pl", "ru", "sv", "tr",
+]);
+
+/** The voice to speak with when the deployment names none. */
+export const CARTESIA_DEFAULT_VOICE = "Jameson";
+
+/**
+ * Whether a configured voice is already the id the API wants.
+ *
+ * Cartesia addresses voices by UUID, but the library shows them by name, so the
+ * value in the environment may be either. A name has to be looked up against
+ * the account's voices; a UUID can go straight through.
+ */
+export function isCartesiaVoiceId(voice: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(voice.trim());
+}
+
+export function isCartesiaTtsSupported(lang: string) {
+  return CARTESIA_LANGUAGES.has(normalizeLanguageCode(lang));
+}
+
 export function normalizeTtsProvider(provider: unknown): TtsProvider {
   if (typeof provider !== "string") return "gemini";
 
@@ -153,11 +193,14 @@ export function normalizeTtsProvider(provider: unknown): TtsProvider {
 }
 
 export function getAvailableTtsProviders(lang: string): TtsProvider[] {
+  // Ordered by preference: Gemini leads, then GPT-4o, then Cartesia; the voices
+  // that came before them follow in the order they were added.
   const providers: TtsProvider[] = ["local", "gemini"];
+  if (isOpenAiTtsSupported(lang)) providers.push("openai");
+  if (isCartesiaTtsSupported(lang)) providers.push("cartesia");
   if (isDeepgramTtsSupported(lang)) providers.push("deepgram");
   if (isSpeechifyTtsSupported(lang)) providers.push("speechify");
   if (isInworldTtsSupported(lang)) providers.push("inworld");
-  if (isOpenAiTtsSupported(lang)) providers.push("openai");
   return providers;
 }
 export function resolveTtsProvider(provider: unknown, lang: string): TtsProvider {
@@ -170,9 +213,10 @@ export function getTtsProviderChain(provider: unknown, lang: string): TtsProvide
   if (primary !== "gemini") return [primary];
 
   const chain: TtsProvider[] = ["gemini"];
+  if (isOpenAiTtsSupported(lang)) chain.push("openai");
+  if (isCartesiaTtsSupported(lang)) chain.push("cartesia");
   if (isSpeechifyTtsSupported(lang)) chain.push("speechify");
   if (isInworldTtsSupported(lang)) chain.push("inworld");
-  if (isOpenAiTtsSupported(lang)) chain.push("openai");
   return chain;
 }
 
@@ -182,5 +226,6 @@ export function getTtsProviderLabel(provider: TtsProvider) {
   if (provider === "speechify") return "Speechify Simba";
   if (provider === "inworld") return "Inworld TTS";
   if (provider === "openai") return "OpenAI GPT-4o";
+  if (provider === "cartesia") return "Cartesia Sonic";
   return "Локальный";
 }
