@@ -129,7 +129,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
     setModelsLoading(true);
     (async () => {
       try {
-        const res = await fetch(`/api/tts/models?provider=${activeProvider}`, {
+        const res = await fetch(`/api/tts/models?provider=${activeProvider}&lang=${profile.targetLanguage}`, {
           headers: await sbAuthHeaders(),
         });
         const data = await res.json() as { models?: TtsModelOption[]; note?: string; error?: string };
@@ -152,7 +152,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
     })();
 
     return () => { cancelled = true; };
-  }, [activeProvider]);
+  }, [activeProvider, profile.targetLanguage]);
 
   const [mcpUrl, setMcpUrl] = useState<string | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);

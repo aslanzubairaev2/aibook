@@ -15,6 +15,7 @@ import { NextResponse } from "next/server";
 import {
   CARTESIA_MODEL,
   GEMINI_TTS_MODEL,
+  normalizeLanguageCode,
   normalizeTtsProvider,
   type TtsModelOption,
 } from "@/lib/ttsProviders";
@@ -28,10 +29,12 @@ export async function GET(req: Request) {
   const user = await getUserFromRequest(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const provider = normalizeTtsProvider(new URL(req.url).searchParams.get("provider"));
+  const params = new URL(req.url).searchParams;
+  const provider = normalizeTtsProvider(params.get("provider"));
+  const lang = params.get("lang") ?? "";
 
   try {
-    const result = await listModels(provider);
+    const result = await listModels(provider, lang);
     if ("error" in result) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }
@@ -42,8 +45,8 @@ export async function GET(req: Request) {
   }
 }
 
-async function listModels(provider: string): Promise<ModelList> {
-  if (provider === "elevenlabs") return listElevenLabsModels();
+async function listModels(provider: string, lang: string): Promise<ModelList> {
+  if (provider === "elevenlabs") return listElevenLabsModels(lang);
   if (provider === "openai") return listOpenAiModels();
   if (provider === "gemini") return listGeminiModels();
   if (provider === "cartesia") return listCartesiaModels();
@@ -52,7 +55,7 @@ async function listModels(provider: string): Promise<ModelList> {
 }
 
 /** ElevenLabs publishes its models, and with them the only real cost figure. */
-async function listElevenLabsModels(): Promise<ModelList> {
+async function listElevenLabsModels(lang: string): Promise<ModelList> {
   const apiKey = (process.env.ELEVENLABS_API_KEY || process.env.ELVENLABS_API_KEY || "").trim();
   if (!apiKey) return { error: "Не задан ключ ElevenLabs (ELEVENLABS_API_KEY).", status: 500 };
 
@@ -73,8 +76,22 @@ async function listElevenLabsModels(): Promise<ModelList> {
     ? payload as Record<string, unknown>[]
     : ((payload as { models?: Record<string, unknown>[] })?.models ?? []);
 
+  const wanted = normalizeLanguageCode(lang);
+
   const models = raw
     .filter((model) => model.can_do_text_to_speech !== false)
+    // Flash v2 and Turbo v2 are English-only, and offering them for a German
+    // deck is offering a model that will mispronounce every word of it. The
+    // listing states each model's languages, so honour it — but only when it
+    // actually says: an absent list is not a claim that the model is narrow.
+    .filter((model) => {
+      const languages = model.languages;
+      if (!wanted || !Array.isArray(languages) || languages.length === 0) return true;
+      return languages.some((entry) => {
+        const id = (entry as { language_id?: unknown })?.language_id;
+        return typeof id === "string" && normalizeLanguageCode(id) === wanted;
+      });
+    })
     .map((model) => {
       // The rate object is read only if it is actually there and numeric; an
       // absent one leaves the price blank rather than filled with a guess.
