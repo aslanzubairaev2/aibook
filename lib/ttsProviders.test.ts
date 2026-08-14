@@ -11,6 +11,7 @@ import {
   getTtsProviderLabel,
   getTtsProviderChain,
   getInworldAuthorizationHeader,
+  normalizeOpenAiVoice,
   normalizeTtsProvider,
 } from "./ttsProviders.ts";
 
@@ -69,6 +70,15 @@ test("GPT-4o needs no locale, so it speaks every language", () => {
   for (const lang of ["de", "ru", "zh", "xx"]) {
     assert.equal(isOpenAiTtsSupported(lang), true, lang);
   }
+});
+
+test("takes an OpenAI voice in the casing the playground shows it", () => {
+  // The playground lists "Ash"; the API accepts only "ash" and 400s otherwise.
+  assert.equal(normalizeOpenAiVoice("Ash"), "ash");
+  assert.equal(normalizeOpenAiVoice(" ALLOY "), "alloy");
+  assert.equal(normalizeOpenAiVoice("onyx"), "onyx");
+  // Not a voice at all: leave it be, so OpenAI's own message explains it.
+  assert.equal(normalizeOpenAiVoice("Matthias"), "Matthias");
 });
 
 test("accepts the names a learner might type for GPT-4o", () => {

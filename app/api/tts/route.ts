@@ -11,6 +11,7 @@ import {
   INWORLD_DEFAULT_VOICE,
   INWORLD_MODEL,
   normalizeLanguageCode,
+  normalizeOpenAiVoice,
   OPENAI_DEFAULT_VOICE,
   OPENAI_TTS_MODEL,
   OPENAI_VOICES,
@@ -332,7 +333,8 @@ function getOpenAiApiKey() {
 }
 
 function getOpenAiVoiceId() {
-  return (process.env.GPT_VOICE_ID || process.env.OPENAI_VOICE_ID || "").trim() || OPENAI_DEFAULT_VOICE;
+  const configured = (process.env.GPT_VOICE_ID || process.env.OPENAI_VOICE_ID || "").trim();
+  return configured ? normalizeOpenAiVoice(configured) : OPENAI_DEFAULT_VOICE;
 }
 
 /**

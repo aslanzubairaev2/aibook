@@ -122,6 +122,21 @@ export const OPENAI_VOICES = [
   "fable", "nova", "onyx", "sage", "shimmer", "verse",
 ];
 
+/**
+ * The voice name in the casing the API accepts.
+ *
+ * OpenAI's playground lists the voices capitalised — "Ash", "Alloy" — but the
+ * API takes only the lowercase form and answers anything else with a 400. The
+ * name copied off the screen is the right voice, so fix the casing rather than
+ * failing on it. A name that is not a voice at all is passed through untouched,
+ * so OpenAI's own message still explains it.
+ */
+export function normalizeOpenAiVoice(voice: string) {
+  const trimmed = voice.trim();
+  const lowered = trimmed.toLowerCase();
+  return OPENAI_VOICES.includes(lowered) ? lowered : trimmed;
+}
+
 export function isOpenAiTtsSupported(_lang: string) {
   return true;
 }
