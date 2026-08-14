@@ -16,10 +16,31 @@ import {
   getAvailableTtsProviders,
   getStaticTtsVoices,
   getTtsProviderLabel,
+  supportsModelChoice,
   supportsVoiceChoice,
+  type TtsModelOption,
   type TtsVoiceOption,
 } from "@/lib/ttsProviders";
 import type { TtsProvider, UserProfile } from "@/lib/types";
+
+/**
+ * What to say about the selected model.
+ *
+ * The relative cost comes first when the provider states one — it is the thing
+ * being compared — and the provider's own note otherwise. Nothing is invented:
+ * an engine that publishes no price simply shows its description.
+ */
+function modelDescription(models: TtsModelOption[], selected: string, note: string | null) {
+  const model = models.find((m) => m.id === selected);
+  if (!model) return note ?? "Модели движка";
+
+  const parts: string[] = [];
+  if (typeof model.costMultiplier === "number") parts.push(`×${model.costMultiplier} к расходу символов`);
+  if (model.unverified) parts.push("список задан вручную");
+  if (model.description) parts.push(model.description);
+
+  return parts.join(" · ").slice(0, 120) || note || model.id;
+}
 
 type Props = {
   profile: UserProfile;
@@ -44,6 +65,10 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
   const [voices, setVoices] = useState<TtsVoiceOption[]>([]);
   const [voicesError, setVoicesError] = useState<string | null>(null);
   const [voicesLoading, setVoicesLoading] = useState(false);
+  const [models, setModels] = useState<TtsModelOption[]>([]);
+  const [modelsNote, setModelsNote] = useState<string | null>(null);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
   const [samplePlaying, setSamplePlaying] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
 
@@ -85,6 +110,44 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
         }
       } finally {
         if (!cancelled) setVoicesLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [activeProvider]);
+
+  useEffect(() => {
+    setModelsError(null);
+    setModelsNote(null);
+
+    if (!supportsModelChoice(activeProvider)) {
+      setModels([]);
+      return;
+    }
+
+    let cancelled = false;
+    setModelsLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/tts/models?provider=${activeProvider}`, {
+          headers: await sbAuthHeaders(),
+        });
+        const data = await res.json() as { models?: TtsModelOption[]; note?: string; error?: string };
+        if (cancelled) return;
+        if (!res.ok) {
+          setModels([]);
+          setModelsError(data.error ?? `Не удалось загрузить модели (${res.status}).`);
+          return;
+        }
+        setModels(data.models ?? []);
+        setModelsNote(data.note ?? null);
+      } catch {
+        if (!cancelled) {
+          setModels([]);
+          setModelsError("Не удалось загрузить модели.");
+        }
+      } finally {
+        if (!cancelled) setModelsLoading(false);
       }
     })();
 
@@ -151,6 +214,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
         ui_language: updated.uiLanguage,
         tts_provider: updated.ttsProvider ?? "local",
         tts_voices: (updated.ttsVoices ?? {}) as Record<string, string>,
+        tts_models: (updated.ttsModels ?? {}) as Record<string, string>,
         reading_minutes: updated.readingMinutes,
         books_started: updated.booksStarted,
         books_finished: updated.booksFinished,
@@ -163,6 +227,36 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
   // for an engine whose stored voice belongs to a different one.
   const storedVoice = profile.ttsVoices?.[activeProvider];
   const selectedVoice = voices.some((v) => v.id === storedVoice) ? storedVoice! : voices[0]?.id ?? "";
+
+  // An engine's stored model may not be one it still offers; fall back to
+  // whatever the provider named first rather than showing an empty box.
+  const storedModel = profile.ttsModels?.[activeProvider];
+  const selectedModel = models.some((m) => m.id === storedModel) ? storedModel! : models[0]?.id ?? "";
+
+  /** Remember the model for this engine, and let the sample prove the change. */
+  async function setModel(modelId: string) {
+    const ttsModels = { ...profile.ttsModels, [activeProvider]: modelId };
+    const updated: UserProfile = { ...profile, ttsModels };
+    saveLocalProfile(updated);
+    onProfileChange(updated);
+    void playSample();
+
+    if (user) {
+      await sbUpsertSettings({
+        user_id: user.id,
+        native_language: updated.nativeLanguage,
+        active_target_lang: updated.targetLanguage,
+        ui_language: updated.uiLanguage,
+        tts_provider: updated.ttsProvider ?? "local",
+        tts_voices: (updated.ttsVoices ?? {}) as Record<string, string>,
+        tts_models: ttsModels as Record<string, string>,
+        reading_minutes: updated.readingMinutes,
+        books_started: updated.booksStarted,
+        books_finished: updated.booksFinished,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
 
   /**
    * Play the sample line in whichever voice is selected.
@@ -203,6 +297,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
         ui_language: updated.uiLanguage,
         tts_provider: updated.ttsProvider ?? "local",
         tts_voices: ttsVoices as Record<string, string>,
+        tts_models: (profile.ttsModels ?? {}) as Record<string, string>,
         reading_minutes: updated.readingMinutes,
         books_started: updated.booksStarted,
         books_finished: updated.booksFinished,
@@ -409,6 +504,30 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
             ))}
           </select>
         </div>
+
+        {supportsModelChoice(activeProvider) && (
+          <div className="setting-row">
+            <div>
+              <div className="setting-row-label">Модель</div>
+              <div className="setting-row-value">
+                {modelsError ?? (modelsLoading ? "Загружаю…" : modelDescription(models, selectedModel, modelsNote))}
+              </div>
+            </div>
+            <select
+              className="lang-select"
+              value={selectedModel}
+              disabled={modelsLoading || models.length === 0}
+              onChange={(e) => void setModel(e.target.value)}
+            >
+              {models.length === 0 && <option value="">—</option>}
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}{model.unverified ? " ?" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {supportsVoiceChoice(activeProvider) && (
           <div className="setting-row">

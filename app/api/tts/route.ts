@@ -12,11 +12,13 @@ import {
   ELEVENLABS_PCM_FORMAT,
   ELEVENLABS_PCM_SAMPLE_RATE,
   GEMINI_MALE_VOICES,
+  GEMINI_TTS_MODEL,
   getBcp47Locale,
   getElevenLabsVoiceIdByName,
   isCartesiaTtsSupported,
   isCartesiaVoiceId,
   isElevenLabsTtsSupported,
+  isValidModelRef,
   isValidVoiceRef,
   OPENAI_SPEAKING_RATE,
   TEACHER_INSTRUCTIONS,
@@ -39,7 +41,6 @@ import { parseWav } from "@/lib/wav";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 
 const MAX_TTS_TEXT_LENGTH = 2000;
-const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 
 export async function POST(req: Request) {
   try {
@@ -49,17 +50,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { text, lang, provider = "gemini", voice } = await req.json() as {
+    const { text, lang, provider = "gemini", voice, model } = await req.json() as {
       text: string;
       lang: string;
       provider?: TtsProvider;
       /** The voice the learner picked in settings, if this engine has a choice. */
       voice?: string;
+      /** Likewise the model, for trying one engine's models against each other. */
+      model?: string;
     };
 
-    // The voice is about to be spent against our key, so it is held to the shape
-    // provider ids and names share rather than forwarded as free text.
+    // Both are about to be spent against our key, so they are held to the shape
+    // provider ids share rather than forwarded as free text.
     const chosenVoice = typeof voice === "string" && isValidVoiceRef(voice) ? voice.trim() : undefined;
+    const chosenModel = typeof model === "string" && isValidModelRef(model) ? model.trim() : undefined;
 
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "Missing text" }, { status: 400 });
@@ -73,11 +77,11 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ OpenAI (GPT_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithOpenAi(text, lang, chosenVoice);
+      const spoken = await speakWithOpenAi(text, lang, chosenVoice, chosenModel);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
-      return NextResponse.json({ ...spoken, provider, model: OPENAI_TTS_MODEL });
+      return NextResponse.json({ ...spoken, provider, model: chosenModel || OPENAI_TTS_MODEL });
     }
 
     if (provider === "elevenlabs") {
@@ -88,11 +92,11 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ ElevenLabs (ELEVENLABS_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithElevenLabs(text, chosenVoice);
+      const spoken = await speakWithElevenLabs(text, chosenVoice, chosenModel);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
-      return NextResponse.json({ ...spoken, provider, model: getElevenLabsModel() });
+      return NextResponse.json({ ...spoken, provider, model: getElevenLabsModel(chosenModel) });
     }
 
     if (provider === "cartesia") {
@@ -103,11 +107,11 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ Cartesia (CARTESIA_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithCartesia(text, lang, chosenVoice);
+      const spoken = await speakWithCartesia(text, lang, chosenVoice, chosenModel);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
-      return NextResponse.json({ ...spoken, provider, model: getCartesiaModel() });
+      return NextResponse.json({ ...spoken, provider, model: getCartesiaModel(chosenModel) });
     }
 
     if (provider === "inworld") {
@@ -180,14 +184,20 @@ export async function POST(req: Request) {
       ? chosenVoice
       : "Algenib";
 
+    const geminiModel = chosenModel || GEMINI_TTS_MODEL;
+    // Only a model other than the usual one joins the key: everything recorded
+    // before models could be chosen was recorded with that one, and re-earning
+    // a full cache costs quota a preview model counts by the request.
+    const geminiCacheKey = geminiModel === GEMINI_TTS_MODEL ? voiceName : `${geminiModel}:${voiceName}`;
+
     // 1. Check database cache
-    const cachedAudio = await sbGetCachedTts(text, lang, voiceName);
+    const cachedAudio = await sbGetCachedTts(text, lang, geminiCacheKey);
     if (cachedAudio) {
-      return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider: "gemini", model: GEMINI_TTS_MODEL });
+      return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider: "gemini", model: geminiModel });
     }
 
     const makeRequest = async (inputText: string) => {
-      return await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${apiKey}`, {
+      return await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -253,7 +263,7 @@ export async function POST(req: Request) {
               freeTier: quota.freeTier,
               limit: quota.limit,
               quotaId: quota.quotaId,
-              model: GEMINI_TTS_MODEL,
+              model: geminiModel,
             },
             retryAfterSeconds: quota.retryAfterSeconds,
           },
@@ -286,8 +296,8 @@ export async function POST(req: Request) {
 
     if (inlineData?.data) {
       // 2. Save to database cache
-      await sbSaveCachedTts(text, lang, voiceName, inlineData.data);
-      return NextResponse.json({ audioBase64: inlineData.data, source: "api", provider: "gemini", model: GEMINI_TTS_MODEL });
+      await sbSaveCachedTts(text, lang, geminiCacheKey, inlineData.data);
+      return NextResponse.json({ audioBase64: inlineData.data, source: "api", provider: "gemini", model: geminiModel });
     }
 
     const reason = "Gemini TTS не вернул аудио.";
@@ -428,8 +438,8 @@ type CartesiaVoice = { id?: string; name?: string };
  * Model ids drift — sonic-2 was current when this was first wired and is not
  * any more — so the deployment can move to a new one without a code change.
  */
-function getCartesiaModel() {
-  return (process.env.CARTESIA_MODEL_ID || "").trim() || CARTESIA_MODEL;
+function getCartesiaModel(requested?: string) {
+  return requested || (process.env.CARTESIA_MODEL_ID || "").trim() || CARTESIA_MODEL;
 }
 
 /** Resolve the configured Cartesia voice to the id the synthesis call needs. */
@@ -501,14 +511,19 @@ async function resolveCartesiaVoice(
  * PCM, and the player schedules those samples with no decoding step at all.
  * That is the shortest path from bytes to sound the player has.
  */
-async function speakWithCartesia(text: string, lang: string, requestedVoice?: string): Promise<Spoken> {
+async function speakWithCartesia(
+  text: string,
+  lang: string,
+  requestedVoice?: string,
+  requestedModel?: string,
+): Promise<Spoken> {
   const apiKey = (process.env.CARTESIA_API_KEY || "").trim();
   if (!apiKey) return { error: "Missing Cartesia API key", status: 500 };
 
   const voice = await resolveCartesiaVoice(apiKey, requestedVoice);
   if ("error" in voice) return voice;
 
-  const model = getCartesiaModel();
+  const model = getCartesiaModel(requestedModel);
   const language = normalizeLanguageCode(lang);
   // The voice is part of the recording's identity, so it belongs in the key.
   const cacheVoiceKey = `${model}:${voice.id}`;
@@ -578,8 +593,10 @@ function getElevenLabsApiKey() {
 }
 
 /** The dashboard variable is spelled ELVENLABS_MODEL_ID; take either spelling. */
-function getElevenLabsModel() {
-  return (process.env.ELEVENLABS_MODEL_ID || process.env.ELVENLABS_MODEL_ID || "").trim() || ELEVENLABS_MODEL;
+function getElevenLabsModel(requested?: string) {
+  return requested
+    || (process.env.ELEVENLABS_MODEL_ID || process.env.ELVENLABS_MODEL_ID || "").trim()
+    || ELEVENLABS_MODEL;
 }
 
 const elevenLabsVoiceIds = new Map<string, string>();
@@ -654,14 +671,18 @@ async function listElevenLabsVoices(
  * formats above 24 kHz sit behind a Pro plan, so a refusal falls back to MP3
  * rather than leaving the card silent.
  */
-async function speakWithElevenLabs(text: string, requestedVoice?: string): Promise<Spoken> {
+async function speakWithElevenLabs(
+  text: string,
+  requestedVoice?: string,
+  requestedModel?: string,
+): Promise<Spoken> {
   const apiKey = getElevenLabsApiKey();
   if (!apiKey) return { error: "Missing ElevenLabs API key", status: 500 };
 
   const voice = await resolveElevenLabsVoice(apiKey, requestedVoice);
   if ("error" in voice) return voice;
 
-  const model = getElevenLabsModel();
+  const model = getElevenLabsModel(requestedModel);
   const cacheVoiceKey = `${model}:${voice.id}`;
   // ElevenLabs picks the language up from the text, so the cache is keyed by
   // the voice alone; "und" keeps those rows out of the per-language ones.
@@ -755,7 +776,12 @@ function getOpenAiVoiceId() {
  * rather than JSON, and MP3 is asked for because the player already decodes
  * that shape for Inworld.
  */
-async function speakWithOpenAi(text: string, lang: string, requestedVoice?: string): Promise<Spoken> {
+async function speakWithOpenAi(
+  text: string,
+  lang: string,
+  requestedVoice?: string,
+  requestedModel?: string,
+): Promise<Spoken> {
   const apiKey = getOpenAiApiKey();
   if (!apiKey) return { error: "Missing OpenAI API key", status: 500 };
 

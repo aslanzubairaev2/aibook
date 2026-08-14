@@ -77,6 +77,8 @@ export type UserProfile = {
    * than a single field.
    */
   ttsVoices?: Partial<Record<TtsProvider, string>>;
+  /** Likewise the model, for trying an engine's models against each other. */
+  ttsModels?: Partial<Record<TtsProvider, string>>;
   cardFilters?: CardFilters;
 };
 

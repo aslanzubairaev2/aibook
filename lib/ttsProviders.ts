@@ -328,6 +328,30 @@ export function isValidVoiceRef(voice: string) {
   return /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(voice.trim());
 }
 
+/** The same guard for a model id, which may carry dots but never spaces. */
+export function isValidModelRef(model: string) {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model.trim());
+}
+
+/** The Gemini speech model this app was built against. */
+export const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+
+export type TtsModelOption = {
+  id: string;
+  name: string;
+  description?: string;
+  /** Relative character cost, when the provider states one. Never guessed. */
+  costMultiplier?: number;
+  /** Set when the entry does not come from the provider's own listing. */
+  unverified?: boolean;
+};
+
+/** The engines whose model the learner may choose. */
+export function supportsModelChoice(provider: TtsProvider) {
+  return provider === "gemini" || provider === "openai"
+    || provider === "cartesia" || provider === "elevenlabs";
+}
+
 // ─── How the voices should read ──────────────────────────────────────────────
 //
 // The learner is listening to work out how a word is actually said, so the

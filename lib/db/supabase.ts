@@ -119,6 +119,8 @@ export type DbUserSettings = {
   tts_provider: string;
   /** The chosen voice per engine, e.g. {"gemini":"Algenib"}; see the migration. */
   tts_voices?: Record<string, string> | null;
+  /** The chosen model per engine, same shape and same migration. */
+  tts_models?: Record<string, string> | null;
   reading_minutes: number;
   books_started: number;
   books_finished: number;
@@ -321,9 +323,9 @@ export async function sbUpsertSettings(settings: DbUserSettings): Promise<void> 
   // applied, saving everything else still has to work — losing the language a
   // learner just chose because their voice could not be stored would be the
   // worse failure of the two.
-  if (error.message.includes("tts_voices")) {
-    console.warn("Skipping tts_voices: the column is not available yet.");
-    const { tts_voices: _unused, ...withoutVoices } = settings;
+  if (error.message.includes("tts_voices") || error.message.includes("tts_models")) {
+    console.warn("Skipping tts_voices/tts_models: the columns are not available yet.");
+    const { tts_voices: _voices, tts_models: _models, ...withoutVoices } = settings;
     const retry = await supabase
       .from("user_settings")
       .upsert(withoutVoices, { onConflict: "user_id" });

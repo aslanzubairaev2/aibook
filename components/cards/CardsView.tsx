@@ -9,6 +9,7 @@ import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { speak } from "@/lib/tts";
 import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
+import { ActiveVoiceLabel } from "@/components/tts/ActiveVoiceLabel";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardVariantState, saveCardVariantProgress } from "@/lib/db/local";
@@ -1266,6 +1267,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                             <Volume2 size={26} />
                           </button>
                           <span className="audio-prompt-lbl">Нажмите, чтобы услышать</span>
+                          <ActiveVoiceLabel />
                         </div>
                       ) : isReversed ? (
                         <div style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}>{promptText}</div>

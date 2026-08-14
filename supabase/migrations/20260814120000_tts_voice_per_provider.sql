@@ -9,3 +9,8 @@
 
 alter table public.user_settings
   add column if not exists tts_voices jsonb not null default '{}'::jsonb;
+
+-- And the model, for the same reason: each engine has several, and which one
+-- was being tried should follow the account rather than one browser.
+alter table public.user_settings
+  add column if not exists tts_models jsonb not null default '{}'::jsonb;

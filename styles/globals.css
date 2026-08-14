@@ -484,6 +484,24 @@ textarea,
 }
 .lang-select:focus { border-color: var(--accent); }
 
+/* Names the engine that is speaking. Quiet enough to ignore while reading,
+   opaque enough to actually read — 0.55 keeps it legible on both surfaces. */
+.active-voice-label {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 190px;
+  pointer-events: none;
+}
+/* A swapped engine is the case worth noticing, so it is not dimmed further. */
+.active-voice-swap { color: var(--accent); opacity: 0.9; }
+
 /* Sits next to a .lang-select in the same row, so it matches its shape. */
 .voice-sample-btn {
   padding: 10px 14px;

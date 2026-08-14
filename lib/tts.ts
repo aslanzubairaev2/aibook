@@ -33,6 +33,17 @@ export type PlaybackController = {
 
 export type TTSState = {
   status: "idle" | "loading" | "playing" | "paused";
+  /**
+   * The engine and model actually producing this audio.
+   *
+   * Not always the one chosen in settings: a quota refusal moves the request
+   * down the fallback chain silently, and the player is the only place that
+   * knows which voice finally answered.
+   */
+  activeProvider?: string;
+  activeModel?: string;
+  /** True when the chain, not the learner, chose the engine above. */
+  fellBack?: boolean;
   currentTime: number;
   duration: number;
   text: string;
@@ -211,10 +222,22 @@ export function seekTTS(time: number) {
  * Inworld emits MP3, which carries its own — so the format decides which of the
  * two decode paths runs.
  */
-type Recording = { audioBase64: string; sampleRate: number; format: "pcm" | "mp3" };
+type Recording = {
+  audioBase64: string;
+  sampleRate: number;
+  format: "pcm" | "mp3";
+  /** The engine that actually spoke, which the fallback chain may have changed. */
+  provider?: string;
+  model?: string;
+  fellBack?: boolean;
+};
 
 /** Cached MP3 is flagged by this header; its absence means the older PCM shape. */
 const FORMAT_HEADER = "X-Audio-Format";
+
+/** Which engine and model made the recording, so a cache hit can say so. */
+const PROVIDER_HEADER = "X-Tts-Provider";
+const MODEL_HEADER = "X-Tts-Model";
 
 function base64ToBytes(base64: string): Uint8Array {
   return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
@@ -279,9 +302,19 @@ function chosenVoiceFor(provider: string): string | undefined {
   return voices?.[provider as keyof typeof voices];
 }
 
+/** Likewise the model, so two models of one engine can be compared. */
+function chosenModelFor(provider: string): string | undefined {
+  const models = getLocalProfile().ttsModels;
+  return models?.[provider as keyof typeof models];
+}
+
 /** Cache key for one recording. Shared by `speak()` and the whole-text narration. */
 function ttsCacheKey(text: string, provider: string, lang: string): string {
-  return `tts-${provider}-${voiceKeyFor(provider, lang)}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
+  // The model belongs in the key for the same reason the voice does: switching
+  // it must not play back what the previous one recorded.
+  const model = chosenModelFor(provider);
+  const engine = model ? `${provider}-${model}` : provider;
+  return `tts-${engine}-${voiceKeyFor(provider, lang)}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
 }
 
 /** One trip to `/api/tts`, returning null (and recording why) on any failure. */
@@ -295,7 +328,11 @@ async function requestTts(
     const res = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
-      body: JSON.stringify({ text, lang, provider, voice: chosenVoiceFor(provider) }),
+      body: JSON.stringify({
+        text, lang, provider,
+        voice: chosenVoiceFor(provider),
+        model: chosenModelFor(provider),
+      }),
     });
 
     if (!res.ok) {
@@ -306,7 +343,8 @@ async function requestTts(
     }
 
     const data = await res.json() as {
-      audioBase64?: string; reason?: string; sampleRate?: number; format?: "mp3"; provider?: string;
+      audioBase64?: string; reason?: string; sampleRate?: number; format?: "mp3";
+      provider?: string; model?: string; fellBackFrom?: string;
     };
     // A quota fallback still produces audio, but the learner deserves to know
     // the voice changed and why.
@@ -317,6 +355,9 @@ async function requestTts(
       audioBase64: data.audioBase64,
       sampleRate: data.sampleRate ?? DEEPGRAM_TTS_SAMPLE_RATE,
       format: data.format === "mp3" ? "mp3" : "pcm",
+      provider: data.provider ?? provider,
+      model: data.model,
+      fellBack: Boolean(data.fellBackFrom),
     };
     try {
       const cache = await caches.open("aibook-tts-cache");
@@ -327,6 +368,8 @@ async function requestTts(
         headers: {
           [SAMPLE_RATE_HEADER]: String(recording.sampleRate),
           [FORMAT_HEADER]: recording.format,
+          [PROVIDER_HEADER]: recording.provider ?? provider,
+          ...(recording.model ? { [MODEL_HEADER]: recording.model } : {}),
         },
       }));
     } catch (e) {}
@@ -387,6 +430,8 @@ export async function speak(
           // Entries cached before providers could differ carry neither header.
           sampleRate: Number(cachedResponse.headers.get(SAMPLE_RATE_HEADER)) || DEEPGRAM_TTS_SAMPLE_RATE,
           format: cachedResponse.headers.get(FORMAT_HEADER) === "mp3" ? "mp3" : "pcm",
+          provider: cachedResponse.headers.get(PROVIDER_HEADER) ?? provider,
+          model: cachedResponse.headers.get(MODEL_HEADER) ?? undefined,
         };
       }
     } catch(e) {}
@@ -420,7 +465,12 @@ export async function speak(
     }
 
     if (recording && currentBuffer) {
-      updateState({ duration: currentBuffer.duration });
+      updateState({
+        duration: currentBuffer.duration,
+        activeProvider: recording.provider ?? provider,
+        activeModel: recording.model,
+        fellBack: recording.fellBack,
+      });
 
       playSegmentFn = (offset: number) => {
         if (!currentAudioCtx || !currentBuffer) return;
@@ -489,7 +539,10 @@ export async function speak(
   
   stopRemoteAudio(true);
   window.speechSynthesis.cancel();
-  
+
+  // Whatever was asked for, what is about to speak is the browser.
+  updateState({ activeProvider: "local", activeModel: undefined, fellBack: provider !== "local" });
+
   const startSpeech = () => {
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = LANG_MAP[lang] ?? lang;
