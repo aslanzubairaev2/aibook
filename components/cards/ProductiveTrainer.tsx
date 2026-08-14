@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, RotateCcw, Volume2, Ear, Mic, MicOff } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CheckCircle2, RotateCcw, Ear, Mic, MicOff, PenLine, MessageSquare, Eye } from "lucide-react";
 import type { Flashcard, ProductiveSkill, SkillProgress } from "@/lib/types";
 import { calculateSM2, createDefaultSkillProgress, type SrsScore } from "@/lib/srs/sm2";
 import { getCardSkillState, saveCardSkillProgress } from "@/lib/db/local";
@@ -10,6 +10,14 @@ import { startRecognition, isSpeechRecognitionSupported, type Recognizer } from 
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { SkillBadges } from "@/components/cards/SkillBadges";
 import { splitCardBack } from "@/lib/cards";
+import {
+  buildActiveQueue,
+  checkTypedAnswer,
+  formatInterval,
+  previewIntervalDays,
+  type ActiveItem,
+  type AnswerVerdict,
+} from "@/lib/srs/activeTraining";
 
 type Props = {
   cards: Flashcard[];
@@ -17,71 +25,36 @@ type Props = {
   onReviewed?: (card: Flashcard) => void;
 };
 
-type QueueItem = { card: Flashcard; skill: ProductiveSkill };
-
-const SKILLS: ProductiveSkill[] = ["recall", "listen", "produce"];
 const SKILL_LABEL: Record<ProductiveSkill, string> = {
-  recall: "Вспоминаю",
-  listen: "Слушаю",
-  produce: "Говорю",
+  recall: "Письмо",
+  listen: "На слух",
+  produce: "Речь",
 };
-const SKILL_PROMPT: Record<ProductiveSkill, string> = {
-  recall: "Напишите это на изучаемом языке",
-  listen: "Прослушайте и напишите, что услышали",
-  produce: "Произнесите вслух, затем оцените себя",
+
+const TARGET_LABEL: Record<string, string> = {
+  de: "по-немецки",
+  en: "по-английски",
+  fr: "по-французски",
+  es: "по-испански",
+  ru: "по-русски",
 };
-const SESSION_CAP = 18;
 
-function endOfTodayMs(): number {
-  const d = new Date();
-  d.setHours(23, 59, 59, 999);
-  return d.getTime();
+/** Every exercise states the task in one imperative line — no guessing what is wanted. */
+function taskText(skill: ProductiveSkill, targetLanguage: string): string {
+  const lang = TARGET_LABEL[targetLanguage] ?? "на изучаемом языке";
+  if (skill === "recall") return `Напишите ${lang}`;
+  if (skill === "listen") return "Послушайте и напишите услышанное";
+  return `Скажите вслух ${lang}`;
 }
 
-function isSkillDue(p?: SkillProgress): boolean {
-  return !p || p.status === "new" || new Date(p.dueAt).getTime() <= endOfTodayMs();
-}
-
-function normalizeAnswer(s: string): string {
-  return s
-    .toLowerCase()
-    .trim()
-    .replace(/[.,!?;:"'»«()\-–—]/g, "")
-    .replace(/\s+/g, " ");
-}
-
-// Round-robin across the three skills so the session stays varied.
-function buildQueue(cards: Flashcard[]): QueueItem[] {
-  const perSkill: Record<ProductiveSkill, QueueItem[]> = { recall: [], listen: [], produce: [] };
-  for (const card of cards) {
-    const state = getCardSkillState(card.id);
-    for (const skill of SKILLS) {
-      if (isSkillDue(state[skill])) perSkill[skill].push({ card, skill });
-    }
-  }
-  const out: QueueItem[] = [];
-  let added = true;
-  while (added && out.length < SESSION_CAP) {
-    added = false;
-    for (const skill of SKILLS) {
-      const q = perSkill[skill];
-      if (q.length) {
-        out.push(q.shift()!);
-        added = true;
-        if (out.length >= SESSION_CAP) break;
-      }
-    }
-  }
-  return out;
-}
+/** The reveal state of one exercise: what the learner produced and how it scored. */
+type Result = { verdict: AnswerVerdict | "self"; hint?: string; heard?: string };
 
 export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) {
-  const [queue, setQueue] = useState<QueueItem[]>(() => buildQueue(cards));
+  const [queue, setQueue] = useState<ActiveItem[]>(() => buildActiveQueue(cards, getCardSkillState));
   const [index, setIndex] = useState(0);
   const [input, setInput] = useState("");
-  const [revealed, setRevealed] = useState(false);
-  const [correct, setCorrect] = useState<boolean | null>(null);
-  const [gaveUp, setGaveUp] = useState(false);
+  const [result, setResult] = useState<Result | null>(null);
   const [listening, setListening] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognizerRef = useRef<Recognizer | null>(null);
@@ -89,6 +62,13 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
 
   const item = queue[index];
   const done = index >= queue.length;
+  const card = item?.card;
+  const skill = item?.skill;
+  const back = useMemo(() => splitCardBack(card?.back ?? ""), [card?.back]);
+
+  const progress: SkillProgress = item
+    ? getCardSkillState(item.card.id)[item.skill] ?? createDefaultSkillProgress()
+    : createDefaultSkillProgress();
 
   function stopVoice() {
     recognizerRef.current?.stop();
@@ -96,73 +76,58 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
     setListening(false);
   }
 
+  // Reveal the answer. `verdict` is "self" when only the learner can judge —
+  // a spoken answer with no recognition to compare against.
+  const reveal = useCallback((next: Result) => {
+    stopVoice();
+    setResult(next);
+    if (card) void speak(card.front, targetLanguage);
+  }, [card, targetLanguage]);
+
+  const submitTyped = useCallback((text: string) => {
+    if (!card || !text.trim()) return;
+    reveal(checkTypedAnswer(text, card.front));
+  }, [card, reveal]);
+
   function toggleVoice() {
     if (listening) { stopVoice(); return; }
     const rec = startRecognition(targetLanguage, {
-      onResult: (t) => setInput(t),
+      onResult: (transcript) => {
+        if (!card) return;
+        if (skill === "produce") {
+          // Recognition on single words is imperfect, so it informs the learner
+          // instead of overruling them: the grade stays theirs.
+          const check = checkTypedAnswer(transcript, card.front);
+          reveal({ verdict: check.verdict === "wrong" ? "self" : check.verdict, hint: check.hint, heard: transcript });
+        } else {
+          setInput(transcript);
+        }
+      },
       onEnd: () => setListening(false),
       onError: () => setListening(false),
     });
     if (rec) { recognizerRef.current = rec; setListening(true); }
   }
 
-  // Stop any active recognition when the component unmounts.
   useEffect(() => () => { recognizerRef.current?.stop(); }, []);
 
-  // For a "listen" item, auto-play the audio when it appears; focus the input.
+  // A fresh exercise: play the audio prompt for a listening item, focus the field.
   useEffect(() => {
     if (!item) return;
     stopVoice();
-    if (item.skill === "listen" && !revealed) {
-      void speak(item.card.front, targetLanguage);
-    }
-    if (item.skill !== "produce" && !revealed) {
-      inputRef.current?.focus();
-    }
+    if (item.skill === "listen") void speak(item.card.front, targetLanguage);
+    if (item.skill !== "produce") inputRef.current?.focus();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index]);
 
-  // Enter advances once an answer is shown (and grades a "produce" item directly).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Enter" || !item) return;
-      if (item.skill === "produce") { e.preventDefault(); grade(3); return; }
-      if (revealed) { e.preventDefault(); grade(gaveUp || !correct ? 1 : 3); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item, revealed, correct, gaveUp]);
-
   function restart() {
-    setQueue(buildQueue(cards));
+    setQueue(buildActiveQueue(cards, getCardSkillState));
     setIndex(0);
     setInput("");
-    setRevealed(false);
-    setCorrect(null);
+    setResult(null);
   }
 
-  function check() {
-    if (!item) return;
-    stopVoice();
-    const ok = normalizeAnswer(input) === normalizeAnswer(item.card.front);
-    setCorrect(ok);
-    setGaveUp(false);
-    setRevealed(true);
-    void speak(item.card.front, targetLanguage);
-  }
-
-  // "Не знаю" — reveal the answer and mark it as forgotten.
-  function dontKnow() {
-    if (!item) return;
-    stopVoice();
-    setCorrect(false);
-    setGaveUp(true);
-    setRevealed(true);
-    void speak(item.card.front, targetLanguage);
-  }
-
-  function grade(score: SrsScore) {
+  const grade = useCallback((score: SrsScore) => {
     if (!item) return;
     stopVoice();
     const prev = getCardSkillState(item.card.id)[item.skill] ?? createDefaultSkillProgress();
@@ -170,43 +135,67 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
     saveCardSkillProgress(item.card.id, item.skill, { ...upd, lastReviewedAt: new Date().toISOString() });
     onReviewed?.(item.card);
     setInput("");
-    setRevealed(false);
-    setCorrect(null);
-    setGaveUp(false);
+    setResult(null);
     setIndex((i) => i + 1);
-  }
+  }, [item, onReviewed]);
+
+  // One Enter answers, the next Enter takes the primary (highlighted) action —
+  // so a whole session can be finished from the keyboard without ambiguity.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !item) return;
+      if (!result) {
+        if (item.skill === "produce") { e.preventDefault(); reveal({ verdict: "self" }); }
+        return;
+      }
+      e.preventDefault();
+      grade(result.verdict === "correct" || result.verdict === "almost" ? 3 : 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [item, result, grade, reveal]);
 
   const styleBlock = (
     <style>{`
-      .pt-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
-      .pt-head { width: 100%; max-width: 460px; display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--text-muted); font-weight: 700; }
-      .pt-skill-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--accent); font-size: 12px; font-weight: 800; }
-      .pt-card { width: 100%; max-width: 460px; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--bg-elevated); padding: 20px 18px; display: flex; flex-direction: column; gap: 14px; min-height: 180px; }
-      .pt-prompt { font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
-      .pt-cue { font-size: 24px; font-weight: 800; text-align: center; line-height: 1.25; word-break: break-word; padding: 6px 0; }
-      .pt-cue.muted { color: var(--surface-dim); }
-      .pt-listen-orb { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 0; color: var(--accent); }
+      .pt-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+      .pt-head { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 8px; }
+      .pt-head-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-muted); font-weight: 700; }
+      .pt-bar { height: 4px; border-radius: 99px; background: var(--bg-elevated); overflow: hidden; }
+      .pt-bar span { display: block; height: 100%; background: var(--accent); transition: width 0.25s ease; }
+      .pt-skill-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 99px; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--accent); font-size: 11px; font-weight: 800; }
+      .pt-card { width: 100%; max-width: 460px; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--bg-elevated); padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+      .pt-task { font-size: 12px; font-weight: 800; color: var(--text-primary); text-align: center; }
+      .pt-cue { font-size: 25px; font-weight: 800; text-align: center; line-height: 1.25; word-break: break-word; }
+      .pt-sub { font-size: 13px; color: var(--text-muted); text-align: center; }
       .pt-input { width: 100%; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-primary); font-size: 18px; text-align: center; outline: none; font-family: var(--font-reading); }
       .pt-input:focus { border-color: var(--accent); }
-      .pt-input.ok { border-color: var(--green); }
-      .pt-input.bad { border-color: #e08888; }
-      .pt-answer-row { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 22px; font-weight: 800; }
-      .pt-answer-row .pt-correct { color: var(--green); }
-      .pt-your { font-size: 13px; color: var(--text-muted); text-align: center; }
-      .pt-your s { color: #e08888; }
-      .pt-meaning { font-size: 14px; color: var(--surface-dim); text-align: center; }
-      .pt-actions { width: 100%; max-width: 460px; display: flex; gap: 8px; }
-      .pt-btn { flex: 1; padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-primary); font-weight: 700; font-size: 14px; cursor: pointer; transition: all 0.18s; }
-      .pt-btn:active { transform: scale(0.97); }
-      .pt-btn.primary { border-color: var(--accent); color: var(--accent); background: rgba(212,168,71,0.1); }
-      .pt-btn.ghost { color: var(--text-muted); }
-      .pt-self-grade { width: 100%; max-width: 460px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
       .pt-input-row { display: flex; gap: 8px; align-items: center; }
       .pt-input-row .pt-input { flex: 1; }
       .pt-mic { flex-shrink: 0; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-card); color: var(--text-muted); cursor: pointer; transition: all 0.18s; }
       .pt-mic:hover { color: var(--accent); border-color: var(--accent); }
       .pt-mic.live { color: #e08888; border-color: #e08888; background: rgba(224, 136, 136, 0.12); animation: pt-pulse 1.2s ease-in-out infinite; }
+      .pt-mic-big { width: 100%; height: 60px; gap: 10px; font-size: 14px; font-weight: 700; }
       @keyframes pt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+      .pt-listen { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px 0; color: var(--accent); }
+      .pt-verdict { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; }
+      .pt-verdict.ok { color: var(--green); }
+      .pt-verdict.almost { color: var(--accent); }
+      .pt-verdict.bad { color: #e08888; }
+      .pt-given { text-align: center; font-size: 14px; color: var(--text-muted); }
+      .pt-given s { color: #e08888; }
+      .pt-answer { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 26px; font-weight: 800; color: var(--green); word-break: break-word; }
+      .pt-answer.miss { color: var(--accent); }
+      .pt-hint { text-align: center; font-size: 12px; color: var(--accent); }
+      .pt-details { text-align: center; font-size: 12px; color: var(--surface-dim); white-space: pre-line; }
+      .pt-actions { width: 100%; max-width: 460px; display: flex; gap: 8px; }
+      .pt-btn { flex: 1; padding: 10px 8px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-primary); font-weight: 700; font-size: 14px; cursor: pointer; transition: all 0.18s; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+      .pt-btn:active { transform: scale(0.97); }
+      .pt-btn:disabled { opacity: 0.45; cursor: default; }
+      .pt-btn small { font-size: 10px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.02em; }
+      .pt-btn.primary { border-color: var(--accent); color: var(--accent); background: rgba(212,168,71,0.1); }
+      .pt-btn.again { border-color: rgba(224, 136, 136, 0.35); color: #e08888; }
+      .pt-btn.again small { color: rgba(224, 136, 136, 0.75); }
+      .pt-btn.ghost { color: var(--text-muted); }
     `}</style>
   );
 
@@ -223,14 +212,14 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
     );
   }
 
-  if (done) {
+  if (done || !item || !card || !skill) {
     return (
       <div className="pt-wrap">
         {styleBlock}
         <div className="empty-state" style={{ background: "linear-gradient(135deg, rgba(122, 171, 106, 0.08) 0%, var(--bg-elevated) 100%)", borderColor: "rgba(122, 171, 106, 0.2)" }}>
           <CheckCircle2 size={48} style={{ color: "var(--green)" }} />
           <strong>Сессия завершена!</strong>
-          <p>Вы воспроизвели {queue.length} упражнений. Прогресс по навыкам сохранён.</p>
+          <p>Вы прошли {queue.length} упражнений. Прогресс по навыкам сохранён.</p>
           <button className="secondary-btn" style={{ marginTop: 12 }} onClick={restart} type="button">
             <RotateCcw size={14} /> Ещё подход
           </button>
@@ -239,135 +228,175 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
     );
   }
 
-  const card = item.card;
-  const nativeMeaning = splitCardBack(card.back).meaning;
-  const showInput = item.skill !== "produce";
+  const typed = skill !== "produce";
+  const good = result?.verdict === "correct";
+  const almost = result?.verdict === "almost";
+
+  /**
+   * One row of grades. Each button says how well it went; the sub-label says
+   * when the word comes back — but only when the options really do differ, so
+   * the row never shows three buttons that all promise the same thing.
+   */
+  const gradeRow = (options: { label: string; score: SrsScore; tone?: string }[]) => {
+    const days = options.map((option) => previewIntervalDays(option.score, progress));
+    const showDays = days.length > 1 && new Set(days).size === days.length;
+    return (
+      <div className="pt-actions">
+        {options.map((option, i) => (
+          <button key={option.score} className={`pt-btn ${option.tone ?? ""}`} onClick={() => grade(option.score)} type="button">
+            {option.label}
+            {showDays && <small>{formatInterval(days[i])}</small>}
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="pt-wrap">
       {styleBlock}
 
       <div className="pt-head">
-        <span>Упражнение {index + 1} из {queue.length}</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <SkillBadges cardId={card.id} />
-          <span className="pt-skill-chip">{SKILL_LABEL[item.skill]}</span>
-        </span>
+        <div className="pt-head-row">
+          <span>{index + 1} / {queue.length}</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <SkillBadges cardId={card.id} />
+            <span className="pt-skill-chip">
+              {skill === "listen" ? <Ear size={11} /> : skill === "produce" ? <MessageSquare size={11} /> : <PenLine size={11} />}
+              {SKILL_LABEL[skill]}
+            </span>
+          </span>
+        </div>
+        <div className="pt-bar"><span style={{ width: `${(index / queue.length) * 100}%` }} /></div>
       </div>
 
       <div className="pt-card">
-        <div className="pt-prompt">
-          {item.skill === "listen" ? <Ear size={13} /> : item.skill === "produce" ? <Volume2 size={13} /> : null}
-          {SKILL_PROMPT[item.skill]}
-        </div>
+        <div className="pt-task">{taskText(skill, targetLanguage)}</div>
 
-        {/* Cue */}
-        {item.skill === "recall" && <div className="pt-cue">{nativeMeaning}</div>}
-
-        {item.skill === "listen" && !revealed && (
-          <div className="pt-listen-orb">
-            <SpeakButton text={card.front} lang={targetLanguage} size={26} />
-            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Нажмите, чтобы повторить</span>
-          </div>
-        )}
-
-        {item.skill === "produce" && (
+        {/* ── The question. The answer is always hidden until it is graded. ── */}
+        {!result && (
           <>
-            <div className="pt-cue">
-              {card.front} <SpeakButton text={card.front} lang={targetLanguage} size={18} />
-            </div>
-            <div className="pt-meaning">{card.back}</div>
+            {skill === "listen" ? (
+              <div className="pt-listen">
+                <SpeakButton text={card.front} lang={targetLanguage} size={26} />
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Нажмите, чтобы повторить</span>
+              </div>
+            ) : (
+              <div className="pt-cue">{back.meaning}</div>
+            )}
+
+            {typed && (
+              <div className="pt-input-row">
+                <input
+                  ref={inputRef}
+                  className="pt-input"
+                  value={input}
+                  placeholder={listening ? "Говорите…" : "Ваш ответ…"}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submitTyped(input); } }}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+                {voiceSupported && (
+                  <button
+                    type="button"
+                    className={`pt-mic ${listening ? "live" : ""}`}
+                    onClick={toggleVoice}
+                    aria-label="Ответить голосом"
+                    title="Ответить голосом"
+                  >
+                    {listening ? <MicOff size={18} /> : <Mic size={18} />}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {skill === "produce" && voiceSupported && (
+              <button
+                type="button"
+                className={`pt-mic pt-mic-big ${listening ? "live" : ""}`}
+                onClick={toggleVoice}
+              >
+                {listening ? <MicOff size={20} /> : <Mic size={20} />}
+                {listening ? "Слушаю…" : "Сказать и проверить"}
+              </button>
+            )}
           </>
         )}
 
-        {/* Input for recall / listen — typed or spoken */}
-        {showInput && !revealed && (
-          <div className="pt-input-row">
-            <input
-              ref={inputRef}
-              className="pt-input"
-              value={input}
-              placeholder={listening ? "Говорите…" : "Ваш ответ…"}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && input.trim()) check(); }}
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-            {voiceSupported && (
-              <button
-                type="button"
-                className={`pt-mic ${listening ? "live" : ""}`}
-                onClick={toggleVoice}
-                aria-label="Ответить голосом"
-                title="Ответить голосом"
-              >
-                {listening ? <MicOff size={18} /> : <Mic size={18} />}
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Result for recall / listen */}
-        {showInput && revealed && (
+        {/* ── The answer, with a verdict that explains itself. ── */}
+        {result && (
           <>
-            <input className={`pt-input ${correct ? "ok" : "bad"}`} value={input} readOnly />
-            <div className="pt-answer-row">
-              <span className={correct ? "pt-correct" : ""} style={!correct ? { color: "var(--accent)" } : undefined}>
-                {card.front}
-              </span>
+            <div className={`pt-verdict ${good ? "ok" : almost ? "almost" : "bad"}`}>
+              {good ? "Верно" : almost ? "Почти верно" : result.verdict === "self" ? "Правильный ответ" : "Не совпало"}
+            </div>
+
+            {(input.trim() || result.heard) && (
+              <div className="pt-given">
+                Вы {result.heard ? "сказали" : "написали"}:{" "}
+                {result.verdict === "wrong" ? <s>{result.heard ?? input}</s> : <b>{result.heard ?? input}</b>}
+              </div>
+            )}
+
+            <div className={`pt-answer ${good ? "" : "miss"}`}>
+              {card.front}
               <SpeakButton text={card.front} lang={targetLanguage} size={16} />
             </div>
-            <div className="pt-meaning">{card.back}</div>
+
+            {result.hint && <div className="pt-hint">{result.hint}</div>}
+            <div className="pt-sub">{back.meaning}</div>
+            {back.details && <div className="pt-details">{back.details}</div>}
           </>
         )}
       </div>
 
-      {/* Action area */}
-      {showInput && !revealed && (
+      {/* ── Actions. Before the answer: one way forward. After it: a single row
+             of grades, shaped by what actually happened. ── */}
+      {!result && typed && (
         <div className="pt-actions">
-          <button className="pt-btn ghost" onClick={dontKnow} type="button">Не знаю</button>
-          <button className="pt-btn primary" onClick={check} type="button" disabled={!input.trim()}>
+          <button className="pt-btn ghost" onClick={() => reveal({ verdict: "wrong" })} type="button">
+            Не помню
+          </button>
+          <button className="pt-btn primary" onClick={() => submitTyped(input)} type="button" disabled={!input.trim()}>
             Проверить
           </button>
         </div>
       )}
 
-      {showInput && revealed && (
-        correct ? (
-          <div className="pt-actions">
-            <button className="pt-btn" onClick={() => grade(4)} type="button">Легко</button>
-            <button className="pt-btn primary" onClick={() => grade(3)} type="button">Дальше →</button>
-          </div>
-        ) : gaveUp ? (
-          <div className="pt-actions">
-            <button className="pt-btn primary" onClick={() => grade(1)} type="button">Дальше →</button>
-          </div>
-        ) : (
-          <div className="pt-actions">
-            <button className="pt-btn ghost" onClick={() => grade(3)} type="button">Я был прав</button>
-            <button className="pt-btn primary" onClick={() => grade(1)} type="button">Дальше →</button>
-          </div>
-        )
-      )}
-
-      {/* Self-grade for produce */}
-      {item.skill === "produce" && (
-        <div className="pt-self-grade">
-          <button className="grade-btn grade-btn-1" onClick={() => grade(1)} type="button">
-            <span className="grade-score">1</span><span className="grade-lbl">Не смог</span>
-          </button>
-          <button className="grade-btn grade-btn-2" onClick={() => grade(2)} type="button">
-            <span className="grade-score">2</span><span className="grade-lbl">Трудно</span>
-          </button>
-          <button className="grade-btn grade-btn-3" onClick={() => grade(3)} type="button">
-            <span className="grade-score">3</span><span className="grade-lbl">Хорошо</span>
-          </button>
-          <button className="grade-btn grade-btn-4" onClick={() => grade(4)} type="button">
-            <span className="grade-score">4</span><span className="grade-lbl">Легко</span>
+      {!result && skill === "produce" && (
+        <div className="pt-actions">
+          <button className="pt-btn primary" onClick={() => reveal({ verdict: "self" })} type="button">
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Eye size={14} /> Показать ответ</span>
           </button>
         </div>
       )}
+
+      {/* Correct: the answer matched, so the only question left is how hard it felt. */}
+      {good && gradeRow([
+        { label: "Трудно", score: 2 },
+        { label: "Хорошо", score: 3, tone: "primary" },
+        { label: "Легко", score: 4 },
+      ])}
+
+      {/* Near miss: the hint above already said what was off, so the choice is
+          only whether it counted. */}
+      {almost && gradeRow([
+        { label: "Повторить", score: 1, tone: "again" },
+        { label: "Засчитать", score: 3, tone: "primary" },
+      ])}
+
+      {/* Missed it: one honest way forward, no arguing with the learner. */}
+      {result?.verdict === "wrong" && gradeRow([
+        { label: "Повторить", score: 1, tone: "primary again" },
+      ])}
+
+      {/* A spoken answer nothing could check automatically — the learner grades it. */}
+      {result?.verdict === "self" && gradeRow([
+        { label: "Не смог", score: 1, tone: "again" },
+        { label: "Сказал верно", score: 3, tone: "primary" },
+        { label: "Легко", score: 4 },
+      ])}
     </div>
   );
 }
