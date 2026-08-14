@@ -27,6 +27,7 @@ import {
   type TrainStatus,
   type VariantProgressMap,
 } from "@/lib/cards";
+import { isTypingTarget, trainerHotkey } from "@/lib/srs/trainerHotkeys";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { speak } from "@/lib/tts";
@@ -1041,6 +1042,77 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const historyCard = historyItem?.card;
   const historyBackParts = splitCardBack(historyCard?.back ?? "");
 
+  // --- Keyboard control for the recognize trainer ---
+  //
+  // Bound only while a card is actually on screen, and never over a modal or a
+  // field the learner is typing into, so the digits stay available to the
+  // search box and the chat.
+  const hotkeysActive = activeTab === "train"
+    && trainMode === "recognize"
+    && !wordModal.open
+    && !discuss.open
+    && (Boolean(currentCard) || Boolean(historyPosition));
+
+  useEffect(() => {
+    if (!hotkeysActive) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return;
+      const action = trainerHotkey(e);
+      if (!action) return;
+
+      // Browsing a graded card is read-only by design, so the keys that would
+      // change it do nothing rather than quietly rescheduling a card the
+      // learner is only looking at.
+      const browsing = historyPosition !== null;
+      const speakTarget = browsing ? historyCard : currentCard;
+
+      switch (action.kind) {
+        case "grade":
+          if (browsing || !currentCard) return;
+          handleGrade(action.score);
+          break;
+        case "speak":
+          if (!speakTarget) return;
+          void speak(speakTarget.front, targetLanguage);
+          break;
+        case "flip":
+          if (browsing || !currentCard) return;
+          setIsFlipped((f) => !f);
+          break;
+        case "story":
+          if (browsing || !currentCard) return;
+          void createMiniStory(currentCard);
+          break;
+        case "discuss":
+          if (!speakTarget) return;
+          void openDiscussForCard(speakTarget);
+          break;
+        case "historyOlder":
+          if (reviewHistory.length === 0) return;
+          // Not yet browsing: the first step back opens the card just graded.
+          if (!historyPosition) openLatestReviewedCard();
+          else if (historyPosition.canGoOlder) setViewingHistoryIndex(historyPosition.index - 1);
+          break;
+        case "historyNewer":
+          if (!historyPosition) return;
+          // Past the newest reviewed card is the live one, which is where the
+          // «Следующая» button leads too.
+          if (historyPosition.canGoNewer) setViewingHistoryIndex(historyPosition.index + 1);
+          else closeReviewedCard();
+          break;
+        case "live":
+          closeReviewedCard();
+          break;
+      }
+      e.preventDefault();
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hotkeysActive, historyPosition?.index, historyPosition?.canGoOlder, historyPosition?.canGoNewer, reviewHistory.length, currentCard?.id, historyCard?.id, targetLanguage, currentTrainIndex, trainQueue, viewingHistoryIndex, miniStory]);
+
   return (
     <section className="screen" onClick={() => { setShowFilterPanel(false); setShowTtsMenu(false); }}>
       <style>{`
@@ -1104,6 +1176,12 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .tts-menu-item:hover { background: var(--bg-elevated); }
         .tts-menu-item.active { color: var(--accent); }
         .srs-grade-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; width: 100%; max-width: 420px; margin: 0 auto; }
+        .srs-keys { display: none; }
+        @media (hover: hover) and (pointer: fine) {
+          .srs-keys { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; width: 100%; max-width: 420px; margin: 12px auto 0; font-size: 10px; font-weight: 700; color: var(--text-muted); }
+          .srs-keys span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+          .srs-keys kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 3px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--bg-elevated); color: var(--text-primary); font-family: inherit; font-size: 9px; font-weight: 800; line-height: 1; }
+        }
         .grade-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px 4px; border: 1px solid var(--border); border-radius: var(--radius-md); font-weight: 700; font-size: 12px; cursor: pointer; background: var(--bg-elevated); transition: all 0.2s; color: var(--text-primary); }
         .grade-btn:active { transform: scale(0.96); }
         .grade-btn-1 { border-color: rgba(224, 136, 136, 0.3); }
@@ -1790,6 +1868,18 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                   </span>
                 </button>
               )}
+
+              {/* Only where there is a keyboard to press. On a touch screen the
+                  row would be a line of instructions for keys that do not exist. */}
+              <div className="srs-keys">
+                <span><kbd>1</kbd>–<kbd>4</kbd> оценка</span>
+                <span><kbd>5</kbd> звук</span>
+                <span><kbd>6</kbd> перевернуть</span>
+                <span><kbd>7</kbd> рассказ</span>
+                <span><kbd>8</kbd> обсудить</span>
+                <span><kbd>←</kbd><kbd>→</kbd> история</span>
+                <span><kbd>0</kbd> к текущей</span>
+              </div>
             </div>
           )}
           </>
