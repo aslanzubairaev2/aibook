@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, createBatchTrainingFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
-import type { CardVariantState, Flashcard, SkillProgress } from "./types.ts";
+import { ALL_TRAIN_VARIANTS, buildTrainQueue, computeDeckStats, countTrainCandidates, createBatchTrainingFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import type { CardVariantState, Flashcard, SkillProgress, TrainVariant } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
   return {
@@ -97,4 +97,124 @@ test("review history stays within the completed cards and exposes safe navigatio
     canGoOlder: true,
     canGoNewer: false,
   });
+});
+
+// --- Training queue and statistics -----------------------------------------
+
+const NOW = new Date("2026-08-14T10:00:00.000Z");
+const TODAY_END = new Date("2026-08-14T23:59:59.999Z").getTime();
+
+function scheduled(overrides: Partial<Flashcard>): Flashcard {
+  return { ...card("scheduled", "batch-a"), ...overrides };
+}
+
+function variant(dueAt: string, overrides: Partial<SkillProgress> = {}): SkillProgress {
+  return {
+    status: "review",
+    repetitions: 1,
+    lapses: 0,
+    intervalDays: 1,
+    easeFactor: 2.5,
+    dueAt,
+    lastReviewedAt: null,
+    ...overrides,
+  };
+}
+
+test("a card due in two directions produces one queue item per direction", () => {
+  const cards = [scheduled({ id: "one", status: "review", repetitions: 1, dueAt: "2026-08-14T23:59:59.999Z" })];
+  const progress: Record<string, CardVariantState> = {
+    one: {
+      reverse: variant("2026-08-14T23:59:59.999Z"),
+      audio: variant("2026-09-01T23:59:59.999Z"),
+    },
+  };
+
+  const queue = buildTrainQueue(
+    cards,
+    { status: "all", type: "all", variants: ALL_TRAIN_VARIANTS },
+    progress,
+    TODAY_END,
+  );
+
+  assert.deepEqual(queue.map((item) => item.variant).sort(), ["forward", "reverse"]);
+});
+
+test("a variant with no stored progress counts as new rather than being skipped", () => {
+  const queue = buildTrainQueue(
+    [scheduled({ id: "fresh" })],
+    { status: "new", type: "all", variants: ALL_TRAIN_VARIANTS },
+    {},
+    TODAY_END,
+  );
+
+  assert.equal(queue.length, 3);
+});
+
+test("chip counts match the queue each chip would build", () => {
+  const cards = [
+    scheduled({ id: "word-due", type: "word", status: "review", repetitions: 1, dueAt: "2026-08-14T12:00:00.000Z" }),
+    scheduled({ id: "phrase-new", type: "phrase" }),
+    scheduled({ id: "word-hard", type: "word", status: "review", repetitions: 3, lapses: 4, dueAt: "2026-12-01T00:00:00.000Z" }),
+  ];
+  const selection = { status: "all" as const, type: "all" as const, variants: ["forward"] as TrainVariant[] };
+  const counts = countTrainCandidates(cards, selection, {}, TODAY_END);
+
+  assert.equal(counts.byStatus.all, buildTrainQueue(cards, selection, {}, TODAY_END).length);
+  assert.equal(counts.byStatus.new, 1);
+  assert.equal(counts.byStatus.review, 1);
+  // Hard cards are drilled whatever their due date says.
+  assert.equal(counts.byStatus.hard, 1);
+  assert.equal(counts.byType.word, 1);
+  assert.equal(counts.byType.phrase, 1);
+
+  for (const status of ["new", "review", "relearning", "hard"] as const) {
+    assert.equal(
+      countTrainCandidates(cards, { ...selection, status }, {}, TODAY_END).byStatus[status],
+      buildTrainQueue(cards, { ...selection, status }, {}, TODAY_END).length,
+      `chip count disagrees with the queue for "${status}"`,
+    );
+  }
+});
+
+test("statistics count every direction, so the banner matches a full session", () => {
+  const cards = [
+    scheduled({ id: "one", status: "review", repetitions: 2, intervalDays: 30, dueAt: "2026-09-30T00:00:00.000Z", lastReviewedAt: "2026-08-14T09:00:00.000Z" }),
+    scheduled({ id: "two" }),
+  ];
+  const progress: Record<string, CardVariantState> = {
+    one: { reverse: variant("2026-08-14T23:59:59.999Z"), audio: variant("2026-08-16T23:59:59.999Z") },
+  };
+
+  const stats = computeDeckStats(cards, progress, NOW);
+
+  // "two" is new in all three directions; "one" is settled forward but due in reverse.
+  assert.equal(stats.dueReps, 4);
+  assert.equal(stats.dueCards, 2);
+  assert.deepEqual(stats.dueByVariant, { forward: 1, reverse: 2, audio: 1 });
+  assert.equal(stats.totalVariants, 6);
+  assert.equal(stats.learnedVariants, 3);
+  assert.equal(stats.matureCards, 1);
+  assert.equal(stats.byStatus.new, 1);
+  assert.equal(stats.byStatus.review, 1);
+  // The audio direction lands two days out.
+  assert.equal(stats.forecast.find((day) => day.dayOffset === 2)?.count, 1);
+  assert.equal(stats.streak, 1);
+});
+
+test("statistics keep every source separate, dictionary batches included", () => {
+  const cards = [
+    scheduled({ id: "book", sourceBookId: "book-1", sourceBookTitle: "Роман", repetitions: 1, status: "review" }),
+    scheduled({ id: "batch-one", sourceBookId: "batch-7", sourceBookTitle: "Страница 12" }),
+    scheduled({ id: "batch-two", sourceBookId: "batch-7", sourceBookTitle: "Страница 12" }),
+  ];
+
+  const stats = computeDeckStats(cards, {}, NOW);
+  const batch = stats.sources.find((source) => source.key === "batch-7");
+
+  assert.equal(stats.sources.length, 2);
+  assert.equal(batch?.title, "Страница 12");
+  assert.equal(batch?.cards, 2);
+  assert.equal(batch?.due, 2);
+  assert.equal(batch?.learned, 0);
 });

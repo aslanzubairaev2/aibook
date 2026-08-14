@@ -14,9 +14,15 @@ const READER_SELECTION_KEY = "aibook_reader_selection";
 const LAST_VIEW_KEY = "aibook_last_view";
 
 let activeNamespace = "guest";
+// The stored namespace is read once. Re-reading it inside getNsKey meant a
+// localStorage round-trip for every single lookup, and the training queue does
+// thousands of those per render.
+let namespaceLoaded = false;
 
 export function setLocalNamespace(ns: string) {
+  if (ns !== activeNamespace) invalidateReadCaches();
   activeNamespace = ns;
+  namespaceLoaded = true;
   if (typeof window !== "undefined") {
     try {
       localStorage.setItem("aibook_active_namespace", ns);
@@ -27,24 +33,29 @@ export function setLocalNamespace(ns: string) {
 }
 
 export function getLocalNamespace(): string {
-  if (typeof window !== "undefined") {
+  if (!namespaceLoaded && typeof window !== "undefined") {
     try {
-      return localStorage.getItem("aibook_active_namespace") ?? activeNamespace;
+      activeNamespace = localStorage.getItem("aibook_active_namespace") ?? activeNamespace;
     } catch {
-      return activeNamespace;
+      // Keep whatever the process already had.
     }
+    namespaceLoaded = true;
   }
   return activeNamespace;
 }
 
+// The legacy → namespaced copy only has to happen once per key per session.
+const migratedKeys = new Set<string>();
+
 function getNsKey(baseKey: string): string {
   const ns = getLocalNamespace();
   const nsKey = `ns:${ns}:${baseKey}`;
-  
-  if (typeof window !== "undefined" && ns === "guest") {
+
+  if (typeof window !== "undefined" && ns === "guest" && !migratedKeys.has(nsKey)) {
+    migratedKeys.add(nsKey);
     try {
       // If namespaced key doesn't exist but legacy key does, migrate/copy it
-      if (localStorage.getItem(nsKey) === null && localStorage.getItem(baseKey) !== null) {
+      if (localStorage.getItem(nsKey) === null) {
         const val = localStorage.getItem(baseKey);
         if (val !== null) {
           localStorage.setItem(nsKey, val);
@@ -55,6 +66,52 @@ function getNsKey(baseKey: string): string {
     }
   }
   return nsKey;
+}
+
+// --- Parsed-value cache ------------------------------------------------------
+//
+// The collections below (cards, per-variant progress, per-skill progress) are
+// read far more often than they are written — a single training render asks for
+// one card's variant progress thousands of times. Parsing the whole collection
+// on each of those reads is what made a 500-card deck unusable, so the parsed
+// value is held in memory and dropped whenever it could have changed: a write
+// here, a namespace switch, or another tab writing the same key.
+
+type ReadCache<T> = { key: string; value: T } | null;
+
+let cardsCache: ReadCache<Flashcard[]> = null;
+let variantCache: ReadCache<VariantProgressMap> = null;
+let skillCache: ReadCache<SkillProgressMap> = null;
+
+function invalidateReadCaches() {
+  cardsCache = null;
+  variantCache = null;
+  skillCache = null;
+  migratedKeys.clear();
+}
+
+let crossTabWatcherReady = false;
+
+/** Another tab writing the same account's storage must not leave us stale. */
+function watchCrossTabWrites() {
+  if (crossTabWatcherReady || typeof window === "undefined") return;
+  crossTabWatcherReady = true;
+  window.addEventListener("storage", (event) => {
+    if (event.key === null) {
+      invalidateReadCaches();
+      return;
+    }
+    if (event.key.endsWith(CARDS_KEY)) cardsCache = null;
+    if (event.key.endsWith(VARIANT_PROGRESS_KEY)) variantCache = null;
+    if (event.key.endsWith(SKILL_PROGRESS_KEY)) skillCache = null;
+  });
+}
+
+function readCached<T>(cache: ReadCache<T>, nsKey: string, parse: () => T): { cache: ReadCache<T>; value: T } {
+  if (cache?.key === nsKey) return { cache, value: cache.value };
+  watchCrossTabWrites();
+  const value = parse();
+  return { cache: { key: nsKey, value }, value };
 }
 
 // --- Simple self-contained IndexedDB utility ---
@@ -199,30 +256,46 @@ export async function deleteLocalBook(id: string): Promise<void> {
 
 // --- Cards ---
 
+/**
+ * The cached array is shared, not copied — callers must treat it as read-only
+ * and replace rather than mutate (which is what every caller already does).
+ */
 export function getLocalCards(): Flashcard[] {
   if (typeof window === "undefined") return [];
-  try {
-    return JSON.parse(localStorage.getItem(getNsKey(CARDS_KEY)) ?? "[]") as Flashcard[];
-  } catch {
-    return [];
-  }
+  const nsKey = getNsKey(CARDS_KEY);
+  const read = readCached(cardsCache, nsKey, () => {
+    try {
+      return JSON.parse(localStorage.getItem(nsKey) ?? "[]") as Flashcard[];
+    } catch {
+      return [];
+    }
+  });
+  cardsCache = read.cache;
+  return read.value;
 }
 
 export function saveLocalCard(card: Flashcard): void {
   const cards = getLocalCards();
   const idx = cards.findIndex((c) => c.id === card.id);
-  if (idx >= 0) cards[idx] = card;
-  else cards.unshift(card);
-  localStorage.setItem(getNsKey(CARDS_KEY), JSON.stringify(cards));
+  const next = idx >= 0
+    ? cards.map((c, i) => (i === idx ? card : c))
+    : [card, ...cards];
+  saveLocalCards(next);
 }
 
 export function saveLocalCards(cards: Flashcard[]): void {
-  localStorage.setItem(getNsKey(CARDS_KEY), JSON.stringify(cards));
+  if (typeof window === "undefined") return;
+  const nsKey = getNsKey(CARDS_KEY);
+  cardsCache = { key: nsKey, value: cards };
+  try {
+    localStorage.setItem(nsKey, JSON.stringify(cards));
+  } catch {
+    // Storage full or unavailable — the in-memory copy still serves this session.
+  }
 }
 
 export function deleteLocalCard(id: string): void {
-  const cards = getLocalCards().filter((c) => c.id !== id);
-  localStorage.setItem(getNsKey(CARDS_KEY), JSON.stringify(cards));
+  saveLocalCards(getLocalCards().filter((c) => c.id !== id));
 }
 
 
@@ -461,11 +534,21 @@ type SkillProgressMap = Record<string, CardSkillState>;
 
 function readSkillProgressMap(): SkillProgressMap {
   if (typeof window === "undefined") return {};
-  try {
-    return JSON.parse(localStorage.getItem(getNsKey(SKILL_PROGRESS_KEY)) ?? "{}") as SkillProgressMap;
-  } catch {
-    return {};
-  }
+  const nsKey = getNsKey(SKILL_PROGRESS_KEY);
+  const read = readCached(skillCache, nsKey, () => {
+    try {
+      return JSON.parse(localStorage.getItem(nsKey) ?? "{}") as SkillProgressMap;
+    } catch {
+      return {};
+    }
+  });
+  skillCache = read.cache;
+  return read.value;
+}
+
+/** Reads every card's productive-skill progress in one pass. */
+export function getCardSkillProgressMap(): SkillProgressMap {
+  return readSkillProgressMap();
 }
 
 export function getCardSkillState(cardId: string): CardSkillState {
@@ -474,10 +557,12 @@ export function getCardSkillState(cardId: string): CardSkillState {
 
 export function saveCardSkillProgress(cardId: string, skill: ProductiveSkill, progress: SkillProgress): void {
   if (typeof window === "undefined") return;
+  const nsKey = getNsKey(SKILL_PROGRESS_KEY);
+  const previous = readSkillProgressMap();
+  const all = { ...previous, [cardId]: { ...previous[cardId], [skill]: progress } };
+  skillCache = { key: nsKey, value: all };
   try {
-    const all = readSkillProgressMap();
-    all[cardId] = { ...all[cardId], [skill]: progress };
-    localStorage.setItem(getNsKey(SKILL_PROGRESS_KEY), JSON.stringify(all));
+    localStorage.setItem(nsKey, JSON.stringify(all));
   } catch {
     // silently fail
   }
@@ -490,11 +575,16 @@ type VariantProgressMap = Record<string, CardVariantState>;
 
 function readVariantProgressMap(): VariantProgressMap {
   if (typeof window === "undefined") return {};
-  try {
-    return JSON.parse(localStorage.getItem(getNsKey(VARIANT_PROGRESS_KEY)) ?? "{}") as VariantProgressMap;
-  } catch {
-    return {};
-  }
+  const nsKey = getNsKey(VARIANT_PROGRESS_KEY);
+  const read = readCached(variantCache, nsKey, () => {
+    try {
+      return JSON.parse(localStorage.getItem(nsKey) ?? "{}") as VariantProgressMap;
+    } catch {
+      return {};
+    }
+  });
+  variantCache = read.cache;
+  return read.value;
 }
 
 export function getCardVariantState(cardId: string): CardVariantState {
@@ -509,8 +599,10 @@ export function getCardVariantProgressMap(): Record<string, CardVariantState> {
 /** Replaces the local mirror after it has been merged with Supabase progress. */
 export function saveCardVariantProgressMap(progress: Record<string, CardVariantState>): void {
   if (typeof window === "undefined") return;
+  const nsKey = getNsKey(VARIANT_PROGRESS_KEY);
+  variantCache = { key: nsKey, value: progress };
   try {
-    localStorage.setItem(getNsKey(VARIANT_PROGRESS_KEY), JSON.stringify(progress));
+    localStorage.setItem(nsKey, JSON.stringify(progress));
   } catch {
     // Keep the app usable when browser storage is unavailable.
   }
@@ -518,13 +610,9 @@ export function saveCardVariantProgressMap(progress: Record<string, CardVariantS
 
 export function saveCardVariantProgress(cardId: string, variant: Exclude<TrainVariant, "forward">, progress: SkillProgress): void {
   if (typeof window === "undefined") return;
-  try {
-    const all = readVariantProgressMap();
-    all[cardId] = { ...all[cardId], [variant]: progress };
-    localStorage.setItem(getNsKey(VARIANT_PROGRESS_KEY), JSON.stringify(all));
-  } catch {
-    // silently fail
-  }
+  const previous = readVariantProgressMap();
+  // A fresh object identity, so a memo keyed on the map notices the change.
+  saveCardVariantProgressMap({ ...previous, [cardId]: { ...previous[cardId], [variant]: progress } });
 }
 
 type DiscussCacheEntry = {

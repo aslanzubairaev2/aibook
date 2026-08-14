@@ -5,6 +5,8 @@ import { BookOpen, ChevronRight, Library, Flame, Phone } from "lucide-react";
 import { BookDetailModal } from "@/components/discover/BookDetailModal";
 import type { Book, Flashcard, UserProfile } from "@/lib/types";
 import { useAuth } from "@/lib/auth/useAuth";
+import { computeDeckStats } from "@/lib/cards";
+import { getCardVariantProgressMap } from "@/lib/db/local";
 
 type Props = {
   book: Book | null;
@@ -119,16 +121,12 @@ export function HomeDashboard({
   const activeLanguage = book?.language || profile.targetLanguage || "de";
   const libraryTitles = useMemo(() => new Set(books.map((item) => item.title.toLowerCase())), [books]);
 
-  // SM-2 Due cards calculation
-  const dueCardsCount = useMemo(() => {
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-    const todayEndTime = todayEnd.getTime();
-    
-    return cards.filter((c) => {
-      return c.status === "new" || new Date(c.dueAt).getTime() <= todayEndTime;
-    }).length;
-  }, [cards]);
+  // Counted the same way the card module counts it — every prompt direction,
+  // not just the forward one — so the home tile and the trainer agree.
+  const dueCardsCount = useMemo(
+    () => computeDeckStats(cards, getCardVariantProgressMap()).dueCards,
+    [cards],
+  );
 
   useEffect(() => {
     const controller = new AbortController();

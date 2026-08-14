@@ -20,7 +20,7 @@ import {
   sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbUpsertFlashcard, sbDeleteFlashcard, sbAuthHeaders, supabase,
   type DbBook, type DbReadingProgress, type DbUserSettings, type DbFlashcard,
 } from "@/lib/db/supabase";
-import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
+import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalCards, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { parseBook } from "@/lib/parser/index";
 import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress } from "@/lib/cards";
@@ -458,25 +458,14 @@ function AppInner() {
 
     // Flashcards
     if (dbCards.length > 0) {
-      const localCards: Flashcard[] = dbCards.map((c) => ({
-        id: c.id,
-        type: c.selection_type,
-        front: c.front,
-        back: c.back,
-        source: c.source_book_title ?? "",
-        addedAt: c.created_at,
-        status: (c.status as Flashcard["status"]) || "new",
-        repetitions: c.repetitions ?? 0,
-        lapses: c.lapses ?? 0,
-        intervalDays: c.interval_days ?? 0,
-        easeFactor: c.easiness_factor ?? 2.5,
-        dueAt: c.next_review_at || c.created_at || new Date().toISOString(),
-        lastReviewedAt: c.last_reviewed_at || null,
-        sourceBookId: c.source_book_id || null,
-        sourceBookTitle: c.source_book_title || null,
-        cefr: c.cefr ?? null,
-      }));
+      const localCards = dbCards.map(dbCardToFlashcard);
       setCards(localCards);
+      // The mirror has to be written too. Cards created server-side — every
+      // word of a photographed dictionary batch — existed only in Supabase
+      // otherwise, so the next launch painted its statistics from a cache that
+      // had never heard of them, and a grade would then save that stale list
+      // back over itself.
+      saveLocalCards(localCards);
     }
 
     // Profile/settings
@@ -661,25 +650,9 @@ function AppInner() {
     try {
       const dbCards = await sbGetFlashcards(user.id);
       if (dbCards) {
-        const localCards: Flashcard[] = dbCards.map((c) => ({
-          id: c.id,
-          type: c.selection_type,
-          front: c.front,
-          back: c.back,
-          source: c.source_book_title ?? "",
-          addedAt: c.created_at,
-          status: (c.status as Flashcard["status"]) || "new",
-          repetitions: c.repetitions ?? 0,
-          lapses: c.lapses ?? 0,
-          intervalDays: c.interval_days ?? 0,
-          easeFactor: c.easiness_factor ?? 2.5,
-          dueAt: c.next_review_at || c.created_at || new Date().toISOString(),
-          lastReviewedAt: c.last_reviewed_at || null,
-          sourceBookId: c.source_book_id || null,
-          sourceBookTitle: c.source_book_title || null,
-          cefr: c.cefr ?? null,
-        }));
+        const localCards = dbCards.map(dbCardToFlashcard);
         setCards(localCards);
+        saveLocalCards(localCards);
       }
     } catch {
       // ignore network errors
@@ -1064,6 +1037,27 @@ export default function Page() {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function dbCardToFlashcard(c: DbFlashcard): Flashcard {
+  return {
+    id: c.id,
+    type: c.selection_type,
+    front: c.front,
+    back: c.back,
+    source: c.source_book_title ?? "",
+    addedAt: c.created_at,
+    status: (c.status as Flashcard["status"]) || "new",
+    repetitions: c.repetitions ?? 0,
+    lapses: c.lapses ?? 0,
+    intervalDays: c.interval_days ?? 0,
+    easeFactor: c.easiness_factor ?? 2.5,
+    dueAt: c.next_review_at || c.created_at || new Date().toISOString(),
+    lastReviewedAt: c.last_reviewed_at || null,
+    sourceBookId: c.source_book_id || null,
+    sourceBookTitle: c.source_book_title || null,
+    cefr: c.cefr ?? null,
+  };
+}
 
 function dbBookToBook(db: DbBook, paragraphs: string[], paragraphIndex: number, progress: number): Book {
   return {
