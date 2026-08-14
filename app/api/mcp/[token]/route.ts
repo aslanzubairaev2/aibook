@@ -28,6 +28,7 @@ import { verifyMcpToken } from "@/lib/mcp/token";
 import { MCP_TOOLS, buildGuideMarkdown, callMcpTool } from "@/lib/mcp/tools";
 import { MCP_PROMPTS, getPrompt } from "@/lib/mcp/prompts";
 import { buildInstructions } from "@/lib/mcp/capabilities";
+import { MCP_SERVER_VERSION } from "@/lib/mcp/version";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -39,7 +40,7 @@ const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const SERVER_INFO = {
   name: "aibook",
   title: "aibook — карточки, словарь и тексты",
-  version: "1.2.0",
+  version: MCP_SERVER_VERSION,
 };
 
 const INSTRUCTIONS = buildInstructions();

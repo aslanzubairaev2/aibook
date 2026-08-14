@@ -34,6 +34,15 @@ const CARD_TYPES = ["word", "phrase", "sentence"] as const;
 // small enough that the request still finishes inside the function's budget.
 const COUNTED_ON_THE_FLY = 30;
 
+// The shelves the app's «Обзор» tab is divided into, as stored on the row.
+const CATALOGUE_SHELVES = ["klexikon", "universal_cefr", "oersi", "dw", "generated"] as const;
+type CatalogueShelf = typeof CATALOGUE_SHELVES[number];
+
+// How many catalogue rows are considered before ranking by coverage. Each row
+// carries a word-frequency map, so this is the ceiling that keeps the call
+// inside its budget; the tool says so when it hits it.
+const CATALOGUE_CANDIDATES = 200;
+
 // Hints defined by the MCP spec. They are what lets a client show a read tool
 // and a destructive one differently — and what stops a cautious agent from
 // treating every tool as dangerous and asking before each call.
@@ -86,6 +95,7 @@ type CardRow = {
   easiness_factor: number | null;
   interval_days: number | null;
   next_review_at: string | null;
+  last_reviewed_at: string | null;
   source_book_id: string | null;
   source_book_title: string | null;
   selection_type: string | null;
@@ -93,7 +103,7 @@ type CardRow = {
 };
 
 const CARD_COLUMNS =
-  "id, front, back, status, repetitions, lapses, easiness_factor, interval_days, next_review_at, source_book_id, source_book_title, selection_type, cefr";
+  "id, front, back, status, repetitions, lapses, easiness_factor, interval_days, next_review_at, last_reviewed_at, source_book_id, source_book_title, selection_type, cefr";
 
 async function getCards(ctx: Ctx): Promise<CardRow[]> {
   const { data, error } = await ctx.admin
@@ -109,8 +119,23 @@ async function getCards(ctx: Ctx): Promise<CardRow[]> {
 // same heuristic the agents are told about in the tool descriptions.
 const LEARNED_REPETITIONS = 3;
 
-function isDue(card: CardRow): boolean {
-  return !card.next_review_at || new Date(card.next_review_at) <= new Date();
+// An interval past three weeks means the word has settled — Anki's convention,
+// and the one the app's statistics panel counts as «выучено».
+const MATURE_INTERVAL_DAYS = 21;
+const FORECAST_DAYS = 7;
+const DAY_MS = 86400000;
+
+/**
+ * The app schedules by day, not by minute: everything falling due before
+ * midnight is in today's session, which is why its «сегодня» number is larger
+ * than a naive `next_review_at <= now` count. Reporting the smaller number told
+ * agents there was less to do than the learner could see on their own screen.
+ *
+ * Day boundaries are UTC here, because a server has no way to know which
+ * midnight the learner is living in.
+ */
+function endOfTodayMs(now: Date): number {
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) + DAY_MS - 1;
 }
 
 // The three directions a card is trained in. "forward" lives on the flashcard
@@ -119,12 +144,19 @@ function isDue(card: CardRow): boolean {
 type VariantRow = {
   flashcard_id: string;
   variant: "reverse" | "audio";
+  status: string | null;
   repetitions: number | null;
   lapses: number | null;
+  easiness_factor: number | null;
+  interval_days: number | null;
   next_review_at: string | null;
+  last_reviewed_at: string | null;
 };
 
-const SKILL_NAMES: Record<"forward" | "reverse" | "audio", string> = {
+type Direction = "forward" | "reverse" | "audio";
+const DIRECTIONS: Direction[] = ["forward", "reverse", "audio"];
+
+const SKILL_NAMES: Record<Direction, string> = {
   forward: "recognition (sees the target word, recalls the meaning)",
   reverse: "recall (sees the meaning, produces the target word)",
   audio: "listening (hears the word)",
@@ -133,12 +165,166 @@ const SKILL_NAMES: Record<"forward" | "reverse" | "audio", string> = {
 async function getVariantProgress(ctx: Ctx): Promise<VariantRow[]> {
   const { data, error } = await ctx.admin
     .from("flashcard_variant_progress")
-    .select("flashcard_id, variant, repetitions, lapses, next_review_at")
+    .select(
+      "flashcard_id, variant, status, repetitions, lapses, easiness_factor, interval_days, next_review_at, last_reviewed_at",
+    )
     .eq("user_id", ctx.userId);
   // The table arrived in a later migration; an installation without it should
   // still answer everything else rather than failing the whole call.
   if (error) return [];
   return (data ?? []) as VariantRow[];
+}
+
+// ─── One schedule, whichever direction it belongs to ────────────────────────
+//
+// The app treats the three directions as one deck of prompts: a card is due if
+// any direction is due, and a session is counted in prompts, not in words.
+// These helpers mirror lib/cards.ts exactly so the numbers an agent quotes are
+// the numbers on the learner's screen.
+
+export type DirectionProgress = {
+  cardId: string;
+  direction: Direction;
+  status: string;
+  repetitions: number;
+  lapses: number;
+  ease: number;
+  intervalDays: number;
+  dueAt: string | null;
+  lastReviewedAt: string | null;
+};
+
+/** Every card in every direction, unscheduled directions included. */
+export function directionProgress(cards: CardRow[], variants: VariantRow[]): DirectionProgress[] {
+  const byCard = new Map<string, Map<Direction, VariantRow>>();
+  for (const row of variants) {
+    const forCard = byCard.get(row.flashcard_id) ?? new Map<Direction, VariantRow>();
+    forCard.set(row.variant, row);
+    byCard.set(row.flashcard_id, forCard);
+  }
+
+  const out: DirectionProgress[] = [];
+  for (const card of cards) {
+    for (const direction of DIRECTIONS) {
+      if (direction === "forward") {
+        out.push({
+          cardId: card.id,
+          direction,
+          status: card.status ?? "new",
+          repetitions: card.repetitions ?? 0,
+          lapses: card.lapses ?? 0,
+          ease: card.easiness_factor ?? 2.5,
+          intervalDays: card.interval_days ?? 0,
+          dueAt: card.next_review_at,
+          lastReviewedAt: card.last_reviewed_at,
+        });
+        continue;
+      }
+      const row = byCard.get(card.id)?.get(direction);
+      out.push({
+        cardId: card.id,
+        direction,
+        // A direction the learner has never been asked in is new, and new is due.
+        status: row?.status ?? "new",
+        repetitions: row?.repetitions ?? 0,
+        lapses: row?.lapses ?? 0,
+        ease: row?.easiness_factor ?? 2.5,
+        intervalDays: row?.interval_days ?? 0,
+        dueAt: row?.next_review_at ?? null,
+        lastReviewedAt: row?.last_reviewed_at ?? null,
+      });
+    }
+  }
+  return out;
+}
+
+export function isDueToday(p: DirectionProgress, todayEndMs: number): boolean {
+  if (p.status === "new") return true;
+  if (!p.dueAt) return true;
+  const due = Date.parse(p.dueAt);
+  return !Number.isFinite(due) || due <= todayEndMs;
+}
+
+/**
+ * "Struggling" is not a low score: it is a prompt the learner keeps losing —
+ * forgotten twice, or ground down to an ease factor the algorithm has pushed
+ * to the floor. Same rule as the app's «Сложные» filter (isHardProgress).
+ */
+export function isStrugglingProgress(p: { lapses: number; repetitions: number; ease: number }): boolean {
+  return p.lapses >= 2 || (p.repetitions > 0 && p.ease <= 2.2);
+}
+
+/**
+ * The statistics panel of the app, computed from the same rows over MCP.
+ *
+ * Written as a pure function of the two tables so it can be tested without a
+ * database, and so `get_overview` and `get_progress` can never disagree.
+ */
+export function summarizeDeck(cards: CardRow[], variants: VariantRow[], now = new Date()) {
+  const todayEndMs = endOfTodayMs(now);
+  const progress = directionProgress(cards, variants);
+
+  const dueCards = new Set<string>();
+  const dueByDirection: Record<Direction, number> = { forward: 0, reverse: 0, audio: 0 };
+  const forecast = Array.from({ length: FORECAST_DAYS }, (_, i) => ({ in_days: i + 1, repetitions: 0 }));
+  const hardCards = new Set<string>();
+  const reviewDays = new Set<string>();
+  const dayKey = (value: string | null): string | null => {
+    if (!value) return null;
+    const time = Date.parse(value);
+    if (!Number.isFinite(time)) return null;
+    return new Date(time).toISOString().slice(0, 10);
+  };
+  const todayKey = new Date(now).toISOString().slice(0, 10);
+
+  let dueReps = 0;
+  let started = 0;
+  let reviewedToday = 0;
+
+  for (const p of progress) {
+    if (p.repetitions > 0) started += 1;
+    if (isStrugglingProgress(p)) hardCards.add(p.cardId);
+    if (isDueToday(p, todayEndMs)) {
+      dueCards.add(p.cardId);
+      dueByDirection[p.direction] += 1;
+      dueReps += 1;
+    } else if (p.dueAt) {
+      const inDays = Math.ceil((Date.parse(p.dueAt) - todayEndMs) / DAY_MS);
+      if (inDays >= 1 && inDays <= FORECAST_DAYS) forecast[inDays - 1].repetitions += 1;
+    }
+    const reviewedOn = dayKey(p.lastReviewedAt);
+    if (reviewedOn) {
+      reviewDays.add(reviewedOn);
+      if (reviewedOn === todayKey) reviewedToday += 1;
+    }
+  }
+
+  // Yesterday still counts as an unbroken streak until today is over.
+  let streak = 0;
+  const cursor = new Date(`${todayKey}T00:00:00.000Z`);
+  if (!reviewDays.has(todayKey)) cursor.setUTCDate(cursor.getUTCDate() - 1);
+  while (reviewDays.has(cursor.toISOString().slice(0, 10))) {
+    streak += 1;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+
+  const totalDirections = cards.length * DIRECTIONS.length;
+  return {
+    due_today: {
+      cards: dueCards.size,
+      repetitions: dueReps,
+      by_direction: dueByDirection,
+    },
+    directions_started: started,
+    directions_total: totalDirections,
+    directions_percent: totalDirections > 0 ? Math.round((started / totalDirections) * 100) : 0,
+    mature_cards: cards.filter((c) => (c.interval_days ?? 0) >= MATURE_INTERVAL_DAYS).length,
+    struggling_cards: hardCards.size,
+    reviewed_today: reviewedToday,
+    streak_days: streak,
+    forecast_next_days: forecast,
+    note: `The same counts the app's own statistics panel shows: a prompt is due if it falls before the end of today, and every card is three prompts (${DIRECTIONS.join(", ")}). Day boundaries are counted in UTC here, so a late-evening review may land on the learner's next day.`,
+  };
 }
 
 /** Cards belonging to one dictionary batch, by id where possible. */
@@ -150,17 +336,24 @@ function cardsOfBatch(cards: CardRow[], batchId: string, batchTitle: string): Ca
   return cards.filter((c) => !c.source_book_id && c.source_book_title === batchTitle);
 }
 
-/** PostgREST filter strings are comma-separated; user text must not break out. */
+/**
+ * PostgREST filter strings are comma-separated; user text must not break out.
+ *
+ * The LIKE wildcards go too — `%` and `_` are syntax to the database and were
+ * meant literally by whoever typed them — which is the same rule the app's own
+ * catalogue search applies to what a reader types into the box.
+ */
 function sanitizeSearch(value: string): string {
-  return value.replace(/[,()*%\\]/g, " ").trim().slice(0, 80);
+  return value.replace(/[,()*%_"\\]/g, " ").trim().slice(0, 80);
 }
 
 // ─── Tool handlers ───────────────────────────────────────────────────────────
 
 async function getOverview(ctx: Ctx): Promise<unknown> {
-  const [langs, cards, lessons, lessonCount, progress, batches, entryCount] = await Promise.all([
+  const [langs, cards, variants, lessons, lessonCount, progress, batches, entryCount] = await Promise.all([
     getLanguages(ctx),
     getCards(ctx),
+    getVariantProgress(ctx),
     ctx.admin
       .from("shared_books")
       .select("id, title, cefr_level, language, created_at")
@@ -188,15 +381,21 @@ async function getOverview(ctx: Ctx): Promise<unknown> {
   ]);
 
   const progressRows = progress.data ?? [];
+  const deck = summarizeDeck(cards, variants);
   return {
     app: "aibook — language-learning app: reading texts, a personal dictionary in batches, and a spaced-repetition deck",
     target_language: langs.target,
     native_language: langs.native,
     flashcards: {
       total: cards.length,
-      due_now: cards.filter(isDue).length,
+      // The learner's own screen counts words due today and the prompts behind
+      // them separately; quoting only one of the two misreports the workload.
+      due_today: deck.due_today.cards,
+      repetitions_due_today: deck.due_today.repetitions,
       learned: cards.filter((c) => (c.repetitions ?? 0) >= LEARNED_REPETITIONS).length,
-      note: `learned = ${LEARNED_REPETITIONS}+ successful reviews in a row, in the recognition direction`,
+      struggling: deck.struggling_cards,
+      streak_days: deck.streak_days,
+      note: `learned = ${LEARNED_REPETITIONS}+ successful reviews in a row, in the recognition direction. Every card is trained in three directions, each on its own schedule — get_progress breaks it down.`,
     },
     dictionary: {
       words: entryCount.count ?? 0,
@@ -261,9 +460,19 @@ async function getStudyWords(ctx: Ctx, args: Args): Promise<unknown> {
 const CARD_FILTERS = ["all", "due", "learned", "new", "struggling"] as const;
 type CardFilter = typeof CARD_FILTERS[number];
 
-function isStruggling(card: CardRow): boolean {
-  const lapses = card.lapses ?? 0;
-  return lapses >= 2 || (lapses >= 1 && (card.easiness_factor ?? 2.5) <= 2.2);
+/** A card is struggling when any one of its three directions is. */
+function isStruggling(card: CardRow, byCard: Map<string, DirectionProgress[]>): boolean {
+  return (byCard.get(card.id) ?? []).some(isStrugglingProgress);
+}
+
+function groupByCard(progress: DirectionProgress[]): Map<string, DirectionProgress[]> {
+  const byCard = new Map<string, DirectionProgress[]>();
+  for (const p of progress) {
+    const list = byCard.get(p.cardId) ?? [];
+    list.push(p);
+    byCard.set(p.cardId, list);
+  }
+  return byCard;
 }
 
 async function listFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
@@ -274,11 +483,19 @@ async function listFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
   const search = typeof args.search === "string" ? normalizeCardText(args.search) : "";
   const batchId = typeof args.batch_id === "string" ? args.batch_id.trim() : "";
 
-  let cards = await getCards(ctx);
-  if (filter === "due") cards = cards.filter(isDue);
+  const [allCards, variants] = await Promise.all([getCards(ctx), getVariantProgress(ctx)]);
+  let cards = allCards;
+  const todayEndMs = endOfTodayMs(new Date());
+  const byCard = groupByCard(directionProgress(cards, variants));
+  const dueDirections = (card: CardRow): Direction[] =>
+    (byCard.get(card.id) ?? []).filter((p) => isDueToday(p, todayEndMs)).map((p) => p.direction);
+
+  // "Due" means what the app's «К повторению» list means: any direction of the
+  // card is waiting, not only the one whose schedule sits on the card row.
+  if (filter === "due") cards = cards.filter((c) => dueDirections(c).length > 0);
   if (filter === "learned") cards = cards.filter((c) => (c.repetitions ?? 0) >= LEARNED_REPETITIONS);
   if (filter === "new") cards = cards.filter((c) => (c.repetitions ?? 0) === 0);
-  if (filter === "struggling") cards = cards.filter(isStruggling);
+  if (filter === "struggling") cards = cards.filter((c) => isStruggling(c, byCard));
   if (batchId) cards = cards.filter((c) => c.source_book_id === batchId);
   if (search) {
     cards = cards.filter(
@@ -300,9 +517,12 @@ async function listFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
       repetitions: c.repetitions ?? 0,
       lapses: c.lapses ?? 0,
       next_review_at: c.next_review_at,
+      // Which of the three trainings this card is waiting for today.
+      due_directions: dueDirections(c),
       source: c.source_book_title,
       batch_id: c.source_book_id,
     })),
+    note: "'repetitions', 'lapses' and 'next_review_at' describe the recognition direction, the one stored on the card itself. 'due_directions' covers all three.",
   };
 }
 
@@ -584,7 +804,7 @@ type DictRow = {
 };
 
 async function listBatches(ctx: Ctx): Promise<unknown> {
-  const [{ data: batches, error }, cards] = await Promise.all([
+  const [{ data: batches, error }, cards, variants] = await Promise.all([
     ctx.admin
       .from("dictionary_batches")
       .select("id, title, kind, topic, language, word_count, created_at")
@@ -592,8 +812,10 @@ async function listBatches(ctx: Ctx): Promise<unknown> {
       .order("created_at", { ascending: false })
       .limit(100),
     getCards(ctx),
+    getVariantProgress(ctx),
   ]);
   if (error) throw new Error(`batches read failed: ${error.message}`);
+  const byCard = groupByCard(directionProgress(cards, variants));
 
   return {
     explanation:
@@ -615,7 +837,7 @@ async function listBatches(ctx: Ctx): Promise<unknown> {
               cards: batchCards.length,
               started,
               learned,
-              struggling: batchCards.filter(isStruggling).length,
+              struggling: batchCards.filter((c) => isStruggling(c, byCard)).length,
               percent: Math.round((started / batchCards.length) * 100),
             }
           : null,
@@ -815,11 +1037,20 @@ async function getProgress(ctx: Ctx, args: Args): Promise<unknown> {
   const limit = Math.min(Math.max(Number(args.limit) || 40, 1), 200);
   const [cards, variants] = await Promise.all([getCards(ctx), getVariantProgress(ctx)]);
   const now = Date.now();
+  const todayEndMs = endOfTodayMs(new Date(now));
+  const deck = summarizeDeck(cards, variants, new Date(now));
+  const byCard = groupByCard(directionProgress(cards, variants));
+
+  // A word is struggling when any of its three directions is — the same rule
+  // the app's «Сложные» filter uses, so this list matches what the learner sees.
+  const isHard = (cardId: string) => (byCard.get(cardId) ?? []).some(isStrugglingProgress);
 
   const withStats = cards.map((c) => {
     const reps = c.repetitions ?? 0;
     const lapses = c.lapses ?? 0;
     return {
+      // Carried so an agent can fix or drop a word straight from this list.
+      id: c.id,
       word: c.front,
       meaning: c.back.split("\n")[0],
       level: c.cefr ?? "",
@@ -830,14 +1061,18 @@ async function getProgress(ctx: Ctx, args: Args): Promise<unknown> {
       due_in_days: c.next_review_at
         ? Math.round((new Date(c.next_review_at).getTime() - now) / 86400000)
         : 0,
+      // Which trainings this word is waiting for today, so an agent drilling
+      // the struggling list knows whether to ask for reading or for producing.
+      due_directions: (byCard.get(c.id) ?? [])
+        .filter((p) => isDueToday(p, todayEndMs))
+        .map((p) => p.direction),
+      struggling: isHard(c.id),
       source: c.source_book_title ?? "",
     };
   });
 
-  // "Struggling" is not a low score, it is a word that keeps being forgotten:
-  // lapses despite repetitions, or an ease factor the algorithm has pushed down.
   const struggling = withStats
-    .filter((w) => w.lapses >= 2 || (w.lapses >= 1 && w.ease <= 2.2))
+    .filter((w) => w.struggling)
     .sort((a, b) => b.lapses - a.lapses || a.ease - b.ease)
     .slice(0, limit);
 
@@ -852,15 +1087,20 @@ async function getProgress(ctx: Ctx, args: Args): Promise<unknown> {
 
   const untouched = withStats.filter((w) => w.reps === 0);
 
+  const allDirections = directionProgress(cards, variants);
+
   return {
     totals: {
       cards: cards.length,
       never_studied: untouched.length,
       in_progress: withStats.filter((w) => w.reps > 0 && w.reps < LEARNED_REPETITIONS).length,
       confident: withStats.filter((w) => w.reps >= LEARNED_REPETITIONS && w.lapses === 0).length,
-      struggling: withStats.filter((w) => w.lapses >= 2 || (w.lapses >= 1 && w.ease <= 2.2)).length,
-      due_now: cards.filter(isDue).length,
+      struggling: deck.struggling_cards,
+      due_today: deck.due_today.cards,
     },
+    // What the learner's own statistics panel says: today's workload, the
+    // streak they are protecting, and what the next week looks like.
+    deck,
     by_level: ["A1", "A2", "B1", "B2", "C1", "C2"].map((level) => ({
       level,
       total: withStats.filter((w) => w.level === level).length,
@@ -869,23 +1109,16 @@ async function getProgress(ctx: Ctx, args: Args): Promise<unknown> {
     // The same word is scheduled separately in each direction, so "knowing" it
     // is not one number: a learner who reads a word fluently may still be
     // unable to produce it from the Russian.
-    by_direction: (["forward", "reverse", "audio"] as const).map((variant) => {
-      const rows = variant === "forward"
-        ? cards.map((c) => ({ reps: c.repetitions ?? 0, lapses: c.lapses ?? 0, due: isDue(c) }))
-        : variants
-            .filter((v) => v.variant === variant)
-            .map((v) => ({
-              reps: v.repetitions ?? 0,
-              lapses: v.lapses ?? 0,
-              due: !v.next_review_at || new Date(v.next_review_at).getTime() <= now,
-            }));
+    by_direction: DIRECTIONS.map((direction) => {
+      const rows = allDirections.filter((p) => p.direction === direction);
+      const started = rows.filter((r) => r.repetitions > 0).length;
       return {
-        direction: variant,
-        means: SKILL_NAMES[variant],
-        started: rows.filter((r) => r.reps > 0).length,
-        confident: rows.filter((r) => r.reps >= LEARNED_REPETITIONS && r.lapses === 0).length,
-        due_now: rows.filter((r) => r.due).length,
-        not_started: cards.length - rows.filter((r) => r.reps > 0).length,
+        direction,
+        means: SKILL_NAMES[direction],
+        started,
+        confident: rows.filter((r) => r.repetitions >= LEARNED_REPETITIONS && r.lapses === 0).length,
+        due_today: rows.filter((r) => isDueToday(r, todayEndMs)).length,
+        not_started: cards.length - started,
       };
     }),
     struggling,
@@ -893,6 +1126,8 @@ async function getProgress(ctx: Ctx, args: Args): Promise<unknown> {
     learning,
     how_to_use:
       "Practise new grammar with the 'confident' words so the sentence is about the construction, not the vocabulary. Weave 'struggling' words into examples and stories as often as you can — those are the ones being forgotten. Leave 'never studied' words alone unless the learner asks. If 'reverse' is far behind 'forward', the learner recognises words they cannot yet produce — ask them to say things, not just read them.",
+    not_included:
+      "The app's second trainer («Активно» — a written test over three tracks: вспоминаю / слушаю / говорю) keeps its record on the learner's own device, so none of it reaches this connection. What you see here is the «Повторение» deck.",
   };
 }
 
@@ -906,13 +1141,25 @@ async function listCatalogue(ctx: Ctx, args: Args): Promise<unknown> {
     ? args.language.trim()
     : langs.target;
 
+  const query = sanitizeSearch(String(args.query ?? ""));
+  const asked = String(args.shelf ?? "").trim();
+  const shelf = (CATALOGUE_SHELVES as readonly string[]).includes(asked) ? (asked as CatalogueShelf) : "";
+
   let request = ctx.admin
     .from("shared_books")
-    .select("id, title, author, cefr_level, language, course_title, total_chars, metadata")
+    .select("id, title, author, cefr_level, language, source_type, course_title, total_chars, metadata")
     .is("owner_user_id", null)
     .eq("language", language)
-    .limit(limit * 3);
+    // The catalogue outgrew the point where an unordered slice was a fair
+    // sample of it — the app pages through it now. Ordering by level, then by
+    // title, means the candidates below are a stretch of one level rather than
+    // whatever the database happened to return first.
+    .order("cefr_level", { ascending: true, nullsFirst: false })
+    .order("title", { ascending: true })
+    .limit(CATALOGUE_CANDIDATES);
   if (LEVELS.includes(level as CefrLevel)) request = request.eq("cefr_level", level);
+  if (shelf) request = request.eq("source_type", shelf);
+  if (query) request = request.ilike("title", `%${query}%`);
 
   const [{ data: books, error }, cards] = await Promise.all([request, getCards(ctx)]);
   if (error) throw new Error(`catalogue read failed: ${error.message}`);
@@ -959,6 +1206,7 @@ async function listCatalogue(ctx: Ctx, args: Args): Promise<unknown> {
       id: b.id,
       title: b.title,
       level: b.cefr_level,
+      shelf: b.source_type,
       course: b.course_title,
       characters: b.total_chars,
       // How much of it the learner can already read — the same badge the app
@@ -979,7 +1227,12 @@ async function listCatalogue(ctx: Ctx, args: Args): Promise<unknown> {
 
   return {
     texts: texts.slice(0, limit),
-    note: "Public texts in the app's catalogue («Обзор»). 'comfortable' means the learner already knows 90–98% of the words — the band where reading teaches most. Open one with get_text.",
+    note: "Public texts in the app's catalogue («Обзор»), on the shelves the app shows: 'klexikon' (short encyclopedia articles in simple German), 'universal_cefr' (graded texts by level), and the rest. 'comfortable' means the learner already knows 90–98% of the words — the band where reading teaches most. Open one with get_text.",
+    ...(books && books.length >= CATALOGUE_CANDIDATES
+      ? {
+          more: `The catalogue is larger than one look at it: these are the first ${CATALOGUE_CANDIDATES} matches, ordered by level. Narrow with 'level', 'shelf' or 'query' if nothing here fits.`,
+        }
+      : {}),
     ...(unmeasured > 0
       ? {
           warning: `${unmeasured} of these texts could not be measured — their stored text is empty, so 'known_words_percent' is null for them. Judge those by CEFR level instead.`,
@@ -999,7 +1252,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "get_overview",
     title: "Что сейчас в приложении",
     description:
-      "What is in the learner's aibook right now: target/native language, flashcard counts (total, due, learned), dictionary size and recent word batches, recent lessons, reading progress. Call this first — it also lists what else you can do here.",
+      "What is in the learner's aibook right now: target/native language, flashcard counts (total, due today, learned, struggling, review streak), dictionary size and recent word batches, recent lessons, reading progress. Call this first — it also lists what else you can do here.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { ...READ_ONLY, title: "Что сейчас в приложении" },
   },
@@ -1015,7 +1268,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "get_progress",
     title: "Как идёт учёба",
     description:
-      "How the learning is actually going, from the spaced-repetition record: which words the learner knows confidently, which are in progress, and which they keep forgetting (repeated lapses or an ease factor the algorithm has pushed down), with totals by CEFR level and by training direction (recognition / recall / listening — each word is scheduled separately in each). Use the confident words when practising a new construction — the sentence should test the grammar, not the vocabulary — and work the struggling ones into examples and stories.",
+      "How the learning is actually going, from the spaced-repetition record: which words the learner knows confidently, which are in progress, and which they keep forgetting (repeated lapses or an ease factor the algorithm has pushed down), with totals by CEFR level and by training direction (recognition / recall / listening — each word is scheduled separately in each). It also returns the deck numbers the app's own statistics panel shows: today's workload in words and in repetitions, the review streak, and the next week's forecast. Use the confident words when practising a new construction — the sentence should test the grammar, not the vocabulary — and work the struggling ones into examples and stories.",
     inputSchema: {
       type: "object",
       properties: { limit: { type: "number", description: "Words per list (default 40, max 200)" } },
@@ -1041,14 +1294,14 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "list_flashcards",
     title: "Карточки",
     description:
-      "List the learner's flashcards with their scheduling state and ids. Filter by 'due', 'learned', 'new' or 'struggling', narrow to one dictionary batch, or search the text of the cards. The ids are what update_flashcard and delete_flashcards take.",
+      "List the learner's flashcards with their scheduling state and ids. Filter by 'due', 'learned', 'new' or 'struggling', narrow to one dictionary batch, or search the text of the cards. Each card says which of its three trainings are waiting today ('due_directions'). The ids are what update_flashcard and delete_flashcards take.",
     inputSchema: {
       type: "object",
       properties: {
         filter: {
           type: "string",
           enum: ["all", "due", "learned", "new", "struggling"],
-          description: "Default 'all'. 'struggling' = repeatedly forgotten.",
+          description: "Default 'all'. 'due' = any direction waiting today, the same list the app shows. 'struggling' = repeatedly forgotten.",
         },
         search: { type: "string", description: "Substring of the front or back text" },
         batch_id: { type: "string", description: "Only cards from this dictionary batch (see list_word_batches)" },
@@ -1123,10 +1376,16 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "list_catalogue",
     title: "Что почитать",
     description:
-      "The ready-made public texts in the app's catalogue, with the share of words the learner already knows in each and whether it sits in the comfortable 90–98% band. Use it to answer «что мне почитать?» with something from the app instead of writing a new text.",
+      "The ready-made public texts in the app's catalogue, with the share of words the learner already knows in each and whether it sits in the comfortable 90–98% band. Search it by title, or narrow it to one shelf or one CEFR level — the catalogue is far larger than one page of results. Use it to answer «что мне почитать?» with something from the app instead of writing a new text.",
     inputSchema: {
       type: "object",
       properties: {
+        query: { type: "string", description: "Search the titles, e.g. «Fahrrad»" },
+        shelf: {
+          type: "string",
+          enum: ["klexikon", "universal_cefr", "oersi", "dw", "generated"],
+          description: "One shelf of the catalogue: 'klexikon' = short encyclopedia articles in simple German, 'universal_cefr' = texts graded by level",
+        },
         level: { type: "string", enum: ["A1", "A2", "B1", "B2", "C1", "C2"], description: "Only texts at this level" },
         language: { type: "string", description: "ISO code; defaults to the learner's target language" },
         limit: { type: "number", description: "Default 20, max 60" },
