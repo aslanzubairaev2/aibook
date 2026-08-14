@@ -9,7 +9,7 @@
     "lint": "next lint",
     "test:vocab": "node --experimental-strip-types --test lib/text/vocab.test.ts",
     "test:crop": "node --experimental-strip-types --test components/capture/imageCrop.test.ts",
-    "test": "node --experimental-strip-types --import ./scripts/register-test-loader.mjs --test --test-timeout 30000 lib/text/vocab.test.ts components/capture/imageCrop.test.ts lib/ai/costs.test.ts lib/mcp/token.test.ts lib/mcp/tools.test.ts lib/ai/lessonModel.test.ts lib/ai/transcriptionLesson.test.ts lib/ai/liveModels.test.ts lib/ai/liveChat.test.ts lib/ai/buildDictionaryPrompt.test.ts lib/cards.test.ts lib/db/dictionaryStore.test.ts lib/ttsQuota.test.ts lib/wav.test.ts lib/ttsProviders.test.ts"
+    "test": "node --experimental-strip-types --import ./scripts/register-test-loader.mjs --test --test-timeout 30000 lib/text/vocab.test.ts components/capture/imageCrop.test.ts lib/ai/costs.test.ts lib/mcp/token.test.ts lib/mcp/tools.test.ts lib/ai/lessonModel.test.ts lib/ai/transcriptionLesson.test.ts lib/ai/liveModels.test.ts lib/ai/liveChat.test.ts lib/ai/buildDictionaryPrompt.test.ts lib/cards.test.ts lib/srs/activeTraining.test.ts lib/db/dictionaryStore.test.ts lib/ttsQuota.test.ts lib/wav.test.ts lib/ttsProviders.test.ts"
   },
   "proxy": "http://192.168.178.55:3000",
   "keywords": [],
