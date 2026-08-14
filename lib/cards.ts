@@ -99,22 +99,78 @@ export function filterCardsByTrainingSource(
   return cards.filter((card) => (card.sourceBookTitle || card.source || "") === sourceTitle);
 }
 
-/** Exact filters used when opening the trainer from one dictionary batch. */
-export function createBatchTrainingFilters(
-  current: CardFilters | undefined,
-  batchId: string,
-  batchTitle: string,
-): CardFilters {
+export const DEFAULT_TRAIN_VARIANTS: TrainVariant[] = ["forward"];
+
+/** A dictionary batch being trained right now — session state, never persisted. */
+export type TrainBatch = { id: string; title: string };
+
+export type ResolvedCardFilters = {
+  filterStatus: CardStatus | "all";
+  filterType: TrainTypeFilter;
+  filterBook: string;
+  filterLevel: string;
+  sortOrder: NonNullable<CardFilters["sortOrder"]>;
+  trainFilter: TrainTypeFilter;
+  trainStatus: TrainStatus;
+  trainBook: string;
+  trainSourceId: string | null;
+  trainVariants: TrainVariant[];
+  trainMode: NonNullable<CardFilters["trainMode"]>;
+};
+
+/**
+ * The filters a screen actually runs with.
+ *
+ * Two layers, deliberately kept apart. `saved` is the learner's own
+ * configuration — the one they set up in the card module and expect to find
+ * again next time. `batch` is «тренировать эту пачку»: it narrows to one
+ * photographed page and clears whatever narrowing was left over, because a
+ * stale type or status would quietly hide most of the batch.
+ *
+ * The batch layer is applied here rather than written into `saved`, which is
+ * what it used to do. Overwriting meant the batch's own "all types, all
+ * statuses, every direction" became the learner's configuration permanently,
+ * and the deck stayed pinned to that one page long after it was finished —
+ * «Начать тренировку» would keep serving it forever. Ending a batch is now
+ * just calling this again without one.
+ */
+export function resolveCardFilters(
+  saved: CardFilters | undefined,
+  batch: TrainBatch | null = null,
+): ResolvedCardFilters {
+  const sortOrder = saved?.sortOrder ?? "added";
+
+  if (batch) {
+    return {
+      filterStatus: "all",
+      filterType: "all",
+      filterBook: batch.title,
+      filterLevel: "all",
+      sortOrder,
+      trainFilter: "all",
+      trainStatus: "all",
+      trainBook: batch.title,
+      trainSourceId: batch.id,
+      // Titles repeat — every page photographed on the same day can share one —
+      // so the id above is the real filter, and the title is only what the
+      // learner sees.
+      trainVariants: [...ALL_TRAIN_VARIANTS],
+      trainMode: "recognize",
+    };
+  }
+
   return {
-    ...current,
-    filterBook: batchTitle,
-    filterStatus: "all",
-    filterType: "all",
-    filterLevel: "all",
-    trainBook: batchTitle,
-    trainSourceId: batchId,
-    trainFilter: "all",
-    trainStatus: "all",
+    filterStatus: saved?.filterStatus ?? "all",
+    filterType: saved?.filterType ?? "all",
+    filterBook: saved?.filterBook ?? "all",
+    filterLevel: saved?.filterLevel ?? "all",
+    sortOrder,
+    trainFilter: saved?.trainFilter ?? "all",
+    trainStatus: saved?.trainStatus ?? "all",
+    trainBook: saved?.trainBook ?? "all",
+    trainSourceId: saved?.trainSourceId ?? null,
+    trainVariants: saved?.trainVariants?.length ? saved.trainVariants : DEFAULT_TRAIN_VARIANTS,
+    trainMode: saved?.trainMode ?? "recognize",
   };
 }
 

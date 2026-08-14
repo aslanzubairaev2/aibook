@@ -10,7 +10,6 @@ import { LibraryView } from "@/components/library/LibraryView";
 import { DiscoverView } from "@/components/discover/DiscoverView";
 import { ReaderView } from "@/components/reader/ReaderView";
 import { CardsView } from "@/components/cards/CardsView";
-import { createBatchTrainingFilters } from "@/lib/cards";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { AuthScreen } from "@/components/auth/AuthScreen";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
@@ -23,7 +22,7 @@ import {
 import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalCards, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { parseBook } from "@/lib/parser/index";
-import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress } from "@/lib/cards";
+import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress, type TrainBatch } from "@/lib/cards";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 import type { AppSection, Book, CardVariantState, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
 
@@ -228,6 +227,8 @@ function AppInner() {
   // Set when arriving from "train this batch" so the card module opens on the
   // right tab with the batch filter already applied.
   const [cardsInitialTab, setCardsInitialTab] = useState<"all" | "train" | null>(null);
+  // The dictionary batch being trained right now, if any. Session-only.
+  const [trainBatch, setTrainBatch] = useState<TrainBatch | null>(null);
   // Which book is having its text fetched, so the shelf can show a spinner.
   const [openingBookId, setOpeningBookId] = useState<string | null>(null);
   const [isLiveChatOpen, setIsLiveChatOpen] = useState(false);
@@ -576,21 +577,16 @@ function AppInner() {
   }
 
   /**
-   * "Train this batch": jump to the card module with its filters preset to
-   * exactly the cards made from that photographed page. The filters live in
-   * the profile, which is also how they normally persist, so CardsView picks
-   * them up on mount without any new plumbing.
+   * "Train this batch": open the card module narrowed to exactly the cards made
+   * from that photographed page.
+   *
+   * The batch is handed over as session state, not written into the saved
+   * filters. It used to overwrite them, which left the deck pinned to one
+   * finished page and lost whatever the learner had configured for their own
+   * training — see resolveCardFilters.
    */
   function handleTrainWords(batchId: string, batchTitle: string) {
-    const updated: UserProfile = {
-      ...profile,
-      // Titles repeat (all photos taken on the same day can share one), so the
-      // UUID is the actual filter. Omitting it mixes unrelated batches and can
-      // reopen the previous session's first card.
-      cardFilters: createBatchTrainingFilters(profile.cardFilters, batchId, batchTitle),
-    };
-    saveLocalProfile(updated);
-    setProfile(updated);
+    setTrainBatch({ id: batchId, title: batchTitle });
     setCardsInitialTab("train");
     setSection("cards");
   }
@@ -912,7 +908,7 @@ function AppInner() {
         // Leaving the card module by any route clears the "arrived to train a
         // batch" flag, so a later visit restores the learner's own filters
         // instead of silently resetting them again.
-        if (next !== "cards") setCardsInitialTab(null);
+        if (next !== "cards") { setCardsInitialTab(null); setTrainBatch(null); }
         setSection(next);
       }}
     >
@@ -991,7 +987,9 @@ function AppInner() {
         <CardsView
           cards={cards}
           initialTab={cardsInitialTab}
-          onBack={() => { setCardsInitialTab(null); setSection("home"); }}
+          trainBatch={trainBatch}
+          onExitBatch={() => setTrainBatch(null)}
+          onBack={() => { setCardsInitialTab(null); setTrainBatch(null); setSection("home"); }}
           onAddCard={handleAddCard}
           onUpdateCard={handleUpdateCard}
           onDeleteCard={handleDeleteCard}

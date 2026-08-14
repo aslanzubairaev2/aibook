@@ -14,9 +14,13 @@ import {
   getReviewHistoryPosition,
   getVariantProgress,
   isVariantDue,
+  resolveCardFilters,
   shuffleTrainQueue,
   splitCardBack,
+  DEFAULT_TRAIN_VARIANTS,
   type DeckStats,
+  type ResolvedCardFilters,
+  type TrainBatch,
   type TrainQueueItem,
   type TrainStatus,
   type VariantProgressMap,
@@ -39,6 +43,14 @@ type Props = {
   cards: Flashcard[];
   /** Which tab to open on — "all" when arriving from «тренировать пачку» in the dictionary. */
   initialTab?: "today" | "train" | "all" | null;
+  /**
+   * A dictionary batch to train, handed over by «тренировать эту пачку».
+   * Session-only: it narrows this visit and is never written over the saved
+   * filters, so the learner's own training setup survives it.
+   */
+  trainBatch?: TrainBatch | null;
+  /** Lets the owner drop its copy of the batch once the session leaves it. */
+  onExitBatch?: () => void;
   onBack: () => void;
   onAddCard: (card: Flashcard) => void;
   onUpdateCard: (card: Flashcard) => void;
@@ -93,8 +105,6 @@ const TRAIN_VARIANT_LABELS: Record<TrainVariant, string> = {
   reverse: "Родной → Изучаемый",
   audio: "Аудио",
 };
-const DEFAULT_TRAIN_VARIANTS: TrainVariant[] = ["forward"];
-
 const STATUS_COLORS: Record<string, string> = {
   new: "var(--accent)",
   learning: "var(--blue)",
@@ -389,7 +399,7 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
   );
 });
 
-export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, onDeleteCard }: Props) {
+export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, onAddCard, onUpdateCard, onDeleteCard }: Props) {
   const { user } = useAuth();
   const [profile, setProfile] = useState(getLocalProfile);
   const targetLanguage = profile.targetLanguage;
@@ -397,13 +407,18 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
 
   const savedFilters = profile.cardFilters;
 
+  // The batch narrows this visit only. Held here so leaving it is a local
+  // change of mind rather than a round trip through the owner.
+  const [batch, setBatch] = useState<TrainBatch | null>(trainBatch ?? null);
+  const [initialFilters] = useState<ResolvedCardFilters>(() => resolveCardFilters(savedFilters, trainBatch ?? null));
+
   const [activeTab, setActiveTab] = useState<"today" | "train" | "all">(initialTab ?? "today");
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState<FilterStatus>(savedFilters?.filterStatus ?? "all");
-  const [filterType, setFilterType] = useState<FilterType>(savedFilters?.filterType ?? "all");
-  const [filterBook, setFilterBook] = useState<string>(savedFilters?.filterBook ?? "all");
-  const [filterLevel, setFilterLevel] = useState<string>(savedFilters?.filterLevel ?? "all");
-  const [sortOrder, setSortOrder] = useState<SortOrder>(savedFilters?.sortOrder ?? "added");
+  const [filterStatus, setFilterStatus] = useState<FilterStatus>(initialFilters.filterStatus);
+  const [filterType, setFilterType] = useState<FilterType>(initialFilters.filterType);
+  const [filterBook, setFilterBook] = useState<string>(initialFilters.filterBook);
+  const [filterLevel, setFilterLevel] = useState<string>(initialFilters.filterLevel);
+  const [sortOrder, setSortOrder] = useState<SortOrder>(initialFilters.sortOrder);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [showTrainFilterPanel, setShowTrainFilterPanel] = useState(false);
   const [showTtsMenu, setShowTtsMenu] = useState(false);
@@ -413,22 +428,15 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const [currentTrainIndex, setCurrentTrainIndex] = useState(0);
   const [reviewedIds, setReviewedIds] = useState<string[]>([]);
   const [isFlipped, setIsFlipped] = useState(false);
-  // Arriving from «тренировать пачку»: whatever narrowing was left over from a
-  // previous session (a type, a status, the productive mode) would quietly hide
-  // most of the batch, so it starts clean — only the batch itself narrows.
-  const arrivedForBatch = initialTab === "train";
-  const [trainFilter, setTrainFilter] = useState<FilterType>(arrivedForBatch ? "all" : savedFilters?.trainFilter ?? "all");
-  const [trainStatus, setTrainStatus] = useState<TrainStatus>(arrivedForBatch ? "all" : savedFilters?.trainStatus ?? "all");
+  const arrivedForBatch = Boolean(trainBatch);
+  const [trainFilter, setTrainFilter] = useState<FilterType>(initialFilters.trainFilter);
+  const [trainStatus, setTrainStatus] = useState<TrainStatus>(initialFilters.trainStatus);
   // Narrows a training session to one source — a book, or a dictionary batch
   // («тренировать именно эти слова» from the dictionary lands here).
-  const [trainBook, setTrainBook] = useState<string>(savedFilters?.trainBook ?? "all");
-  const [trainSourceId, setTrainSourceId] = useState<string | null>(savedFilters?.trainSourceId ?? null);
-  const [trainVariants, setTrainVariants] = useState<TrainVariant[]>(
-    arrivedForBatch
-      ? [...ALL_TRAIN_VARIANTS]
-      : savedFilters?.trainVariants?.length ? savedFilters.trainVariants : DEFAULT_TRAIN_VARIANTS,
-  );
-  const [trainMode, setTrainMode] = useState<"recognize" | "active">(arrivedForBatch ? "recognize" : savedFilters?.trainMode ?? "recognize");
+  const [trainBook, setTrainBook] = useState<string>(initialFilters.trainBook);
+  const [trainSourceId, setTrainSourceId] = useState<string | null>(initialFilters.trainSourceId);
+  const [trainVariants, setTrainVariants] = useState<TrainVariant[]>(initialFilters.trainVariants);
+  const [trainMode, setTrainMode] = useState<"recognize" | "active">(initialFilters.trainMode);
   // Snapshot of the cards being trained this session — built once per session
   // start/filter change rather than re-derived from the (mutating) `cards`
   // prop on every render, so grading a card can't shrink the queue out from
@@ -501,13 +509,20 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
 
   // Arriving straight on the training tab (from the dictionary's «тренировать»)
   // never went through the tab button, which is what used to build the queue —
-  // so the session starts here instead, with the reset filters above.
+  // so the session starts here instead. Nothing is persisted: the batch's own
+  // "all types, all statuses, every direction" is how this one visit runs, not
+  // a new preference.
   const batchSessionStartedRef = useRef(false);
   useEffect(() => {
     if (!arrivedForBatch || batchSessionStartedRef.current) return;
     batchSessionStartedRef.current = true;
-    persistCardFilters({ trainFilter: "all", trainStatus: "all", trainVariants: [...ALL_TRAIN_VARIANTS], trainMode: "recognize" });
-    startTrainingSession("all", "all", ALL_TRAIN_VARIANTS, trainBook, trainSourceId);
+    startTrainingSession(
+      initialFilters.trainStatus,
+      initialFilters.trainFilter,
+      initialFilters.trainVariants,
+      initialFilters.trainBook,
+      initialFilters.trainSourceId,
+    );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrivedForBatch]);
 
@@ -667,6 +682,44 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
     setReviewHistory([]);
     setViewingHistoryIndex(null);
     clearSrsSession();
+  }
+
+  /**
+   * Leave the dictionary batch and go back to the learner's own training setup.
+   *
+   * This is the way out of «тренировать эту пачку», and it is the whole reason
+   * the batch is never written into the saved filters: the configuration the
+   * learner built for themselves is still sitting in the profile, so coming
+   * back to it is one call to resolveCardFilters with no batch.
+   */
+  function startSavedTraining() {
+    const restored = resolveCardFilters(profile.cardFilters, null);
+    setBatch(null);
+    onExitBatch?.();
+    setFilterStatus(restored.filterStatus);
+    setFilterType(restored.filterType);
+    setFilterBook(restored.filterBook);
+    setFilterLevel(restored.filterLevel);
+    setTrainFilter(restored.trainFilter);
+    setTrainStatus(restored.trainStatus);
+    setTrainBook(restored.trainBook);
+    setTrainSourceId(restored.trainSourceId);
+    setTrainVariants(restored.trainVariants);
+    setTrainMode(restored.trainMode);
+    startTrainingSession(
+      restored.trainStatus,
+      restored.trainFilter,
+      restored.trainVariants,
+      restored.trainBook,
+      restored.trainSourceId,
+    );
+  }
+
+  /** Picking a source by hand is a deliberate choice, so it ends the batch. */
+  function leaveBatchForOwnChoice() {
+    if (!batch) return;
+    setBatch(null);
+    onExitBatch?.();
   }
 
   const handleGrade = (score: 1 | 2 | 3 | 4) => {
@@ -1094,6 +1147,12 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         .srs-source-due { flex-shrink: 0; min-width: 34px; text-align: right; font-size: 11px; font-weight: 800; color: var(--accent); }
         .srs-list-more { margin: 10px auto 0; padding: 9px 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); color: var(--text-muted); font-size: 12px; font-weight: 700; cursor: pointer; }
         .srs-list-more:hover { border-color: var(--accent); color: var(--accent); }
+        .srs-batch-banner { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 460px; margin: 0 auto; padding: 9px 12px; border: 1px solid rgba(212, 168, 71, 0.3); border-radius: var(--radius-md); background: rgba(212, 168, 71, 0.08); color: var(--accent); }
+        .srs-batch-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 1px; }
+        .srs-batch-copy strong { font-size: 12px; font-weight: 850; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .srs-batch-copy span { font-size: 10px; font-weight: 700; color: var(--text-muted); }
+        .srs-batch-exit { flex-shrink: 0; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text-muted); font-size: 11px; font-weight: 800; cursor: pointer; transition: all 0.18s ease; }
+        .srs-batch-exit:hover { border-color: var(--accent); color: var(--accent); }
       `}</style>
 
       {/* Word Modal */}
@@ -1213,7 +1272,12 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                 <span style={{ fontSize: 13, color: "var(--text-muted)", fontWeight: 700 }}>
                   К повторению ({dueCards.length}):
                 </span>
-                <button className="pill-btn" onClick={() => { restartTraining(); setActiveTab("train"); }} type="button">
+                <button
+                  className="pill-btn"
+                  onClick={() => { startSavedTraining(); setActiveTab("train"); }}
+                  type="button"
+                  title={batch ? "Начнёт обычную тренировку — фильтр пачки будет снят" : undefined}
+                >
                   <Play size={14} fill="currentColor" /> Начать тренировку
                 </button>
               </div>
@@ -1236,6 +1300,22 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
       {/* TAB: TRAINING */}
       {activeTab === "train" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* A batch narrows the deck without touching the saved filters, so it
+              has to say so — otherwise a session pinned to one photographed
+              page looks like the whole deck having gone missing. */}
+          {batch && (
+            <div className="srs-batch-banner">
+              <Layers size={16} />
+              <div className="srs-batch-copy">
+                <strong>Пачка «{batch.title}»</strong>
+                <span>Ваши обычные фильтры сохранены и вернутся</span>
+              </div>
+              <button className="srs-batch-exit" type="button" onClick={startSavedTraining}>
+                Выйти
+              </button>
+            </div>
+          )}
+
           {/* Mode switch (passive recognition vs active production) + the
               filters toggle share one row so they don't cost extra vertical
               space above the fold. */}
@@ -1275,6 +1355,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                     value={trainBook}
                     onChange={(e) => {
                       const book = e.target.value;
+                      leaveBatchForOwnChoice();
                       setTrainBook(book);
                       setTrainSourceId(null);
                       persistCardFilters({ trainBook: book, trainSourceId: null });
@@ -1356,7 +1437,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
               {activeTrainFilterCount > 0 && (
                 <button
                   className="filter-reset-btn"
-                  onClick={() => { setTrainFilter("all"); setTrainStatus("all"); setTrainBook("all"); setTrainSourceId(null); setTrainVariants(DEFAULT_TRAIN_VARIANTS); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainBook: "all", trainSourceId: null, trainVariants: DEFAULT_TRAIN_VARIANTS }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS, "all", null); }}
+                  onClick={() => { leaveBatchForOwnChoice(); setTrainFilter("all"); setTrainStatus("all"); setTrainBook("all"); setTrainSourceId(null); setTrainVariants(DEFAULT_TRAIN_VARIANTS); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainBook: "all", trainSourceId: null, trainVariants: DEFAULT_TRAIN_VARIANTS }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS, "all", null); }}
                   type="button"
                 >
                   Сбросить фильтры
@@ -1436,10 +1517,22 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
           ) : currentTrainIndex >= trainQueue.length ? (
             <div className="empty-state" style={{ background: "linear-gradient(135deg, rgba(122, 171, 106, 0.08) 0%, var(--bg-elevated) 100%)", borderColor: "rgba(122, 171, 106, 0.2)" }}>
               <CheckCircle2 size={48} style={{ color: "var(--green)" }} />
-              <strong>Тренировка завершена!</strong>
-              <p>Вы повторили все {trainQueue.length} карточек. Отличная работа!</p>
+              <strong>{batch ? "Пачка пройдена!" : "Тренировка завершена!"}</strong>
+              <p>
+                {batch
+                  ? `«${batch.title}» — все ${trainQueue.length} повторений сделаны. Отличная работа!`
+                  : `Вы повторили все ${trainQueue.length} карточек. Отличная работа!`}
+              </p>
+              {/* The batch was a detour. Its cards are done, so the obvious next
+                  step is the training the learner set up for themselves — which
+                  is still exactly as they left it. */}
+              {batch && (
+                <button className="primary-btn" style={{ marginTop: 12, maxWidth: 280 }} onClick={startSavedTraining} type="button">
+                  <Play size={14} fill="currentColor" style={{ marginRight: 6 }} /> Продолжить обычную тренировку
+                </button>
+              )}
               <button className="secondary-btn" style={{ marginTop: 12 }} onClick={restartTraining} type="button">
-                <RotateCcw size={14} /> Начать заново
+                <RotateCcw size={14} /> {batch ? "Пройти пачку заново" : "Начать заново"}
               </button>
               {reviewHistory.length > 0 && (
                 <button className="srs-history-open" onClick={openLatestReviewedCard} type="button">

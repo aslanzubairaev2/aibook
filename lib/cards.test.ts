@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, buildTrainQueue, computeDeckStats, countTrainCandidates, createBatchTrainingFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import { ALL_TRAIN_VARIANTS, buildTrainQueue, computeDeckStats, countTrainCandidates, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
 import type { CardVariantState, Flashcard, SkillProgress, TrainVariant } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
@@ -53,16 +53,51 @@ test("dictionary batch filter uses its id when titles collide", () => {
   );
 });
 
-test("opening a dictionary batch persists its exact id, not only its non-unique title", () => {
-  const filters = createBatchTrainingFilters(
-    { trainBook: "Старая пачка", trainSourceId: "old-id", trainStatus: "hard" },
-    "new-id",
-    "Одинаковый заголовок",
-  );
+test("a dictionary batch narrows by its exact id, not only its non-unique title", () => {
+  const saved = { trainBook: "Своя книга", trainSourceId: "book-id", trainStatus: "hard" as const, trainFilter: "word" as const, trainMode: "active" as const };
+  const session = resolveCardFilters(saved, { id: "new-id", title: "Одинаковый заголовок" });
 
-  assert.equal(filters.trainBook, "Одинаковый заголовок");
-  assert.equal(filters.trainSourceId, "new-id");
-  assert.equal(filters.trainStatus, "all");
+  assert.equal(session.trainSourceId, "new-id");
+  assert.equal(session.trainBook, "Одинаковый заголовок");
+  // Leftover narrowing would hide most of the batch, so the batch clears it.
+  assert.equal(session.trainStatus, "all");
+  assert.equal(session.trainFilter, "all");
+  assert.equal(session.trainMode, "recognize");
+  assert.deepEqual(session.trainVariants, ALL_TRAIN_VARIANTS);
+});
+
+test("a batch never overwrites the learner's own training setup", () => {
+  const saved = {
+    trainBook: "Своя книга",
+    trainSourceId: "book-id",
+    trainStatus: "hard" as const,
+    trainFilter: "word" as const,
+    trainMode: "active" as const,
+    trainVariants: ["forward", "audio"] as TrainVariant[],
+    filterLevel: "B1",
+  };
+
+  // Running a batch and then leaving it has to land back on the saved setup —
+  // this is what "Начать тренировку" does after «тренировать пачку».
+  resolveCardFilters(saved, { id: "batch-9", title: "Страница 12" });
+  const restored = resolveCardFilters(saved, null);
+
+  assert.equal(restored.trainSourceId, "book-id");
+  assert.equal(restored.trainBook, "Своя книга");
+  assert.equal(restored.trainStatus, "hard");
+  assert.equal(restored.trainFilter, "word");
+  assert.equal(restored.trainMode, "active");
+  assert.deepEqual(restored.trainVariants, ["forward", "audio"]);
+  assert.equal(restored.filterLevel, "B1");
+});
+
+test("an empty configuration falls back to a single forward direction", () => {
+  const fresh = resolveCardFilters(undefined, null);
+
+  assert.deepEqual(fresh.trainVariants, ["forward"]);
+  assert.equal(fresh.trainBook, "all");
+  assert.equal(fresh.trainSourceId, null);
+  assert.equal(fresh.trainStatus, "all");
 });
 
 test("reverse prompts separate the native meaning from dictionary grammar", () => {
