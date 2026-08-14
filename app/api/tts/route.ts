@@ -12,6 +12,7 @@ import {
   ELEVENLABS_PCM_FORMAT,
   ELEVENLABS_PCM_SAMPLE_RATE,
   GEMINI_MALE_VOICES,
+  GEMINI_TTS_FALLBACK_MODELS,
   GEMINI_TTS_MODEL,
   getBcp47Locale,
   getElevenLabsVoiceIdByName,
@@ -196,37 +197,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider: "gemini", model: geminiModel });
     }
 
-    const makeRequest = async (inputText: string) => {
-      return await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ text: inputText }]
-            }
-          ],
-          safetySettings: [
-            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-          ],
-          generationConfig: {
-            responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName
-                }
-              }
-            }
-          }
-        })
-      });
-    };
+    const makeRequest = (inputText: string) => geminiTtsRequest(apiKey, geminiModel, voiceName, inputText);
 
     let response: Response;
     try {
@@ -234,7 +205,10 @@ export async function POST(req: Request) {
     } catch (error) {
       console.error("Gemini TTS request failed:", error);
       const reason = "Не удалось связаться с Gemini TTS.";
-      const fallback = await speakWithAutomaticFallback(text, lang, reason);
+      const fallback = await speakWithAutomaticFallback(text, lang, reason, {
+        voiceName,
+        spentModel: geminiModel,
+      });
       if (fallback) return NextResponse.json(fallback);
       throw error;
     }
@@ -252,7 +226,10 @@ export async function POST(req: Request) {
           err,
         );
 
-        const fallback = await speakWithAutomaticFallback(text, lang, quotaMessageRu(quota));
+        const fallback = await speakWithAutomaticFallback(text, lang, quotaMessageRu(quota), {
+          voiceName,
+          spentModel: geminiModel,
+        });
         if (fallback) return NextResponse.json(fallback);
 
         return NextResponse.json(
@@ -276,7 +253,10 @@ export async function POST(req: Request) {
 
       console.error("Gemini TTS API error:", err);
       const reason = `Gemini TTS недоступен (ошибка ${response.status}).`;
-      const fallback = await speakWithAutomaticFallback(text, lang, reason);
+      const fallback = await speakWithAutomaticFallback(text, lang, reason, {
+        voiceName,
+        spentModel: geminiModel,
+      });
       if (fallback) return NextResponse.json(fallback);
       return NextResponse.json({ error: reason }, { status: response.status });
     }
@@ -301,7 +281,10 @@ export async function POST(req: Request) {
     }
 
     const reason = "Gemini TTS не вернул аудио.";
-    const fallback = await speakWithAutomaticFallback(text, lang, reason);
+    const fallback = await speakWithAutomaticFallback(text, lang, reason, {
+      voiceName,
+      spentModel: geminiModel,
+    });
     if (fallback) return NextResponse.json(fallback);
     return NextResponse.json({ error: reason }, { status: 500 });
   } catch (error) {
@@ -315,7 +298,7 @@ type Spoken =
   | { error: string; status: number };
 
 type AutomaticFallback = Exclude<Spoken, { error: string; status: number }> & {
-  provider: "speechify" | "inworld" | "openai" | "cartesia" | "elevenlabs";
+  provider: "gemini" | "speechify" | "inworld" | "openai" | "cartesia" | "elevenlabs";
   model: string;
   fellBackFrom: "gemini";
   reason: string;
@@ -325,7 +308,29 @@ async function speakWithAutomaticFallback(
   text: string,
   lang: string,
   reason: string,
+  gemini?: { voiceName: string; spentModel: string },
 ): Promise<AutomaticFallback | null> {
+  // Gemini's free allowance is counted per model, so the sibling model is a
+  // fresh allowance rather than the same spent one — and it is free, which the
+  // engines below it are not. Try it before reaching for a paid voice.
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (gemini && apiKey) {
+    const alternates = [GEMINI_TTS_MODEL, ...GEMINI_TTS_FALLBACK_MODELS]
+      .filter((model) => model !== gemini.spentModel);
+
+    for (const model of alternates) {
+      try {
+        const spoken = await speakWithGeminiModel(text, lang, model, gemini.voiceName, apiKey);
+        if (!("error" in spoken)) {
+          return { ...spoken, provider: "gemini", model, fellBackFrom: "gemini", reason };
+        }
+        console.warn(`Gemini ${model} fallback failed with status ${spoken.status}: ${spoken.error}`);
+      } catch (error) {
+        console.error(`Gemini ${model} fallback threw:`, error);
+      }
+    }
+  }
+
   for (const provider of getTtsProviderChain("gemini", lang).slice(1)) {
     try {
       if (provider === "speechify") {
@@ -419,6 +424,65 @@ async function speakWithAutomaticFallback(
   }
 
   return null;
+}
+
+/**
+ * One Gemini speech request.
+ *
+ * Shared by the main path and by the model fallback: a second hand-kept copy of
+ * this body is exactly the kind of thing that drifts out of step.
+ */
+function geminiTtsRequest(apiKey: string, model: string, voiceName: string, inputText: string) {
+  return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: inputText }] }],
+      safetySettings: [
+        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+      ],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+      },
+    }),
+  });
+}
+
+/**
+ * Speak through one named Gemini model, cache included.
+ *
+ * Used when the chosen model has run out of quota: no diagnostics here, since
+ * a refusal from this one only means "try the next", and the learner was
+ * already told why the first one stopped.
+ */
+async function speakWithGeminiModel(
+  text: string,
+  lang: string,
+  model: string,
+  voiceName: string,
+  apiKey: string,
+): Promise<Spoken> {
+  // Matches the main path's key exactly, so the two share their recordings.
+  const cacheKey = model === GEMINI_TTS_MODEL ? voiceName : `${model}:${voiceName}`;
+
+  const cached = await sbGetCachedTts(text, lang, cacheKey);
+  if (cached) return { audioBase64: cached, source: "db_cache" };
+
+  const response = await geminiTtsRequest(apiKey, model, voiceName, text);
+  if (!response.ok) {
+    return { error: `Gemini ${model}: ${response.status}`, status: response.status };
+  }
+
+  const data = await response.json();
+  const audioBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!audioBase64) return { error: `Gemini ${model} returned no audio`, status: 502 };
+
+  await sbSaveCachedTts(text, lang, cacheKey, audioBase64);
+  return { audioBase64, source: "api" };
 }
 
 /**

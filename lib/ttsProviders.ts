@@ -336,6 +336,20 @@ export function isValidModelRef(model: string) {
 /** The Gemini speech model this app was built against. */
 export const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 
+/**
+ * The other Gemini speech models, tried when the chosen one runs out of quota.
+ *
+ * A preview model's free allowance is counted per model, so the second one is
+ * a fresh hundred requests rather than the same exhausted bucket — which makes
+ * it the right thing to reach for before any of the paid engines. A model id
+ * that has since been retired simply 404s and the next one is tried, so a stale
+ * entry here costs a round trip and nothing else.
+ */
+export const GEMINI_TTS_FALLBACK_MODELS = [
+  "gemini-2.5-flash-preview-tts",
+  "gemini-2.5-pro-preview-tts",
+];
+
 export type TtsModelOption = {
   id: string;
   name: string;
