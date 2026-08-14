@@ -1,7 +1,8 @@
 "use client";
 
+import { memo } from "react";
 import { getCardSkillState } from "@/lib/db/local";
-import type { ProductiveSkill, SkillProgress } from "@/lib/types";
+import type { CardSkillState, ProductiveSkill, SkillProgress } from "@/lib/types";
 
 const TRACKS: { skill: ProductiveSkill; letter: string; title: string }[] = [
   { skill: "recall", letter: "В", title: "Вспоминаю" },
@@ -17,8 +18,13 @@ function maturityColor(p?: SkillProgress): string {
   return "var(--blue)";
 }
 
-export function SkillBadges({ cardId }: { cardId: string }) {
-  const state = getCardSkillState(cardId);
+/**
+ * `state` is optional so a single badge can still look itself up, but any list
+ * should read the whole progress map once and hand each row its slice — a
+ * per-row lookup in a 500-card deck is 500 reads of the same store.
+ */
+export const SkillBadges = memo(function SkillBadges({ cardId, state: provided }: { cardId: string; state?: CardSkillState }) {
+  const state = provided ?? getCardSkillState(cardId);
   return (
     <span style={{ display: "inline-flex", gap: 4 }} aria-label="Прогресс продуктивных навыков">
       {TRACKS.map(({ skill, letter, title }) => {
@@ -48,4 +54,4 @@ export function SkillBadges({ cardId }: { cardId: string }) {
       })}
     </span>
   );
-}
+});

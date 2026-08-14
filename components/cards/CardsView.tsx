@@ -1,17 +1,33 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X } from "lucide-react";
-import type { AiAnalysis, CardFilters, DiscussMessage, Flashcard, TrainVariant, TtsProvider } from "@/lib/types";
-import { calculateSM2, createDefaultSrsFields, createDefaultSkillProgress } from "@/lib/srs/sm2";
-import { ALL_TRAIN_VARIANTS, filterCardsByTrainingSource, findDuplicateCard, getReviewHistoryPosition, splitCardBack } from "@/lib/cards";
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
+import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3 } from "lucide-react";
+import type { AiAnalysis, CardFilters, CardSkillState, DiscussMessage, Flashcard, TrainVariant, TtsProvider } from "@/lib/types";
+import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
+import {
+  ALL_TRAIN_VARIANTS,
+  buildTrainQueue,
+  computeDeckStats,
+  countTrainCandidates,
+  filterCardsByTrainingSource,
+  findDuplicateCard,
+  getReviewHistoryPosition,
+  getVariantProgress,
+  isVariantDue,
+  shuffleTrainQueue,
+  splitCardBack,
+  type DeckStats,
+  type TrainQueueItem,
+  type TrainStatus,
+  type VariantProgressMap,
+} from "@/lib/cards";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { speak } from "@/lib/tts";
 import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
-import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardVariantState, saveCardVariantProgress } from "@/lib/db/local";
+import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardSkillProgressMap, getCardVariantProgressMap, saveCardVariantProgress } from "@/lib/db/local";
 import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertCardVariantProgress, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
@@ -56,10 +72,7 @@ function guessPos(front: string): string {
 
 type FilterStatus = "all" | "new" | "learning" | "review" | "relearning";
 type FilterType = "all" | "word" | "phrase" | "sentence";
-type TrainStatus = "all" | "new" | "learning" | "review" | "relearning" | "hard";
 type SortOrder = "added" | "due" | "ease";
-type TrainQueueItem = { card: Flashcard; variant: TrainVariant };
-type VariantProgressLike = { status: Flashcard["status"]; repetitions: number; lapses: number; intervalDays: number; easeFactor: number; dueAt: string };
 
 const TYPE_LABELS = { word: "Слово", phrase: "Фраза", sentence: "Предложение" } as const;
 
@@ -82,22 +95,24 @@ const TRAIN_VARIANT_LABELS: Record<TrainVariant, string> = {
 };
 const DEFAULT_TRAIN_VARIANTS: TrainVariant[] = ["forward"];
 
-// "Hard" cards: repeatedly forgotten (lapses) or with a low ease factor —
-// the ones the user struggles to memorize. Trained regardless of due date.
-function isHardProgress(p: { lapses: number; repetitions: number; easeFactor: number }): boolean {
-  return p.lapses >= 2 || (p.repetitions > 0 && p.easeFactor <= 2.2);
-}
-function isHardCard(c: Flashcard): boolean {
-  return isHardProgress(c);
-}
+const STATUS_COLORS: Record<string, string> = {
+  new: "var(--accent)",
+  learning: "var(--blue)",
+  review: "var(--green)",
+  relearning: "#e08888",
+};
 
-// The base Flashcard SM-2 fields are the "forward" variant's progress;
-// "reverse"/"audio" get their own independent schedule from local storage.
-function getVariantProgress(card: Flashcard, variant: TrainVariant): VariantProgressLike {
-  if (variant === "forward") {
-    return { status: card.status, repetitions: card.repetitions, lapses: card.lapses, intervalDays: card.intervalDays, easeFactor: card.easeFactor, dueAt: card.dueAt };
-  }
-  return getCardVariantState(card.id)[variant] ?? createDefaultSkillProgress();
+const STATUS_LABELS: Record<string, string> = {
+  new: "Новые",
+  learning: "Обучение",
+  review: "Повторение",
+  relearning: "Переучивание",
+};
+
+function endOfTodayMs(): number {
+  const d = new Date();
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
 }
 
 /** Offer only the voices that can actually speak the deck's language. */
@@ -107,6 +122,272 @@ function ttsProvidersFor(lang: string): { value: TtsProvider; label: string }[] 
     label: value === "local" ? "Браузер" : getTtsProviderLabel(value),
   }));
 }
+
+// --- Tokenized card text ---
+// Module-level and memoized on purpose. Declared inside the component body it
+// was a brand-new component type on every render, so React threw away and
+// rebuilt every tokenized span in the list — hundreds of them — each time any
+// piece of state changed.
+type TokenizedTextProps = {
+  text: string;
+  style?: React.CSSProperties;
+  onWordTap: (word: string, e: React.MouseEvent) => void;
+};
+
+const TokenizedText = memo(function TokenizedText({ text, style, onWordTap }: TokenizedTextProps) {
+  const tokens = useMemo(() => splitIntoTokens(text), [text]);
+  return (
+    <div style={style}>
+      {tokens.map((tok, i) => {
+        if (!normalizeToken(tok)) return <span key={i}>{tok}</span>;
+        return (
+          <span
+            key={i}
+            onClick={(e) => onWordTap(tok, e)}
+            style={{ cursor: "pointer", borderRadius: 2, transition: "background 0.15s" }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(212, 168, 71, 0.15)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            {tok}
+          </span>
+        );
+      })}
+    </div>
+  );
+});
+
+/** The markers for one card: type, part of speech, level — in that order. */
+function cardMarkers(card: Flashcard, facts: WordFacts | undefined): { text: string; kind: string }[] {
+  const marks: { text: string; kind: string }[] = [
+    { text: TYPE_LABELS[card.type], kind: card.type },
+  ];
+  const pos = card.type === "word" ? shortPos(facts?.pos ?? "") || guessPos(card.front) : "";
+  if (pos) marks.push({ text: pos, kind: "pos" });
+  const level = card.cefr || facts?.cefr || "";
+  if (level) marks.push({ text: level, kind: "level" });
+  return marks;
+}
+
+type WordFacts = { pos: string; cefr: string };
+
+/** One shared empty object, so a row without skill progress stays memo-stable. */
+const EMPTY_SKILL_STATE: CardSkillState = {};
+
+const DueCardRow = memo(function DueCardRow({ card, skillState }: { card: Flashcard; skillState: CardSkillState }) {
+  const color = STATUS_COLORS[card.status] ?? "var(--accent)";
+  return (
+    <div className="flash-card" style={{ borderLeft: `4px solid ${color}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+        <span className={`flash-card-type ${card.type}`}>{TYPE_LABELS[card.type]}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <SkillBadges cardId={card.id} state={skillState} />
+          <span style={{ fontSize: 10, background: `${color}18`, color, padding: "2px 6px", borderRadius: 4, fontWeight: 800, textTransform: "uppercase" }}>
+            {STATUS_LABELS[card.status] ?? card.status}
+          </span>
+        </div>
+      </div>
+      <div className="flash-card-front" style={{ fontSize: 16 }}>{card.front}</div>
+      <div className="flash-card-back" style={{ fontSize: 13, color: "var(--text-muted)" }}>{card.back}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(240, 230, 211, 0.05)" }}>
+        <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
+        {card.intervalDays > 0 && (
+          <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+            <Calendar size={10} /> {card.intervalDays} дн.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+type AllCardRowProps = {
+  card: Flashcard;
+  facts: WordFacts | undefined;
+  targetLanguage: string;
+  onWordTap: (word: string, e: React.MouseEvent) => void;
+  onDiscuss: (card: Flashcard) => void;
+  onDelete: (id: string) => void;
+};
+
+const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWordTap, onDiscuss, onDelete }: AllCardRowProps) {
+  const color = STATUS_COLORS[card.status] ?? "var(--accent)";
+  return (
+    <div className="flash-card" style={{ display: "flex", gap: 12, alignItems: "flex-start", justifyContent: "space-between" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, flexWrap: "wrap" }}>
+          {cardMarkers(card, facts).map((m, i) => (
+            <span key={i} className={`card-marker ${m.kind}${i === 0 ? " lead" : ""}`}>{m.text}</span>
+          ))}
+          <span style={{ fontSize: 10, background: `${color}18`, color, padding: "2px 6px", borderRadius: 4, fontWeight: 800 }}>
+            {STATUS_LABELS[card.status] ?? card.status}
+            {card.intervalDays > 0 ? ` · ${card.intervalDays}дн` : ""}
+          </span>
+        </div>
+        {/* Front is spoken and word-tappable, like text everywhere else in the app. */}
+        <div className="flash-card-front" style={{ fontSize: 15, display: "flex", alignItems: "flex-start", gap: 6 }}>
+          <TokenizedText text={card.front} style={{ flex: 1 }} onWordTap={onWordTap} />
+          <SpeakButton text={card.front} lang={targetLanguage} size={15} />
+        </div>
+        <TokenizedText text={card.back} style={{ fontSize: 13, color: "var(--text-muted)" }} onWordTap={onWordTap} />
+        <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+        <button
+          className="card-row-delete-btn"
+          style={{ color: "var(--text-muted)" }}
+          onClick={() => onDiscuss(card)}
+          type="button"
+          aria-label="Обсудить с AI"
+          title="Обсудить с AI"
+        >
+          <MessageCircle size={16} />
+        </button>
+        <button
+          className="card-row-delete-btn"
+          onClick={() => { if (confirm("Удалить карточку?")) onDelete(card.id); }}
+          type="button"
+          aria-label="Удалить"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+    </div>
+  );
+});
+
+const VARIANT_SHORT: Record<TrainVariant, string> = {
+  forward: "Изуч. → Родной",
+  reverse: "Родной → Изуч.",
+  audio: "Аудио",
+};
+
+const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+
+/**
+ * The detail behind the banner.
+ *
+ * Everything here is counted per prompt direction, the same way a session is
+ * built, so «сегодня» in the banner and «Карточка N из M» in the trainer finally
+ * describe the same work. The per-source list exists so a photographed
+ * dictionary batch can be seen contributing its own cards rather than
+ * disappearing into one deck-wide total.
+ */
+const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckStats; onClick: (e: React.MouseEvent) => void }) {
+  const totalStatus = Math.max(1, stats.totalCards);
+  const learnedPct = stats.totalVariants > 0 ? Math.round((stats.learnedVariants / stats.totalVariants) * 100) : 0;
+  const forecastPeak = Math.max(1, ...stats.forecast.map((d) => d.count));
+  const today = new Date();
+  const topSources = stats.sources.slice(0, 8);
+
+  return (
+    <div className="srs-stats-panel" onClick={onClick}>
+      <div className="srs-stats-grid">
+        <div className="srs-stat-tile">
+          <b>{stats.totalCards}</b>
+          <span>карточек всего</span>
+        </div>
+        <div className="srs-stat-tile">
+          <b style={{ color: "var(--accent)" }}>{stats.dueReps}</b>
+          <span>повторений сегодня</span>
+        </div>
+        <div className="srs-stat-tile">
+          <b style={{ color: "var(--green)" }}>{stats.matureCards}</b>
+          <span>освоено надолго</span>
+        </div>
+        <div className="srs-stat-tile">
+          <b style={{ color: stats.hardCards > 0 ? "#e08888" : "var(--text-muted)" }}>{stats.hardCards}</b>
+          <span>сложных</span>
+        </div>
+        <div className="srs-stat-tile">
+          <b>{stats.reviewedToday}</b>
+          <span>повторено сегодня</span>
+        </div>
+        <div className="srs-stat-tile">
+          <b>{stats.bestStreak}</b>
+          <span>лучшая серия, дн.</span>
+        </div>
+      </div>
+
+      <div>
+        <div className="srs-stats-section-label">Состав колоды</div>
+        <div className="srs-stat-bar">
+          {(["new", "learning", "review", "relearning"] as const).map((status) => (
+            <i
+              key={status}
+              style={{ width: `${(stats.byStatus[status] / totalStatus) * 100}%`, background: STATUS_COLORS[status] }}
+            />
+          ))}
+        </div>
+        <div className="srs-stat-legend">
+          {(["new", "learning", "review", "relearning"] as const).map((status) => (
+            <span key={status}>
+              <i style={{ background: STATUS_COLORS[status] }} />
+              {STATUS_LABELS[status]}: {stats.byStatus[status]}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div className="srs-stats-section-label">
+          Направления — пройдено {stats.learnedVariants} из {stats.totalVariants} ({learnedPct}%)
+        </div>
+        <div className="srs-stat-legend" style={{ marginTop: 0 }}>
+          {ALL_TRAIN_VARIANTS.map((variant) => (
+            <span key={variant}>
+              <i style={{ background: "var(--accent)" }} />
+              {VARIANT_SHORT[variant]}: {stats.dueByVariant[variant]} к повторению
+            </span>
+          ))}
+        </div>
+        <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+          Каждое направление учится отдельно, поэтому повторений больше, чем карточек.
+        </div>
+      </div>
+
+      <div>
+        <div className="srs-stats-section-label">Нагрузка на 7 дней</div>
+        <div className="srs-forecast">
+          {stats.forecast.map((day) => {
+            const date = new Date(today);
+            date.setDate(date.getDate() + day.dayOffset);
+            return (
+              <div className="srs-forecast-col" key={day.dayOffset}>
+                <span className="srs-forecast-val">{day.count || ""}</span>
+                <div className="srs-forecast-bar" style={{ height: `${Math.max(3, (day.count / forecastPeak) * 100)}%` }} />
+                <span className="srs-forecast-lbl">{WEEKDAYS[date.getDay()]}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {topSources.length > 0 && (
+        <div>
+          <div className="srs-stats-section-label">По источникам — книги и пачки из словаря</div>
+          {topSources.map((source) => (
+            <div className="srs-source-row" key={source.key}>
+              <span className="srs-source-title" title={source.title}>{source.title}</span>
+              <span className="srs-source-meta">{source.learned}/{source.cards}</span>
+              <span className="srs-source-due">{source.due > 0 ? `+${source.due}` : "—"}</span>
+            </div>
+          ))}
+          {stats.sources.length > topSources.length && (
+            <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+              и ещё {stats.sources.length - topSources.length} источник(ов)
+            </div>
+          )}
+        </div>
+      )}
+
+      {stats.lapses > 0 && (
+        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          Забытых повторений за всё время: {stats.lapses}
+        </div>
+      )}
+    </div>
+  );
+});
 
 export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, onDeleteCard }: Props) {
   const { user } = useAuth();
@@ -158,6 +439,24 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const [reviewHistory, setReviewHistory] = useState<TrainQueueItem[]>([]);
   const [viewingHistoryIndex, setViewingHistoryIndex] = useState<number | null>(null);
 
+  // Per-variant SRS progress, read from storage once and replaced (never
+  // mutated) after a grade, so every memo below can key on its identity
+  // instead of re-reading storage per card.
+  const [variantProgress, setVariantProgress] = useState<VariantProgressMap>(getCardVariantProgressMap);
+  const skillProgress = useMemo(() => getCardSkillProgressMap(), [cards]);
+
+  // The end of "today" only has to move when the day does.
+  const [todayEndTime, setTodayEndTime] = useState(endOfTodayMs);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTodayEndTime((prev) => {
+        const next = endOfTodayMs();
+        return next === prev ? prev : next;
+      });
+    }, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   // Discuss-with-AI state (chat about a specific card)
   const [discuss, setDiscuss] = useState<{
     open: boolean;
@@ -181,40 +480,24 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const [visibleCount, setVisibleCount] = useState(50);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
+  const [showStats, setShowStats] = useState(false);
+
   // --- Stats ---
-  const todayEnd = new Date();
-  todayEnd.setHours(23, 59, 59, 999);
-  const todayEndTime = todayEnd.getTime();
+  // One traversal of the deck, reused by the banner, the badges and the panel.
+  const stats = useMemo(
+    () => computeDeckStats(cards, variantProgress, new Date(todayEndTime)),
+    [cards, variantProgress, todayEndTime],
+  );
 
-  const dueCards = cards.filter((c) => {
-    return c.status === "new" || new Date(c.dueAt).getTime() <= todayEndTime;
-  });
-
-  const learnedCount = cards.filter((c) => c.repetitions > 0).length;
-
-  const calculateStreak = (cardsList: Flashcard[]): number => {
-    const reviewedDates = new Set<string>();
-    cardsList.forEach((c) => {
-      if (c.lastReviewedAt) reviewedDates.add(new Date(c.lastReviewedAt).toDateString());
-    });
-    let streak = 0;
-    const checkDate = new Date();
-    if (reviewedDates.has(checkDate.toDateString())) {
-      while (reviewedDates.has(checkDate.toDateString())) {
-        streak++;
-        checkDate.setDate(checkDate.getDate() - 1);
-      }
-    } else {
-      checkDate.setDate(checkDate.getDate() - 1);
-      while (reviewedDates.has(checkDate.toDateString())) {
-        streak++;
-        checkDate.setDate(checkDate.getDate() - 1);
-      }
-    }
-    return streak;
-  };
-
-  const streak = calculateStreak(cards);
+  // A card belongs on "today" when any of its three directions is due — the
+  // same rule the statistics use, so the banner, the tab badge and this list
+  // can never disagree the way they used to.
+  const dueCards = useMemo(
+    () => cards.filter((card) =>
+      ALL_TRAIN_VARIANTS.some((v) => isVariantDue(getVariantProgress(card, v, variantProgress), todayEndTime)),
+    ),
+    [cards, variantProgress, todayEndTime],
+  );
 
   // Arriving straight on the training tab (from the dictionary's «тренировать»)
   // never went through the tab button, which is what used to build the queue —
@@ -239,7 +522,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
     const saved = getSrsSession();
     if (saved && saved.reviewedIds.length > 0) {
       sessionRestoredRef.current = true;
-      const queue = buildTrainQueue(trainStatus, trainFilter, trainVariants);
+      const queue = makeTrainQueue(trainStatus, trainFilter, trainVariants);
       setTrainQueue(queue);
       setReviewedIds(saved.reviewedIds);
       setCurrentTrainIndex(Math.min(saved.currentIndex, queue.length));
@@ -254,15 +537,9 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trainQueue, currentTrainIndex]);
 
-  // --- Infinite scroll for All Cards ---
+  // Switching tabs starts its list from the top again.
   useEffect(() => {
-    if (!sentinelRef.current) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) setVisibleCount((n) => n + 50); },
-      { rootMargin: "200px" }
-    );
-    obs.observe(sentinelRef.current);
-    return () => obs.disconnect();
+    setVisibleCount(50);
   }, [activeTab]);
 
   // --- Close menus on outside click ---
@@ -337,49 +614,44 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   // --- Training (cards filtered by status and type) ---
   // "hard" draws from ALL cards (not just due today) so problem cards can be
   // drilled any time; the rest filter today's due queue by SRS status.
-  // This pool is only used to show live counts on the filter chips before a
-  // session starts — the actual training queue is a separate snapshot (see
-  // `buildTrainQueue`/`trainQueue` below) so it doesn't shrink mid-session.
   // Each selected variant (forward/reverse/audio) carries its own independent
-  // schedule (see getVariantProgress), so a card can be due in one variant and
-  // produces its own queue item per due variant rather than a single coin-flip.
-  function buildTrainQueue(
-    status: TrainStatus,
-    filter: FilterType,
-    variants: TrainVariant[],
-    book: string = trainBook,
-    sourceId: string | null = trainSourceId,
-  ): TrainQueueItem[] {
-    let typed = filter === "all" ? cards : cards.filter((c) => c.type === filter);
-    typed = filterCardsByTrainingSource(typed, book, sourceId);
-    const items: TrainQueueItem[] = [];
-    for (const card of typed) {
-      for (const variant of variants) {
-        const p = getVariantProgress(card, variant);
-        if (status === "hard") {
-          if (isHardProgress(p)) items.push({ card, variant });
-          continue;
-        }
-        const due = p.status === "new" || new Date(p.dueAt).getTime() <= todayEndTime;
-        if (!due) continue;
-        if (status !== "all" && p.status !== status) continue;
-        items.push({ card, variant });
-      }
-    }
-    // Shuffle so multi-variant sessions interleave instead of running all of
-    // one variant before the next.
-    for (let i = items.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [items[i], items[j]] = [items[j], items[i]];
-    }
-    return items;
-  }
+  // schedule (see getVariantProgress), so a card produces one queue item per
+  // due variant rather than a single coin-flip.
+  const makeTrainQueue = useCallback(
+    (
+      status: TrainStatus,
+      filter: FilterType,
+      variants: TrainVariant[],
+      book: string = trainBook,
+      sourceId: string | null = trainSourceId,
+    ): TrainQueueItem[] =>
+      // Shuffled so multi-variant sessions interleave instead of running all of
+      // one variant before the next.
+      shuffleTrainQueue(
+        buildTrainQueue(cards, { status, type: filter, variants, book, sourceId }, variantProgress, todayEndTime),
+      ),
+    [cards, variantProgress, todayEndTime, trainBook, trainSourceId],
+  );
 
-  const trainPool = buildTrainQueue(trainStatus, "all", trainVariants);
+  // Live counts for the filter chips, computed in a single pass. Each chip used
+  // to build its own full queue on every render, which is what made opening the
+  // filter panel — or changing anything at all — take tens of seconds.
+  const trainCounts = useMemo(
+    () => countTrainCandidates(
+      cards,
+      { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId },
+      variantProgress,
+      todayEndTime,
+    ),
+    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, variantProgress, todayEndTime],
+  );
 
   // The productive trainer keeps its own schedule but must obey the same
   // narrowing: "train this batch" means this batch in either mode.
-  const trainCards = filterCardsByTrainingSource(cards, trainBook, trainSourceId);
+  const trainCards = useMemo(
+    () => filterCardsByTrainingSource(cards, trainBook, trainSourceId),
+    [cards, trainBook, trainSourceId],
+  );
 
   function startTrainingSession(
     status: TrainStatus,
@@ -388,7 +660,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
     book: string = trainBook,
     sourceId: string | null = trainSourceId,
   ) {
-    setTrainQueue(buildTrainQueue(status, filter, variants, book, sourceId));
+    setTrainQueue(makeTrainQueue(status, filter, variants, book, sourceId));
     setCurrentTrainIndex(0);
     setReviewedIds([]);
     setIsFlipped(false);
@@ -400,7 +672,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const handleGrade = (score: 1 | 2 | 3 | 4) => {
     if (viewingHistoryIndex !== null || trainQueue.length === 0 || currentTrainIndex >= trainQueue.length) return;
     const { card, variant } = trainQueue[currentTrainIndex];
-    const prev = getVariantProgress(card, variant);
+    const prev = getVariantProgress(card, variant, variantProgress);
     const srsUpdate = calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor);
     const now = new Date().toISOString();
     if (variant === "forward") {
@@ -408,6 +680,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
     } else {
       const progress = { ...srsUpdate, lastReviewedAt: now };
       saveCardVariantProgress(card.id, variant, progress);
+      setVariantProgress(getCardVariantProgressMap());
       if (user) void sbUpsertCardVariantProgress(user.id, [{ cardId: card.id, variant, progress }]);
       // Bump lastReviewedAt only, so the streak counter sees today's activity
       // without disturbing the forward variant's own SRS fields.
@@ -509,7 +782,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   // carry them. Fetched once when the module opens, matched by the card's
   // front, so a card made from a photographed page shows «сущ. · A1» without a
   // schema change. Cards from the reader fall back to the heuristic below.
-  const [wordFacts, setWordFacts] = useState<Map<string, { pos: string; cefr: string }>>(new Map());
+  const [wordFacts, setWordFacts] = useState<Map<string, WordFacts>>(new Map());
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -518,7 +791,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         if (!res.ok) return;
         const data = await res.json() as { entries?: { headword: string; lemma: string; part_of_speech: string; cefr: string }[] };
         if (cancelled) return;
-        const map = new Map<string, { pos: string; cefr: string }>();
+        const map = new Map<string, WordFacts>();
         for (const e of data.entries ?? []) {
           const fact = { pos: e.part_of_speech ?? "", cefr: e.cefr ?? "" };
           map.set(normalizeFront(e.headword), fact);
@@ -569,19 +842,6 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
     }
   }
 
-  /** The markers for one card: type, part of speech, level — in that order. */
-  function cardMarkers(card: Flashcard): { text: string; kind: string }[] {
-    const marks: { text: string; kind: string }[] = [
-      { text: TYPE_LABELS[card.type], kind: card.type },
-    ];
-    const fact = wordFacts.get(normalizeFront(card.front));
-    const pos = card.type === "word" ? shortPos(fact?.pos ?? "") || guessPos(card.front) : "";
-    if (pos) marks.push({ text: pos, kind: "pos" });
-    const level = card.cefr || fact?.cefr || "";
-    if (level) marks.push({ text: level, kind: "level" });
-    return marks;
-  }
-
   const openWordModalFor = useCallback(async (word: string) => {
     const norm = normalizeToken(word);
     if (!norm) return;
@@ -619,30 +879,6 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
     void openWordModalFor(word);
   }, [openWordModalFor]);
 
-  // --- Tokenized card text ---
-  const TokenizedText = ({ text, style }: { text: string; style?: React.CSSProperties }) => {
-    const tokens = splitIntoTokens(text);
-    return (
-      <div style={style}>
-        {tokens.map((tok, i) => {
-          const norm = normalizeToken(tok);
-          if (!norm) return <span key={i}>{tok}</span>;
-          return (
-            <span
-              key={i}
-              onClick={(e) => handleWordTap(tok, e)}
-              style={{ cursor: "pointer", borderRadius: 2, transition: "background 0.15s" }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(212, 168, 71, 0.15)")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-            >
-              {tok}
-            </span>
-          );
-        })}
-      </div>
-    );
-  };
-
   // --- Dynamic font size for card text ---
   function cardFontSize(text: string): string {
     if (text.length > 200) return "13px";
@@ -652,44 +888,60 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   }
 
   // --- All Cards filtering & sorting ---
-  const allBooks = Array.from(new Set(cards.map((c) => c.sourceBookTitle || c.source || "").filter(Boolean)));
+  const allBooks = useMemo(
+    () => Array.from(new Set(cards.map((c) => c.sourceBookTitle || c.source || "").filter(Boolean))),
+    [cards],
+  );
   // Only levels that actually occur — cards made before levels existed have none.
-  const cardLevels = ["A1", "A2", "B1", "B2", "C1", "C2"].filter((l) => cards.some((c) => c.cefr === l));
+  const cardLevels = useMemo(
+    () => ["A1", "A2", "B1", "B2", "C1", "C2"].filter((l) => cards.some((c) => c.cefr === l)),
+    [cards],
+  );
   const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all", filterLevel !== "all"].filter(Boolean).length;
   const variantsAreDefault = trainVariants.length === 1 && trainVariants[0] === "forward";
   const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", trainBook !== "all", !variantsAreDefault].filter(Boolean).length;
 
-  const filteredAllCards = cards
-    .filter((c) => {
-      if (filterStatus !== "all" && c.status !== filterStatus) return false;
-      if (filterType !== "all" && c.type !== filterType) return false;
-      if (filterBook !== "all" && (c.sourceBookTitle || c.source || "") !== filterBook) return false;
-      if (filterLevel !== "all" && (c.cefr ?? "") !== filterLevel) return false;
-      const query = searchQuery.toLowerCase().trim();
-      if (query) return c.front.toLowerCase().includes(query) || c.back.toLowerCase().includes(query) || (c.sourceBookTitle || c.source || "").toLowerCase().includes(query);
-      return true;
-    })
-    .sort((a, b) => {
-      if (sortOrder === "due") return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
-      if (sortOrder === "ease") return a.easeFactor - b.easeFactor;
-      return new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime();
-    });
+  const filteredAllCards = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    return cards
+      .filter((c) => {
+        if (filterStatus !== "all" && c.status !== filterStatus) return false;
+        if (filterType !== "all" && c.type !== filterType) return false;
+        if (filterBook !== "all" && (c.sourceBookTitle || c.source || "") !== filterBook) return false;
+        if (filterLevel !== "all" && (c.cefr ?? "") !== filterLevel) return false;
+        if (query) return c.front.toLowerCase().includes(query) || c.back.toLowerCase().includes(query) || (c.sourceBookTitle || c.source || "").toLowerCase().includes(query);
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortOrder === "due") return Date.parse(a.dueAt) - Date.parse(b.dueAt);
+        if (sortOrder === "ease") return a.easeFactor - b.easeFactor;
+        return Date.parse(b.addedAt) - Date.parse(a.addedAt);
+      });
+  }, [cards, filterStatus, filterType, filterBook, filterLevel, searchQuery, sortOrder]);
 
-  const visibleCards = filteredAllCards.slice(0, visibleCount);
+  // Both long lists page in as they are scrolled: rendering 500-plus rows at
+  // once cost more than everything else on the screen put together.
+  const visibleCards = useMemo(() => filteredAllCards.slice(0, visibleCount), [filteredAllCards, visibleCount]);
+  const visibleDueCards = useMemo(() => dueCards.slice(0, visibleCount), [dueCards, visibleCount]);
+  const hasMoreRows = activeTab === "today"
+    ? visibleCount < dueCards.length
+    : visibleCount < filteredAllCards.length;
 
-  const STATUS_COLORS: Record<string, string> = {
-    new: "var(--accent)",
-    learning: "var(--blue)",
-    review: "var(--green)",
-    relearning: "#e08888",
-  };
+  // --- Infinite scroll for the long lists (Today and All Cards) ---
+  // Re-attached whenever the sentinel could have been unmounted, so a list that
+  // shrinks below one page and grows again keeps paging.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setVisibleCount((n) => n + 50); },
+      { rootMargin: "200px" }
+    );
+    obs.observe(sentinel);
+    return () => obs.disconnect();
+  }, [activeTab, hasMoreRows]);
 
-  const STATUS_LABELS: Record<string, string> = {
-    new: "Новые",
-    learning: "Обучение",
-    review: "Повторение",
-    relearning: "Переучивание",
-  };
+  const openDiscussCallback = useCallback((card: Flashcard) => { void openDiscussForCard(card); }, [targetLanguage, nativeLanguage, user]);
 
   const currentItem = trainQueue[currentTrainIndex];
   const currentCard = currentItem?.card as Flashcard;
@@ -700,8 +952,8 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
   const promptText = isReversed ? backParts.meaning : currentCard?.front;
   const answerText = isReversed ? currentCard?.front : currentCard?.back;
   const promptLang = isReversed ? nativeLanguage : targetLanguage;
-  const currentProgress = currentCard ? getVariantProgress(currentCard, currentVariant) : null;
-  const currentMarkers = currentCard ? cardMarkers(currentCard) : [];
+  const currentProgress = currentCard ? getVariantProgress(currentCard, currentVariant, variantProgress) : null;
+  const currentMarkers = currentCard ? cardMarkers(currentCard, wordFacts.get(normalizeFront(currentCard.front))) : [];
   const historyPosition = getReviewHistoryPosition(reviewHistory.length, viewingHistoryIndex);
   const historyItem = historyPosition ? reviewHistory[historyPosition.index] : null;
   const historyCard = historyItem?.card;
@@ -817,6 +1069,31 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         .filter-group-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 6px; }
         .filter-reset-btn { align-self: flex-start; font-size: 12px; font-weight: 700; color: var(--text-muted); background: transparent; border: none; cursor: pointer; padding: 4px 0; text-decoration: underline; }
         .filter-reset-btn:hover { color: var(--accent); }
+        .srs-stats-toggle { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex-shrink: 0; border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.18s ease; }
+        .srs-stats-toggle:hover, .srs-stats-toggle.active { background: rgba(212, 168, 71, 0.12); color: var(--accent); }
+        .srs-stats-panel { display: flex; flex-direction: column; gap: 14px; padding: 14px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card); box-shadow: var(--shadow-sm); }
+        .srs-stats-section-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 8px; }
+        .srs-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+        .srs-stat-tile { display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); }
+        .srs-stat-tile b { font-size: 19px; font-weight: 900; line-height: 1; }
+        .srs-stat-tile span { font-size: 10px; font-weight: 700; color: var(--text-muted); line-height: 1.25; }
+        .srs-stat-bar { display: flex; height: 8px; width: 100%; border-radius: 99px; overflow: hidden; background: rgba(240, 230, 211, 0.07); }
+        .srs-stat-bar i { display: block; height: 100%; }
+        .srs-stat-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; font-weight: 700; color: var(--text-muted); }
+        .srs-stat-legend span { display: inline-flex; align-items: center; gap: 5px; }
+        .srs-stat-legend i { width: 8px; height: 8px; border-radius: 2px; }
+        .srs-forecast { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; align-items: end; height: 64px; }
+        .srs-forecast-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%; }
+        .srs-forecast-bar { width: 100%; min-height: 3px; border-radius: 3px 3px 0 0; background: rgba(212, 168, 71, 0.55); }
+        .srs-forecast-lbl { font-size: 9px; font-weight: 700; color: var(--text-muted); }
+        .srs-forecast-val { font-size: 10px; font-weight: 800; color: var(--text-primary); }
+        .srs-source-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--border); font-size: 12px; }
+        .srs-source-row:first-of-type { border-top: none; }
+        .srs-source-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+        .srs-source-meta { flex-shrink: 0; font-size: 11px; font-weight: 700; color: var(--text-muted); }
+        .srs-source-due { flex-shrink: 0; min-width: 34px; text-align: right; font-size: 11px; font-weight: 800; color: var(--accent); }
+        .srs-list-more { margin: 10px auto 0; padding: 9px 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); color: var(--text-muted); font-size: 12px; font-weight: 700; cursor: pointer; }
+        .srs-list-more:hover { border-color: var(--accent); color: var(--accent); }
       `}</style>
 
       {/* Word Modal */}
@@ -866,26 +1143,38 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
         </button>
       </header>
 
-      {/* Stats Banner */}
+      {/* Stats Banner — the summary line; the panel below it holds the detail */}
       <div className="srs-stats-banner">
-        <div className="srs-stat-mini">
-          <span className="srs-stat-val" style={{ color: "var(--accent)" }}>{dueCards.length}</span>
-          <span className="srs-stat-lbl">сегодня</span>
+        <div className="srs-stat-mini" title="Карточек ждёт сегодня — и сколько это повторений с учётом выбранных направлений">
+          <span className="srs-stat-val" style={{ color: "var(--accent)" }}>{stats.dueCards}</span>
+          <span className="srs-stat-lbl">сегодня · {stats.dueReps} повт.</span>
         </div>
         <div className="srs-stat-divider" />
-        <div className="srs-stat-mini">
-          <span className="srs-stat-val" style={{ color: streak > 0 ? "var(--accent)" : "var(--text-muted)" }}>
-            <Flame size={13} fill={streak > 0 ? "var(--accent)" : "none"} />
-            {streak}
+        <div className="srs-stat-mini" title={`Лучшая серия: ${stats.bestStreak} дн.`}>
+          <span className="srs-stat-val" style={{ color: stats.streak > 0 ? "var(--accent)" : "var(--text-muted)" }}>
+            <Flame size={13} fill={stats.streak > 0 ? "var(--accent)" : "none"} />
+            {stats.streak}
           </span>
           <span className="srs-stat-lbl">серия</span>
         </div>
         <div className="srs-stat-divider" />
-        <div className="srs-stat-mini">
-          <span className="srs-stat-val" style={{ color: "var(--green)" }}>{learnedCount}</span>
-          <span className="srs-stat-lbl">изучено</span>
+        <div className="srs-stat-mini" title="Карточек, которые вы уже хотя бы раз повторили">
+          <span className="srs-stat-val" style={{ color: "var(--green)" }}>{stats.learnedCards}</span>
+          <span className="srs-stat-lbl">из {stats.totalCards} изучено</span>
         </div>
+        <button
+          className={`srs-stats-toggle ${showStats ? "active" : ""}`}
+          onClick={(e) => { e.stopPropagation(); setShowStats((v) => !v); }}
+          type="button"
+          aria-label="Подробная статистика"
+          aria-expanded={showStats}
+          title="Подробная статистика"
+        >
+          <BarChart3 size={15} />
+        </button>
       </div>
+
+      {showStats && <StatsPanel stats={stats} onClick={(e) => e.stopPropagation()} />}
 
       {/* Navigation Tabs */}
       <div className="srs-tabs-container">
@@ -929,30 +1218,16 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                 </button>
               </div>
               <div className="card-list">
-                {dueCards.map((card) => (
-                  <div key={card.id} className="flash-card" style={{ borderLeft: `4px solid ${STATUS_COLORS[card.status] ?? "var(--accent)"}` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-                      <span className={`flash-card-type ${card.type}`}>{TYPE_LABELS[card.type]}</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <SkillBadges cardId={card.id} />
-                        <span style={{ fontSize: 10, background: `${STATUS_COLORS[card.status] ?? "var(--accent)"}18`, color: STATUS_COLORS[card.status] ?? "var(--accent)", padding: "2px 6px", borderRadius: 4, fontWeight: 800, textTransform: "uppercase" }}>
-                          {STATUS_LABELS[card.status] ?? card.status}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flash-card-front" style={{ fontSize: 16 }}>{card.front}</div>
-                    <div className="flash-card-back" style={{ fontSize: 13, color: "var(--text-muted)" }}>{card.back}</div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(240, 230, 211, 0.05)" }}>
-                      <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
-                      {card.intervalDays > 0 && (
-                        <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
-                          <Calendar size={10} /> {card.intervalDays} дн.
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                {visibleDueCards.map((card) => (
+                  <DueCardRow key={card.id} card={card} skillState={skillProgress[card.id] ?? EMPTY_SKILL_STATE} />
                 ))}
+                {hasMoreRows && <div ref={sentinelRef} style={{ height: 1 }} />}
               </div>
+              {hasMoreRows && (
+                <button className="srs-list-more" type="button" onClick={() => setVisibleCount((n) => n + 50)}>
+                  Показать ещё ({dueCards.length - visibleDueCards.length})
+                </button>
+              )}
             </>
           )}
         </div>
@@ -1024,9 +1299,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                     >
                       {t === "all" ? "Все типы" : TYPE_LABELS[t]}
                       {t !== "all" && (
-                        <span style={{ marginLeft: 4, opacity: 0.7 }}>
-                          {trainPool.filter((it) => it.card.type === t).length}
-                        </span>
+                        <span style={{ marginLeft: 4, opacity: 0.7 }}>{trainCounts.byType[t]}</span>
                       )}
                     </button>
                   ))}
@@ -1037,7 +1310,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                 <div className="filter-group-label">Статус</div>
                 <div className="filter-chips">
                   {(["all", "new", "learning", "review", "relearning", "hard"] as TrainStatus[]).map((s) => {
-                    const count = buildTrainQueue(s, trainFilter, trainVariants).length;
+                    const count = trainCounts.byStatus[s];
                     return (
                       <button
                         key={s}
@@ -1129,7 +1402,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
 
                 <div className="srs-history-word-row">
                   <div className="srs-history-word">
-                    <TokenizedText text={historyCard.front} style={{ fontSize: "inherit", fontWeight: "inherit", lineHeight: "inherit" }} />
+                    <TokenizedText text={historyCard.front} style={{ fontSize: "inherit", fontWeight: "inherit", lineHeight: "inherit" }} onWordTap={handleWordTap} />
                   </div>
                   <SpeakButton text={historyCard.front} lang={targetLanguage} size={19} />
                 </div>
@@ -1273,6 +1546,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                         <TokenizedText
                           text={promptText}
                           style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
+                          onWordTap={handleWordTap}
                         />
                       )}
                     </div>
@@ -1303,6 +1577,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                           <TokenizedText
                             text={currentCard.front}
                             style={{ fontSize: cardFontSize(currentCard.front), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3, textAlign: "center" }}
+                            onWordTap={handleWordTap}
                           />
                           <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center" }}>{currentCard.back}</div>
                         </div>
@@ -1311,6 +1586,7 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
                           <TokenizedText
                             text={answerText}
                             style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}
+                            onWordTap={handleWordTap}
                           />
                           {backParts.details && (
                             <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
@@ -1473,50 +1749,17 @@ export function CardsView({ cards, initialTab, onBack, onAddCard, onUpdateCard, 
           ) : (
             <div className="card-list">
               {visibleCards.map((card) => (
-                <div key={card.id} className="flash-card" style={{ display: "flex", gap: 12, alignItems: "flex-start", justifyContent: "space-between" }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, flexWrap: "wrap" }}>
-                      {cardMarkers(card).map((m, i) => (
-                        <span key={i} className={`card-marker ${m.kind}${i === 0 ? " lead" : ""}`}>{m.text}</span>
-                      ))}
-                      <span style={{ fontSize: 10, background: `${STATUS_COLORS[card.status] ?? "var(--accent)"}18`, color: STATUS_COLORS[card.status] ?? "var(--accent)", padding: "2px 6px", borderRadius: 4, fontWeight: 800 }}>
-                        {STATUS_LABELS[card.status] ?? card.status}
-                        {card.intervalDays > 0 ? ` · ${card.intervalDays}дн` : ""}
-                      </span>
-                    </div>
-                    {/* Front is spoken and word-tappable, like text everywhere else in the app. */}
-                    <div className="flash-card-front" style={{ fontSize: 15, display: "flex", alignItems: "flex-start", gap: 6 }}>
-                      <TokenizedText text={card.front} style={{ flex: 1 }} />
-                      <SpeakButton text={card.front} lang={targetLanguage} size={15} />
-                    </div>
-                    <TokenizedText text={card.back} style={{ fontSize: 13, color: "var(--text-muted)" }} />
-                    <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
-                    <button
-                      className="card-row-delete-btn"
-                      style={{ color: "var(--text-muted)" }}
-                      onClick={() => void openDiscussForCard(card)}
-                      type="button"
-                      aria-label="Обсудить с AI"
-                      title="Обсудить с AI"
-                    >
-                      <MessageCircle size={16} />
-                    </button>
-                    <button
-                      className="card-row-delete-btn"
-                      onClick={() => { if (confirm("Удалить карточку?")) onDeleteCard(card.id); }}
-                      type="button"
-                      aria-label="Удалить"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
+                <AllCardRow
+                  key={card.id}
+                  card={card}
+                  facts={wordFacts.get(normalizeFront(card.front))}
+                  targetLanguage={targetLanguage}
+                  onWordTap={handleWordTap}
+                  onDiscuss={openDiscussCallback}
+                  onDelete={onDeleteCard}
+                />
               ))}
-              {visibleCount < filteredAllCards.length && (
-                <div ref={sentinelRef} style={{ height: 1 }} />
-              )}
+              {hasMoreRows && <div ref={sentinelRef} style={{ height: 1 }} />}
             </div>
           )}
         </div>
