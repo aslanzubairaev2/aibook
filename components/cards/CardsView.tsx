@@ -9,6 +9,8 @@ import {
   buildTrainQueue,
   computeDeckStats,
   countTrainCandidates,
+  deckInsight,
+  CARD_STATUSES,
   filterCardsByTrainingSource,
   findDuplicateCard,
   getReviewHistoryPosition,
@@ -265,98 +267,120 @@ const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWor
   );
 });
 
-const VARIANT_SHORT: Record<TrainVariant, string> = {
-  forward: "Изуч. → Родной",
-  reverse: "Родной → Изуч.",
-  audio: "Аудио",
+const VARIANT_LABELS_LONG: Record<TrainVariant, string> = {
+  forward: "Узнавание",
+  reverse: "Воспроизведение",
+  audio: "Аудирование",
+};
+
+const VARIANT_COLORS: Record<TrainVariant, string> = {
+  forward: "var(--blue)",
+  reverse: "var(--accent)",
+  audio: "var(--green)",
 };
 
 const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
+/** A labelled progress row — the shape every block in the panel is built from. */
+function StatBar({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
+  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+  return (
+    <div className="srs-bar-row">
+      <span className="srs-bar-label">{label}</span>
+      <span className="srs-bar-track"><i style={{ width: `${pct}%`, background: color }} /></span>
+      <span className="srs-bar-value">{value}<small> / {total}</small></span>
+    </div>
+  );
+}
+
 /**
- * The detail behind the banner.
+ * The detail behind the today line.
  *
- * Everything here is counted per prompt direction, the same way a session is
- * built, so «сегодня» in the banner and «Карточка N из M» in the trainer finally
- * describe the same work. The per-source list exists so a photographed
- * dictionary batch can be seen contributing its own cards rather than
- * disappearing into one deck-wide total.
+ * Counters alone say what is true without saying what to do, so this is built
+ * around comparisons a learner can act on: which of the three directions is
+ * lagging, what today's remaining work is made of, and which day of the coming
+ * week is going to hurt. Everything is counted per direction, the same way a
+ * session is, so the numbers here and the trainer's own progress line describe
+ * the same work.
  */
 const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckStats; onClick: (e: React.MouseEvent) => void }) {
-  const totalStatus = Math.max(1, stats.totalCards);
   const learnedPct = stats.totalVariants > 0 ? Math.round((stats.learnedVariants / stats.totalVariants) * 100) : 0;
   const forecastPeak = Math.max(1, ...stats.forecast.map((d) => d.count));
   const today = new Date();
   const topSources = stats.sources.slice(0, 8);
+  const insight = deckInsight(stats, today);
+  const notStarted = stats.totalCards - stats.learnedCards;
 
   return (
     <div className="srs-stats-panel" onClick={onClick}>
-      <div className="srs-stats-grid">
-        <div className="srs-stat-tile">
-          <b>{stats.totalCards}</b>
-          <span>карточек всего</span>
+      <section>
+        <div className="srs-stats-head">
+          <div className="srs-stats-section-label">Освоение трёх направлений</div>
+          <span className="srs-stats-note">начато {stats.learnedVariants} из {stats.totalVariants} · {learnedPct}%</span>
         </div>
-        <div className="srs-stat-tile">
-          <b style={{ color: "var(--accent)" }}>{stats.dueReps}</b>
-          <span>повторений сегодня</span>
-        </div>
-        <div className="srs-stat-tile">
-          <b style={{ color: "var(--green)" }}>{stats.matureCards}</b>
-          <span>освоено надолго</span>
-        </div>
-        <div className="srs-stat-tile">
-          <b style={{ color: stats.hardCards > 0 ? "#e08888" : "var(--text-muted)" }}>{stats.hardCards}</b>
-          <span>сложных</span>
-        </div>
-        <div className="srs-stat-tile">
-          <b>{stats.reviewedToday}</b>
-          <span>повторено сегодня</span>
-        </div>
-        <div className="srs-stat-tile">
-          <b>{stats.bestStreak}</b>
-          <span>лучшая серия, дн.</span>
-        </div>
-      </div>
+        {ALL_TRAIN_VARIANTS.map((variant) => (
+          <StatBar
+            key={variant}
+            label={VARIANT_LABELS_LONG[variant]}
+            value={stats.startedByVariant[variant]}
+            total={stats.totalCards}
+            color={VARIANT_COLORS[variant]}
+          />
+        ))}
+      </section>
 
-      <div>
-        <div className="srs-stats-section-label">Состав колоды</div>
-        <div className="srs-stat-bar">
-          {(["new", "learning", "review", "relearning"] as const).map((status) => (
-            <i
-              key={status}
-              style={{ width: `${(stats.byStatus[status] / totalStatus) * 100}%`, background: STATUS_COLORS[status] }}
-            />
-          ))}
+      <section>
+        <div className="srs-stats-head">
+          <div className="srs-stats-section-label">Осталось сегодня</div>
+          <span className="srs-stats-note">{stats.dueCards} карточек · {stats.dueReps} повторений</span>
         </div>
-        <div className="srs-stat-legend">
-          {(["new", "learning", "review", "relearning"] as const).map((status) => (
+        {stats.dueReps === 0 ? (
+          <div className="srs-stats-empty">Всё повторено — можно отдыхать или читать.</div>
+        ) : (
+          <>
+            <div className="srs-stat-bar">
+              {ALL_TRAIN_VARIANTS.map((variant) => (
+                <i
+                  key={variant}
+                  style={{ width: `${(stats.dueByVariant[variant] / stats.dueReps) * 100}%`, background: VARIANT_COLORS[variant] }}
+                />
+              ))}
+            </div>
+            <div className="srs-stat-legend">
+              {ALL_TRAIN_VARIANTS.map((variant) => (
+                <span key={variant}>
+                  <i style={{ background: VARIANT_COLORS[variant] }} />
+                  {VARIANT_LABELS_LONG[variant]} — {stats.dueByVariant[variant]}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+
+      <section>
+        <div className="srs-stats-head">
+          <div className="srs-stats-section-label">Состояние колоды</div>
+          <span className="srs-stats-note">показатели независимы и могут пересекаться</span>
+        </div>
+        <StatBar label="Трудные" value={stats.hardCards} total={stats.totalCards} color="#e08888" />
+        <StatBar label="Не начаты" value={notStarted} total={stats.totalCards} color="var(--accent)" />
+        <StatBar label="Зрелые" value={stats.matureCards} total={stats.totalCards} color="var(--green)" />
+        <div className="srs-stats-legend-row">
+          {CARD_STATUSES.map((status) => (
             <span key={status}>
               <i style={{ background: STATUS_COLORS[status] }} />
               {STATUS_LABELS[status]}: {stats.byStatus[status]}
             </span>
           ))}
         </div>
-      </div>
+      </section>
 
-      <div>
-        <div className="srs-stats-section-label">
-          Направления — пройдено {stats.learnedVariants} из {stats.totalVariants} ({learnedPct}%)
+      <section>
+        <div className="srs-stats-head">
+          <div className="srs-stats-section-label">Прогноз на неделю</div>
+          <span className="srs-stats-note">назначенных повторений</span>
         </div>
-        <div className="srs-stat-legend" style={{ marginTop: 0 }}>
-          {ALL_TRAIN_VARIANTS.map((variant) => (
-            <span key={variant}>
-              <i style={{ background: "var(--accent)" }} />
-              {VARIANT_SHORT[variant]}: {stats.dueByVariant[variant]} к повторению
-            </span>
-          ))}
-        </div>
-        <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
-          Каждое направление учится отдельно, поэтому повторений больше, чем карточек.
-        </div>
-      </div>
-
-      <div>
-        <div className="srs-stats-section-label">Нагрузка на 7 дней</div>
         <div className="srs-forecast">
           {stats.forecast.map((day) => {
             const date = new Date(today);
@@ -364,17 +388,23 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
             return (
               <div className="srs-forecast-col" key={day.dayOffset}>
                 <span className="srs-forecast-val">{day.count || ""}</span>
-                <div className="srs-forecast-bar" style={{ height: `${Math.max(3, (day.count / forecastPeak) * 100)}%` }} />
+                <div
+                  className="srs-forecast-bar"
+                  style={{ height: `${Math.max(2, (day.count / forecastPeak) * 100)}%`, opacity: day.count > 0 ? 1 : 0.3 }}
+                />
                 <span className="srs-forecast-lbl">{WEEKDAYS[date.getDay()]}</span>
               </div>
             );
           })}
         </div>
-      </div>
+      </section>
 
       {topSources.length > 0 && (
-        <div>
-          <div className="srs-stats-section-label">По источникам — книги и пачки из словаря</div>
+        <section>
+          <div className="srs-stats-head">
+            <div className="srs-stats-section-label">По источникам</div>
+            <span className="srs-stats-note">книги и пачки из словаря</span>
+          </div>
           {topSources.map((source) => (
             <div className="srs-source-row" key={source.key}>
               <span className="srs-source-title" title={source.title}>{source.title}</span>
@@ -383,18 +413,12 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
             </div>
           ))}
           {stats.sources.length > topSources.length && (
-            <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
-              и ещё {stats.sources.length - topSources.length} источник(ов)
-            </div>
+            <div className="srs-stats-empty">и ещё {stats.sources.length - topSources.length} источник(ов)</div>
           )}
-        </div>
+        </section>
       )}
 
-      {stats.lapses > 0 && (
-        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          Забытых повторений за всё время: {stats.lapses}
-        </div>
-      )}
+      {insight && <div className="srs-stats-insight">{insight}</div>}
     </div>
   );
 });
@@ -994,6 +1018,11 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     return () => obs.disconnect();
   }, [activeTab, hasMoreRows]);
 
+  // Today's plan is what has been done plus what is left, so the bar fills as
+  // the session runs and stretches honestly when new cards are added mid-day.
+  const todayPlanned = stats.reviewedToday + stats.dueReps;
+  const todayDonePct = todayPlanned > 0 ? Math.round((stats.reviewedToday / todayPlanned) * 100) : 100;
+
   const openDiscussCallback = useCallback((card: Flashcard) => { void openDiscussForCard(card); }, [targetLanguage, nativeLanguage, user]);
 
   const currentItem = trainQueue[currentTrainIndex];
@@ -1024,6 +1053,19 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .srs-tab-badge.empty { background: rgba(240, 230, 211, 0.08); color: var(--text-muted); }
         .srs-tab.active .srs-tab-badge:not(.empty) { background: var(--accent); color: var(--bg-primary); }
         .srs-stats-banner { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 8px 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); }
+        .srs-today { padding: 11px 13px 9px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); }
+        .srs-today-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+        .srs-today-lead { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+        .srs-today-remaining { font-size: 27px; font-weight: 900; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+        .srs-today-lbl { font-size: 11px; font-weight: 700; color: var(--text-muted); }
+        .srs-today-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; flex-shrink: 0; }
+        .srs-today-done { font-size: 13px; font-weight: 850; font-variant-numeric: tabular-nums; }
+        .srs-today-sub { font-size: 10px; font-weight: 700; color: var(--text-muted); }
+        .srs-today-bar { height: 6px; margin: 9px 0 8px; border-radius: 99px; overflow: hidden; background: rgba(240, 230, 211, 0.08); }
+        .srs-today-bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--green)); transition: width 0.35s ease; }
+        .srs-today-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .srs-today-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 750; color: var(--text-muted); white-space: nowrap; }
+        .srs-today-foot .srs-stats-toggle { margin-left: auto; width: auto; height: 26px; padding: 0 9px; gap: 5px; font-size: 11px; font-weight: 800; }
         .srs-stat-mini { display: flex; align-items: center; gap: 5px; }
         .srs-stat-mini .srs-stat-val { font-size: 14px; font-weight: 900; line-height: 1; display: flex; align-items: center; gap: 3px; }
         .srs-stat-mini .srs-stat-lbl { font-size: 10px; color: var(--text-muted); font-weight: 700; white-space: nowrap; }
@@ -1124,12 +1166,21 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .filter-reset-btn:hover { color: var(--accent); }
         .srs-stats-toggle { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex-shrink: 0; border: none; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.18s ease; }
         .srs-stats-toggle:hover, .srs-stats-toggle.active { background: rgba(212, 168, 71, 0.12); color: var(--accent); }
-        .srs-stats-panel { display: flex; flex-direction: column; gap: 14px; padding: 14px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card); box-shadow: var(--shadow-sm); }
-        .srs-stats-section-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 8px; }
-        .srs-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
-        .srs-stat-tile { display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); }
-        .srs-stat-tile b { font-size: 19px; font-weight: 900; line-height: 1; }
-        .srs-stat-tile span { font-size: 10px; font-weight: 700; color: var(--text-muted); line-height: 1.25; }
+        .srs-stats-panel { display: flex; flex-direction: column; gap: 18px; padding: 14px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card); box-shadow: var(--shadow-sm); }
+        .srs-stats-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+        .srs-stats-section-label { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-primary); }
+        .srs-stats-note { flex-shrink: 0; font-size: 10px; font-weight: 700; color: var(--text-muted); text-align: right; }
+        .srs-stats-empty { font-size: 11px; font-weight: 700; color: var(--text-muted); }
+        .srs-bar-row { display: flex; align-items: center; gap: 9px; padding: 3px 0; }
+        .srs-bar-label { flex-shrink: 0; width: 108px; font-size: 11px; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .srs-bar-track { flex: 1; min-width: 0; height: 9px; border-radius: 99px; overflow: hidden; background: rgba(240, 230, 211, 0.08); }
+        .srs-bar-track i { display: block; height: 100%; border-radius: 99px; transition: width 0.35s ease; }
+        .srs-bar-value { flex-shrink: 0; min-width: 64px; text-align: right; font-size: 11px; font-weight: 850; font-variant-numeric: tabular-nums; }
+        .srs-bar-value small { font-weight: 700; color: var(--text-muted); }
+        .srs-stats-legend-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 9px; font-size: 11px; font-weight: 700; color: var(--text-muted); }
+        .srs-stats-legend-row span { display: inline-flex; align-items: center; gap: 5px; }
+        .srs-stats-legend-row i { width: 8px; height: 8px; border-radius: 2px; }
+        .srs-stats-insight { padding: 10px 12px; border-radius: var(--radius-sm); background: rgba(212, 168, 71, 0.08); border: 1px solid rgba(212, 168, 71, 0.2); font-size: 12px; font-weight: 700; line-height: 1.4; color: var(--text-primary); }
         .srs-stat-bar { display: flex; height: 8px; width: 100%; border-radius: 99px; overflow: hidden; background: rgba(240, 230, 211, 0.07); }
         .srs-stat-bar i { display: block; height: 100%; }
         .srs-stat-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; font-weight: 700; color: var(--text-muted); }
@@ -1202,35 +1253,45 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         </button>
       </header>
 
-      {/* Stats Banner — the summary line; the panel below it holds the detail */}
-      <div className="srs-stats-banner">
-        <div className="srs-stat-mini" title="Карточек ждёт сегодня — и сколько это повторений с учётом выбранных направлений">
-          <span className="srs-stat-val" style={{ color: "var(--accent)" }}>{stats.dueCards}</span>
-          <span className="srs-stat-lbl">сегодня · {stats.dueReps} повт.</span>
+      {/* Today's progress — the one line that has to move on every grade.
+          It used to lead with the number of cards due, which only drops once
+          all three of a card's directions are done: a learner could grade
+          fifteen prompts and watch "177" sit there unchanged. Repetitions are
+          the unit a session is actually counted in, so that is what leads. */}
+      <div className="srs-today">
+        <div className="srs-today-head">
+          <div className="srs-today-lead">
+            <span className="srs-today-remaining">{stats.dueReps}</span>
+            <span className="srs-today-lbl">
+              {stats.dueReps === 0 ? "на сегодня всё" : "повторений осталось"}
+            </span>
+          </div>
+          <div className="srs-today-side">
+            <span className="srs-today-done">{stats.reviewedToday} из {todayPlanned}</span>
+            <span className="srs-today-sub">сделано сегодня · {stats.dueCards} карт.</span>
+          </div>
         </div>
-        <div className="srs-stat-divider" />
-        <div className="srs-stat-mini" title={`Лучшая серия: ${stats.bestStreak} дн.`}>
-          <span className="srs-stat-val" style={{ color: stats.streak > 0 ? "var(--accent)" : "var(--text-muted)" }}>
-            <Flame size={13} fill={stats.streak > 0 ? "var(--accent)" : "none"} />
-            {stats.streak}
+        <div className="srs-today-bar" role="progressbar" aria-valuenow={todayDonePct} aria-valuemin={0} aria-valuemax={100}>
+          <i style={{ width: `${todayDonePct}%` }} />
+        </div>
+        <div className="srs-today-foot">
+          <span className="srs-today-chip" title={`Лучшая серия: ${stats.bestStreak} дн.`}>
+            <Flame size={12} fill={stats.streak > 0 ? "var(--accent)" : "none"} />
+            {stats.streak} дн. подряд
           </span>
-          <span className="srs-stat-lbl">серия</span>
+          <span className="srs-today-chip" title="Карточек, которые вы уже хотя бы раз повторили">
+            {stats.learnedCards} из {stats.totalCards} изучено
+          </span>
+          <button
+            className={`srs-stats-toggle ${showStats ? "active" : ""}`}
+            onClick={(e) => { e.stopPropagation(); setShowStats((v) => !v); }}
+            type="button"
+            aria-expanded={showStats}
+          >
+            <BarChart3 size={13} /> Разбор
+            <ChevronDown size={12} style={{ transform: showStats ? "rotate(180deg)" : undefined, transition: "transform 0.18s" }} />
+          </button>
         </div>
-        <div className="srs-stat-divider" />
-        <div className="srs-stat-mini" title="Карточек, которые вы уже хотя бы раз повторили">
-          <span className="srs-stat-val" style={{ color: "var(--green)" }}>{stats.learnedCards}</span>
-          <span className="srs-stat-lbl">из {stats.totalCards} изучено</span>
-        </div>
-        <button
-          className={`srs-stats-toggle ${showStats ? "active" : ""}`}
-          onClick={(e) => { e.stopPropagation(); setShowStats((v) => !v); }}
-          type="button"
-          aria-label="Подробная статистика"
-          aria-expanded={showStats}
-          title="Подробная статистика"
-        >
-          <BarChart3 size={15} />
-        </button>
       </div>
 
       {showStats && <StatsPanel stats={stats} onClick={(e) => e.stopPropagation()} />}

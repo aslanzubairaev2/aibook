@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, buildTrainQueue, computeDeckStats, countTrainCandidates, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import { ALL_TRAIN_VARIANTS, buildTrainQueue, computeDeckStats, countTrainCandidates, deckInsight, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
 import type { CardVariantState, Flashcard, SkillProgress, TrainVariant } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
@@ -235,6 +235,49 @@ test("statistics count every direction, so the banner matches a full session", (
   // The audio direction lands two days out.
   assert.equal(stats.forecast.find((day) => day.dayOffset === 2)?.count, 1);
   assert.equal(stats.streak, 1);
+});
+
+test("today's remaining work drops on every single grade, not once a card is finished", () => {
+  // The banner reads dueReps, because dueCards only falls when all three of a
+  // card's directions are done — a learner could grade fifteen prompts and
+  // watch the old per-card number sit still.
+  const cards = [scheduled({ id: "one" }), scheduled({ id: "two" })];
+
+  const before = computeDeckStats(cards, {}, NOW);
+  assert.equal(before.dueReps, 6);
+  assert.equal(before.dueCards, 2);
+
+  // One direction of one card graded away to tomorrow.
+  const after = computeDeckStats(cards, {
+    one: { reverse: variant("2026-08-20T23:59:59.999Z", { lastReviewedAt: NOW.toISOString() }) },
+  }, NOW);
+
+  assert.equal(after.dueReps, 5, "remaining repetitions must fall by one");
+  assert.equal(after.dueCards, 2, "the card itself is still due in its other directions");
+  assert.equal(after.reviewedToday, 1, "and today's done count must rise");
+});
+
+test("mastery is tracked per direction so the lagging one can be named", () => {
+  // Twenty cards met in recognition, half of them in production, none by ear —
+  // the shape of a real deck, where the gap is worth naming. A two-card deck
+  // deliberately says nothing: a difference of one is not a finding.
+  const cards = Array.from({ length: 20 }, (_, i) => scheduled({ id: `card-${i}`, repetitions: 3 }));
+  const progress: Record<string, CardVariantState> = {};
+  for (let i = 0; i < 10; i++) {
+    progress[`card-${i}`] = { reverse: variant("2026-09-01T00:00:00.000Z", { repetitions: 2 }) };
+  }
+
+  const stats = computeDeckStats(cards, progress, NOW);
+
+  assert.deepEqual(stats.startedByVariant, { forward: 20, reverse: 10, audio: 0 });
+  assert.match(deckInsight(stats, NOW) ?? "", /Главный резерв — аудирование: начато 0 из 20/);
+
+  const evenDeck = computeDeckStats([scheduled({ id: "one", repetitions: 3 })], {}, NOW);
+  assert.doesNotMatch(deckInsight(evenDeck, NOW) ?? "", /Главный резерв/);
+});
+
+test("the takeaway stays quiet when there is nothing to say", () => {
+  assert.equal(deckInsight(computeDeckStats([], {}, NOW), NOW), null);
 });
 
 test("statistics keep every source separate, dictionary batches included", () => {

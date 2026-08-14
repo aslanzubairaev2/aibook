@@ -334,6 +334,8 @@ export type DeckStats = {
   matureCards: number;
   learnedVariants: number;
   totalVariants: number;
+  /** Cards met at least once in each direction — where the real gaps show. */
+  startedByVariant: Record<TrainVariant, number>;
   hardCards: number;
   /**
    * Times a prompt has been forgotten, summed over the deck. There is no review
@@ -420,6 +422,7 @@ export function computeDeckStats(
     matureCards: 0,
     learnedVariants: 0,
     totalVariants: cards.length * ALL_TRAIN_VARIANTS.length,
+    startedByVariant: { forward: 0, reverse: 0, audio: 0 },
     hardCards: 0,
     lapses: 0,
     streak: 0,
@@ -457,6 +460,7 @@ export function computeDeckStats(
       if (isHardProgress(p)) cardHard = true;
       if (p.repetitions > 0) {
         stats.learnedVariants += 1;
+        stats.startedByVariant[variant] += 1;
         cardTouched = true;
       }
       if (isVariantDue(p, todayEndMs)) {
@@ -500,6 +504,52 @@ export function computeDeckStats(
   stats.sources = [...sources.values()].sort((a, b) => b.due - a.due || b.cards - a.cards);
 
   return stats;
+}
+
+export const VARIANT_NAMES: Record<TrainVariant, string> = {
+  forward: "узнавание",
+  reverse: "воспроизведение",
+  audio: "аудирование",
+};
+
+const WEEKDAY_NAMES = ["воскресенье", "понедельник", "вторник", "среду", "четверг", "пятницу", "субботу"];
+
+/**
+ * One sentence saying what the numbers add up to.
+ *
+ * A wall of counters tells a learner what is true but not what to do about it,
+ * so this names the direction that is furthest behind — the one worth spending
+ * the next sessions on — and warns about the heaviest day ahead, which is the
+ * other decision the forecast supports.
+ */
+export function deckInsight(stats: DeckStats, now: Date = new Date()): string | null {
+  if (stats.totalCards === 0) return null;
+
+  const parts: string[] = [];
+
+  const behind = [...ALL_TRAIN_VARIANTS].sort(
+    (a, b) => stats.startedByVariant[a] - stats.startedByVariant[b],
+  );
+  const weakest = behind[0];
+  const strongest = behind[behind.length - 1];
+  // Only worth naming when the gap is real rather than a rounding difference.
+  if (stats.startedByVariant[strongest] - stats.startedByVariant[weakest] >= Math.max(5, stats.totalCards * 0.05)) {
+    parts.push(`Главный резерв — ${VARIANT_NAMES[weakest]}: начато ${stats.startedByVariant[weakest]} из ${stats.totalCards}`);
+  }
+
+  const peak = stats.forecast.reduce((best, day) => (day.count > best.count ? day : best), stats.forecast[0]);
+  if (peak && peak.count > 0) {
+    const date = new Date(now);
+    date.setDate(date.getDate() + peak.dayOffset);
+    parts.push(`самый нагруженный день впереди — ${WEEKDAY_NAMES[date.getDay()]}, ${peak.count} повторений`);
+  }
+
+  if (parts.length === 0) {
+    return stats.dueReps > 0
+      ? `Сегодня осталось ${stats.dueReps} повторений.`
+      : "На сегодня всё повторено.";
+  }
+  return `${parts.join("; ")}.`;
 }
 
 /** Counts each prompt direction as an independent learned item. */
