@@ -6,7 +6,6 @@ import { SpeakButton } from "@/components/ui/SpeakButton";
 import { normalizeToken } from "@/lib/selector/text";
 import { subscribeTTS, getTTSState, TTSState, toggleAutoNext, speak } from "@/lib/tts";
 import { getAvailableTtsProviders, getTtsProviderLabel, resolveTtsProvider } from "@/lib/ttsProviders";
-import { ActiveVoiceLabel } from "@/components/tts/ActiveVoiceLabel";
 import type { AiAnalysis, Flashcard, UserProfile } from "@/lib/types";
 
 type Tab = "word" | "phrase" | "sentence";
@@ -110,7 +109,6 @@ export function AiPanel({
             >
               <Zap size={16} fill={tts.autoNext ? "currentColor" : "none"} />
             </button>
-            <ActiveVoiceLabel />
             <select
               className="tts-provider-select"
               aria-label="Голосовой движок"

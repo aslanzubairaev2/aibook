@@ -485,19 +485,36 @@ textarea,
 .lang-select:focus { border-color: var(--accent); }
 
 /* Names the engine that is speaking. Quiet enough to ignore while reading,
-   opaque enough to actually read — 0.55 keeps it legible on both surfaces. */
+   opaque enough to actually read — 0.6 keeps it legible on both surfaces. */
 .active-voice-label {
   font-size: 11px;
   font-weight: 600;
   line-height: 1.2;
   letter-spacing: 0.01em;
   color: var(--text-muted);
-  opacity: 0.55;
+  opacity: 0.6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 190px;
   pointer-events: none;
+}
+
+/* Above the player, not inside it: absolute so it can never displace the
+   controls, and centred on the bar it belongs to. It comes and goes with the
+   player, since the player itself is what fades in and out. */
+.audio-scrubber-voice.active-voice-label {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90%;
+  padding: 3px 10px;
+  border-radius: 100px;
+  background: rgba(30, 25, 20, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  opacity: 0.75;
 }
 /* A swapped engine is the case worth noticing, so it is not dimmed further. */
 .active-voice-swap { color: var(--accent); opacity: 0.9; }

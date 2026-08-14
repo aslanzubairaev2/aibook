@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Play, Pause, X, Repeat } from "lucide-react";
 import { subscribeTTS, pauseTTS, resumeTTS, seekTTS, stopTTS, toggleRepeat, TTSState, getTTSState } from "@/lib/tts";
+import { ActiveVoiceLabel } from "@/components/tts/ActiveVoiceLabel";
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -78,6 +79,9 @@ export function AudioScrubber() {
 
   return (
     <div className={`audio-scrubber-overlay ${show ? "visible" : "hidden"}`}>
+      {/* Floats clear of the bar rather than sitting in it: nothing here may
+          move the controls, which is what naming the engine did before. */}
+      <ActiveVoiceLabel className="audio-scrubber-voice" />
       <div className="audio-scrubber-content">
         <button 
           className="audio-play-btn" 
