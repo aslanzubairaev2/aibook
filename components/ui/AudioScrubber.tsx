@@ -79,9 +79,6 @@ export function AudioScrubber() {
 
   return (
     <div className={`audio-scrubber-overlay ${show ? "visible" : "hidden"}`}>
-      {/* Floats clear of the bar rather than sitting in it: nothing here may
-          move the controls, which is what naming the engine did before. */}
-      <ActiveVoiceLabel className="audio-scrubber-voice" />
       <div className="audio-scrubber-content">
         <button 
           className="audio-play-btn" 
@@ -109,8 +106,12 @@ export function AudioScrubber() {
               className="audio-progress-input"
             />
           </div>
+          {/* The timecode row is mostly empty space, and the engine that is
+              speaking belongs there: inside the player, between the two times,
+              where it costs no extra height and displaces no control. */}
           <div className="audio-time">
             <span>{formatTime(displayTime)}</span>
+            <ActiveVoiceLabel className="audio-scrubber-voice" />
             <span>{formatTime(duration)}</span>
           </div>
         </div>
