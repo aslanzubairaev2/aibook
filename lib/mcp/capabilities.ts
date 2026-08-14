@@ -32,7 +32,7 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
   {
     area: "Flashcards (spaced repetition)",
     summary:
-      "The learner's SM-2 deck. Each card is trained in three independent directions — recognition (see the German, recall the meaning), recall (see the meaning, produce the German) and listening (hear it) — each with its own schedule, so a word can be solid in one direction and shaky in another.",
+      "The learner's SM-2 deck («Повторение»). Each card is trained in three independent directions — recognition (see the German, recall the meaning), recall (see the meaning, produce the German) and listening (hear it) — each with its own schedule, so a word can be solid in one direction and shaky in another, and a deck of 100 words is 300 prompts. The app has a second trainer beside it («Активно», a written test), but that one keeps its record on the learner's device and is invisible here.",
     tools: ["list_flashcards", "add_flashcards", "update_flashcard", "delete_flashcards", "get_study_words"],
     say: [
       "«добавь это в карточки»",
@@ -56,14 +56,18 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
   {
     area: "Learning quality",
     summary:
-      "get_progress reads the scheduling record and says which words are confident, which are in progress and which the learner keeps forgetting (lapses, or an ease factor the algorithm has pushed down), broken down by CEFR level and by training direction.",
+      "get_progress reads the scheduling record and says which words are confident, which are in progress and which the learner keeps forgetting (lapses, or an ease factor the algorithm has pushed down), broken down by CEFR level and by training direction. It also returns the deck's own numbers — today's workload, the review streak, the week ahead — the same ones the app's statistics panel shows the learner.",
     tools: ["get_progress"],
-    say: ["«что у меня плохо запоминается?»", "«проверь, как идёт учёба»"],
+    say: [
+      "«что у меня плохо запоминается?»",
+      "«проверь, как идёт учёба»",
+      "«сколько мне сегодня повторять?»",
+    ],
   },
   {
     area: "Reading texts",
     summary:
-      "Texts the learner reads in the app. You write them yourself — you are the language model, this server never spends the learner's AI budget — and create_lesson saves them into «Мои уроки» with an optional glossary and comprehension questions. list_catalogue shows the ready-made public texts with the share of words the learner already knows.",
+      "Texts the learner reads in the app. You write them yourself — you are the language model, this server never spends the learner's AI budget — and create_lesson saves them into «Мои уроки» with an optional glossary and comprehension questions. list_catalogue searches the ready-made public shelves and reports the share of words the learner already knows in each text.",
     tools: ["create_lesson", "list_texts", "get_text", "list_catalogue"],
     say: [
       "«напиши рассказ из моих слов»",
@@ -80,8 +84,9 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
  */
 export const AGENT_LIMITS: string[] = [
   "Grading reviews: only the learner can answer a card. You add and edit cards; the app schedules them.",
-  "Audio: narration and text-to-speech happen in the app, not through this connection.",
-  "The live voice tutor, photo recognition of pages and in-app AI analysis run inside the app on the learner's own AI budget; this connection is plain data and costs them nothing.",
+  "The active trainer («Активно» — the written test over вспоминаю / слушаю / говорю) keeps its record on the learner's own device. Nothing about it reaches this connection; what you can read is the «Повторение» deck.",
+  "Audio: the app speaks cards and texts itself, through whichever voice engine the learner has chosen in their settings. You cannot make it speak, and no audio comes back through this connection.",
+  "The live voice tutor, photo recognition of coursebook pages and in-app AI analysis run inside the app on the learner's own AI budget; this connection is plain data and costs them nothing.",
   "Deleting texts, batches or the dictionary: removal is the learner's own action in the app (delete_flashcards is the one exception, for cleaning up mistakes you made).",
 ];
 
@@ -89,6 +94,7 @@ export const AGENT_LIMITS: string[] = [
 export const AGENT_TIPS: string[] = [
   "Write at the learner's level: pull their vocabulary with get_progress or get_study_words first, build the text mostly from confident words, and weave in a few they are forgetting.",
   "A themed set of words belongs in add_word_batch, not in add_flashcards — the batch is what the app can train, show progress for and re-open as a page.",
+  "Counts here are counted the way the app counts them: a card is due if it falls before the end of today, and every card is three prompts, so «сегодня» is both a number of words and a larger number of repetitions. Quote both, or the learner's screen will contradict you.",
   "Practise a new grammar point with words the learner already knows, so the sentence tests the construction and not the vocabulary.",
   "Everything you write lands in the learner's own app, under «Мои уроки» or «Словарь». It shows up after they refresh.",
   "Nothing here spends the learner's AI budget; these tools are plain database reads and writes.",

@@ -14,6 +14,7 @@
 import { NextResponse } from "next/server";
 import { MCP_TOOLS } from "@/lib/mcp/tools";
 import { MCP_PROMPTS } from "@/lib/mcp/prompts";
+import { MCP_SERVER_VERSION } from "@/lib/mcp/version";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,7 @@ export async function GET() {
   const commit = process.env.VERCEL_GIT_COMMIT_SHA ?? "";
   return NextResponse.json({
     server: "aibook MCP",
-    version: "1.2.0",
+    version: MCP_SERVER_VERSION,
     commit: commit ? commit.slice(0, 7) : "unknown (not built on Vercel)",
     branch: process.env.VERCEL_GIT_COMMIT_REF ?? "",
     tool_count: MCP_TOOLS.length,

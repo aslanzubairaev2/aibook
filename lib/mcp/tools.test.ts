@@ -8,7 +8,16 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MCP_TOOLS, buildGuideMarkdown, callMcpTool, findRegistryDrift } from "./tools.ts";
+import {
+  MCP_TOOLS,
+  buildGuideMarkdown,
+  callMcpTool,
+  directionProgress,
+  findRegistryDrift,
+  isDueToday,
+  isStrugglingProgress,
+  summarizeDeck,
+} from "./tools.ts";
 import { CAPABILITY_AREAS, buildInstructions } from "./capabilities.ts";
 import { MCP_PROMPTS, getPrompt } from "./prompts.ts";
 
@@ -92,6 +101,105 @@ test("prompts build a usable request and only mention tools that exist", () => {
       }
     }
   }
+});
+
+// ─── The deck, counted the way the app counts it ────────────────────────────
+//
+// The numbers an agent quotes end up next to the numbers on the learner's own
+// screen, so these pin the two together: due by end of day, three prompts per
+// card, and "struggling" meaning what the app's «Сложные» filter means.
+
+const NOW = new Date("2026-08-14T09:00:00.000Z");
+
+function card(over: Record<string, unknown> = {}) {
+  return {
+    id: "card-1",
+    front: "die Haltestelle",
+    back: "остановка",
+    status: "review",
+    repetitions: 4,
+    lapses: 0,
+    easiness_factor: 2.5,
+    interval_days: 30,
+    next_review_at: "2026-09-01T00:00:00.000Z",
+    last_reviewed_at: "2026-08-14T06:00:00.000Z",
+    source_book_id: null,
+    source_book_title: null,
+    selection_type: "word",
+    cefr: "A2",
+    ...over,
+  } as Parameters<typeof summarizeDeck>[0][number];
+}
+
+test("a card falling due later today is due, not tomorrow's problem", () => {
+  const later = card({ next_review_at: "2026-08-14T22:00:00.000Z" });
+  const [forward] = directionProgress([later], []);
+  const endOfDay = Date.parse("2026-08-14T23:59:59.999Z");
+  assert.equal(isDueToday(forward, endOfDay), true);
+});
+
+test("a direction the learner has never been asked in counts as due", () => {
+  const progress = directionProgress([card()], []);
+  const endOfDay = Date.parse("2026-08-14T23:59:59.999Z");
+  assert.deepEqual(
+    progress.filter((p) => isDueToday(p, endOfDay)).map((p) => p.direction),
+    ["reverse", "audio"],
+  );
+});
+
+test("struggling means ground down, not merely lapsed once", () => {
+  assert.equal(isStrugglingProgress({ lapses: 2, repetitions: 5, ease: 2.5 }), true);
+  assert.equal(isStrugglingProgress({ lapses: 0, repetitions: 3, ease: 2.1 }), true);
+  assert.equal(isStrugglingProgress({ lapses: 1, repetitions: 4, ease: 2.5 }), false);
+  // Untouched cards are not struggling, whatever their default ease says.
+  assert.equal(isStrugglingProgress({ lapses: 0, repetitions: 0, ease: 2.2 }), false);
+});
+
+test("one card is three prompts, and the summary counts both", () => {
+  const deck = summarizeDeck([card()], [], NOW);
+  assert.equal(deck.due_today.cards, 1);
+  assert.equal(deck.due_today.repetitions, 2, "forward is scheduled ahead; the other two are new");
+  assert.deepEqual(deck.due_today.by_direction, { forward: 0, reverse: 1, audio: 1 });
+  assert.equal(deck.directions_total, 3);
+  assert.equal(deck.mature_cards, 1, "a 30-day interval has settled");
+});
+
+test("a scheduled direction lands in the forecast rather than in today", () => {
+  const deck = summarizeDeck([card({ next_review_at: "2026-08-17T08:00:00.000Z" })], [], NOW);
+  assert.equal(deck.due_today.by_direction.forward, 0);
+  assert.deepEqual(
+    deck.forecast_next_days.filter((d) => d.repetitions > 0),
+    [{ in_days: 3, repetitions: 1 }],
+  );
+});
+
+test("the variant table carries its own schedule and its own lapses", () => {
+  const variants = [
+    {
+      flashcard_id: "card-1",
+      variant: "reverse" as const,
+      status: "relearning",
+      repetitions: 1,
+      lapses: 3,
+      easiness_factor: 1.9,
+      interval_days: 1,
+      next_review_at: "2026-08-20T00:00:00.000Z",
+      last_reviewed_at: "2026-08-13T10:00:00.000Z",
+    },
+  ];
+  const deck = summarizeDeck([card()], variants, NOW);
+  assert.equal(deck.struggling_cards, 1, "shaky in one direction is shaky");
+  assert.equal(deck.due_today.by_direction.reverse, 0, "it has a schedule now, and it is not today");
+  assert.equal(deck.due_today.by_direction.audio, 1);
+  assert.equal(deck.streak_days, 2, "reviewed today and yesterday");
+  assert.equal(deck.reviewed_today, 1);
+});
+
+test("an empty deck reports zeroes rather than dividing by nothing", () => {
+  const deck = summarizeDeck([], [], NOW);
+  assert.equal(deck.due_today.cards, 0);
+  assert.equal(deck.directions_percent, 0);
+  assert.equal(deck.streak_days, 0);
 });
 
 test("prompt arguments are substituted when supplied", () => {
