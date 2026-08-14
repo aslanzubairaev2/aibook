@@ -6,12 +6,18 @@ const TTS_PROVIDERS = new Set<TtsProvider>([
   "deepgram",
   "speechify",
   "inworld",
+  "openai",
 ]);
 
 const LEGACY_TTS_PROVIDERS: Record<string, TtsProvider> = {
   inword: "inworld",
   inwords: "inworld",
   simba: "speechify",
+  gpt: "openai",
+  gpt4o: "openai",
+  "gpt-4o": "openai",
+  "gpt_4o": "openai",
+  "openai-tts": "openai",
 };
 
 export const DEEPGRAM_TTS_SAMPLE_RATE = 24000;
@@ -98,6 +104,28 @@ export function isInworldTtsSupported(lang: string) {
   return Boolean(getBcp47Locale(lang));
 }
 
+// ─── OpenAI ──────────────────────────────────────────────────────────────────
+//
+// gpt-4o-mini-tts takes no language field at all: the voice follows the language
+// of the text it is handed. So there is no locale table to keep here and no
+// per-language question to answer — it speaks whatever the deck holds, which is
+// why it is the one voice offered for every language.
+
+export const OPENAI_TTS_MODEL = "gpt-4o-mini-tts";
+
+/** OpenAI's voices are a fixed set of names; this one is the safe default. */
+export const OPENAI_DEFAULT_VOICE = "alloy";
+
+/** The voices gpt-4o-mini-tts accepts, for naming a bad GPT_VOICE_ID. */
+export const OPENAI_VOICES = [
+  "alloy", "ash", "ballad", "coral", "echo",
+  "fable", "nova", "onyx", "sage", "shimmer", "verse",
+];
+
+export function isOpenAiTtsSupported(_lang: string) {
+  return true;
+}
+
 export function normalizeTtsProvider(provider: unknown): TtsProvider {
   if (typeof provider !== "string") return "gemini";
 
@@ -114,6 +142,7 @@ export function getAvailableTtsProviders(lang: string): TtsProvider[] {
   if (isDeepgramTtsSupported(lang)) providers.push("deepgram");
   if (isSpeechifyTtsSupported(lang)) providers.push("speechify");
   if (isInworldTtsSupported(lang)) providers.push("inworld");
+  if (isOpenAiTtsSupported(lang)) providers.push("openai");
   return providers;
 }
 export function resolveTtsProvider(provider: unknown, lang: string): TtsProvider {
@@ -128,6 +157,7 @@ export function getTtsProviderChain(provider: unknown, lang: string): TtsProvide
   const chain: TtsProvider[] = ["gemini"];
   if (isSpeechifyTtsSupported(lang)) chain.push("speechify");
   if (isInworldTtsSupported(lang)) chain.push("inworld");
+  if (isOpenAiTtsSupported(lang)) chain.push("openai");
   return chain;
 }
 
@@ -136,5 +166,6 @@ export function getTtsProviderLabel(provider: TtsProvider) {
   if (provider === "deepgram") return "Deepgram Aura";
   if (provider === "speechify") return "Speechify Simba";
   if (provider === "inworld") return "Inworld TTS";
+  if (provider === "openai") return "OpenAI GPT-4o";
   return "Локальный";
 }

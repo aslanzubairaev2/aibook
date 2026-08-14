@@ -11,6 +11,9 @@ import {
   INWORLD_DEFAULT_VOICE,
   INWORLD_MODEL,
   normalizeLanguageCode,
+  OPENAI_DEFAULT_VOICE,
+  OPENAI_TTS_MODEL,
+  OPENAI_VOICES,
 } from "@/lib/ttsProviders";
 import { diagnoseQuotaError, quotaMessageRu } from "@/lib/ttsQuota";
 import { parseWav } from "@/lib/wav";
@@ -30,7 +33,7 @@ export async function POST(req: Request) {
     const { text, lang, provider = "gemini" } = await req.json() as {
       text: string;
       lang: string;
-      provider?: "gemini" | "deepgram" | "speechify" | "inworld";
+      provider?: "gemini" | "deepgram" | "speechify" | "inworld" | "openai";
     };
 
     if (!text || typeof text !== "string") {
@@ -38,6 +41,18 @@ export async function POST(req: Request) {
     }
     if (text.length > MAX_TTS_TEXT_LENGTH) {
       return NextResponse.json({ error: `TTS text exceeds ${MAX_TTS_TEXT_LENGTH} character limit` }, { status: 413 });
+    }
+
+    if (provider === "openai") {
+      if (!getOpenAiApiKey()) {
+        return NextResponse.json({ error: "Не задан ключ OpenAI (GPT_API_KEY)." }, { status: 500 });
+      }
+
+      const spoken = await speakWithOpenAi(text, lang);
+      if ("error" in spoken) {
+        return NextResponse.json({ error: spoken.error }, { status: spoken.status });
+      }
+      return NextResponse.json({ ...spoken, provider, model: OPENAI_TTS_MODEL });
     }
 
     if (provider === "inworld") {
@@ -233,7 +248,7 @@ type Spoken =
   | { error: string; status: number };
 
 type AutomaticFallback = Exclude<Spoken, { error: string; status: number }> & {
-  provider: "speechify" | "inworld";
+  provider: "speechify" | "inworld" | "openai";
   model: string;
   fellBackFrom: "gemini";
   reason: string;
@@ -279,6 +294,23 @@ async function speakWithAutomaticFallback(
           };
         }
         console.warn(`Inworld fallback failed with status ${spoken.status}: ${spoken.error}`);
+        continue;
+      }
+
+      if (provider === "openai") {
+        if (!getOpenAiApiKey()) continue;
+
+        const spoken = await speakWithOpenAi(text, lang);
+        if (!("error" in spoken)) {
+          return {
+            ...spoken,
+            provider: "openai",
+            model: OPENAI_TTS_MODEL,
+            fellBackFrom: "gemini",
+            reason,
+          };
+        }
+        console.warn(`OpenAI fallback failed with status ${spoken.status}: ${spoken.error}`);
       }
     } catch (error) {
       console.error(`${provider} fallback threw:`, error);
@@ -286,6 +318,80 @@ async function speakWithAutomaticFallback(
   }
 
   return null;
+}
+
+/**
+ * The OpenAI credentials, under either name.
+ *
+ * The deployment names them GPT_API_KEY / GPT_VOICE_ID; OPENAI_* is accepted
+ * too, so a machine that already carries the conventional names works without
+ * a second copy of the same secret.
+ */
+function getOpenAiApiKey() {
+  return (process.env.GPT_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+}
+
+function getOpenAiVoiceId() {
+  return (process.env.GPT_VOICE_ID || process.env.OPENAI_VOICE_ID || "").trim() || OPENAI_DEFAULT_VOICE;
+}
+
+/**
+ * Synthesise through OpenAI's gpt-4o-mini-tts.
+ *
+ * The model reads the language out of the text itself — there is no locale to
+ * pass — so every deck can use it. It answers with the audio bytes directly
+ * rather than JSON, and MP3 is asked for because the player already decodes
+ * that shape for Inworld.
+ */
+async function speakWithOpenAi(text: string, lang: string): Promise<Spoken> {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) return { error: "Missing OpenAI API key", status: 500 };
+
+  const voiceId = getOpenAiVoiceId();
+  // Switching the voice must not serve the previous one out of the cache.
+  const cacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}`;
+  const language = normalizeLanguageCode(lang);
+
+  const cached = await sbGetCachedTts(text, language, cacheVoiceKey);
+  if (cached) return { audioBase64: cached, source: "db_cache", format: "mp3" };
+
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENAI_TTS_MODEL,
+      input: text,
+      voice: voiceId,
+      response_format: "mp3",
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    console.error(`OpenAI TTS API error (${response.status}, voice=${voiceId}):`, err);
+    if (response.status === 401 || response.status === 403) {
+      return { error: "OpenAI не принял ключ. Проверьте GPT_API_KEY.", status: response.status };
+    }
+    if (response.status === 429) {
+      return { error: "OpenAI ограничил запросы. Проверьте баланс аккаунта.", status: 429 };
+    }
+    if (response.status === 400 && /voice/i.test(err)) {
+      return {
+        error: `OpenAI не знает голос «${voiceId}». Допустимые: ${OPENAI_VOICES.join(", ")}.`,
+        status: 400,
+      };
+    }
+    return { error: "OpenAI TTS failed", status: response.status };
+  }
+
+  const audioBase64 = Buffer.from(await response.arrayBuffer()).toString("base64");
+  if (!audioBase64) return { error: "OpenAI returned no audio", status: 502 };
+
+  await sbSaveCachedTts(text, language, cacheVoiceKey, audioBase64);
+  return { audioBase64, source: "api", format: "mp3" };
 }
 
 /**

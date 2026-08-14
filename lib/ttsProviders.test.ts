@@ -6,10 +6,12 @@ import {
   getSpeechifyLocale,
   getSpeechifyModel,
   isInworldTtsSupported,
+  isOpenAiTtsSupported,
   isSpeechifyTtsSupported,
   getTtsProviderLabel,
   getTtsProviderChain,
   getInworldAuthorizationHeader,
+  normalizeTtsProvider,
 } from "./ttsProviders.ts";
 
 test("picks Simba 3.0 for the languages it covers", () => {
@@ -44,18 +46,35 @@ test("reports no support for a language with no locale mapping", () => {
 });
 
 test("offers every voice that can speak German", () => {
-  assert.deepEqual(getAvailableTtsProviders("de"), ["local", "gemini", "deepgram", "speechify", "inworld"]);
+  assert.deepEqual(
+    getAvailableTtsProviders("de"),
+    ["local", "gemini", "deepgram", "speechify", "inworld", "openai"],
+  );
 
   // Polish has a locale for the paid voices but no Deepgram model.
-  assert.deepEqual(getAvailableTtsProviders("pl"), ["local", "gemini", "speechify", "inworld"]);
+  assert.deepEqual(getAvailableTtsProviders("pl"), ["local", "gemini", "speechify", "inworld", "openai"]);
 
-  // A language with no locale mapping leaves only the browser and Gemini.
-  assert.deepEqual(getAvailableTtsProviders("xx"), ["local", "gemini"]);
+  // A language with no locale mapping leaves the browser, Gemini, and GPT-4o —
+  // the last of which reads the language off the text and so never opts out.
+  assert.deepEqual(getAvailableTtsProviders("xx"), ["local", "gemini", "openai"]);
 });
 
 test("labels the new providers", () => {
   assert.equal(getTtsProviderLabel("speechify"), "Speechify Simba");
   assert.equal(getTtsProviderLabel("inworld"), "Inworld TTS");
+  assert.equal(getTtsProviderLabel("openai"), "OpenAI GPT-4o");
+});
+
+test("GPT-4o needs no locale, so it speaks every language", () => {
+  for (const lang of ["de", "ru", "zh", "xx"]) {
+    assert.equal(isOpenAiTtsSupported(lang), true, lang);
+  }
+});
+
+test("accepts the names a learner might type for GPT-4o", () => {
+  for (const alias of ["openai", "gpt", "gpt-4o", "GPT_4o", " OpenAI "]) {
+    assert.equal(normalizeTtsProvider(alias), "openai", alias);
+  }
 });
 
 test("Inworld takes the same locale tags, since one voice covers many languages", () => {
@@ -66,9 +85,11 @@ test("Inworld takes the same locale tags, since one voice covers many languages"
 });
 
 test("builds the automatic Gemini fallback chain", () => {
-  assert.deepEqual(getTtsProviderChain(undefined, "de"), ["gemini", "speechify", "inworld"]);
-  assert.deepEqual(getTtsProviderChain("gemini", "xx"), ["gemini"]);
+  assert.deepEqual(getTtsProviderChain(undefined, "de"), ["gemini", "speechify", "inworld", "openai"]);
+  // Even with no locale mapping, GPT-4o can still answer for Gemini.
+  assert.deepEqual(getTtsProviderChain("gemini", "xx"), ["gemini", "openai"]);
   assert.deepEqual(getTtsProviderChain("speechify", "de"), ["speechify"]);
+  assert.deepEqual(getTtsProviderChain("openai", "de"), ["openai"]);
 });
 
 test("normalizes a missing provider to Gemini", () => {

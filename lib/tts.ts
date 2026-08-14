@@ -8,7 +8,9 @@ import {
   isInworldTtsSupported,
   isSpeechifyTtsSupported,
   INWORLD_MODEL,
+  isOpenAiTtsSupported,
   normalizeLanguageCode,
+  OPENAI_TTS_MODEL,
 } from "./ttsProviders";
 
 /** Cached audio is headerless PCM, so its rate rides along as a response header. */
@@ -132,7 +134,8 @@ let playSegmentFn: ((offset: number) => void) | null = null;
 
 /** Providers whose audio plays through the Web Audio path rather than the browser voice. */
 function isRemoteProvider(provider: string | undefined): boolean {
-  return provider === "gemini" || provider === "deepgram" || provider === "speechify" || provider === "inworld";
+  return provider === "gemini" || provider === "deepgram" || provider === "speechify"
+    || provider === "inworld" || provider === "openai";
 }
 
 export function pauseTTS() {
@@ -244,6 +247,7 @@ function resolveProvider(requested: string, lang: string): string {
   if (requested === "deepgram" && !isDeepgramTtsSupported(lang)) return "local";
   if (requested === "speechify" && !isSpeechifyTtsSupported(lang)) return "local";
   if (requested === "inworld" && !isInworldTtsSupported(lang)) return "local";
+  if (requested === "openai" && !isOpenAiTtsSupported(lang)) return "local";
   return requested;
 }
 
@@ -252,6 +256,7 @@ function voiceKeyFor(provider: string, lang: string): string {
   if (provider === "deepgram") return getDeepgramTtsModel(lang) ?? "default";
   if (provider === "speechify") return getSpeechifyModel(lang);
   if (provider === "inworld") return INWORLD_MODEL;
+  if (provider === "openai") return OPENAI_TTS_MODEL;
   return "Algenib";
 }
 
