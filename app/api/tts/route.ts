@@ -6,9 +6,19 @@ import {
   CARTESIA_MODEL,
   CARTESIA_SAMPLE_RATE,
   DEEPGRAM_TTS_SAMPLE_RATE,
+  ELEVENLABS_DEFAULT_VOICE,
+  ELEVENLABS_MODEL,
+  ELEVENLABS_MP3_FORMAT,
+  ELEVENLABS_PCM_FORMAT,
+  ELEVENLABS_PCM_SAMPLE_RATE,
+  GEMINI_MALE_VOICES,
   getBcp47Locale,
   isCartesiaTtsSupported,
   isCartesiaVoiceId,
+  isElevenLabsTtsSupported,
+  isValidVoiceRef,
+  OPENAI_SPEAKING_RATE,
+  TEACHER_INSTRUCTIONS,
   getInworldAuthorizationHeader,
   getDeepgramTtsModel,
   getSpeechifyLocale,
@@ -22,6 +32,7 @@ import {
   OPENAI_TTS_MODEL,
   OPENAI_VOICES,
 } from "@/lib/ttsProviders";
+import type { TtsProvider } from "@/lib/types";
 import { diagnoseQuotaError, quotaMessageRu } from "@/lib/ttsQuota";
 import { parseWav } from "@/lib/wav";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
@@ -37,11 +48,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { text, lang, provider = "gemini" } = await req.json() as {
+    const { text, lang, provider = "gemini", voice } = await req.json() as {
       text: string;
       lang: string;
-      provider?: "gemini" | "deepgram" | "speechify" | "inworld" | "openai" | "cartesia";
+      provider?: TtsProvider;
+      /** The voice the learner picked in settings, if this engine has a choice. */
+      voice?: string;
     };
+
+    // The voice is about to be spent against our key, so it is held to the shape
+    // provider ids and names share rather than forwarded as free text.
+    const chosenVoice = typeof voice === "string" && isValidVoiceRef(voice) ? voice.trim() : undefined;
 
     if (!text || typeof text !== "string") {
       return NextResponse.json({ error: "Missing text" }, { status: 400 });
@@ -55,11 +72,26 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ OpenAI (GPT_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithOpenAi(text, lang);
+      const spoken = await speakWithOpenAi(text, lang, chosenVoice);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
       return NextResponse.json({ ...spoken, provider, model: OPENAI_TTS_MODEL });
+    }
+
+    if (provider === "elevenlabs") {
+      if (!isElevenLabsTtsSupported(lang)) {
+        return NextResponse.json({ error: "ElevenLabs does not support this language" }, { status: 400 });
+      }
+      if (!getElevenLabsApiKey()) {
+        return NextResponse.json({ error: "Не задан ключ ElevenLabs (ELEVENLABS_API_KEY)." }, { status: 500 });
+      }
+
+      const spoken = await speakWithElevenLabs(text, chosenVoice);
+      if ("error" in spoken) {
+        return NextResponse.json({ error: spoken.error }, { status: spoken.status });
+      }
+      return NextResponse.json({ ...spoken, provider, model: getElevenLabsModel() });
     }
 
     if (provider === "cartesia") {
@@ -70,11 +102,11 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ Cartesia (CARTESIA_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithCartesia(text, lang);
+      const spoken = await speakWithCartesia(text, lang, chosenVoice);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
-      return NextResponse.json({ ...spoken, provider, model: CARTESIA_MODEL });
+      return NextResponse.json({ ...spoken, provider, model: getCartesiaModel() });
     }
 
     if (provider === "inworld") {
@@ -142,8 +174,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: reason }, { status: 500 });
     }
 
-    // Use Algenib voice as requested
-    const voiceName = "Algenib";
+    // The learner's pick from settings, or the voice this app has always used.
+    const voiceName = chosenVoice && GEMINI_MALE_VOICES.some((v) => v.id === chosenVoice)
+      ? chosenVoice
+      : "Algenib";
 
     // 1. Check database cache
     const cachedAudio = await sbGetCachedTts(text, lang, voiceName);
@@ -270,7 +304,7 @@ type Spoken =
   | { error: string; status: number };
 
 type AutomaticFallback = Exclude<Spoken, { error: string; status: number }> & {
-  provider: "speechify" | "inworld" | "openai" | "cartesia";
+  provider: "speechify" | "inworld" | "openai" | "cartesia" | "elevenlabs";
   model: string;
   fellBackFrom: "gemini";
   reason: string;
@@ -350,6 +384,23 @@ async function speakWithAutomaticFallback(
           };
         }
         console.warn(`Cartesia fallback failed with status ${spoken.status}: ${spoken.error}`);
+        continue;
+      }
+
+      if (provider === "elevenlabs") {
+        if (!getElevenLabsApiKey()) continue;
+
+        const spoken = await speakWithElevenLabs(text);
+        if (!("error" in spoken)) {
+          return {
+            ...spoken,
+            provider: "elevenlabs",
+            model: getElevenLabsModel(),
+            fellBackFrom: "gemini",
+            reason,
+          };
+        }
+        console.warn(`ElevenLabs fallback failed with status ${spoken.status}: ${spoken.error}`);
       }
     } catch (error) {
       console.error(`${provider} fallback threw:`, error);
@@ -370,9 +421,23 @@ const cartesiaVoiceIds = new Map<string, string>();
 
 type CartesiaVoice = { id?: string; name?: string };
 
+/**
+ * The Cartesia model to speak with.
+ *
+ * Model ids drift — sonic-2 was current when this was first wired and is not
+ * any more — so the deployment can move to a new one without a code change.
+ */
+function getCartesiaModel() {
+  return (process.env.CARTESIA_MODEL_ID || "").trim() || CARTESIA_MODEL;
+}
+
 /** Resolve the configured Cartesia voice to the id the synthesis call needs. */
-async function resolveCartesiaVoice(apiKey: string): Promise<{ id: string } | { error: string; status: number }> {
-  const configured = (process.env.CARTESIA_VOICE_ID || process.env.CARTESIA_VOICE || "").trim()
+async function resolveCartesiaVoice(
+  apiKey: string,
+  requested?: string,
+): Promise<{ id: string } | { error: string; status: number }> {
+  const configured = requested
+    || (process.env.CARTESIA_VOICE_ID || process.env.CARTESIA_VOICE || "").trim()
     || CARTESIA_DEFAULT_VOICE;
 
   // Already an id: nothing to look up.
@@ -390,7 +455,10 @@ async function resolveCartesiaVoice(apiKey: string): Promise<{ id: string } | { 
     if (cursor) url.searchParams.set("starting_after", cursor);
 
     const response = await fetch(url, {
-      headers: { "X-API-Key": apiKey, "Cartesia-Version": CARTESIA_API_VERSION },
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Cartesia-Version": CARTESIA_API_VERSION,
+      },
     });
 
     if (!response.ok) {
@@ -426,64 +494,231 @@ async function resolveCartesiaVoice(apiKey: string): Promise<{ id: string } | { 
 }
 
 /**
- * Synthesise through Cartesia Sonic 2.
+ * Synthesise through Cartesia Sonic.
  *
- * One multilingual model over a fixed language list, taking the bare two-letter
- * code. MP3 is asked for so the audio travels the same path Inworld and GPT-4o
- * already use.
+ * WAV rather than MP3: the header states the rate, the route strips it to raw
+ * PCM, and the player schedules those samples with no decoding step at all.
+ * That is the shortest path from bytes to sound the player has.
  */
-async function speakWithCartesia(text: string, lang: string): Promise<Spoken> {
+async function speakWithCartesia(text: string, lang: string, requestedVoice?: string): Promise<Spoken> {
   const apiKey = (process.env.CARTESIA_API_KEY || "").trim();
   if (!apiKey) return { error: "Missing Cartesia API key", status: 500 };
 
-  const voice = await resolveCartesiaVoice(apiKey);
+  const voice = await resolveCartesiaVoice(apiKey, requestedVoice);
   if ("error" in voice) return voice;
 
+  const model = getCartesiaModel();
   const language = normalizeLanguageCode(lang);
   // The voice is part of the recording's identity, so it belongs in the key.
-  const cacheVoiceKey = `${CARTESIA_MODEL}:${voice.id}`;
+  const cacheVoiceKey = `${model}:${voice.id}`;
 
-  const cached = await sbGetCachedTts(text, language, cacheVoiceKey);
-  if (cached) return { audioBase64: cached, source: "db_cache", format: "mp3" };
+  const cachedWav = await sbGetCachedTts(text, language, cacheVoiceKey);
+  if (cachedWav) {
+    const decoded = decodeWavBase64(cachedWav);
+    if (decoded) return { ...decoded, source: "db_cache" };
+    console.warn("Cartesia cache row was not readable WAV; re-synthesising");
+  }
 
   const response = await fetch("https://api.cartesia.ai/tts/bytes", {
     method: "POST",
     headers: {
-      "X-API-Key": apiKey,
+      "Authorization": `Bearer ${apiKey}`,
       "Cartesia-Version": CARTESIA_API_VERSION,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model_id: CARTESIA_MODEL,
+      model_id: model,
       transcript: text,
-      voice: { mode: "id", id: voice.id },
+      voice: { id: voice.id },
       language,
-      output_format: { container: "mp3", sample_rate: CARTESIA_SAMPLE_RATE, bit_rate: 128000 },
+      output_format: {
+        container: "wav",
+        encoding: "pcm_s16le",
+        sample_rate: CARTESIA_SAMPLE_RATE,
+      },
     }),
   });
 
   if (!response.ok) {
     const err = await response.text();
-    console.error(`Cartesia TTS API error (${response.status}, voice=${voice.id}, lang=${language}):`, err);
+    console.error(`Cartesia TTS API error (${response.status}, model=${model}, voice=${voice.id}, lang=${language}):`, err);
     if (response.status === 401 || response.status === 403) {
       return { error: "Cartesia не приняла ключ. Проверьте CARTESIA_API_KEY.", status: response.status };
     }
     if (response.status === 402 || response.status === 429) {
       return { error: "Cartesia ограничила запросы. Проверьте баланс кредитов.", status: response.status };
     }
-    if (response.status === 400 && /voice/i.test(err)) {
+    if (/model/i.test(err)) {
+      return {
+        error: `Cartesia не знает модель «${model}». Задайте актуальную в CARTESIA_MODEL_ID.`,
+        status: response.status,
+      };
+    }
+    if (/voice/i.test(err)) {
       // A stale id in the cache is worth forgetting, so the next call re-resolves.
       cartesiaVoiceIds.clear();
-      return { error: "Cartesia отклонила голос. Проверьте CARTESIA_VOICE_ID.", status: 400 };
+      return { error: "Cartesia отклонила голос. Проверьте CARTESIA_VOICE_ID.", status: response.status };
     }
     return { error: "Cartesia TTS failed", status: response.status };
   }
 
-  const audioBase64 = Buffer.from(await response.arrayBuffer()).toString("base64");
-  if (!audioBase64) return { error: "Cartesia returned no audio", status: 502 };
+  const wavBase64 = Buffer.from(await response.arrayBuffer()).toString("base64");
+  const decoded = decodeWavBase64(wavBase64);
+  if (!decoded) return { error: "Cartesia returned audio the player cannot decode", status: 502 };
 
-  await sbSaveCachedTts(text, language, cacheVoiceKey, audioBase64);
-  return { audioBase64, source: "api", format: "mp3" };
+  await sbSaveCachedTts(text, language, cacheVoiceKey, wavBase64);
+  return { ...decoded, source: "api" };
+}
+
+// ─── ElevenLabs ──────────────────────────────────────────────────────────────
+
+function getElevenLabsApiKey() {
+  return (process.env.ELEVENLABS_API_KEY || process.env.ELVENLABS_API_KEY || "").trim();
+}
+
+/** The dashboard variable is spelled ELVENLABS_MODEL_ID; take either spelling. */
+function getElevenLabsModel() {
+  return (process.env.ELEVENLABS_MODEL_ID || process.env.ELVENLABS_MODEL_ID || "").trim() || ELEVENLABS_MODEL;
+}
+
+const elevenLabsVoiceIds = new Map<string, string>();
+
+type ElevenLabsVoice = { voice_id?: string; name?: string; labels?: Record<string, string> };
+
+/** Resolve a voice name — the library shows names, the API wants ids. */
+async function resolveElevenLabsVoice(
+  apiKey: string,
+  requested?: string,
+): Promise<{ id: string } | { error: string; status: number }> {
+  const configured = requested
+    || (process.env.ELEVENLABS_VOICE_ID || process.env.ELVENLABS_VOICE_ID || "").trim()
+    || ELEVENLABS_DEFAULT_VOICE;
+
+  // ElevenLabs ids are 20 characters of base62; anything that shape is an id.
+  if (/^[A-Za-z0-9]{20}$/.test(configured)) return { id: configured };
+
+  const wanted = configured.toLowerCase();
+  const remembered = elevenLabsVoiceIds.get(wanted);
+  if (remembered) return { id: remembered };
+
+  const voices = await listElevenLabsVoices(apiKey);
+  if ("error" in voices) return voices;
+
+  const match = voices.voices.find((voice) => voice.name?.trim().toLowerCase() === wanted);
+  if (!match?.voice_id) {
+    return {
+      error: `ElevenLabs не знает голос «${configured}». Выберите другой в настройках.`,
+      status: 400,
+    };
+  }
+
+  elevenLabsVoiceIds.set(wanted, match.voice_id);
+  return { id: match.voice_id };
+}
+
+async function listElevenLabsVoices(
+  apiKey: string,
+): Promise<{ voices: ElevenLabsVoice[] } | { error: string; status: number }> {
+  const response = await fetch("https://api.elevenlabs.io/v1/voices", {
+    headers: { "xi-api-key": apiKey },
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    console.error(`ElevenLabs voice list failed (${response.status}):`, err);
+    if (response.status === 401) {
+      return { error: "ElevenLabs не принял ключ. Проверьте ELEVENLABS_API_KEY.", status: 401 };
+    }
+    return { error: `Не удалось получить список голосов ElevenLabs (${response.status}).`, status: 502 };
+  }
+
+  const payload = await response.json() as { voices?: ElevenLabsVoice[] };
+  return { voices: payload.voices ?? [] };
+}
+
+/**
+ * Synthesise through ElevenLabs.
+ *
+ * Raw PCM is asked for rather than MP3: the player can schedule those samples
+ * directly, where MP3 has to go through the browser's decoder first. The raw
+ * formats above 24 kHz sit behind a Pro plan, so a refusal falls back to MP3
+ * rather than leaving the card silent.
+ */
+async function speakWithElevenLabs(text: string, requestedVoice?: string): Promise<Spoken> {
+  const apiKey = getElevenLabsApiKey();
+  if (!apiKey) return { error: "Missing ElevenLabs API key", status: 500 };
+
+  const voice = await resolveElevenLabsVoice(apiKey, requestedVoice);
+  if ("error" in voice) return voice;
+
+  const model = getElevenLabsModel();
+  const cacheVoiceKey = `${model}:${voice.id}`;
+  // ElevenLabs picks the language up from the text, so the cache is keyed by
+  // the voice alone; "und" keeps those rows out of the per-language ones.
+  const cached = await sbGetCachedTts(text, "und", cacheVoiceKey);
+  if (cached) {
+    return { audioBase64: cached, source: "db_cache", sampleRate: ELEVENLABS_PCM_SAMPLE_RATE };
+  }
+
+  const body = JSON.stringify({
+    text,
+    model_id: model,
+    // Steady enough to be a reference, expressive enough not to drone; speaker
+    // boost keeps the opening consonant from being swallowed.
+    voice_settings: {
+      stability: 0.55,
+      similarity_boost: 0.8,
+      style: 0.15,
+      use_speaker_boost: true,
+      speed: 1.0,
+    },
+  });
+
+  const speak = (format: string) => fetch(
+    `https://api.elevenlabs.io/v1/text-to-speech/${voice.id}?output_format=${format}`,
+    {
+      method: "POST",
+      headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
+      body,
+    },
+  );
+
+  let format: "pcm" | "mp3" = "pcm";
+  let response = await speak(ELEVENLABS_PCM_FORMAT);
+
+  if (!response.ok && (response.status === 400 || response.status === 403 || response.status === 422)) {
+    // Raw PCM is plan-gated; MP3 is not, and a decoded card beats a silent one.
+    const err = await response.text();
+    console.warn(`ElevenLabs refused ${ELEVENLABS_PCM_FORMAT} (${response.status}), retrying as MP3:`, err);
+    response = await speak(ELEVENLABS_MP3_FORMAT);
+    format = "mp3";
+  }
+
+  if (!response.ok) {
+    const err = await response.text();
+    console.error(`ElevenLabs TTS API error (${response.status}, voice=${voice.id}, model=${model}):`, err);
+    if (response.status === 401) {
+      return { error: "ElevenLabs не принял ключ. Проверьте ELEVENLABS_API_KEY.", status: 401 };
+    }
+    if (response.status === 429) {
+      return { error: "ElevenLabs ограничил запросы. Проверьте остаток символов.", status: 429 };
+    }
+    if (/model/i.test(err)) {
+      return { error: `ElevenLabs не знает модель «${model}». Проверьте ELEVENLABS_MODEL_ID.`, status: 400 };
+    }
+    return { error: "ElevenLabs TTS failed", status: response.status };
+  }
+
+  const audioBase64 = Buffer.from(await response.arrayBuffer()).toString("base64");
+  if (!audioBase64) return { error: "ElevenLabs returned no audio", status: 502 };
+
+  if (format === "mp3") {
+    // MP3 rows would be read back as PCM; keep them out of the shared cache.
+    return { audioBase64, source: "api", format: "mp3" };
+  }
+
+  await sbSaveCachedTts(text, "und", cacheVoiceKey, audioBase64);
+  return { audioBase64, source: "api", sampleRate: ELEVENLABS_PCM_SAMPLE_RATE };
 }
 
 /**
@@ -510,13 +745,15 @@ function getOpenAiVoiceId() {
  * rather than JSON, and MP3 is asked for because the player already decodes
  * that shape for Inworld.
  */
-async function speakWithOpenAi(text: string, lang: string): Promise<Spoken> {
+async function speakWithOpenAi(text: string, lang: string, requestedVoice?: string): Promise<Spoken> {
   const apiKey = getOpenAiApiKey();
   if (!apiKey) return { error: "Missing OpenAI API key", status: 500 };
 
-  const voiceId = getOpenAiVoiceId();
-  // Switching the voice must not serve the previous one out of the cache.
-  const cacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}`;
+  const voiceId = requestedVoice ? normalizeOpenAiVoice(requestedVoice) : getOpenAiVoiceId();
+  // Switching the voice must not serve the previous one out of the cache, and
+  // neither must changing how it is told to read: "teacher" marks the delivery
+  // this key was recorded with.
+  const cacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}:teacher`;
   const language = normalizeLanguageCode(lang);
 
   const cached = await sbGetCachedTts(text, language, cacheVoiceKey);
@@ -532,6 +769,10 @@ async function speakWithOpenAi(text: string, lang: string): Promise<Spoken> {
       model: OPENAI_TTS_MODEL,
       input: text,
       voice: voiceId,
+      // gpt-4o-mini-tts takes direction in plain words, and reads a shade
+      // slower than a learner following along wants.
+      instructions: TEACHER_INSTRUCTIONS,
+      speed: OPENAI_SPEAKING_RATE,
       response_format: "mp3",
     }),
   });

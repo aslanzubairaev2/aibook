@@ -3,8 +3,10 @@ import { sbAuthHeaders } from "./db/supabase";
 import {
   CARTESIA_MODEL,
   DEEPGRAM_TTS_SAMPLE_RATE,
+  ELEVENLABS_DEFAULT_VOICE,
   getDeepgramTtsModel,
   isCartesiaTtsSupported,
+  isElevenLabsTtsSupported,
   getSpeechifyModel,
   isDeepgramTtsSupported,
   isInworldTtsSupported,
@@ -137,7 +139,8 @@ let playSegmentFn: ((offset: number) => void) | null = null;
 /** Providers whose audio plays through the Web Audio path rather than the browser voice. */
 function isRemoteProvider(provider: string | undefined): boolean {
   return provider === "gemini" || provider === "deepgram" || provider === "speechify"
-    || provider === "inworld" || provider === "openai" || provider === "cartesia";
+    || provider === "inworld" || provider === "openai" || provider === "cartesia"
+    || provider === "elevenlabs";
 }
 
 export function pauseTTS() {
@@ -251,17 +254,29 @@ function resolveProvider(requested: string, lang: string): string {
   if (requested === "inworld" && !isInworldTtsSupported(lang)) return "local";
   if (requested === "openai" && !isOpenAiTtsSupported(lang)) return "local";
   if (requested === "cartesia" && !isCartesiaTtsSupported(lang)) return "local";
+  if (requested === "elevenlabs" && !isElevenLabsTtsSupported(lang)) return "local";
   return requested;
 }
 
 /** The voice that defines a recording's identity, per provider. */
 function voiceKeyFor(provider: string, lang: string): string {
+  // A voice the learner picked defines the recording more than the model does.
+  const chosen = chosenVoiceFor(provider);
+  if (chosen) return chosen;
+
   if (provider === "deepgram") return getDeepgramTtsModel(lang) ?? "default";
   if (provider === "speechify") return getSpeechifyModel(lang);
   if (provider === "inworld") return INWORLD_MODEL;
   if (provider === "openai") return OPENAI_TTS_MODEL;
   if (provider === "cartesia") return CARTESIA_MODEL;
+  if (provider === "elevenlabs") return ELEVENLABS_DEFAULT_VOICE;
   return "Algenib";
+}
+
+/** The voice chosen in settings for this engine, if it has a choice at all. */
+function chosenVoiceFor(provider: string): string | undefined {
+  const voices = getLocalProfile().ttsVoices;
+  return voices?.[provider as keyof typeof voices];
 }
 
 /** Cache key for one recording. Shared by `speak()` and the whole-text narration. */
@@ -280,7 +295,7 @@ async function requestTts(
     const res = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
-      body: JSON.stringify({ text, lang, provider }),
+      body: JSON.stringify({ text, lang, provider, voice: chosenVoiceFor(provider) }),
     });
 
     if (!res.ok) {

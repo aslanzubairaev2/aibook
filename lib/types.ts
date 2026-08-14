@@ -1,7 +1,8 @@
 export type AppSection = "home" | "discover" | "books" | "reader" | "cards" | "settings" | "auth";
 
 export type SelectionType = "word" | "phrase" | "sentence";
-export type TtsProvider = "local" | "gemini" | "deepgram" | "speechify" | "inworld" | "openai" | "cartesia";
+export type TtsProvider =
+  | "local" | "gemini" | "deepgram" | "speechify" | "inworld" | "openai" | "cartesia" | "elevenlabs";
 
 export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated";
@@ -68,6 +69,14 @@ export type UserProfile = {
   booksFinished: number;
   savedItems: number;
   ttsProvider?: TtsProvider;
+  /**
+   * The chosen voice per engine, kept on this device.
+   *
+   * Each engine has its own cast, so switching engines must not carry a voice
+   * that means nothing to the next one — hence one entry per provider rather
+   * than a single field.
+   */
+  ttsVoices?: Partial<Record<TtsProvider, string>>;
   cardFilters?: CardFilters;
 };
 

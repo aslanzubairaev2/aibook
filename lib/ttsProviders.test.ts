@@ -5,9 +5,12 @@ import {
   getBcp47Locale,
   getSpeechifyLocale,
   getSpeechifyModel,
+  getStaticTtsVoices,
   isCartesiaTtsSupported,
   isCartesiaVoiceId,
   isInworldTtsSupported,
+  isValidVoiceRef,
+  supportsVoiceChoice,
   isOpenAiTtsSupported,
   isSpeechifyTtsSupported,
   getTtsProviderLabel,
@@ -48,24 +51,27 @@ test("reports no support for a language with no locale mapping", () => {
   assert.equal(isSpeechifyTtsSupported("de"), true);
 });
 
-test("offers every voice that can speak German, best first", () => {
+test("offers every voice that can speak German, best first and browser last", () => {
   assert.deepEqual(
     getAvailableTtsProviders("de"),
-    ["local", "gemini", "openai", "cartesia", "deepgram", "speechify", "inworld"],
+    ["gemini", "openai", "cartesia", "elevenlabs", "deepgram", "speechify", "inworld", "local"],
   );
 
   // Polish has a locale for the paid voices but no Deepgram model.
   assert.deepEqual(
     getAvailableTtsProviders("pl"),
-    ["local", "gemini", "openai", "cartesia", "speechify", "inworld"],
+    ["gemini", "openai", "cartesia", "elevenlabs", "speechify", "inworld", "local"],
   );
 
-  // Greek is outside Sonic 2's language list but still has a Speechify locale.
-  assert.deepEqual(getAvailableTtsProviders("el"), ["local", "gemini", "openai", "speechify", "inworld"]);
+  // Greek is outside Sonic's language list but ElevenLabs and Speechify have it.
+  assert.deepEqual(
+    getAvailableTtsProviders("el"),
+    ["gemini", "openai", "elevenlabs", "speechify", "inworld", "local"],
+  );
 
-  // A language with no locale mapping leaves the browser, Gemini, and GPT-4o —
-  // the last of which reads the language off the text and so never opts out.
-  assert.deepEqual(getAvailableTtsProviders("xx"), ["local", "gemini", "openai"]);
+  // A language nobody maps leaves the browser, Gemini, and GPT-4o — the last of
+  // which reads the language off the text and so never opts out.
+  assert.deepEqual(getAvailableTtsProviders("xx"), ["gemini", "openai", "local"]);
 });
 
 test("labels the new providers", () => {
@@ -83,6 +89,30 @@ test("Sonic 2 speaks its own list of languages and no others", () => {
   for (const lang of ["el", "he", "uk", "xx"]) {
     assert.equal(isCartesiaTtsSupported(lang), false, lang);
   }
+});
+
+test("offers a male cast for the engines whose voices are fixed", () => {
+  assert.equal(supportsVoiceChoice("gemini"), true);
+  assert.equal(supportsVoiceChoice("elevenlabs"), true);
+  // Deepgram picks its voice from the language, so there is nothing to choose.
+  assert.equal(supportsVoiceChoice("deepgram"), false);
+  assert.equal(supportsVoiceChoice("local"), false);
+
+  // The fixed casts are known up front; the account-held ones are fetched.
+  assert.ok((getStaticTtsVoices("gemini") ?? []).some((v) => v.id === "Algenib"));
+  assert.ok((getStaticTtsVoices("openai") ?? []).every((v) => v.id === v.id.toLowerCase()));
+  assert.equal(getStaticTtsVoices("cartesia"), null);
+  assert.equal(getStaticTtsVoices("elevenlabs"), null);
+});
+
+test("only forwards a voice reference that looks like one", () => {
+  assert.equal(isValidVoiceRef("Algenib"), true);
+  assert.equal(isValidVoiceRef("a5136bf9-224c-4d76-b823-52bd5efcffcc"), true);
+  assert.equal(isValidVoiceRef("CwhRBWXzGAHq8TQ4Fs17"), true);
+  // Anything that could steer the upstream request is not a voice.
+  assert.equal(isValidVoiceRef("../../etc/passwd"), false);
+  assert.equal(isValidVoiceRef('{"model":"x"}'), false);
+  assert.equal(isValidVoiceRef(""), false);
 });
 
 test("tells a Cartesia voice id from a voice name", () => {
@@ -123,7 +153,7 @@ test("Inworld takes the same locale tags, since one voice covers many languages"
 test("builds the automatic Gemini fallback chain in preference order", () => {
   assert.deepEqual(
     getTtsProviderChain(undefined, "de"),
-    ["gemini", "openai", "cartesia", "speechify", "inworld"],
+    ["gemini", "openai", "cartesia", "elevenlabs", "speechify", "inworld"],
   );
   // Even with no locale mapping, GPT-4o can still answer for Gemini.
   assert.deepEqual(getTtsProviderChain("gemini", "xx"), ["gemini", "openai"]);

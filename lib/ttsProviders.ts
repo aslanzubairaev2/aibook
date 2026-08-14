@@ -8,6 +8,7 @@ const TTS_PROVIDERS = new Set<TtsProvider>([
   "inworld",
   "openai",
   "cartesia",
+  "elevenlabs",
 ]);
 
 const LEGACY_TTS_PROVIDERS: Record<string, TtsProvider> = {
@@ -20,6 +21,11 @@ const LEGACY_TTS_PROVIDERS: Record<string, TtsProvider> = {
   "gpt_4o": "openai",
   "openai-tts": "openai",
   sonic: "cartesia",
+  eleven: "elevenlabs",
+  "11labs": "elevenlabs",
+  elevenlab: "elevenlabs",
+  // The dashboard variable is spelled ELVENLABS_*; accept that spelling too.
+  elvenlabs: "elevenlabs",
 };
 
 export const DEEPGRAM_TTS_SAMPLE_RATE = 24000;
@@ -150,12 +156,16 @@ export function isOpenAiTtsSupported(_lang: string) {
 // from the account's own library — there is no name to guess at — so it is read
 // from the environment, and looked up from the account when unset.
 
-export const CARTESIA_MODEL = "sonic-2";
+export const CARTESIA_MODEL = "sonic-3.5";
 
-/** The API version this integration was written against; Cartesia requires it. */
-export const CARTESIA_API_VERSION = "2024-11-13";
+/**
+ * Cartesia's API is dated, and the date is a pinned choice rather than a knob:
+ * a newer one can carry breaking changes. This is the version the request shape
+ * below was written against.
+ */
+export const CARTESIA_API_VERSION = "2026-03-01";
 
-/** MP3 out of Cartesia is 44.1 kHz; the player is told so by the container. */
+/** WAV at 44.1 kHz: self-contained, and the header states the rate we play at. */
 export const CARTESIA_SAMPLE_RATE = 44100;
 
 const CARTESIA_LANGUAGES = new Set([
@@ -163,8 +173,8 @@ const CARTESIA_LANGUAGES = new Set([
   "hi", "it", "ko", "nl", "pl", "ru", "sv", "tr",
 ]);
 
-/** The voice to speak with when the deployment names none. */
-export const CARTESIA_DEFAULT_VOICE = "Jameson";
+/** Jameson, by id — a real one, since an invented UUID resolves to nothing. */
+export const CARTESIA_DEFAULT_VOICE = "a5136bf9-224c-4d76-b823-52bd5efcffcc";
 
 /**
  * Whether a configured voice is already the id the API wants.
@@ -181,6 +191,128 @@ export function isCartesiaTtsSupported(lang: string) {
   return CARTESIA_LANGUAGES.has(normalizeLanguageCode(lang));
 }
 
+// ─── ElevenLabs ──────────────────────────────────────────────────────────────
+//
+// Multilingual v2 covers the languages this app teaches and is the quality
+// model; the flash models trade that away for latency the learner never feels
+// on a single card. Voices are addressed by id, and the library shows names, so
+// a name is resolved the same way Cartesia's is.
+
+export const ELEVENLABS_MODEL = "eleven_multilingual_v2";
+
+/** Roger, by name: the id is looked up once against the account's voices. */
+export const ELEVENLABS_DEFAULT_VOICE = "Roger";
+
+/**
+ * Raw PCM, not MP3.
+ *
+ * The player's PCM path needs no decoding step at all, while MP3 has to go
+ * through the browser's decoder first. 24 kHz is the highest raw rate that is
+ * not gated behind a Pro plan, so it is the fast default with MP3 as the
+ * fallback for accounts that cannot have it.
+ */
+export const ELEVENLABS_PCM_FORMAT = "pcm_24000";
+export const ELEVENLABS_PCM_SAMPLE_RATE = 24000;
+export const ELEVENLABS_MP3_FORMAT = "mp3_44100_128";
+
+/** The 29 languages of multilingual v2. */
+const ELEVENLABS_LANGUAGES = new Set([
+  "en", "de", "pl", "es", "it", "fr", "pt", "hi", "ar", "zh", "ko", "ja",
+  "nl", "tr", "sv", "id", "fil", "uk", "el", "cs", "fi", "ro", "da", "bg",
+  "ms", "sk", "hr", "ta", "no", "nb", "vi", "ru", "hu",
+]);
+
+export function isElevenLabsTtsSupported(lang: string) {
+  return ELEVENLABS_LANGUAGES.has(normalizeLanguageCode(lang));
+}
+
+// ─── Choosing a voice ────────────────────────────────────────────────────────
+//
+// Two of the engines have a fixed cast of voices that ships with the model, and
+// two read theirs from the account. The fixed ones live here so the settings
+// screen can offer them without a round trip; the others are fetched.
+
+export type TtsVoiceOption = {
+  id: string;
+  name: string;
+  /** How it sounds, in a couple of words, so the choice can be made by ear. */
+  hint?: string;
+};
+
+/** Gemini's prebuilt cast, the male half of it. */
+export const GEMINI_MALE_VOICES: TtsVoiceOption[] = [
+  { id: "Algenib", name: "Algenib", hint: "с хрипотцой" },
+  { id: "Charon", name: "Charon", hint: "рассказчик" },
+  { id: "Puck", name: "Puck", hint: "живой" },
+  { id: "Fenrir", name: "Fenrir", hint: "напористый" },
+  { id: "Orus", name: "Orus", hint: "твёрдый" },
+  { id: "Enceladus", name: "Enceladus", hint: "с придыханием" },
+  { id: "Iapetus", name: "Iapetus", hint: "чёткий" },
+  { id: "Umbriel", name: "Umbriel", hint: "спокойный" },
+  { id: "Algieba", name: "Algieba", hint: "мягкий" },
+  { id: "Rasalgethi", name: "Rasalgethi", hint: "лекторский" },
+  { id: "Alnilam", name: "Alnilam", hint: "уверенный" },
+  { id: "Schedar", name: "Schedar", hint: "ровный" },
+  { id: "Gacrux", name: "Gacrux", hint: "взрослый" },
+  { id: "Achird", name: "Achird", hint: "дружелюбный" },
+  { id: "Zubenelgenubi", name: "Zubenelgenubi", hint: "разговорный" },
+  { id: "Sadaltager", name: "Sadaltager", hint: "знающий" },
+];
+
+/** OpenAI's cast is fixed and lowercase; these are the male-sounding ones. */
+export const OPENAI_MALE_VOICES: TtsVoiceOption[] = [
+  { id: "onyx", name: "Onyx", hint: "низкий" },
+  { id: "ash", name: "Ash", hint: "собранный" },
+  { id: "echo", name: "Echo", hint: "ровный" },
+  { id: "ballad", name: "Ballad", hint: "с интонацией" },
+  { id: "fable", name: "Fable", hint: "британский" },
+  { id: "verse", name: "Verse", hint: "выразительный" },
+  { id: "alloy", name: "Alloy", hint: "нейтральный" },
+];
+
+/** The voices an engine ships with, or null when they come from the account. */
+export function getStaticTtsVoices(provider: TtsProvider): TtsVoiceOption[] | null {
+  if (provider === "gemini") return GEMINI_MALE_VOICES;
+  if (provider === "openai") return OPENAI_MALE_VOICES;
+  return null;
+}
+
+/** The engines whose voice the learner may choose. */
+export function supportsVoiceChoice(provider: TtsProvider) {
+  return provider === "gemini" || provider === "openai"
+    || provider === "cartesia" || provider === "elevenlabs";
+}
+
+/**
+ * A voice name or id is safe to forward upstream.
+ *
+ * The value arrives from the client, and it is about to be spent against our
+ * key, so it is held to the shape every provider's ids and names share rather
+ * than passed on as free text.
+ */
+export function isValidVoiceRef(voice: string) {
+  return /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(voice.trim());
+}
+
+// ─── How the voices should read ──────────────────────────────────────────────
+//
+// The learner is listening to work out how a word is actually said, so the
+// delivery matters as much as the voice: every syllable pronounced, nothing
+// swallowed at the start, and slow enough to follow without being a dirge.
+// Only some engines take direction; those that do get this.
+
+export const TEACHER_INSTRUCTIONS = [
+  "You are a warm, patient language teacher reading aloud for a student.",
+  "Pronounce every word completely and distinctly, in the language of the text.",
+  "Never clip, swallow or rush the first syllable of a sentence — begin cleanly.",
+  "Keep an even, unhurried pace with clear separation between words,",
+  "a short pause at commas and a full one at sentence ends.",
+  "Use natural, encouraging intonation; do not act, whisper or dramatise.",
+].join(" ");
+
+/** GPT-4o reads a shade slower than a learner wants; nudge it along. */
+export const OPENAI_SPEAKING_RATE = 1.1;
+
 export function normalizeTtsProvider(provider: unknown): TtsProvider {
   if (typeof provider !== "string") return "gemini";
 
@@ -193,14 +325,17 @@ export function normalizeTtsProvider(provider: unknown): TtsProvider {
 }
 
 export function getAvailableTtsProviders(lang: string): TtsProvider[] {
-  // Ordered by preference: Gemini leads, then GPT-4o, then Cartesia; the voices
-  // that came before them follow in the order they were added.
-  const providers: TtsProvider[] = ["local", "gemini"];
+  // Ordered by preference: Gemini, GPT-4o, Cartesia, ElevenLabs, then the rest.
+  // The browser's own voice goes last — it is the thing to reach for when every
+  // real voice has failed, not the first offer.
+  const providers: TtsProvider[] = ["gemini"];
   if (isOpenAiTtsSupported(lang)) providers.push("openai");
   if (isCartesiaTtsSupported(lang)) providers.push("cartesia");
+  if (isElevenLabsTtsSupported(lang)) providers.push("elevenlabs");
   if (isDeepgramTtsSupported(lang)) providers.push("deepgram");
   if (isSpeechifyTtsSupported(lang)) providers.push("speechify");
   if (isInworldTtsSupported(lang)) providers.push("inworld");
+  providers.push("local");
   return providers;
 }
 export function resolveTtsProvider(provider: unknown, lang: string): TtsProvider {
@@ -215,6 +350,7 @@ export function getTtsProviderChain(provider: unknown, lang: string): TtsProvide
   const chain: TtsProvider[] = ["gemini"];
   if (isOpenAiTtsSupported(lang)) chain.push("openai");
   if (isCartesiaTtsSupported(lang)) chain.push("cartesia");
+  if (isElevenLabsTtsSupported(lang)) chain.push("elevenlabs");
   if (isSpeechifyTtsSupported(lang)) chain.push("speechify");
   if (isInworldTtsSupported(lang)) chain.push("inworld");
   return chain;
@@ -227,5 +363,6 @@ export function getTtsProviderLabel(provider: TtsProvider) {
   if (provider === "inworld") return "Inworld TTS";
   if (provider === "openai") return "OpenAI GPT-4o";
   if (provider === "cartesia") return "Cartesia Sonic";
+  if (provider === "elevenlabs") return "ElevenLabs";
   return "Локальный";
 }

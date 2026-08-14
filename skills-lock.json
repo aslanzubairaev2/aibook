@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "cartesia-api": {
+      "source": "cartesia-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/cartesia-api/SKILL.md",
+      "computedHash": "dad7e10c7075f23b408800f88984c2093b75b6f34beda8a49c06161814fff2ff"
+    },
+    "line-voice-agent": {
+      "source": "cartesia-ai/skills",
+      "sourceType": "github",
+      "skillPath": "skills/line-voice-agent/SKILL.md",
+      "computedHash": "525ce7fba78e96e7e8ae213f77bbf55d60cb40a4b951bd8ba1083e0edf3c018d"
+    },
+    "text-to-speech": {
+      "source": "elevenlabs/skills",
+      "sourceType": "github",
+      "skillPath": "text-to-speech/SKILL.md",
+      "computedHash": "3169d1b5dd35d6d13eadec47963daa2519d6c85cf480fe083688e4822193fd19"
+    }
+  }
+}

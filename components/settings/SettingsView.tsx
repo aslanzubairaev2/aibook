@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SUPPORTED_LANGUAGES } from "@/lib/config";
 import { 
   saveLocalProfile, 
@@ -11,7 +11,19 @@ import {
 } from "@/lib/db/local";
 import { sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
-import { getAvailableTtsProviders, getTtsProviderLabel, isCartesiaTtsSupported, isDeepgramTtsSupported, isInworldTtsSupported, isOpenAiTtsSupported, isSpeechifyTtsSupported } from "@/lib/ttsProviders";
+import {
+  getAvailableTtsProviders,
+  getStaticTtsVoices,
+  getTtsProviderLabel,
+  isCartesiaTtsSupported,
+  isDeepgramTtsSupported,
+  isElevenLabsTtsSupported,
+  isInworldTtsSupported,
+  isOpenAiTtsSupported,
+  isSpeechifyTtsSupported,
+  supportsVoiceChoice,
+  type TtsVoiceOption,
+} from "@/lib/ttsProviders";
 import type { TtsProvider, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -26,6 +38,61 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
   const [aiProvider, setAiProvider] = useState<"off" | "custom">(() => getLocalAiProvider());
   const [geminiKey, setGeminiKey] = useState<string>(() => getLocalGeminiKey());
   const [showKey, setShowKey] = useState(false);
+
+  // The engine actually in force: a stored one the language cannot speak is not
+  // the one that will be used, so the voice list must follow the real choice.
+  const availableProviders = getAvailableTtsProviders(profile.targetLanguage);
+  const activeProvider: TtsProvider = availableProviders.includes(profile.ttsProvider ?? "local")
+    ? (profile.ttsProvider ?? "local")
+    : "local";
+
+  const [voices, setVoices] = useState<TtsVoiceOption[]>([]);
+  const [voicesError, setVoicesError] = useState<string | null>(null);
+  const [voicesLoading, setVoicesLoading] = useState(false);
+
+  useEffect(() => {
+    setVoicesError(null);
+
+    if (!supportsVoiceChoice(activeProvider)) {
+      setVoices([]);
+      return;
+    }
+
+    // Gemini and GPT-4o ship their cast with the model — no round trip needed.
+    const fixed = getStaticTtsVoices(activeProvider);
+    if (fixed) {
+      setVoices(fixed);
+      return;
+    }
+
+    // Cartesia and ElevenLabs keep theirs in the account, behind our key.
+    let cancelled = false;
+    setVoicesLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/tts/voices?provider=${activeProvider}`, {
+          headers: await sbAuthHeaders(),
+        });
+        const data = await res.json() as { voices?: TtsVoiceOption[]; error?: string };
+        if (cancelled) return;
+        if (!res.ok) {
+          setVoices([]);
+          setVoicesError(data.error ?? `Не удалось загрузить голоса (${res.status}).`);
+          return;
+        }
+        setVoices(data.voices ?? []);
+      } catch {
+        if (!cancelled) {
+          setVoices([]);
+          setVoicesError("Не удалось загрузить голоса.");
+        }
+      } finally {
+        if (!cancelled) setVoicesLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [activeProvider]);
 
   const [mcpUrl, setMcpUrl] = useState<string | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);
@@ -92,6 +159,21 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
         updated_at: new Date().toISOString(),
       });
     }
+  }
+
+  // Fall back to the first voice offered, so the box never shows an empty slot
+  // for an engine whose stored voice belongs to a different one.
+  const storedVoice = profile.ttsVoices?.[activeProvider];
+  const selectedVoice = voices.some((v) => v.id === storedVoice) ? storedVoice! : voices[0]?.id ?? "";
+
+  /** Remember the voice for this engine only — each engine has its own cast. */
+  function setVoice(voiceId: string) {
+    const updated: UserProfile = {
+      ...profile,
+      ttsVoices: { ...profile.ttsVoices, [activeProvider]: voiceId },
+    };
+    saveLocalProfile(updated);
+    onProfileChange(updated);
   }
 
   return (
@@ -282,10 +364,9 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
           </div>
           <select
             className="lang-select"
-            value={getAvailableTtsProviders(profile.targetLanguage).includes(profile.ttsProvider ?? "local") ? profile.ttsProvider || "local" : "local"}
+            value={activeProvider}
             onChange={(e) => void setLang("ttsProvider", e.target.value as TtsProvider)}
           >
-            <option value="local">Локальный</option>
             <option value="gemini">Gemini TTS</option>
             {isOpenAiTtsSupported(profile.targetLanguage) && (
               <option value="openai">OpenAI GPT-4o</option>
@@ -302,8 +383,35 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
             {isInworldTtsSupported(profile.targetLanguage) && (
               <option value="inworld">Inworld TTS</option>
             )}
+            <option value="local">Локальный</option>
           </select>
         </div>
+
+        {supportsVoiceChoice(activeProvider) && (
+          <div className="setting-row">
+            <div>
+              <div className="setting-row-label">Голос</div>
+              <div className="setting-row-value">
+                {voicesError
+                  ? voicesError
+                  : voicesLoading
+                    ? "Загружаю…"
+                    : voices.find((v) => v.id === selectedVoice)?.hint ?? "Мужские голоса"}
+              </div>
+            </div>
+            <select
+              className="lang-select"
+              value={selectedVoice}
+              disabled={voicesLoading || voices.length === 0}
+              onChange={(e) => setVoice(e.target.value)}
+            >
+              {voices.length === 0 && <option value="">—</option>}
+              {voices.map((voice) => (
+                <option key={voice.id} value={voice.id}>{voice.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Info */}
