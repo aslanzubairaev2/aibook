@@ -54,6 +54,9 @@ export type TTSState = {
 
 type TTSListener = (state: TTSState) => void;
 
+/** Safari has never renamed its prefixed constructor, and no lib type covers it. */
+type WebkitWindow = Window & { webkitAudioContext?: typeof AudioContext };
+
 let currentAudioCtx: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 let startOffset = 0;
@@ -128,7 +131,7 @@ export function toggleAutoNext() {
 function stopRemoteAudio(silent = false) {
   if (currentSource) {
     currentSource.onended = null;
-    try { currentSource.stop(); } catch(e) {}
+    try { currentSource.stop(); } catch {}
     currentSource.disconnect();
     currentSource = null;
   }
@@ -534,10 +537,15 @@ export async function speak(
       }
     }
 
-    if (recording) {
-      if (!currentAudioCtx) {
-        currentAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
+    if (recording && !currentAudioCtx) {
+      const AudioCtx = window.AudioContext ?? (window as WebkitWindow).webkitAudioContext;
+      // No Web Audio at all: the recording cannot be scheduled, so this drops
+      // to the browser voice below the same way undecodable audio does.
+      if (AudioCtx) currentAudioCtx = new AudioCtx();
+      else console.warn("No AudioContext in this browser; using the browser voice");
+    }
+
+    if (recording && currentAudioCtx) {
       if (currentAudioCtx.state === "suspended") {
         await currentAudioCtx.resume();
       }
@@ -639,7 +647,7 @@ export async function speak(
     // Mobile browsers don't give duration for speech, so we estimate it
     const estimatedDuration = Math.max(1, text.length / 15);
     
-    let timerRef: any = null;
+    let timerRef: ReturnType<typeof setInterval> | null = null;
     let startTime = 0;
 
     const cleanup = () => {
@@ -691,7 +699,7 @@ export async function speak(
         if (onEnd) onEnd(); 
       }
     };
-    utter.onerror = (e: any) => { 
+    utter.onerror = (e: SpeechSynthesisErrorEvent) => { 
       cleanup();
       // Ignore interrupted/canceled as they are often intentional (e.g. seeking or new speech)
       if (e.error === 'interrupted' || e.error === 'canceled') return;
