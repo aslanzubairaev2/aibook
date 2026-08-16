@@ -1361,7 +1361,6 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .srs-zen .srs-train-controls,
         .srs-zen .srs-batch-banner,
         .srs-zen .srs-train-progress,
-        .srs-zen .srs-history-open,
         .srs-zen .srs-keys { display: none !important; }
 
         /* The scroll container, so a card taller than the screen can still be
@@ -1370,23 +1369,23 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
             be added only while the player was up, which moved the grades out
             from under a thumb already on its way down every time playback
             ended, and a missed tap grades the wrong card. */
-        .srs-zen .srs-train-tab { position: absolute; inset: 0; gap: 0 !important; overflow-y: auto; overscroll-behavior: contain; padding: calc(env(safe-area-inset-top, 0px) + 8px) 14px calc(env(safe-area-inset-bottom, 16px) + 116px); }
+        .srs-zen .srs-train-tab { position: absolute; inset: 0; gap: 0 !important; overflow-y: auto; overscroll-behavior: contain; padding: calc(env(safe-area-inset-top, 0px) + 8px) 14px calc(env(safe-area-inset-bottom, 16px) + 56px); }
         .srs-zen .srs-train-stage { min-height: 100%; }
 
-        /* The card and its grades are one block, and the block hangs from the
-            bottom of that reserved strip: the buttons sit directly under the
-            card, always in the same place, and a taller card grows upwards
-            instead of pushing them. The thumb learns one position and keeps it
-            — through a card of any length, and through the player coming and
-            going. An auto margin does the hanging rather than
-            justify-content, because a centred flex child whose content
-            overflows becomes unscrollable at the top. */
-        .srs-zen .flipper-perspective { margin-top: auto !important; margin-bottom: 12px !important; }
-        /* With the block hanging from the bottom, a short card would leave the
-            top two thirds of the screen empty. The card takes that space
-            instead — it is the only thing here to look at — and because it
-            grows upwards the grades below it do not move an inch. */
-        .srs-zen .flipper-face { min-height: min(52vh, 400px); }
+        /* The card, its grades and the way back to the last one are one block,
+            centred in the screen. The buttons are placed by the card and
+            nothing else: they move only when the card does, which is only ever
+            in answer to a tap. What must never move them is the player, and it
+            cannot — the strip it floats over is reserved whether or not
+            anything is playing.
+
+            The centring is done with a pair of auto margins rather than
+            justify-content so that the top line stays at the top, and so that
+            a card too tall for the screen scrolls from its top edge instead of
+            being cut off at both ends. */
+        .srs-zen .zen-topbar { margin-bottom: auto; }
+        .srs-zen .srs-train-stage::after { content: ""; margin-top: auto; }
+        .srs-zen .flipper-perspective { margin-bottom: 12px !important; }
         .srs-zen .srs-history-view { margin-top: auto; margin-bottom: auto; }
 
         .zen-topbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px; width: 100%; max-width: 420px; margin: 0 auto; padding: 2px 0 8px; background: var(--bg-primary); }
@@ -1396,9 +1395,11 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .zen-topbar-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; border: none; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.18s ease; }
         .zen-topbar-btn:hover { background: rgba(240, 230, 211, 0.08); color: var(--text-primary); }
 
-        /* Last in the column, so the block's bottom edge is the grades'. The
-            horizontal centring is the one they have everywhere else. */
         .srs-zen .srs-grade-row { margin-top: 0; margin-bottom: 0; }
+        /* Straight under the grades, where it is in the ordinary trainer —
+            quieter here, because in an empty screen a full block of text
+            competes with the card. */
+        .srs-zen .srs-history-open { margin-top: 6px; padding: 7px 12px; }
 
         .zen-toggle { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex-shrink: 0; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-muted); cursor: pointer; transition: all 0.2s; }
         .zen-toggle:hover { border-color: var(--accent); color: var(--accent); }
@@ -1813,22 +1814,6 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                   <div className="zen-progress" role="progressbar" aria-valuenow={Math.round((currentTrainIndex / trainQueue.length) * 100)} aria-valuemin={0} aria-valuemax={100}>
                     <i style={{ width: `${Math.round((currentTrainIndex / trainQueue.length) * 100)}%` }} />
                   </div>
-                  {/* The way back to a card already graded. It lives up here
-                      rather than under the grades, where the full-width button
-                      would sit between the thumb and the card — and where it
-                      only exists once there is any history, which would move
-                      the grades the first time it appeared. */}
-                  {reviewHistory.length > 0 && (
-                    <button
-                      className="zen-topbar-btn"
-                      onClick={(e) => { e.stopPropagation(); openLatestReviewedCard(); }}
-                      type="button"
-                      aria-label="Посмотреть предыдущую карточку"
-                      title="Предыдущая карточка (←) — без изменения прогресса"
-                    >
-                      <Eye size={17} />
-                    </button>
-                  )}
                   <button className="zen-topbar-btn" onClick={(e) => { e.stopPropagation(); setZen(false); }} type="button" aria-label="Выйти из дзен-режима" title="Выйти из дзен-режима (Esc)">
                     <Minimize2 size={17} />
                   </button>
