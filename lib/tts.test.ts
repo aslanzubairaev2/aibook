@@ -77,8 +77,15 @@ function serve(server: Server) {
   };
 }
 
-const { speak } = await import("./tts.ts");
+const {
+  speak, getLastTtsError, prefetchSpeech, prefetchSpeechAhead, SPEECH_PREFETCH_AHEAD,
+} = await import("./tts.ts");
 const { saveLocalProfile } = await import("./db/local.ts");
+
+/** Let the prefetches started without awaiting actually reach the network. */
+async function settle() {
+  for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function useProvider(ttsProvider: string) {
   cacheStore.clear();
@@ -177,4 +184,97 @@ test("switching the chosen voice does not play the previous one back", async () 
   await speak("Guten Tag!", "de");
 
   assert.equal(server.calls, 2);
+});
+
+// ─── Fetching ahead ──────────────────────────────────────────────────────────
+//
+// The same measure as above, from the other side: a prefetch is only worth
+// having if the play it was meant to serve then costs nothing. One that fetches
+// audio the play asks for again has doubled the bill to save nothing.
+
+test("a line fetched ahead of time plays without asking again", async () => {
+  useProvider("gemini");
+  const server: Server = {
+    calls: 0,
+    reply: () => ({ audioBase64: SILENCE, provider: "gemini", model: "gemini-2.5-flash-preview-tts" }),
+  };
+  serve(server);
+
+  await prefetchSpeech("Guten Tag!", "de");
+  assert.equal(server.calls, 1);
+
+  await speak("Guten Tag!", "de");
+  assert.equal(server.calls, 1);
+});
+
+test("a play that catches a prefetch mid-flight joins it", async () => {
+  useProvider("gemini");
+  let calls = 0;
+  let release: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  g.fetch = async () => {
+    calls++;
+    await held;
+    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  };
+
+  const prefetching = prefetchSpeech("Guten Tag!", "de");
+  await settle();
+  const playing = speak("Guten Tag!", "de");
+  release?.();
+  await Promise.all([prefetching, playing]);
+
+  assert.equal(calls, 1);
+});
+
+test("nothing is fetched ahead for a line already cached", async () => {
+  useProvider("gemini");
+  const server: Server = { calls: 0, reply: () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  serve(server);
+
+  await speak("Guten Tag!", "de");
+  await prefetchSpeech("Guten Tag!", "de");
+
+  assert.equal(server.calls, 1);
+});
+
+test("the browser voice is never fetched ahead — there is nothing to fetch", async () => {
+  useProvider("local");
+  const server: Server = { calls: 0, reply: () => ({ audioBase64: SILENCE }) };
+  serve(server);
+
+  await prefetchSpeech("Guten Tag!", "de");
+
+  assert.equal(server.calls, 0);
+});
+
+test("only the agreed depth is fetched ahead, nearest first", async () => {
+  useProvider("gemini");
+  const asked: string[] = [];
+  g.fetch = async (_url: string, init: { body: string }) => {
+    asked.push(JSON.parse(init.body).text);
+    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  };
+
+  prefetchSpeechAhead(["eins", "zwei", "drei", "vier", "fünf"], "de");
+  await settle();
+
+  assert.equal(asked.length, SPEECH_PREFETCH_AHEAD);
+  assert.deepEqual(asked, ["eins", "zwei"].slice(0, SPEECH_PREFETCH_AHEAD));
+});
+
+test("a prefetch that fails does not caption the card played next", async () => {
+  // `lastTtsError` explains the voice coming out of the speaker right now. A
+  // request made ahead of time is not about anything the learner is hearing, so
+  // its failure belongs in the console, not under the next card they play.
+  useProvider("gemini");
+  const server: Server = { calls: 0, reply: () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  serve(server);
+  await speak("Guten Tag!", "de");
+  assert.equal(getLastTtsError(), null);
+
+  g.fetch = async () => ({ ok: false, status: 429, json: async () => ({ error: "Квота исчерпана" }) });
+  await prefetchSpeech("Gute Nacht!", "de");
+
+  assert.equal(getLastTtsError(), null);
 });

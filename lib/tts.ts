@@ -323,7 +323,19 @@ async function requestTts(
   lang: string,
   provider: string,
   cacheKey: string,
+  /**
+   * A prefetch, whose failures belong in the console rather than the interface.
+   *
+   * `lastTtsError` explains the voice the learner is hearing right now, and a
+   * request made ahead of time is not about anything they are hearing — letting
+   * one write there would caption the wrong card.
+   */
+  opts: { silent?: boolean } = {},
 ): Promise<Recording | null> {
+  const report = (message: string | null) => {
+    if (!opts.silent) lastTtsError = message;
+  };
+
   try {
     const res = await fetch("/api/tts", {
       method: "POST",
@@ -337,8 +349,9 @@ async function requestTts(
 
     if (!res.ok) {
       const detail = await res.json().catch(() => null) as { error?: string } | null;
-      lastTtsError = detail?.error ?? `${provider} TTS: ошибка ${res.status}`;
-      console.warn(`${provider} TTS request failed with status ${res.status}: ${lastTtsError}; using local voice`);
+      const message = detail?.error ?? `${provider} TTS: ошибка ${res.status}`;
+      report(message);
+      console.warn(`${provider} TTS request failed with status ${res.status}: ${message}; using local voice`);
       return null;
     }
 
@@ -348,7 +361,7 @@ async function requestTts(
     };
     // A quota fallback still produces audio, but the learner deserves to know
     // the voice changed and why.
-    lastTtsError = data.reason ?? null;
+    report(data.reason ?? null);
     if (!data.audioBase64) return null;
 
     const recording: Recording = {
@@ -384,8 +397,73 @@ async function requestTts(
     return recording;
   } catch (e) {
     console.error(`${provider} TTS API failed`, e);
-    lastTtsError = "Не удалось связаться с сервисом озвучки.";
+    report("Не удалось связаться с сервисом озвучки.");
     return null;
+  }
+}
+
+/**
+ * How many upcoming recordings to fetch before they are needed.
+ *
+ * One would cover a learner working steadily through a session. Two covers the
+ * one moving quickly, without turning a session they abandon halfway into a
+ * pile of recordings nobody ever hears.
+ */
+export const SPEECH_PREFETCH_AHEAD = 2;
+
+/**
+ * Fetch a line's audio now, so that playing it later is immediate.
+ *
+ * A card that speaks the moment it appears cannot start fetching until it is on
+ * screen, so every such card opens with a pause — short on its own, wearing
+ * across a long session. Asking for the next card's audio while the learner is
+ * still answering this one moves that pause somewhere it costs nothing.
+ *
+ * It buys the head start without buying the audio twice: the recording lands in
+ * the same cache under the same key `speak()` reads, and a `speak()` that
+ * arrives while the prefetch is still on the wire joins that request rather
+ * than starting a second one.
+ */
+export async function prefetchSpeech(text: string, lang: string): Promise<void> {
+  if (!text.trim()) return;
+
+  const profile = getLocalProfile();
+  const provider = resolveProvider(profile.ttsProvider ?? "local", lang);
+  // The browser voice speaks from the text itself — there is nothing to fetch.
+  if (!isRemoteProvider(provider)) return;
+
+  const cacheKey = ttsCacheKey(text, provider, lang);
+  if (inFlight.has(cacheKey)) return;
+
+  // Without somewhere to keep the answer, a prefetch is not a head start: the
+  // play it was meant to serve would have to ask all over again, and the only
+  // thing gained is a second bill. So a missing Cache API means don't bother.
+  let cache: Cache;
+  try {
+    cache = await caches.open("aibook-tts-cache");
+    if (await cache.match(cacheKey)) return;
+  } catch {
+    return;
+  }
+
+  const pending = requestTts(text, lang, provider, cacheKey, { silent: true });
+  inFlight.set(cacheKey, pending);
+  try {
+    await pending;
+  } finally {
+    inFlight.delete(cacheKey);
+  }
+}
+
+/**
+ * Warm the next few lines a session will speak, nearest first.
+ *
+ * Callers pass what is coming in the order it is coming; how far ahead to go is
+ * decided here, so every trainer prefetches to the same depth.
+ */
+export function prefetchSpeechAhead(texts: string[], lang: string): void {
+  for (const text of texts.slice(0, SPEECH_PREFETCH_AHEAD)) {
+    void prefetchSpeech(text, lang);
   }
 }
 
