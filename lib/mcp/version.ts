@@ -7,4 +7,4 @@
 //
 // Bump the minor when the tools change shape: a client that cached the tool
 // list at connection time has no other way to notice.
-export const MCP_SERVER_VERSION = "1.3.0";
+export const MCP_SERVER_VERSION = "1.4.0";

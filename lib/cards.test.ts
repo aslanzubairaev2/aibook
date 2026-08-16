@@ -270,14 +270,98 @@ test("mastery is tracked per direction so the lagging one can be named", () => {
   const stats = computeDeckStats(cards, progress, NOW);
 
   assert.deepEqual(stats.startedByVariant, { forward: 20, reverse: 10, audio: 0 });
-  assert.match(deckInsight(stats, NOW) ?? "", /Главный резерв — аудирование: начато 0 из 20/);
+  assert.match(deckInsight(stats) ?? "", /главный резерв — аудирование: начато 0 из 20/);
 
   const evenDeck = computeDeckStats([scheduled({ id: "one", repetitions: 3 })], {}, NOW);
-  assert.doesNotMatch(deckInsight(evenDeck, NOW) ?? "", /Главный резерв/);
+  assert.doesNotMatch(deckInsight(evenDeck) ?? "", /главный резерв/i);
+});
+
+test("the forecast opens on today, and today counts what was done as well as what is left", () => {
+  const cards = [
+    // Cleared this morning: the whole point is that it still shows up.
+    scheduled({ id: "done", status: "review", repetitions: 3, intervalDays: 10, dueAt: "2026-08-24T09:00:00.000Z", lastReviewedAt: NOW.toISOString() }),
+    scheduled({ id: "waiting" }),
+  ];
+
+  const stats = computeDeckStats(cards, {}, NOW);
+  const today = stats.forecast[0];
+
+  assert.equal(today.dayOffset, 0);
+  assert.equal(today.date.getDate(), 14, "the column knows its own date");
+  assert.equal(today.done, 1, "a prompt reviewed today is on today's column");
+  assert.equal(today.count, stats.dueReps, "and so is everything still waiting");
+  assert.equal(stats.forecast.length, 7);
+  assert.equal(stats.forecast.at(-1)?.dayOffset, 6);
+});
+
+test("yesterday's unfinished session is named as carried over, not folded in silently", () => {
+  const cards = [
+    scheduled({ id: "late", status: "review", repetitions: 2, dueAt: "2026-08-12T09:00:00.000Z", lastReviewedAt: "2026-08-12T09:00:00.000Z" }),
+    scheduled({ id: "today", status: "review", repetitions: 2, dueAt: "2026-08-14T20:00:00.000Z", lastReviewedAt: "2026-08-13T20:00:00.000Z" }),
+  ];
+
+  const stats = computeDeckStats(cards, {}, NOW);
+
+  // Only the forward direction of "late" carries a date from an earlier day;
+  // the untouched reverse and audio prompts are new, which is waiting, not late.
+  assert.equal(stats.overdueReps, 1);
+  assert.equal(stats.overdueCards, 1);
+  assert.equal(stats.dueReps, 6);
+  assert.match(deckInsight(stats) ?? "", /из них 1 с прошлых дней/);
+});
+
+test("a day in the forecast is named with its date, so it cannot be read as the one just gone", () => {
+  // Saturday the 15th is tomorrow; on a Friday "в субботу" is unambiguous only
+  // once the date is attached.
+  const cards = Array.from({ length: 12 }, (_, i) =>
+    scheduled({ id: `card-${i}`, status: "review", repetitions: 3, intervalDays: 6, dueAt: "2026-08-20T09:00:00.000Z", lastReviewedAt: NOW.toISOString() }),
+  );
+  const progress: Record<string, CardVariantState> = {};
+  for (let i = 0; i < 12; i++) {
+    progress[`card-${i}`] = {
+      reverse: variant("2026-08-20T09:00:00.000Z", { repetitions: 2 }),
+      audio: variant("2026-08-20T09:00:00.000Z", { repetitions: 2 }),
+    };
+  }
+
+  const insight = deckInsight(computeDeckStats(cards, progress, NOW)) ?? "";
+  assert.match(insight, /самый нагруженный день впереди — в четверг, 20 августа: 36 повторений/);
+});
+
+test("each direction counts its own review, so one graded prompt is one review", () => {
+  // The trainer used to stamp the card's own lastReviewedAt when grading the
+  // reverse prompt — "to keep the streak alive" — which made a single graded
+  // prompt show up as two in «сделано сегодня».
+  const cards = [scheduled({ id: "one", status: "review", repetitions: 2, dueAt: "2026-08-20T09:00:00.000Z", lastReviewedAt: "2026-08-12T09:00:00.000Z" })];
+  const progress: Record<string, CardVariantState> = {
+    one: { reverse: variant("2026-08-20T09:00:00.000Z", { repetitions: 1, lastReviewedAt: NOW.toISOString() }) },
+  };
+
+  const stats = computeDeckStats(cards, progress, NOW);
+  assert.equal(stats.reviewedToday, 1);
+  assert.equal(stats.forecast[0].done, 1);
+  // …and the streak still sees today through that same timestamp.
+  assert.equal(stats.streak, 1);
+});
+
+test("a cleared day says what was done rather than going quiet", () => {
+  const cards = [
+    scheduled({ id: "one", status: "review", repetitions: 3, intervalDays: 10, dueAt: "2026-08-24T09:00:00.000Z", lastReviewedAt: NOW.toISOString() }),
+  ];
+  const progress: Record<string, CardVariantState> = {
+    one: {
+      reverse: variant("2026-08-24T09:00:00.000Z", { repetitions: 2, lastReviewedAt: NOW.toISOString() }),
+      audio: variant("2026-08-24T09:00:00.000Z", { repetitions: 2, lastReviewedAt: NOW.toISOString() }),
+    },
+  };
+
+  const stats = computeDeckStats(cards, progress, NOW);
+  assert.equal(stats.dueReps, 0);
+  assert.match(deckInsight(stats) ?? "", /^Сегодня повторено 3 — на сегодня всё/);
 });
 
 test("the takeaway stays quiet when there is nothing to say", () => {
-  assert.equal(deckInsight(computeDeckStats([], {}, NOW), NOW), null);
+  assert.equal(deckInsight(computeDeckStats([], {}, NOW)), null);
 });
 
 test("statistics keep every source separate, dictionary batches included", () => {

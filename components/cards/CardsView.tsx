@@ -308,10 +308,11 @@ function StatBar({ label, value, total, color }: { label: string; value: number;
  */
 const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckStats; onClick: (e: React.MouseEvent) => void }) {
   const learnedPct = stats.totalVariants > 0 ? Math.round((stats.learnedVariants / stats.totalVariants) * 100) : 0;
-  const forecastPeak = Math.max(1, ...stats.forecast.map((d) => d.count));
-  const today = new Date();
+  // Today's column carries done + remaining, so the scale has to account for
+  // both or a finished day would overflow the chart.
+  const forecastPeak = Math.max(1, ...stats.forecast.map((d) => d.count + d.done));
   const topSources = stats.sources.slice(0, 8);
-  const insight = deckInsight(stats, today);
+  const insight = deckInsight(stats);
   const notStarted = stats.totalCards - stats.learnedCards;
 
   return (
@@ -338,7 +339,11 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
           <span className="srs-stats-note">{stats.dueCards} карточек · {stats.dueReps} повторений</span>
         </div>
         {stats.dueReps === 0 ? (
-          <div className="srs-stats-empty">Всё повторено — можно отдыхать или читать.</div>
+          <div className="srs-stats-empty">
+            {stats.reviewedToday > 0
+              ? `Всё повторено — сегодня сделано ${stats.reviewedToday}. Можно отдыхать или читать.`
+              : "Всё повторено — можно отдыхать или читать."}
+          </div>
         ) : (
           <>
             <div className="srs-stat-bar">
@@ -357,6 +362,13 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
                 </span>
               ))}
             </div>
+            {/* Leftovers from earlier days are the usual reason today's number
+                is bigger than yesterday's forecast promised. */}
+            {stats.overdueReps > 0 && (
+              <div className="srs-stats-empty">
+                Из них {stats.overdueReps} с прошлых дней ({stats.overdueCards} карт.) — они уже в очереди на сегодня.
+              </div>
+            )}
           </>
         )}
       </section>
@@ -386,19 +398,34 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
         </div>
         <div className="srs-forecast">
           {stats.forecast.map((day) => {
-            const date = new Date(today);
-            date.setDate(date.getDate() + day.dayOffset);
+            const total = day.count + day.done;
+            const isToday = day.dayOffset === 0;
             return (
-              <div className="srs-forecast-col" key={day.dayOffset}>
-                <span className="srs-forecast-val">{day.count || ""}</span>
-                <div
-                  className="srs-forecast-bar"
-                  style={{ height: `${Math.max(2, (day.count / forecastPeak) * 100)}%`, opacity: day.count > 0 ? 1 : 0.3 }}
-                />
-                <span className="srs-forecast-lbl">{WEEKDAYS[date.getDay()]}</span>
+              <div className={`srs-forecast-col${isToday ? " today" : ""}`} key={day.dayOffset}>
+                <span className="srs-forecast-val">{total || ""}</span>
+                {/* Today is drawn in two parts — what is done under what is
+                    left — so a cleared day reads as a full green column
+                    instead of the blank the chart used to show. */}
+                <div className="srs-forecast-track">
+                  <div className="srs-forecast-stack" style={{ height: `${Math.max(3, (total / forecastPeak) * 100)}%` }}>
+                    {day.count > 0 && (
+                      <div className="srs-forecast-bar" style={{ flexGrow: day.count }} />
+                    )}
+                    {day.done > 0 && (
+                      <div className="srs-forecast-bar done" style={{ flexGrow: day.done }} />
+                    )}
+                    {total === 0 && <div className="srs-forecast-bar empty" style={{ flexGrow: 1 }} />}
+                  </div>
+                </div>
+                <span className="srs-forecast-lbl">{isToday ? "сегодня" : WEEKDAYS[day.date.getDay()]}</span>
+                <span className="srs-forecast-date">{day.date.getDate()}</span>
               </div>
             );
           })}
+        </div>
+        <div className="srs-forecast-key">
+          <span><i className="done" />сделано сегодня</span>
+          <span><i />назначено</span>
         </div>
       </section>
 
@@ -786,9 +813,10 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       saveCardVariantProgress(card.id, variant, progress);
       setVariantProgress(getCardVariantProgressMap());
       if (user) void sbUpsertCardVariantProgress(user.id, [{ cardId: card.id, variant, progress }]);
-      // Bump lastReviewedAt only, so the streak counter sees today's activity
-      // without disturbing the forward variant's own SRS fields.
-      onUpdateCard({ ...card, lastReviewedAt: now });
+      // The card's own lastReviewedAt is deliberately left alone: it is the
+      // recognition prompt's record, and stamping it here counted one graded
+      // reverse prompt as two reviews in «сделано сегодня». The streak reads
+      // every direction's timestamp, so today's activity is seen either way.
     }
 
     setReviewHistory((history) => [...history, { card, variant }]);
@@ -1326,11 +1354,31 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .srs-stat-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; font-weight: 700; color: var(--text-muted); }
         .srs-stat-legend span { display: inline-flex; align-items: center; gap: 5px; }
         .srs-stat-legend i { width: 8px; height: 8px; border-radius: 2px; }
-        .srs-forecast { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; align-items: end; height: 64px; }
-        .srs-forecast-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%; }
-        .srs-forecast-bar { width: 100%; min-height: 3px; border-radius: 3px 3px 0 0; background: rgba(212, 168, 71, 0.55); }
-        .srs-forecast-lbl { font-size: 9px; font-weight: 700; color: var(--text-muted); }
+        .srs-forecast { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; height: 88px; }
+        /* Four rows — number, bar, weekday, date — so the bars are measured
+           against a track of their own. Sized as a share of the whole column,
+           they came out compressed and a peak twice another's size barely
+           looked taller. */
+        .srs-forecast-col { display: grid; grid-template-rows: auto 1fr auto auto; justify-items: center; gap: 2px; min-width: 0; }
+        .srs-forecast-track { display: flex; align-items: flex-end; width: 100%; height: 100%; }
+        /* One column, two stacked segments: what is still due sits above what
+           has already been reviewed today. */
+        .srs-forecast-stack { display: flex; flex-direction: column; justify-content: flex-end; width: 100%; min-height: 3px; }
+        .srs-forecast-bar { width: 100%; min-height: 2px; background: rgba(212, 168, 71, 0.55); }
+        .srs-forecast-stack > .srs-forecast-bar:first-child { border-radius: 3px 3px 0 0; }
+        .srs-forecast-stack > .srs-forecast-bar:last-child { border-radius: 0 0 2px 2px; }
+        .srs-forecast-stack > .srs-forecast-bar:only-child { border-radius: 3px 3px 2px 2px; }
+        .srs-forecast-bar.done { background: var(--green); }
+        .srs-forecast-bar.empty { background: rgba(212, 168, 71, 0.18); }
+        .srs-forecast-lbl { font-size: 9px; font-weight: 700; color: var(--text-muted); white-space: nowrap; }
+        .srs-forecast-date { font-size: 8px; font-weight: 700; color: rgba(240, 230, 211, 0.28); line-height: 1; }
+        .srs-forecast-col.today .srs-forecast-lbl { color: var(--accent); }
+        .srs-forecast-col.today .srs-forecast-val { color: var(--accent); }
         .srs-forecast-val { font-size: 10px; font-weight: 800; color: var(--text-primary); }
+        .srs-forecast-key { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 10px; font-weight: 700; color: var(--text-muted); }
+        .srs-forecast-key span { display: inline-flex; align-items: center; gap: 5px; }
+        .srs-forecast-key i { width: 8px; height: 8px; border-radius: 2px; background: rgba(212, 168, 71, 0.55); }
+        .srs-forecast-key i.done { background: var(--green); }
         .srs-source-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--border); font-size: 12px; }
         .srs-source-row:first-of-type { border-top: none; }
         .srs-source-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }

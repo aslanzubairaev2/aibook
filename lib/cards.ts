@@ -335,6 +335,14 @@ export type DeckStats = {
   /** Individual repetitions waiting today — what a full session actually costs. */
   dueReps: number;
   dueByVariant: Record<TrainVariant, number>;
+  /**
+   * The part of today's queue that was actually scheduled for an earlier day.
+   * Half a session left undone on Saturday reappears silently inside Sunday's
+   * number, and the difference between "today's work" and "Saturday's leftovers"
+   * is exactly what a learner needs to see to make sense of a spike.
+   */
+  overdueReps: number;
+  overdueCards: number;
   learnedCards: number;
   matureCards: number;
   learnedVariants: number;
@@ -351,8 +359,27 @@ export type DeckStats = {
   streak: number;
   bestStreak: number;
   reviewedToday: number;
-  forecast: { dayOffset: number; count: number }[];
+  /**
+   * Seven days starting with today (`dayOffset: 0`).
+   *
+   * Today used to be missing entirely — the chart began tomorrow — so a learner
+   * who had just cleared 1439 repetitions saw no trace of them and read the
+   * weekday labels as the days that had just passed. Today's column carries
+   * both halves of the day: what is still waiting, and what has been done.
+   */
+  forecast: DeckForecastDay[];
   sources: DeckSourceStat[];
+};
+
+export type DeckForecastDay = {
+  /** 0 = today, 1 = tomorrow, … */
+  dayOffset: number;
+  /** Repetitions scheduled for that day and not yet done. */
+  count: number;
+  /** Repetitions already reviewed that day. Only ever non-zero for today. */
+  done: number;
+  /** Local calendar date of the column, for labelling it unambiguously. */
+  date: Date;
 };
 
 /** Anki's convention: an interval past three weeks counts as settled. */
@@ -415,6 +442,9 @@ export function computeDeckStats(
   const todayEnd = new Date(now);
   todayEnd.setHours(23, 59, 59, 999);
   const todayEndMs = todayEnd.getTime();
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+  const todayStartMs = todayStart.getTime();
   const dayMs = 24 * 60 * 60 * 1000;
 
   const stats: DeckStats = {
@@ -423,6 +453,8 @@ export function computeDeckStats(
     dueCards: 0,
     dueReps: 0,
     dueByVariant: { forward: 0, reverse: 0, audio: 0 },
+    overdueReps: 0,
+    overdueCards: 0,
     learnedCards: 0,
     matureCards: 0,
     learnedVariants: 0,
@@ -433,7 +465,11 @@ export function computeDeckStats(
     streak: 0,
     bestStreak: 0,
     reviewedToday: 0,
-    forecast: Array.from({ length: FORECAST_DAYS }, (_, dayOffset) => ({ dayOffset: dayOffset + 1, count: 0 })),
+    forecast: Array.from({ length: FORECAST_DAYS }, (_, dayOffset) => {
+      const date = new Date(todayStartMs);
+      date.setDate(date.getDate() + dayOffset);
+      return { dayOffset, count: 0, done: 0, date };
+    }),
     sources: [],
   };
 
@@ -456,6 +492,7 @@ export function computeDeckStats(
     source.cards += 1;
 
     let cardDue = false;
+    let cardOverdue = false;
     let cardTouched = false;
     let cardHard = false;
 
@@ -472,9 +509,15 @@ export function computeDeckStats(
         cardDue = true;
         stats.dueReps += 1;
         stats.dueByVariant[variant] += 1;
+        stats.forecast[0].count += 1;
+        // "New" has no date behind it — it is waiting, not late.
+        if (p.status !== "new" && Date.parse(p.dueAt) < todayStartMs) {
+          cardOverdue = true;
+          stats.overdueReps += 1;
+        }
       } else {
         const inDays = Math.ceil((Date.parse(p.dueAt) - todayEndMs) / dayMs);
-        if (inDays >= 1 && inDays <= FORECAST_DAYS) stats.forecast[inDays - 1].count += 1;
+        if (inDays >= 1 && inDays < FORECAST_DAYS) stats.forecast[inDays].count += 1;
       }
 
       const reviewedOn = dayKey(
@@ -482,7 +525,10 @@ export function computeDeckStats(
       );
       if (reviewedOn) {
         reviewDays.add(reviewedOn);
-        if (reviewedOn === todayKey) stats.reviewedToday += 1;
+        if (reviewedOn === todayKey) {
+          stats.reviewedToday += 1;
+          stats.forecast[0].done += 1;
+        }
       }
     }
 
@@ -490,6 +536,7 @@ export function computeDeckStats(
       stats.dueCards += 1;
       source.due += 1;
     }
+    if (cardOverdue) stats.overdueCards += 1;
     if (cardTouched) {
       stats.learnedCards += 1;
       source.learned += 1;
@@ -517,20 +564,65 @@ export const VARIANT_NAMES: Record<TrainVariant, string> = {
   audio: "аудирование",
 };
 
-const WEEKDAY_NAMES = ["воскресенье", "понедельник", "вторник", "среду", "четверг", "пятницу", "субботу"];
+const WEEKDAY_ACCUSATIVE = ["воскресенье", "понедельник", "вторник", "среду", "четверг", "пятницу", "субботу"];
+const WEEKDAY_SHORT = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+const MONTH_GENITIVE = [
+  "января", "февраля", "марта", "апреля", "мая", "июня",
+  "июля", "августа", "сентября", "октября", "ноября", "декабря",
+];
+
+/** "сб" — the label under a forecast column. */
+export function forecastWeekday(date: Date): string {
+  return WEEKDAY_SHORT[date.getDay()];
+}
+
+/**
+ * Names a forecast day the way a person would.
+ *
+ * A bare weekday is ambiguous the moment the same one has just passed: on a
+ * Sunday, "в субботу" reads as yesterday, which is precisely how a forecast of
+ * next Saturday's pile-up got mistaken for a report on the day before.
+ */
+export function describeForecastDay(day: DeckForecastDay): string {
+  if (day.dayOffset === 0) return "сегодня";
+  if (day.dayOffset === 1) return "завтра";
+  if (day.dayOffset === 2) return "послезавтра";
+  return `в ${WEEKDAY_ACCUSATIVE[day.date.getDay()]}, ${day.date.getDate()} ${MONTH_GENITIVE[day.date.getMonth()]}`;
+}
 
 /**
  * One sentence saying what the numbers add up to.
  *
- * A wall of counters tells a learner what is true but not what to do about it,
- * so this names the direction that is furthest behind — the one worth spending
- * the next sessions on — and warns about the heaviest day ahead, which is the
- * other decision the forecast supports.
+ * It opens with today — what is left, and what has already been done, because a
+ * cleared day deserves to be said out loud — then names the next heavy day with
+ * its date, and finally the direction that is furthest behind.
+ *
+ * It needs no clock of its own: every forecast day arrived carrying its date.
  */
-export function deckInsight(stats: DeckStats, now: Date = new Date()): string | null {
+export function deckInsight(stats: DeckStats): string | null {
   if (stats.totalCards === 0) return null;
 
   const parts: string[] = [];
+
+  if (stats.dueReps === 0) {
+    parts.push(
+      stats.reviewedToday > 0
+        ? `Сегодня повторено ${stats.reviewedToday} — на сегодня всё`
+        : "На сегодня всё повторено",
+    );
+  } else if (stats.overdueReps > 0) {
+    parts.push(`Осталось ${stats.dueReps} повторений, из них ${stats.overdueReps} с прошлых дней`);
+  } else {
+    parts.push(`Осталось ${stats.dueReps} повторений`);
+  }
+
+  // The heaviest day still ahead. Today is excluded on purpose: it is already
+  // covered by the clause above, and "впереди" must mean what it says.
+  const ahead = stats.forecast.filter((day) => day.dayOffset > 0);
+  const peak = ahead.reduce((best, day) => (day.count > best.count ? day : best), ahead[0]);
+  if (peak && peak.count > 0) {
+    parts.push(`самый нагруженный день впереди — ${describeForecastDay(peak)}: ${peak.count} повторений`);
+  }
 
   const behind = [...ALL_TRAIN_VARIANTS].sort(
     (a, b) => stats.startedByVariant[a] - stats.startedByVariant[b],
@@ -539,21 +631,9 @@ export function deckInsight(stats: DeckStats, now: Date = new Date()): string | 
   const strongest = behind[behind.length - 1];
   // Only worth naming when the gap is real rather than a rounding difference.
   if (stats.startedByVariant[strongest] - stats.startedByVariant[weakest] >= Math.max(5, stats.totalCards * 0.05)) {
-    parts.push(`Главный резерв — ${VARIANT_NAMES[weakest]}: начато ${stats.startedByVariant[weakest]} из ${stats.totalCards}`);
+    parts.push(`главный резерв — ${VARIANT_NAMES[weakest]}: начато ${stats.startedByVariant[weakest]} из ${stats.totalCards}`);
   }
 
-  const peak = stats.forecast.reduce((best, day) => (day.count > best.count ? day : best), stats.forecast[0]);
-  if (peak && peak.count > 0) {
-    const date = new Date(now);
-    date.setDate(date.getDate() + peak.dayOffset);
-    parts.push(`самый нагруженный день впереди — ${WEEKDAY_NAMES[date.getDay()]}, ${peak.count} повторений`);
-  }
-
-  if (parts.length === 0) {
-    return stats.dueReps > 0
-      ? `Сегодня осталось ${stats.dueReps} повторений.`
-      : "На сегодня всё повторено.";
-  }
   return `${parts.join("; ")}.`;
 }
 

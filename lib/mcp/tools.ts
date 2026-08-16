@@ -124,6 +124,7 @@ const LEARNED_REPETITIONS = 3;
 const MATURE_INTERVAL_DAYS = 21;
 const FORECAST_DAYS = 7;
 const DAY_MS = 86400000;
+const WEEKDAYS_EN = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /**
  * The app schedules by day, not by minute: everything falling due before
@@ -264,9 +265,23 @@ export function summarizeDeck(cards: CardRow[], variants: VariantRow[], now = ne
   const todayEndMs = endOfTodayMs(now);
   const progress = directionProgress(cards, variants);
 
+  const startOfTodayMs = endOfTodayMs(now) - DAY_MS + 1;
   const dueCards = new Set<string>();
+  const overdueCards = new Set<string>();
   const dueByDirection: Record<Direction, number> = { forward: 0, reverse: 0, audio: 0 };
-  const forecast = Array.from({ length: FORECAST_DAYS }, (_, i) => ({ in_days: i + 1, repetitions: 0 }));
+  // Starts at today, not tomorrow: an agent asked "what is coming up" needs the
+  // day the learner is actually standing in, and each entry carries its date so
+  // a weekday can never be mistaken for the one that just passed.
+  const forecast = Array.from({ length: FORECAST_DAYS }, (_, i) => {
+    const date = new Date(startOfTodayMs + i * DAY_MS);
+    return {
+      in_days: i,
+      date: date.toISOString().slice(0, 10),
+      weekday: WEEKDAYS_EN[date.getUTCDay()],
+      repetitions: 0,
+      reviewed: 0,
+    };
+  });
   const hardCards = new Set<string>();
   const reviewDays = new Set<string>();
   const dayKey = (value: string | null): string | null => {
@@ -278,6 +293,7 @@ export function summarizeDeck(cards: CardRow[], variants: VariantRow[], now = ne
   const todayKey = new Date(now).toISOString().slice(0, 10);
 
   let dueReps = 0;
+  let overdueReps = 0;
   let started = 0;
   let reviewedToday = 0;
 
@@ -288,14 +304,24 @@ export function summarizeDeck(cards: CardRow[], variants: VariantRow[], now = ne
       dueCards.add(p.cardId);
       dueByDirection[p.direction] += 1;
       dueReps += 1;
+      forecast[0].repetitions += 1;
+      // A card that was scheduled for an earlier day and not done is late; a
+      // "new" one has no date behind it and is merely waiting.
+      if (p.status !== "new" && p.dueAt && Date.parse(p.dueAt) < startOfTodayMs) {
+        overdueCards.add(p.cardId);
+        overdueReps += 1;
+      }
     } else if (p.dueAt) {
       const inDays = Math.ceil((Date.parse(p.dueAt) - todayEndMs) / DAY_MS);
-      if (inDays >= 1 && inDays <= FORECAST_DAYS) forecast[inDays - 1].repetitions += 1;
+      if (inDays >= 1 && inDays < FORECAST_DAYS) forecast[inDays].repetitions += 1;
     }
     const reviewedOn = dayKey(p.lastReviewedAt);
     if (reviewedOn) {
       reviewDays.add(reviewedOn);
-      if (reviewedOn === todayKey) reviewedToday += 1;
+      if (reviewedOn === todayKey) {
+        reviewedToday += 1;
+        forecast[0].reviewed += 1;
+      }
     }
   }
 
@@ -310,10 +336,16 @@ export function summarizeDeck(cards: CardRow[], variants: VariantRow[], now = ne
 
   const totalDirections = cards.length * DIRECTIONS.length;
   return {
+    today: todayKey,
     due_today: {
       cards: dueCards.size,
       repetitions: dueReps,
       by_direction: dueByDirection,
+      // Part of today's queue that was scheduled for an earlier day. A session
+      // left half-done reappears inside the next day's number, and without this
+      // the spike has no explanation.
+      overdue_repetitions: overdueReps,
+      overdue_cards: overdueCards.size,
     },
     directions_started: started,
     directions_total: totalDirections,
@@ -323,7 +355,7 @@ export function summarizeDeck(cards: CardRow[], variants: VariantRow[], now = ne
     reviewed_today: reviewedToday,
     streak_days: streak,
     forecast_next_days: forecast,
-    note: `The same counts the app's own statistics panel shows: a prompt is due if it falls before the end of today, and every card is three prompts (${DIRECTIONS.join(", ")}). Day boundaries are counted in UTC here, so a late-evening review may land on the learner's next day.`,
+    note: `The same counts the app's own statistics panel shows: a prompt is due if it falls before the end of today, and every card is three prompts (${DIRECTIONS.join(", ")}). forecast_next_days[0] is today — its "reviewed" is what has already been done today and its "repetitions" is what is still waiting; later entries are what falls due on that date. Day boundaries are counted in UTC here, so a late-evening review may land on the learner's next day.`,
   };
 }
 
@@ -1268,7 +1300,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "get_progress",
     title: "Как идёт учёба",
     description:
-      "How the learning is actually going, from the spaced-repetition record: which words the learner knows confidently, which are in progress, and which they keep forgetting (repeated lapses or an ease factor the algorithm has pushed down), with totals by CEFR level and by training direction (recognition / recall / listening — each word is scheduled separately in each). It also returns the deck numbers the app's own statistics panel shows: today's workload in words and in repetitions, the review streak, and the next week's forecast. Use the confident words when practising a new construction — the sentence should test the grammar, not the vocabulary — and work the struggling ones into examples and stories.",
+      "How the learning is actually going, from the spaced-repetition record: which words the learner knows confidently, which are in progress, and which they keep forgetting (repeated lapses or an ease factor the algorithm has pushed down), with totals by CEFR level and by training direction (recognition / recall / listening — each word is scheduled separately in each). It also returns the deck numbers the app's own statistics panel shows: today's date and workload in words and in repetitions (including how much of it is carried over from earlier days), what has already been reviewed today, the review streak, and a seven-day forecast that starts with today and dates every entry. Use the confident words when practising a new construction — the sentence should test the grammar, not the vocabulary — and work the struggling ones into examples and stories.",
     inputSchema: {
       type: "object",
       properties: { limit: { type: "number", description: "Words per list (default 40, max 200)" } },

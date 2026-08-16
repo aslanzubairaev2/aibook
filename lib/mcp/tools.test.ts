@@ -168,9 +168,53 @@ test("a scheduled direction lands in the forecast rather than in today", () => {
   const deck = summarizeDeck([card({ next_review_at: "2026-08-17T08:00:00.000Z" })], [], NOW);
   assert.equal(deck.due_today.by_direction.forward, 0);
   assert.deepEqual(
-    deck.forecast_next_days.filter((d) => d.repetitions > 0),
-    [{ in_days: 3, repetitions: 1 }],
+    deck.forecast_next_days.filter((d) => d.in_days > 0 && d.repetitions > 0),
+    [{ in_days: 3, date: "2026-08-17", weekday: "Monday", repetitions: 1, reviewed: 0 }],
   );
+});
+
+test("the forecast starts at today, dated, so a weekday cannot be read as the one just gone", () => {
+  const deck = summarizeDeck([card({ next_review_at: "2026-08-17T08:00:00.000Z" })], [], NOW);
+
+  assert.equal(deck.today, "2026-08-14");
+  assert.equal(deck.forecast_next_days[0].in_days, 0);
+  assert.equal(deck.forecast_next_days[0].date, "2026-08-14");
+  assert.equal(deck.forecast_next_days.length, 7);
+  // Seven days that all name themselves — the last one is six days out, not seven.
+  assert.equal(deck.forecast_next_days.at(-1)?.date, "2026-08-20");
+});
+
+test("today's column carries what is left and what has already been done", () => {
+  const deck = summarizeDeck(
+    [
+      card({ id: "left", next_review_at: "2026-08-14T06:00:00.000Z", status: "review", repetitions: 2, last_reviewed_at: "2026-08-10T06:00:00.000Z" }),
+      card({ id: "done", next_review_at: "2026-08-25T06:00:00.000Z", status: "review", repetitions: 3, last_reviewed_at: "2026-08-14T08:00:00.000Z" }),
+    ],
+    [],
+    NOW,
+  );
+
+  const today = deck.forecast_next_days[0];
+  assert.equal(today.repetitions, 5, "one card fully due, one due in its two unscheduled directions");
+  assert.equal(today.reviewed, 1, "and one prompt already reviewed today");
+  assert.equal(deck.reviewed_today, 1);
+});
+
+test("work carried over from an earlier day is reported as carried over", () => {
+  const deck = summarizeDeck(
+    [
+      card({ id: "late", next_review_at: "2026-08-11T06:00:00.000Z", status: "review", repetitions: 2, last_reviewed_at: "2026-08-10T06:00:00.000Z" }),
+      card({ id: "today", next_review_at: "2026-08-14T20:00:00.000Z", status: "review", repetitions: 2, last_reviewed_at: "2026-08-13T20:00:00.000Z" }),
+    ],
+    [],
+    NOW,
+  );
+
+  // Only the forward direction of "late" has a date behind it; the untouched
+  // reverse/audio prompts of both cards are new, which is waiting, not late.
+  assert.equal(deck.due_today.overdue_repetitions, 1);
+  assert.equal(deck.due_today.overdue_cards, 1);
+  assert.equal(deck.due_today.repetitions, 6);
 });
 
 test("the variant table carries its own schedule and its own lapses", () => {
