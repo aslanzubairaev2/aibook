@@ -361,10 +361,14 @@ async function requestTts(
     };
     try {
       const cache = await caches.open("aibook-tts-cache");
-      const actualCacheKey = data.provider && isRemoteProvider(data.provider)
-        ? ttsCacheKey(text, data.provider, lang)
-        : cacheKey;
-      await cache.put(actualCacheKey, new Response(recording.audioBase64, {
+      // Stored under the key this request asked with, never under the engine
+      // that answered. A fallback recording filed under the engine that spoke
+      // is a recording nobody looks for: the next play asks under the engine
+      // chosen in settings, misses, and pays for the whole chain again — so
+      // while a provider is rate-limited, every single play stays a paid round
+      // trip. Which engine actually spoke rides along in the headers instead,
+      // which is all the player needed it for.
+      await cache.put(cacheKey, new Response(recording.audioBase64, {
         headers: {
           [SAMPLE_RATE_HEADER]: String(recording.sampleRate),
           [FORMAT_HEADER]: recording.format,
@@ -372,7 +376,11 @@ async function requestTts(
           ...(recording.model ? { [MODEL_HEADER]: recording.model } : {}),
         },
       }));
-    } catch (e) {}
+    } catch (e) {
+      // Storage full, or no Cache API. Playback is unaffected, but every later
+      // play of this text will pay for it again — worth saying so out loud.
+      console.warn("TTS cache write failed; this text will be requested again", e);
+    }
     return recording;
   } catch (e) {
     console.error(`${provider} TTS API failed`, e);
@@ -434,7 +442,9 @@ export async function speak(
           model: cachedResponse.headers.get(MODEL_HEADER) ?? undefined,
         };
       }
-    } catch(e) {}
+    } catch (e) {
+      console.warn("TTS cache read failed; requesting the audio instead", e);
+    }
 
     if (!recording) {
       const pending = inFlight.get(cacheKey) ?? requestTts(text, lang, provider, cacheKey);
@@ -693,6 +703,10 @@ export async function prepareFullTextAudio(
   // format cover the joined recording; the first passage to arrive settles them.
   let sampleRate = DEEPGRAM_TTS_SAMPLE_RATE;
   let format: "pcm" | "mp3" = "pcm";
+  // Likewise the engine that answered, so the player can name it on a cache hit
+  // the same way a single-card recording does.
+  let spokenBy: string | undefined;
+  let spokenWith: string | undefined;
 
   for (let i = 0; i < chunks.length; i++) {
     if (opts.shouldCancel?.()) {
@@ -717,18 +731,37 @@ export async function prepareFullTextAudio(
         const res = await fetch("/api/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(await opts.authHeaders()) },
-          body: JSON.stringify({ text: chunks[i], lang, provider }),
+          // The voice and model belong in the request for the same reason they
+          // belong in the key: without them the server speaks with its own
+          // default, and the passage lands in the cache under a key claiming
+          // the voice chosen in settings — so `speak()` would later play the
+          // wrong voice back and call it a hit.
+          body: JSON.stringify({
+            text: chunks[i], lang, provider,
+            voice: chosenVoiceFor(provider),
+            model: chosenModelFor(provider),
+          }),
         });
         if (res.ok) {
-          const data = await res.json() as { audioBase64?: string; sampleRate?: number; format?: "mp3" };
+          const data = await res.json() as {
+            audioBase64?: string; sampleRate?: number; format?: "mp3";
+            provider?: string; model?: string;
+          };
           base64 = data.audioBase64 ?? null;
           sampleRate = data.sampleRate ?? sampleRate;
           if (data.format === "mp3") format = "mp3";
           if (base64) {
+            spokenBy = data.provider ?? spokenBy;
+            spokenWith = data.model ?? spokenWith;
             try {
               const cache = await caches.open("aibook-tts-cache");
               await cache.put(key, new Response(base64, {
-                headers: { [SAMPLE_RATE_HEADER]: String(sampleRate), [FORMAT_HEADER]: format },
+                headers: {
+                  [SAMPLE_RATE_HEADER]: String(sampleRate),
+                  [FORMAT_HEADER]: format,
+                  ...(spokenBy ? { [PROVIDER_HEADER]: spokenBy } : {}),
+                  ...(spokenWith ? { [MODEL_HEADER]: spokenWith } : {}),
+                },
               }));
             } catch { /* cache full or unavailable */ }
           }
@@ -766,7 +799,12 @@ export async function prepareFullTextAudio(
       await cache.put(
         ttsCacheKey(fullText, provider, lang),
         new Response(bytesToBase64(joined), {
-          headers: { [SAMPLE_RATE_HEADER]: String(sampleRate), [FORMAT_HEADER]: format },
+          headers: {
+            [SAMPLE_RATE_HEADER]: String(sampleRate),
+            [FORMAT_HEADER]: format,
+            ...(spokenBy ? { [PROVIDER_HEADER]: spokenBy } : {}),
+            ...(spokenWith ? { [MODEL_HEADER]: spokenWith } : {}),
+          },
         }),
       );
     } catch { /* cache full — playback falls back to per-passage */ }
