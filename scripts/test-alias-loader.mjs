@@ -23,7 +23,15 @@ function firstExisting(base) {
   return null;
 }
 
+// Next's package exports leave "next/server" to the bundler; plain Node needs
+// the file. Without this no API route can be imported by a test at all.
+const BARE_TO_FILE = { "next/server": "next/server.js" };
+
 export function resolve(specifier, context, nextResolve) {
+  if (BARE_TO_FILE[specifier]) {
+    return nextResolve(BARE_TO_FILE[specifier], context);
+  }
+
   if (specifier.startsWith("@/")) {
     const found = firstExisting(resolvePath(root, specifier.slice(2)));
     if (found) return { url: found, shortCircuit: true };

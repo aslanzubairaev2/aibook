@@ -40,6 +40,7 @@ import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertC
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
+import { describeCardFamiliarity } from "@/lib/ai/wordProfile";
 import { ProductiveTrainer } from "@/components/cards/ProductiveTrainer";
 import { SkillBadges } from "@/components/cards/SkillBadges";
 
@@ -505,6 +506,10 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     messages: DiscussMessage[];
     historyLoading: boolean;
   }>({ open: false, card: null, cacheKey: "", messages: [], historyLoading: false });
+
+  // The card's own schedule is what tells the tutor whether this word needs a
+  // memory hook or nothing but nuance.
+  const discussWordProfile = useMemo(() => describeCardFamiliarity(discuss.card), [discuss.card]);
 
   // Word modal state
   const [wordModal, setWordModal] = useState<{
@@ -1431,6 +1436,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
           nativeLanguage={nativeLanguage}
           targetLanguage={targetLanguage}
           messages={discuss.messages}
+          wordProfile={discussWordProfile}
           onMessagesChange={handleDiscussMessagesChange}
           onClose={() => setDiscuss((prev) => ({ ...prev, open: false }))}
           onWordTap={(word) => void openWordModalFor(word)}

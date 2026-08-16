@@ -713,6 +713,58 @@
   background: rgba(18, 15, 10, 0.92);
 }
 
+/* Buttons into the app's own tables (conjugation, declension, word analysis).
+   Gold rather than grey: unlike the question chips beside them, these open a
+   screen instead of sending a message, and should read as the heavier action. */
+.discuss-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 0 0 2px;
+  scrollbar-width: none;
+}
+
+.discuss-actions::-webkit-scrollbar {
+  display: none;
+}
+
+/* The two-class selector is deliberate: `.discuss-input button` below styles
+   the mic and send keys and would otherwise win on source order, which is what
+   used to turn the question chips into 42px gold blocks. */
+.discuss-input .discuss-actions button {
+  width: auto;
+  min-width: max-content;
+  height: 30px;
+  padding: 0 11px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(212, 168, 71, 0.34);
+  border-radius: 15px;
+  background: rgba(212, 168, 71, 0.14);
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.discuss-input .discuss-actions button:hover {
+  border-color: rgba(212, 168, 71, 0.58);
+  background: rgba(212, 168, 71, 0.22);
+}
+
+.discuss-input .discuss-actions button svg {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
 .discuss-quick-prompts {
   grid-column: 1 / -1;
   display: flex;
@@ -726,33 +778,41 @@
   display: none;
 }
 
-.discuss-quick-prompts button {
+/* Questions the learner can send, written by the model from the context. They
+   stay quiet next to the gold action buttons — a chip sends a message, a button
+   opens a screen — but are big enough to hit with a thumb. */
+.discuss-input .discuss-quick-prompts button {
   width: auto;
   min-width: max-content;
-  height: 22px;
-  padding: 0 8px;
+  height: 28px;
+  padding: 0 11px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(240, 230, 211, 0.08);
-  border-radius: 11px;
-  background: rgba(240, 230, 211, 0.03);
-  color: rgba(240, 230, 211, 0.48);
+  border: 1px solid rgba(240, 230, 211, 0.14);
+  border-radius: 14px;
+  background: rgba(240, 230, 211, 0.05);
+  color: rgba(240, 230, 211, 0.72);
   font-family: var(--font-ui);
-  font-size: 11px;
-  font-weight: 400;
+  font-size: 12px;
+  font-weight: 500;
   letter-spacing: 0;
+  white-space: nowrap;
   transition:
     background var(--transition-fast),
     border-color var(--transition-fast),
     color var(--transition-fast);
 }
 
-.discuss-quick-prompts button:hover:not(:disabled) {
-  border-color: rgba(240, 230, 211, 0.16);
-  background: rgba(240, 230, 211, 0.06);
-  color: rgba(240, 230, 211, 0.72);
+.discuss-input .discuss-quick-prompts button:hover:not(:disabled) {
+  border-color: rgba(240, 230, 211, 0.26);
+  background: rgba(240, 230, 211, 0.09);
+  color: var(--surface);
+}
+
+.discuss-input .discuss-quick-prompts button:disabled {
+  opacity: 0.45;
 }
 
 .discuss-input input {

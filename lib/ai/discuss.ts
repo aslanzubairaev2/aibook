@@ -1,4 +1,4 @@
-import type { AiMode, DiscussMessage } from "@/lib/types";
+import type { AiMode, DiscussMessage, DiscussWordProfile } from "@/lib/types";
 import { supabase } from "@/lib/db/supabase";
 import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
 
@@ -10,6 +10,10 @@ export type DiscussRequest = {
   sentenceAfter?: string;
   nativeLanguage: string;
   targetLanguage: string;
+  /** CEFR estimate from the learner's own books and deck, when it can be made. */
+  learnerLevel?: string;
+  /** How well this learner already knows this item, from its card's schedule. */
+  wordProfile?: DiscussWordProfile;
   history: DiscussMessage[];
   message: string;
 };

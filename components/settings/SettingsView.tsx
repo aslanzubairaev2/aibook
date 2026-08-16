@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { SUPPORTED_LANGUAGES } from "@/lib/config";
+import { AI_CONFIG, SUPPORTED_LANGUAGES } from "@/lib/config";
 import { 
   saveLocalProfile, 
   getLocalAiProvider, 
@@ -580,7 +580,8 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
       <div className="settings-list" style={{ marginBottom: 24 }}>
         {[
           { label: "Версия", value: "1.1.0" },
-          { label: "AI модель", value: "gemini-3.1-flash-lite" },
+          { label: "AI модель", value: AI_CONFIG.model },
+          { label: "Модель обсуждения", value: AI_CONFIG.discussModel },
           { label: "Форматы книг", value: "TXT, EPUB, FB2" },
           { label: "Хранилище", value: "Supabase + LocalStorage cache" },
         ].map(({ label, value }) => (

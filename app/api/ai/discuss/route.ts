@@ -1,11 +1,75 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// The chat behind "Обсудить с AI".
+//
+// Two things make this route different from the other AI routes: it runs on the
+// stronger model (see AI_CONFIG.discussModel — the discussion is the one place
+// that has to reason about the learner rather than extract fields), and it asks
+// for more than prose. The answer carries the follow-up chips and the buttons
+// that open the app's own grammar tables, so the chat can offer "Спряжение
+// aufräumen" instead of pasting a paradigm into a message bubble.
+
+import { GoogleGenAI, Type, type GenerateContentResponse } from "@google/genai";
 import { NextResponse } from "next/server";
 import { AI_CONFIG } from "@/lib/config";
-import type { DiscussMessage } from "@/lib/types";
+import type { DiscussMessage, DiscussWordProfile } from "@/lib/types";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
+import { parseModelJson } from "@/lib/ai/jsonResponse";
+import { buildDiscussSystemPrompt, parseDiscussReply } from "@/lib/ai/buildDiscussPrompt";
+
+/** Points the SDK at a stand-in service in tests; unset in production. */
+const BASE_URL = process.env.GEMINI_API_BASE_URL;
+
+const RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    contentParts: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          type: { type: Type.STRING },
+          text: { type: Type.STRING },
+          translation: { type: Type.STRING },
+        },
+        required: ["type", "text"],
+      },
+    },
+    suggestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+    actions: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          kind: { type: Type.STRING },
+          label: { type: Type.STRING },
+          word: { type: Type.STRING },
+        },
+        required: ["kind", "label", "word"],
+      },
+    },
+  },
+  required: ["contentParts"],
+} as const;
 
 function messageText(message: DiscussMessage) {
   return message.text || message.contentParts?.map((part) => part.text).join("") || "";
+}
+
+/**
+ * Remembers, for the life of the server process, that the configured discussion
+ * model is not reachable with the key in use — so a learner whose key predates
+ * it pays the 404 round-trip once instead of on every message.
+ */
+let discussModelUnavailable = false;
+
+function looksUnavailable(err: unknown): boolean {
+  const raw = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    raw.includes("404") ||
+    raw.includes("not found") ||
+    raw.includes("not_found") ||
+    raw.includes("is not supported") ||
+    raw.includes("unsupported")
+  );
 }
 
 export async function POST(req: Request) {
@@ -25,85 +89,79 @@ export async function POST(req: Request) {
     sentenceAfter?: string;
     nativeLanguage: string;
     targetLanguage: string;
+    learnerLevel?: string;
+    wordProfile?: DiscussWordProfile;
     history: DiscussMessage[];
     message: string;
   };
 
-  const context =
-    body.mode === "sentence"
-      ? `Previous sentence: "${body.sentenceBefore || ""}"\nSelected sentence: "${body.selectedText}"\nNext sentence: "${body.sentenceAfter || ""}"`
-      : body.mode === "phrase"
-        ? `Selected phrase: "${body.selectedText}"\nCurrent sentence: "${body.sentence}"`
-        : `Selected word: "${body.selectedText}"\nCurrent sentence: "${body.sentence}"`;
+  const systemInstruction = buildDiscussSystemPrompt({
+    mode: body.mode,
+    selectedText: body.selectedText,
+    sentence: body.sentence,
+    sentenceBefore: body.sentenceBefore,
+    sentenceAfter: body.sentenceAfter,
+    nativeLanguage: body.nativeLanguage,
+    targetLanguage: body.targetLanguage,
+    learnerLevel: body.learnerLevel,
+    wordProfile: body.wordProfile,
+  });
 
-  const formattedHistory = body.history.map((message) => ({
-    role: message.role === "model" ? "model" : "user",
-    parts: [{ text: messageText(message) }],
-  }));
+  const contents = [
+    ...body.history.map((message) => ({
+      role: message.role === "model" ? "model" : "user",
+      parts: [{ text: messageText(message) }],
+    })),
+    { role: "user", parts: [{ text: body.message }] },
+  ];
 
-  const systemInstruction = `You are a friendly language tutor. The student is learning "${body.targetLanguage}" and speaks "${body.nativeLanguage}".
+  const ai = new GoogleGenAI(BASE_URL ? { apiKey, httpOptions: { baseUrl: BASE_URL } } : { apiKey });
 
-Discuss the selected ${body.mode} and answer in ${body.nativeLanguage}. Be concise but useful.
-
-Context:
-${context}
-
-Return ONLY valid JSON with this exact shape:
-{
-  "role": "model",
-  "contentParts": [
-    { "type": "text", "text": "plain explanation in ${body.nativeLanguage}" },
-    { "type": "learning", "text": "word or phrase in ${body.targetLanguage}", "translation": "translation in ${body.nativeLanguage}" }
-  ]
-}
-
-Use "learning" parts for any ${body.targetLanguage} words, phrases, examples, or sentences so the app can make them clickable and speakable.
-Every "learning" part MUST include a clear "translation" in ${body.nativeLanguage}. If you give examples, each example must be a learning part with translation.
-Do not suggest replacing source text. Do not include markdown.`;
-
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: AI_CONFIG.model,
+  const call = (model: string) => ai.models.generateContent({
+    model,
+    contents,
+    config: {
       systemInstruction,
-      generationConfig: {
-        responseMimeType: "application/json",
-        maxOutputTokens: AI_CONFIG.maxOutputTokens,
-        temperature: 0.6,
-      },
-    });
+      responseMimeType: "application/json",
+      responseSchema: RESPONSE_SCHEMA as never,
+      maxOutputTokens: AI_CONFIG.discussMaxOutputTokens,
+      temperature: 0.7,
+      // The depth here comes from the instructions, not from a thinking
+      // budget — and in a chat the learner is waiting, while a budget spent
+      // thinking comes out of the same ceiling as the answer and truncates it.
+      thinkingConfig: { thinkingBudget: 0 },
+    },
+  });
 
-    const result = await model.generateContent({
-      contents: [
-        ...formattedHistory,
-        { role: "user", parts: [{ text: body.message }] },
-      ],
-    });
-    const rawText = result.response.text();
-    let parsed: any;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch {
-      // AI returned invalid JSON — wrap raw text as a plain message
-      return NextResponse.json({
-        role: "model",
-        contentParts: [{ type: "text", text: rawText || "No response." }],
-      });
-    }
-
-    if (!Array.isArray(parsed.contentParts)) {
-      return NextResponse.json({
-        role: "model",
-        contentParts: [{ type: "text", text: rawText || "No response." }],
-      });
-    }
-
-    return NextResponse.json({
-      role: "model",
-      contentParts: parsed.contentParts,
-    });
+  let response: GenerateContentResponse;
+  try {
+    response = discussModelUnavailable
+      ? await call(AI_CONFIG.model)
+      : await call(AI_CONFIG.discussModel);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    if (discussModelUnavailable || !looksUnavailable(err)) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
+    // The key cannot reach the discussion model: keep the chat working on the
+    // model the rest of the app already uses.
+    discussModelUnavailable = true;
+    try {
+      response = await call(AI_CONFIG.model);
+    } catch (fallbackErr) {
+      const msg = fallbackErr instanceof Error ? fallbackErr.message : "Unknown error";
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
   }
+
+  // `.text` is a getter that throws on a blocked response.
+  let rawText = "";
+  try {
+    rawText = response.text ?? "";
+  } catch {
+    rawText = "";
+  }
+
+  const parsed = parseModelJson(rawText);
+  return NextResponse.json(parseDiscussReply(parsed.ok ? parsed.value : null, rawText));
 }

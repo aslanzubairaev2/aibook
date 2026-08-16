@@ -189,10 +189,62 @@ export type DiscussContentPart = {
   translation?: string;
 };
 
+/**
+ * A button the tutor can put under its answer, wired to a screen the app
+ * already has. The model only says *what* would help here ("the conjugation of
+ * aufräumen"); the app decides how to show it.
+ */
+export type DiscussActionKind = "conjugation" | "declension" | "comparison" | "forms" | "word";
+
+export type DiscussAction = {
+  kind: DiscussActionKind;
+  /** Button caption, in the learner's native language. */
+  label: string;
+  /** Dictionary form the modal should open on. */
+  word: string;
+};
+
 export type DiscussMessage = {
   role: "user" | "model";
   text?: string;
   contentParts?: DiscussContentPart[];
+  /**
+   * Follow-up questions this particular learner is likely to ask next, written
+   * by the model from the context. They replace the fixed chip list, which
+   * offered "Отличия" whether or not there was anything to contrast.
+   */
+  suggestions?: string[];
+  actions?: DiscussAction[];
+};
+
+/**
+ * How well the learner already knows the thing being discussed, read off the
+ * SRS state of their own card for it. The tutor uses this to decide whether to
+ * explain the basics, hand over a memory hook, or skip straight to nuance.
+ */
+export type DiscussFamiliarity =
+  /** No card for it — nothing known about this learner and this word. */
+  | "unseen"
+  /** Saved, never successfully recalled yet. */
+  | "new"
+  /** Keeps being forgotten: lapses, or a low ease factor. */
+  | "struggling"
+  /** On its way in, short intervals. */
+  | "learning"
+  /** Recalled reliably for a while. */
+  | "familiar"
+  /** Long intervals, no recent failures. */
+  | "mastered";
+
+export type DiscussWordProfile = {
+  familiarity: DiscussFamiliarity;
+  status?: CardStatus;
+  repetitions?: number;
+  lapses?: number;
+  intervalDays?: number;
+  easeFactor?: number;
+  /** CEFR level of the word itself, when the dictionary knows it. */
+  cefr?: string | null;
 };
 
 export type ReaderSelectionSnapshot = {

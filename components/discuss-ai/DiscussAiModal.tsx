@@ -1,11 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { Loader2, Mic, Send, X, Quote, Plus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { Loader2, Mic, Send, X, Quote, Plus, Table2 } from "lucide-react";
 import { discussWithAi } from "@/lib/ai/discuss";
+import { INITIAL_DISCUSS_REQUEST } from "@/lib/ai/buildDiscussPrompt";
+import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 import { normalizeToken, splitIntoTokens } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
-import type { AiMode, DiscussContentPart, DiscussMessage } from "@/lib/types";
+import { GrammarModal } from "@/components/word-modal/GrammarModal";
+import type {
+  AiMode,
+  DiscussAction,
+  DiscussActionKind,
+  DiscussContentPart,
+  DiscussMessage,
+  DiscussWordProfile,
+  PosTag,
+} from "@/lib/types";
 
 type Props = {
   isOpen: boolean;
@@ -22,6 +33,12 @@ type Props = {
   onWordTap: (word: string, contextSentence: string) => void;
   onAddExample?: (text: string, translation: string) => void;
   isHistoryLoading?: boolean;
+  /**
+   * How well this learner already knows the thing being discussed, read off
+   * their own card for it. Lets the tutor hand over a memory hook for a word
+   * that keeps being forgotten and skip the basics for one that is known.
+   */
+  wordProfile?: DiscussWordProfile;
 };
 
 const MODE_LABEL: Record<AiMode, string> = {
@@ -30,19 +47,22 @@ const MODE_LABEL: Record<AiMode, string> = {
   sentence: "предложение",
 };
 
+// Shown only until the model's own follow-ups arrive with its first answer.
+// Phrased the way the learner would ask, so tapping one reads as a question
+// rather than as a category ("Отличия" answered a question nobody had asked).
 const BASE_QUICK_PROMPTS: Record<AiMode, string[]> = {
-  word: ["Примеры", "Отличия", "Как запомнить"],
-  phrase: ["Когда говорят", "3 примера", "Разбор слов"],
-  sentence: ["Структура", "Проще", "Похожее"],
+  word: ["Как сказать «я …»", "Примеры из жизни", "Как запомнить"],
+  phrase: ["Когда так говорят", "Сказать иначе", "Что ответить"],
+  sentence: ["Скажи проще", "Разбери по частям", "Как ответить"],
 };
 
-const FOLLOW_UP_PROMPTS = [
-  "Ещё примеры",
-  "А синонимы?",
-  "Подробнее",
-  "Когда используют?",
-  "Антонимы",
-];
+/** Which grammar table each button kind opens. */
+const ACTION_POS: Record<Exclude<DiscussActionKind, "word">, PosTag> = {
+  conjugation: "verb",
+  declension: "noun",
+  comparison: "adjective",
+  forms: "other",
+};
 
 const DISCUSS_LABEL = "Обсудить с AI";
 const CLOSE_LABEL = "Закрыть";
@@ -50,13 +70,11 @@ const LISTENING_PLACEHOLDER = "Слушаю...";
 const QUESTION_PLACEHOLDER = "Короткий вопрос";
 const VOICE_INPUT_LABEL = "Голосовой ввод";
 const SEND_LABEL = "Отправить";
-const EMPTY_TEXT = "AI сейчас подготовит короткий разбор. Можно сразу спросить о примерах, отличиях или грамматике.";
+const EMPTY_TEXT = "Сейчас разберём: что это значит и как это сказать самому — с живыми примерами.";
 const TYPING_TEXT = "AI печатает...";
 const ERROR_TEXT = "Не получилось связаться с AI. Попробуйте еще раз.";
 const QUOTE_LABEL = "Цитировать";
-
-const INITIAL_ANALYSIS_PROMPT =
-  "Give a short general analysis and summary for the selected text. If you use examples in the target language, add translations to the native language.";
+const FORMS_ACTION_LABEL = "Формы слова";
 
 export function DiscussAiModal({
   isOpen,
@@ -73,14 +91,19 @@ export function DiscussAiModal({
   onWordTap,
   onAddExample,
   isHistoryLoading = false,
+  wordProfile,
 }: Props) {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [quotedText, setQuotedText] = useState<string | null>(null);
-  const [dynamicPrompts, setDynamicPrompts] = useState<string[] | null>(null);
   const [placeholderOverride, setPlaceholderOverride] = useState<string | null>(null);
+  // Estimated from books read and deck size, locally — see lib/ai/userLevel.
+  // `ready` gates the opening request so the very first answer is already
+  // pitched at the right level instead of being generic.
+  const [learnerLevel, setLearnerLevel] = useState<{ ready: boolean; summary?: string }>({ ready: false });
+  const [grammarFor, setGrammarFor] = useState<{ word: string; posTag: PosTag } | null>(null);
   const initialSentRef = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -105,6 +128,22 @@ export function DiscussAiModal({
     if (!isOpen) return;
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isOpen]);
+
+  // Read the learner's level once per opening. A failure here is not worth
+  // showing anyone: the discussion just proceeds without the hint.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const estimate = await estimateTargetLanguageLevel(targetLanguage);
+        if (!cancelled) setLearnerLevel({ ready: true, summary: estimate?.summary });
+      } catch {
+        if (!cancelled) setLearnerLevel({ ready: true });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isOpen, targetLanguage]);
 
   // Document selection change listener to preserve mobile/desktop highlight selections before click clears them
   useEffect(() => {
@@ -224,22 +263,12 @@ export function DiscussAiModal({
 
   // Auto-send initial analysis prompt (hidden from user)
   useEffect(() => {
-    if (!isOpen || isHistoryLoading) return;
+    if (!isOpen || isHistoryLoading || !learnerLevel.ready) return;
     const initialKey = `${mode}:${selectedText}:${sentence}`;
     if (messages.length > 0 || initialSentRef.current === initialKey) return;
     initialSentRef.current = initialKey;
     void sendInitialPromptRef.current();
-  }, [isOpen, mode, selectedText, sentence, messages.length, isHistoryLoading]);
-
-  // Update dynamic prompts after AI responds
-  useEffect(() => {
-    if (messages.length < 2) {
-      setDynamicPrompts(null);
-      return;
-    }
-    const shuffled = [...FOLLOW_UP_PROMPTS].sort(() => Math.random() - 0.5);
-    setDynamicPrompts(shuffled.slice(0, 3));
-  }, [messages.length]);
+  }, [isOpen, mode, selectedText, sentence, messages.length, isHistoryLoading, learnerLevel.ready]);
 
   // Send the initial prompt WITHOUT showing it in the chat
   async function sendInitialPrompt() {
@@ -255,8 +284,10 @@ export function DiscussAiModal({
         sentenceAfter,
         nativeLanguage,
         targetLanguage,
+        learnerLevel: learnerLevel.summary,
+        wordProfile,
         history: [],
-        message: INITIAL_ANALYSIS_PROMPT,
+        message: INITIAL_DISCUSS_REQUEST,
       });
       if (latestMessagesRef.current.length === 0) {
         onMessagesChange([response]);
@@ -301,6 +332,8 @@ export function DiscussAiModal({
         sentenceAfter,
         nativeLanguage,
         targetLanguage,
+        learnerLevel: learnerLevel.summary,
+        wordProfile,
         history: messages,
         message: fullText,
       });
@@ -316,12 +349,44 @@ export function DiscussAiModal({
     } finally {
       setIsSending(false);
     }
-  }, [isSending, quotedText, messages, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage]);
+  }, [isSending, quotedText, messages, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage, learnerLevel.summary, wordProfile]);
 
   // Keep ref updated to prevent SpeechRecognition from getting stale values
   useEffect(() => {
     sendMessageRef.current = sendMessage;
   }, [sendMessage]);
+
+  const lastModelMessage = useMemo(
+    () => [...messages].reverse().find((message) => message.role === "model"),
+    [messages],
+  );
+
+  // The chips follow the answer: the model writes the three questions this
+  // learner would plausibly ask next about this item. The fixed list is only
+  // the opening hand, before there is anything to follow up on.
+  const currentPrompts = lastModelMessage?.suggestions?.length
+    ? lastModelMessage.suggestions
+    : BASE_QUICK_PROMPTS[mode];
+
+  // Buttons into the app's own tables. Whatever the model offered, plus a
+  // standing one for the selected word — the forms are always one tap away,
+  // whether or not the answer happened to mention them.
+  const actions = useMemo(() => {
+    const fromModel = lastModelMessage?.actions ?? [];
+    const standing: DiscussAction[] =
+      mode === "word" && selectedText.trim()
+        ? [{ kind: "forms", label: FORMS_ACTION_LABEL, word: selectedText.trim() }]
+        : [];
+    const seen = new Set<string>();
+    return [...fromModel, ...standing].filter((action) => {
+      const key = action.word.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [lastModelMessage, mode, selectedText]);
+
+  if (!isOpen) return null;
 
   function toggleListening() {
     if (!recognitionRef.current || isSending) return;
@@ -344,9 +409,13 @@ export function DiscussAiModal({
     }
   }
 
-  if (!isOpen) return null;
-
-  const currentPrompts = dynamicPrompts || BASE_QUICK_PROMPTS[mode];
+  function handleAction(action: DiscussAction) {
+    if (action.kind === "word") {
+      onWordTap(action.word, sentence || selectedText);
+      return;
+    }
+    setGrammarFor({ word: action.word, posTag: ACTION_POS[action.kind] });
+  }
 
   return (
     <div className="modal-backdrop discuss-backdrop" onClick={onClose}>
@@ -419,6 +488,21 @@ export function DiscussAiModal({
               </button>
             </div>
           )}
+          {actions.length > 0 && (
+            <div className="discuss-actions">
+              {actions.map((action) => (
+                <button
+                  key={`${action.kind}:${action.word}`}
+                  type="button"
+                  onClick={() => handleAction(action)}
+                  title={action.label}
+                >
+                  <Table2 size={12} />
+                  <span>{action.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="discuss-quick-prompts">
             {currentPrompts.map((prompt) => (
               <button
@@ -447,6 +531,19 @@ export function DiscussAiModal({
           </button>
         </form>
       </section>
+
+      {/* The same conjugation/declension tables the word modal opens, reachable
+          without leaving the discussion. */}
+      {grammarFor && (
+        <GrammarModal
+          key={`${grammarFor.posTag}:${grammarFor.word}`}
+          word={grammarFor.word}
+          posTag={grammarFor.posTag}
+          defaultLang={targetLanguage}
+          nativeLang={nativeLanguage}
+          onClose={() => setGrammarFor(null)}
+        />
+      )}
     </div>
   );
 }

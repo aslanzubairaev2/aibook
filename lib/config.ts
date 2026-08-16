@@ -1,5 +1,19 @@
 export const AI_CONFIG = {
   model: "gemini-3.1-flash-lite",
+  /**
+   * "Обсудить с AI" runs on a stronger model than the rest of the app.
+   * Everything else here is extraction — a translation, a word's fields, a
+   * grammar table — where the lite model is exactly right. The discussion is
+   * the one place that has to reason about what this particular learner needs
+   * and write it in plain language, and the lite model answered it with a
+   * dictionary gloss.
+   *
+   * If the key in use cannot reach this model, the route falls back to
+   * `model` on the first 404 rather than failing the chat.
+   */
+  discussModel: process.env.NEXT_PUBLIC_GEMINI_DISCUSS_MODEL || "gemini-3.7-flash",
+  /** A discussion answer carries several examples and their translations. */
+  discussMaxOutputTokens: 4096,
   maxOutputTokens: 1024,
   temperature: 0.2,
   contextSentences: 1,

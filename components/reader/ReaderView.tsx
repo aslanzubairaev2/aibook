@@ -39,6 +39,7 @@ import {
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { findDuplicateCard } from "@/lib/cards";
+import { describeTextFamiliarity } from "@/lib/ai/wordProfile";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { getTTSState, prepareFullTextAudio, speak, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
 import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, LessonContext, ReaderProgressSnapshot, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
@@ -597,6 +598,14 @@ export function ReaderView({
     if (mode === "phrase") return token.phraseText;
     return token.sentence;
   }
+
+  // What the deck already says about the selected text, for the discussion's
+  // sense of how much this learner needs told. Memoised so the chat's send
+  // handler is not rebuilt on every render of the reader.
+  const discussWordProfile = useMemo(
+    () => (active ? describeTextFamiliarity(getTextForMode(active, activeTab), cards) : undefined),
+    [active, activeTab, cards],
+  );
 
   function getRegularSelectionForMode(token: ActiveToken, mode: AiMode) {
     if (!token.isCustomSentence || mode === "sentence") return token;
@@ -1477,6 +1486,7 @@ export function ReaderView({
           nativeLanguage={profile.nativeLanguage}
           targetLanguage={book.language}
           messages={discussMessages}
+          wordProfile={discussWordProfile}
           onMessagesChange={handleDiscussMessagesChange}
           onClose={() => setIsDiscussOpen(false)}
           onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
