@@ -31,6 +31,7 @@ import { isTypingTarget, trainerHotkey } from "@/lib/srs/trainerHotkeys";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { prefetchSpeechAhead, speak } from "@/lib/tts";
+import { RespeakButton } from "@/components/ui/RespeakButton";
 import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
@@ -1742,6 +1743,15 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                       >
                         <MessageCircle size={22} />
                       </button>
+                      {/* Re-record. Shown wherever something is actually spoken:
+                          a reversed prompt is the learner's own language and is
+                          never read aloud, so there is nothing there to fix. */}
+                      {!isReversed && (
+                        <RespeakButton
+                          text={isAudio ? currentCard.front : promptText}
+                          lang={isAudio ? targetLanguage : promptLang}
+                        />
+                      )}
                       {/* TTS button — long press or right-click to change provider.
                           Hidden when the prompt is native-language text (speaking it
                           back is pointless) or audio mode (its own play button covers this). */}
@@ -1812,6 +1822,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                     </div>
                     {(isReversed || isAudio) && (
                       <div className="card-actions-right">
+                        <RespeakButton text={currentCard.front} lang={targetLanguage} />
                         <div className="card-tts-wrap" onClick={(e) => e.stopPropagation()}>
                           <SpeakButton text={currentCard.front} lang={targetLanguage} size={22} />
                         </div>
