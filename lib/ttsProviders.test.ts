@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildGeminiSpeechPrompt,
+  getElevenLabsLanguageCode,
+  getLanguageName,
+  isPromptDirectedTts,
+  teacherInstructions,
   getAvailableTtsProviders,
   getBcp47Locale,
   getSpeechifyLocale,
@@ -169,4 +174,75 @@ test("normalizes a missing provider to Gemini", () => {
 test("accepts both supported Inworld key shapes", () => {
   assert.equal(getInworldAuthorizationHeader("abc123"), "Basic abc123");
   assert.equal(getInworldAuthorizationHeader(" Basic abc123 "), "Basic abc123");
+});
+
+// ─── Telling the engine what to do ───────────────────────────────────────────
+//
+// Two failures these guard against, both seen in a real session: the German
+// "so" read aloud as English, because nothing said which language it was; and
+// the German "lacht" answered with laughter rather than with the word, because
+// nothing said it was a word to pronounce rather than a meaning to perform.
+
+test("the Gemini prompt names the language and ends with the text to speak", () => {
+  const prompt = buildGeminiSpeechPrompt("lacht", "de");
+
+  assert.match(prompt, /in German/);
+  // Direction first, text last: everything after the colon is what gets said,
+  // so the word has to be the tail of the prompt and nothing may follow it.
+  assert.ok(prompt.endsWith(": lacht"), prompt);
+});
+
+test("the Gemini prompt forbids acting the word out", () => {
+  const prompt = buildGeminiSpeechPrompt("lacht", "de");
+
+  assert.match(prompt, /without acting it out/);
+  assert.match(prompt, /sound effects/);
+});
+
+test("a language with no name still gets a usable prompt", () => {
+  const prompt = buildGeminiSpeechPrompt("lacht", "xx");
+
+  assert.doesNotMatch(prompt, /\bin null\b|\bin undefined\b/);
+  assert.ok(prompt.endsWith(": lacht"), prompt);
+});
+
+test("the spoken instructions name the language and rule out sound effects", () => {
+  const german = teacherInstructions("de");
+
+  assert.match(german, /The text is German/);
+  assert.match(german, /German pronunciation/);
+  assert.match(german, /laughter/);
+  assert.match(german, /never performed/);
+});
+
+test("instructions for an unnamed language fall back to the text's own", () => {
+  const unknown = teacherInstructions("xx");
+
+  assert.doesNotMatch(unknown, /\bnull\b|\bundefined\b/);
+  assert.match(unknown, /in the language of the text/);
+  // The no-acting direction is not conditional on knowing the language.
+  assert.match(unknown, /laughter/);
+});
+
+test("a language name is only claimed for languages we have one for", () => {
+  assert.equal(getLanguageName("de"), "German");
+  assert.equal(getLanguageName("de-AT"), "German");
+  assert.equal(getLanguageName("xx"), null);
+});
+
+test("ElevenLabs is told the language only by the models that accept one", () => {
+  // Sending language_code to a model that does not take it is a 400, not a hint.
+  assert.equal(getElevenLabsLanguageCode("eleven_flash_v2_5", "de"), "de");
+  assert.equal(getElevenLabsLanguageCode("eleven_turbo_v2_5", "de-AT"), "de");
+  assert.equal(getElevenLabsLanguageCode("eleven_multilingual_v2", "de"), null);
+  assert.equal(getElevenLabsLanguageCode("eleven_flash_v2_5", "xx"), null);
+});
+
+test("only the engines that take direction expire on a style change", () => {
+  assert.equal(isPromptDirectedTts("gemini"), true);
+  assert.equal(isPromptDirectedTts("openai"), true);
+  // The rest are configured in fields, and make the same sound as before.
+  assert.equal(isPromptDirectedTts("deepgram"), false);
+  assert.equal(isPromptDirectedTts("cartesia"), false);
+  assert.equal(isPromptDirectedTts("elevenlabs"), false);
 });

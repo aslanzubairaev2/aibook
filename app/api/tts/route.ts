@@ -19,10 +19,13 @@ import {
   isCartesiaTtsSupported,
   isCartesiaVoiceId,
   isElevenLabsTtsSupported,
+  buildGeminiSpeechPrompt,
+  getElevenLabsLanguageCode,
+  SPEECH_STYLE_VERSION,
   isValidModelRef,
   isValidVoiceRef,
   OPENAI_SPEAKING_RATE,
-  TEACHER_INSTRUCTIONS,
+  teacherInstructions,
   getInworldAuthorizationHeader,
   getDeepgramTtsModel,
   getSpeechifyLocale,
@@ -93,7 +96,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ ElevenLabs (ELEVENLABS_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithElevenLabs(text, chosenVoice, chosenModel);
+      const spoken = await speakWithElevenLabs(text, lang, chosenVoice, chosenModel);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
@@ -189,7 +192,14 @@ export async function POST(req: Request) {
     // Only a model other than the usual one joins the key: everything recorded
     // before models could be chosen was recorded with that one, and re-earning
     // a full cache costs quota a preview model counts by the request.
-    const geminiCacheKey = geminiModel === GEMINI_TTS_MODEL ? voiceName : `${geminiModel}:${voiceName}`;
+    //
+    // The style version does join it, though, and knowingly costs that quota.
+    // Every recording made before the model was told anything is in whichever
+    // language it guessed, acted out or not — which is the thing being fixed,
+    // so serving those again would be serving the bug.
+    const geminiCacheKey = geminiModel === GEMINI_TTS_MODEL
+      ? `${voiceName}:${SPEECH_STYLE_VERSION}`
+      : `${geminiModel}:${voiceName}:${SPEECH_STYLE_VERSION}`;
 
     // 1. Check database cache
     const cachedAudio = await sbGetCachedTts(text, lang, geminiCacheKey);
@@ -197,7 +207,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider: "gemini", model: geminiModel });
     }
 
-    const makeRequest = (inputText: string) => geminiTtsRequest(apiKey, geminiModel, voiceName, inputText);
+    const makeRequest = (inputText: string) => geminiTtsRequest(apiKey, geminiModel, voiceName, inputText, lang);
 
     let response: Response;
     try {
@@ -406,7 +416,7 @@ async function speakWithAutomaticFallback(
       if (provider === "elevenlabs") {
         if (!getElevenLabsApiKey()) continue;
 
-        const spoken = await speakWithElevenLabs(text);
+        const spoken = await speakWithElevenLabs(text, lang);
         if (!("error" in spoken)) {
           return {
             ...spoken,
@@ -432,12 +442,18 @@ async function speakWithAutomaticFallback(
  * Shared by the main path and by the model fallback: a second hand-kept copy of
  * this body is exactly the kind of thing that drifts out of step.
  */
-function geminiTtsRequest(apiKey: string, model: string, voiceName: string, inputText: string) {
+function geminiTtsRequest(
+  apiKey: string,
+  model: string,
+  voiceName: string,
+  inputText: string,
+  lang: string,
+) {
   return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: inputText }] }],
+      contents: [{ parts: [{ text: buildGeminiSpeechPrompt(inputText, lang) }] }],
       safetySettings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
         { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -467,12 +483,14 @@ async function speakWithGeminiModel(
   apiKey: string,
 ): Promise<Spoken> {
   // Matches the main path's key exactly, so the two share their recordings.
-  const cacheKey = model === GEMINI_TTS_MODEL ? voiceName : `${model}:${voiceName}`;
+  const cacheKey = model === GEMINI_TTS_MODEL
+    ? `${voiceName}:${SPEECH_STYLE_VERSION}`
+    : `${model}:${voiceName}:${SPEECH_STYLE_VERSION}`;
 
   const cached = await sbGetCachedTts(text, lang, cacheKey);
   if (cached) return { audioBase64: cached, source: "db_cache" };
 
-  const response = await geminiTtsRequest(apiKey, model, voiceName, text);
+  const response = await geminiTtsRequest(apiKey, model, voiceName, text, lang);
   if (!response.ok) {
     return { error: `Gemini ${model}: ${response.status}`, status: response.status };
   }
@@ -737,6 +755,7 @@ async function listElevenLabsVoices(
  */
 async function speakWithElevenLabs(
   text: string,
+  lang: string,
   requestedVoice?: string,
   requestedModel?: string,
 ): Promise<Spoken> {
@@ -747,10 +766,14 @@ async function speakWithElevenLabs(
   if ("error" in voice) return voice;
 
   const model = getElevenLabsModel(requestedModel);
+  // Flash and Turbo 2.5 can be told the language; the others read it off the
+  // text, which is how a German "so" ends up read as English.
+  const languageCode = getElevenLabsLanguageCode(model, lang);
   const cacheVoiceKey = `${model}:${voice.id}`;
-  // ElevenLabs picks the language up from the text, so the cache is keyed by
-  // the voice alone; "und" keeps those rows out of the per-language ones.
-  const cached = await sbGetCachedTts(text, "und", cacheVoiceKey);
+  // A recording told which language to use belongs to that language. Only the
+  // models that take no such hint still share the language-less "und" rows.
+  const cacheLang = languageCode ?? "und";
+  const cached = await sbGetCachedTts(text, cacheLang, cacheVoiceKey);
   if (cached) {
     return { audioBase64: cached, source: "db_cache", sampleRate: ELEVENLABS_PCM_SAMPLE_RATE };
   }
@@ -758,6 +781,7 @@ async function speakWithElevenLabs(
   const body = JSON.stringify({
     text,
     model_id: model,
+    ...(languageCode ? { language_code: languageCode } : {}),
     // Steady enough to be a reference, expressive enough not to drone; speaker
     // boost keeps the opening consonant from being swallowed.
     voice_settings: {
@@ -812,7 +836,7 @@ async function speakWithElevenLabs(
     return { audioBase64, source: "api", format: "mp3" };
   }
 
-  await sbSaveCachedTts(text, "und", cacheVoiceKey, audioBase64);
+  await sbSaveCachedTts(text, cacheLang, cacheVoiceKey, audioBase64);
   return { audioBase64, source: "api", sampleRate: ELEVENLABS_PCM_SAMPLE_RATE };
 }
 
@@ -852,9 +876,9 @@ async function speakWithOpenAi(
   const voiceId = requestedVoice ? normalizeOpenAiVoice(requestedVoice) : getOpenAiVoiceId();
   // Switching the voice must not serve the previous one out of the cache, and
   // neither must changing how it is told to read: "teacher" marks the delivery
-  // this key was recorded with.
-  const cacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}:teacher`;
+  // this key was recorded with, and the version marks which wording of it.
   const language = normalizeLanguageCode(lang);
+  const cacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}:teacher:${SPEECH_STYLE_VERSION}`;
 
   const cached = await sbGetCachedTts(text, language, cacheVoiceKey);
   if (cached) return { audioBase64: cached, source: "db_cache", format: "mp3" };
@@ -871,7 +895,7 @@ async function speakWithOpenAi(
       voice: voiceId,
       // gpt-4o-mini-tts takes direction in plain words, and reads a shade
       // slower than a learner following along wants.
-      instructions: TEACHER_INSTRUCTIONS,
+      instructions: teacherInstructions(lang),
       speed: OPENAI_SPEAKING_RATE,
       response_format: "mp3",
     }),

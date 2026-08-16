@@ -278,3 +278,37 @@ test("a prefetch that fails does not caption the card played next", async () => 
 
   assert.equal(getLastTtsError(), null);
 });
+
+// ─── Expiring what the old instructions produced ─────────────────────────────
+
+/** Put audio in the cache directly, the way an older version of the app would. */
+function seedCache(key: string) {
+  cacheStore.set(key, { body: SILENCE, headers: new Map([["X-Sample-Rate", "24000"]]) });
+}
+
+test("a recording made before the engine was told anything is not served", async () => {
+  // Gemini used to be handed the bare word with no direction, so those
+  // recordings are in whichever language it guessed and may act the word out
+  // rather than say it. Playing them back would be playing back the bug.
+  useProvider("gemini");
+  const server: Server = { calls: 0, reply: () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  serve(server);
+
+  seedCache("tts-gemini-Algenib-de-Guten%20Tag!");
+  await speak("Guten Tag!", "de");
+
+  assert.equal(server.calls, 1);
+});
+
+test("an engine that takes no direction keeps the recordings it had", async () => {
+  // Deepgram picks its voice by language from a field, so nothing about what it
+  // says changed. Expiring its cache would spend quota on identical audio.
+  useProvider("deepgram");
+  const server: Server = { calls: 0, reply: () => ({ audioBase64: SILENCE, provider: "deepgram" }) };
+  serve(server);
+
+  seedCache("tts-deepgram-aura-2-julius-de-de-Guten%20Tag!");
+  await speak("Guten Tag!", "de");
+
+  assert.equal(server.calls, 0);
+});

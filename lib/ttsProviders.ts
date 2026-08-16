@@ -76,6 +76,49 @@ export function getSpeechifyModel(lang: string) {
   return SIMBA_3_LANGUAGES.has(normalizeLanguageCode(lang)) ? "simba-3.0" : "simba-multilingual";
 }
 
+/**
+ * The English name of a language, for engines that take their direction in
+ * prose rather than in a locale field.
+ *
+ * Naming the language is the whole point: an engine left to infer it from the
+ * text has only the spelling to go on, and the words a learner drills are the
+ * short ones that several languages spell the same way.
+ */
+const LANGUAGE_NAMES: Record<string, string> = {
+  de: "German", en: "English", es: "Spanish", fr: "French", it: "Italian",
+  pt: "Portuguese", ru: "Russian", nl: "Dutch", ja: "Japanese", pl: "Polish",
+  tr: "Turkish", uk: "Ukrainian", sv: "Swedish", da: "Danish", nb: "Norwegian",
+  fi: "Finnish", cs: "Czech", el: "Greek", he: "Hebrew", hi: "Hindi",
+  ar: "Arabic", zh: "Chinese", ko: "Korean", vi: "Vietnamese", id: "Indonesian",
+  ro: "Romanian", hu: "Hungarian", bg: "Bulgarian", sk: "Slovak", hr: "Croatian",
+};
+
+/** Null for a language we have no name for — better silent than wrong. */
+export function getLanguageName(lang: string): string | null {
+  return LANGUAGE_NAMES[normalizeLanguageCode(lang)] ?? null;
+}
+
+/**
+ * Engines whose voice is directed in prose rather than configured in fields.
+ *
+ * They are the ones a changed instruction changes the output of, so they are
+ * the ones whose cached recordings a changed instruction must expire.
+ */
+export function isPromptDirectedTts(provider: string): boolean {
+  return provider === "gemini" || provider === "openai";
+}
+
+/**
+ * Bumped whenever the direction given to those engines changes.
+ *
+ * What they say is a function of the instruction as much as of the text, so a
+ * rewritten instruction leaves every recording made under the old one stale —
+ * and here "stale" means precisely the wrong-language, acted-out readings this
+ * was rewritten to stop. It rides in both cache keys, so neither the browser's
+ * copy nor the shared one outlives the change that replaced it.
+ */
+export const SPEECH_STYLE_VERSION = "s2";
+
 /** Widen a bare language code to the BCP-47 tag the voice APIs expect. */
 export function getBcp47Locale(lang: string) {
   // A caller that already passed a full locale ("de-AT") knows better than the table.
@@ -114,10 +157,11 @@ export function isInworldTtsSupported(lang: string) {
 
 // ─── OpenAI ──────────────────────────────────────────────────────────────────
 //
-// gpt-4o-mini-tts takes no language field at all: the voice follows the language
-// of the text it is handed. So there is no locale table to keep here and no
-// per-language question to answer — it speaks whatever the deck holds, which is
-// why it is the one voice offered for every language.
+// gpt-4o-mini-tts takes no language field at all, so there is no locale table to
+// keep here — it speaks whatever the deck holds, which is why it is the one
+// voice offered for every language. What it does take is direction in plain
+// words, and the language is named there instead: left to infer it from the
+// text alone, it reads short words into whichever language spells them that way.
 
 export const OPENAI_TTS_MODEL = "gpt-4o-mini-tts";
 
@@ -204,6 +248,20 @@ export function isCartesiaTtsSupported(lang: string) {
  * wins over this constant, which only fills in when it is unset.
  */
 export const ELEVENLABS_MODEL = "eleven_flash_v2_5";
+
+/**
+ * The models that accept a language_code, and so can be told which language.
+ *
+ * The rest infer it from the text, and sending the field to one of those is a
+ * 400 rather than a hint — so it is sent only where it is understood.
+ */
+const ELEVENLABS_LANGUAGE_CODE_MODELS = new Set(["eleven_flash_v2_5", "eleven_turbo_v2_5"]);
+
+/** The language code to send with this model, or null when it takes none. */
+export function getElevenLabsLanguageCode(model: string, lang: string): string | null {
+  if (!ELEVENLABS_LANGUAGE_CODE_MODELS.has(model)) return null;
+  return getLanguageName(lang) ? normalizeLanguageCode(lang) : null;
+}
 
 /** Roger, by id — see ELEVENLABS_MALE_VOICES for why the id and not the name. */
 export const ELEVENLABS_DEFAULT_VOICE = "CwhRBWXzGAHq8TQ4Fs17";
@@ -373,14 +431,51 @@ export function supportsModelChoice(provider: TtsProvider) {
 // swallowed at the start, and slow enough to follow without being a dirge.
 // Only some engines take direction; those that do get this.
 
-export const TEACHER_INSTRUCTIONS = [
-  "You are a warm, patient language teacher reading aloud for a student.",
-  "Pronounce every word completely and distinctly, in the language of the text.",
-  "Never clip, swallow or rush the first syllable of a sentence — begin cleanly.",
-  "Keep an even, unhurried pace with clear separation between words,",
-  "a short pause at commas and a full one at sentence ends.",
-  "Use natural, encouraging intonation; do not act, whisper or dramatise.",
-].join(" ");
+export function teacherInstructions(lang: string) {
+  const language = getLanguageName(lang);
+  return [
+    "You are a warm, patient language teacher reading aloud for a student.",
+    // Without this an engine that reads the language off the text alone will
+    // guess, and short words spelled alike across languages — German "so",
+    // "was", "die", "hat" — get guessed into English.
+    language
+      ? `The text is ${language}. Read it as ${language}, with ${language} pronunciation, whatever other language it may resemble.`
+      : "Pronounce every word completely and distinctly, in the language of the text.",
+    "Read the text exactly as written. Never translate, explain, spell out or add to it.",
+    // The engines are answering a dictionary lookup, not performing a scene.
+    // Told only to "read a word", they have acted the word out instead: the
+    // German "lacht" came back as laughter rather than as the word.
+    "Never act out or illustrate what the text means. Produce no laughter, sighs,",
+    "gasps, breaths, crying, shouting or any other sound effect, no matter what",
+    "the words describe — every word is spoken, never performed.",
+    "Never clip, swallow or rush the first syllable of a sentence — begin cleanly.",
+    "Keep an even, unhurried pace with clear separation between words,",
+    "a short pause at commas and a full one at sentence ends.",
+    "Use a calm, even, encouraging tone; do not dramatise or whisper.",
+  ].join(" ");
+}
+
+/**
+ * The prompt Gemini's speech models take: direction, a colon, then the words.
+ *
+ * Everything ahead of the colon steers the delivery and is not spoken, and
+ * everything after it is — which is why the direction is kept to one sentence.
+ * A long one starts to read like content, and content is what gets said aloud.
+ *
+ * Until this existed the model was handed the bare word and told nothing, so it
+ * settled both open questions itself: which language a word like "so" is in,
+ * and whether "lacht" is a word to pronounce or a laugh to perform.
+ */
+export function buildGeminiSpeechPrompt(text: string, lang: string) {
+  const language = getLanguageName(lang);
+  return [
+    "Say the following",
+    language ? ` in ${language}` : "",
+    ", exactly as written, with a calm and neutral teacher's voice,",
+    " without acting it out or adding any sound effects: ",
+    text,
+  ].join("");
+}
 
 /** GPT-4o reads a shade slower than a learner wants; nudge it along. */
 export const OPENAI_SPEAKING_RATE = 1.1;

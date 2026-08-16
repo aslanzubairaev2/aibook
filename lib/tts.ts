@@ -13,7 +13,9 @@ import {
   isSpeechifyTtsSupported,
   INWORLD_MODEL,
   isOpenAiTtsSupported,
+  isPromptDirectedTts,
   normalizeLanguageCode,
+  SPEECH_STYLE_VERSION,
   OPENAI_TTS_MODEL,
 } from "./ttsProviders";
 
@@ -317,7 +319,11 @@ function ttsCacheKey(text: string, provider: string, lang: string): string {
   // it must not play back what the previous one recorded.
   const model = chosenModelFor(provider);
   const engine = model ? `${provider}-${model}` : provider;
-  return `tts-${engine}-${voiceKeyFor(provider, lang)}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
+  // And so does the direction, for the engines that take one — but only those.
+  // The rest make the same sound they always did, and expiring their recordings
+  // would spend quota to hear something identical.
+  const style = isPromptDirectedTts(provider) ? `-${SPEECH_STYLE_VERSION}` : "";
+  return `tts-${engine}${style}-${voiceKeyFor(provider, lang)}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
 }
 
 /** One trip to `/api/tts`, returning null (and recording why) on any failure. */
