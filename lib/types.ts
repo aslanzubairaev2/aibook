@@ -58,6 +58,8 @@ export type CardFilters = {
   trainSourceId?: string | null;
   trainVariants?: TrainVariant[];
   trainMode?: "recognize" | "active";
+  /** Full-immersion training: nothing on screen but the card and the grades. */
+  zenMode?: boolean;
 };
 
 export type UserProfile = {

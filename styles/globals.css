@@ -498,26 +498,39 @@ textarea,
   display: block;
 }
 
+.active-voice-label-track {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
 .active-voice-label-text {
   display: inline-block;
   white-space: nowrap;
 }
 
-/* A name too long for the space travels through it rather than widening it.
-   Held still at both ends so it can be read, and only ever applied when the
-   text actually overruns — a name that fits must not wander. */
-.active-voice-label.is-scrolling .active-voice-label-text {
-  animation: voice-label-marquee var(--marquee-duration, 6s) ease-in-out infinite alternate;
+/* A name too long for the space travels through it rather than widening it:
+   one steady run to the left, restarted the moment the trailing copy reaches
+   the position the first one started from, so the loop has no seam and no
+   backwards trip. Only ever applied when the text actually overruns — a name
+   that fits must not wander. */
+.active-voice-label.is-scrolling .active-voice-label-track {
+  gap: var(--marquee-gap, 36px);
+  animation: voice-label-marquee var(--marquee-duration, 6s) linear infinite;
 }
 
 @keyframes voice-label-marquee {
-  0%, 22% { transform: translateX(0); }
-  78%, 100% { transform: translateX(var(--marquee-shift, 0)); }
+  from { transform: translateX(0); }
+  to   { transform: translateX(calc(-1 * var(--marquee-distance, 0px))); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .active-voice-label.is-scrolling .active-voice-label-text { animation: none; }
-  .active-voice-label.is-scrolling { text-overflow: ellipsis; }
+  .active-voice-label.is-scrolling .active-voice-label-track { animation: none; }
+  /* Without the movement the chasing copy is only clutter, and the ellipsis
+     takes over the job of saying "there is more". */
+  .active-voice-label.is-scrolling .active-voice-label-text:nth-child(2) { display: none; }
+  .active-voice-label.is-scrolling .active-voice-label-text { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .active-voice-label.is-scrolling .active-voice-label-track { display: block; max-width: 100%; }
 }
 
 /* Inside the player, in the gap between the two timecodes. It takes no width of

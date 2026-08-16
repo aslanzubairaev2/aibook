@@ -32,6 +32,13 @@ test("the real arrow keys walk the review history", () => {
   assert.deepEqual(trainerHotkey(press("ArrowRight")), { kind: "historyNewer" });
 });
 
+test("escape is the way out of a screen that has hidden everything else", () => {
+  assert.deepEqual(trainerHotkey(press("Escape")), { kind: "zenExit" });
+  // Escape is read after the digits, so nothing it was already doing changes.
+  assert.deepEqual(trainerHotkey(press("Numpad1", "1")), { kind: "grade", score: 1 });
+  assert.deepEqual(trainerHotkey(press("ArrowLeft")), { kind: "historyOlder" });
+});
+
 test("keyboards without a keypad work off the digit row", () => {
   assert.deepEqual(trainerHotkey(press("Digit3", "3")), { kind: "grade", score: 3 });
   // A layout whose code says nothing useful still reports the character.
@@ -46,7 +53,6 @@ test("shortcuts never steal a browser or system combination", () => {
 
 test("keys the trainer has no use for are left alone", () => {
   assert.equal(trainerHotkey(press("KeyA", "a")), null);
-  assert.equal(trainerHotkey(press("Escape")), null);
   assert.equal(trainerHotkey(press("Space", " ")), null);
 });
 

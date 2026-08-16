@@ -116,6 +116,7 @@ export type ResolvedCardFilters = {
   trainSourceId: string | null;
   trainVariants: TrainVariant[];
   trainMode: NonNullable<CardFilters["trainMode"]>;
+  zenMode: boolean;
 };
 
 /**
@@ -156,6 +157,9 @@ export function resolveCardFilters(
       // learner sees.
       trainVariants: [...ALL_TRAIN_VARIANTS],
       trainMode: "recognize",
+      // Zen is how the learner likes to train, not part of what is being
+      // trained, so a batch narrows the deck without changing the view.
+      zenMode: saved?.zenMode ?? false,
     };
   }
 
@@ -171,6 +175,7 @@ export function resolveCardFilters(
     trainSourceId: saved?.trainSourceId ?? null,
     trainVariants: saved?.trainVariants?.length ? saved.trainVariants : DEFAULT_TRAIN_VARIANTS,
     trainMode: saved?.trainMode ?? "recognize",
+    zenMode: saved?.zenMode ?? false,
   };
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
-import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3 } from "lucide-react";
+import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2 } from "lucide-react";
 import type { AiAnalysis, CardFilters, CardSkillState, DiscussMessage, Flashcard, TrainVariant, TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
 import {
@@ -30,7 +30,7 @@ import {
 import { isTypingTarget, trainerHotkey } from "@/lib/srs/trainerHotkeys";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
-import { prefetchSpeechAhead, speak } from "@/lib/tts";
+import { prefetchSpeechAhead, speak, subscribeTTS } from "@/lib/tts";
 import { RespeakButton } from "@/components/ui/RespeakButton";
 import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
 import { analyzeSelection } from "@/lib/ai/analyze";
@@ -463,6 +463,16 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const [trainSourceId, setTrainSourceId] = useState<string | null>(initialFilters.trainSourceId);
   const [trainVariants, setTrainVariants] = useState<TrainVariant[]>(initialFilters.trainVariants);
   const [trainMode, setTrainMode] = useState<"recognize" | "active">(initialFilters.trainMode);
+  // Zen: the trainer with everything around it taken away — no header, no
+  // counters, no tabs, no filters. Grading a card is one decision repeated a
+  // hundred times, and on a phone the page around the card was tall enough to
+  // push the grade buttons under the fold, so every single one of those
+  // decisions cost a scroll down and a scroll back up.
+  const [zenMode, setZenMode] = useState(initialFilters.zenMode);
+  // Whether the audio player is on screen. It floats over the bottom of the
+  // viewport, exactly where the zen grade buttons live, so they step aside for
+  // it rather than letting it land on top of them.
+  const [playerOnScreen, setPlayerOnScreen] = useState(false);
   // Snapshot of the cards being trained this session — built once per session
   // start/filter change rather than re-derived from the (mutating) `cards`
   // prop on every render, so grading a card can't shrink the queue out from
@@ -824,6 +834,14 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     });
   }, [user]);
 
+  // Zen is a way of working, not a one-off view, so the choice is remembered
+  // the same way the filters are: a learner who trains this way trains this way
+  // tomorrow too, without hunting for the button again.
+  const setZen = useCallback((on: boolean) => {
+    setZenMode(on);
+    persistCardFilters({ zenMode: on });
+  }, [persistCardFilters]);
+
   // --- TTS provider change ---
   const handleTtsProviderChange = (provider: TtsProvider, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1057,6 +1075,30 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const historyCard = historyItem?.card;
   const historyBackParts = splitCardBack(historyCard?.back ?? "");
 
+  // Zen only takes over while there is a card to sit alone on the screen. The
+  // finished-session summary, an empty queue and the productive trainer all
+  // keep the ordinary page — which is also what makes the queue running out a
+  // way back to the rest of the module rather than a dead end.
+  const zenActive = zenMode
+    && activeTab === "train"
+    && trainMode === "recognize"
+    && trainQueue.length > 0
+    && currentTrainIndex < trainQueue.length;
+
+  // The player is the one thing allowed to appear over a zen screen, and it
+  // floats exactly where the grade buttons are, so its presence is state the
+  // layout has to know about.
+  useEffect(() => subscribeTTS((s) => setPlayerOnScreen(s.status !== "idle")), []);
+
+  // A full-screen trainer over a scrolled page would otherwise let the page
+  // behind it move under the finger — the very thing zen exists to stop.
+  useEffect(() => {
+    if (!zenActive) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previous; };
+  }, [zenActive]);
+
   // --- Keyboard control for the recognize trainer ---
   //
   // Bound only while a card is actually on screen, and never over a modal or a
@@ -1119,6 +1161,12 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         case "live":
           closeReviewedCard();
           break;
+        case "zenExit":
+          // Escape means "give me the page back". With nothing hidden there is
+          // nothing to escape from, so the key is left to the browser.
+          if (!zenActive) return;
+          setZen(false);
+          break;
       }
       e.preventDefault();
     };
@@ -1126,10 +1174,13 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hotkeysActive, historyPosition?.index, historyPosition?.canGoOlder, historyPosition?.canGoNewer, reviewHistory.length, currentCard?.id, historyCard?.id, targetLanguage, currentTrainIndex, trainQueue, viewingHistoryIndex, miniStory]);
+  }, [hotkeysActive, historyPosition?.index, historyPosition?.canGoOlder, historyPosition?.canGoNewer, reviewHistory.length, currentCard?.id, historyCard?.id, targetLanguage, currentTrainIndex, trainQueue, viewingHistoryIndex, miniStory, zenActive, setZen]);
 
   return (
-    <section className="screen" onClick={() => { setShowFilterPanel(false); setShowTtsMenu(false); }}>
+    <section
+      className={`screen${zenActive ? " srs-zen" : ""}${zenActive && playerOnScreen ? " has-player" : ""}`}
+      onClick={() => { setShowFilterPanel(false); setShowTtsMenu(false); }}
+    >
       <style>{`
         .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; border-bottom: 1px solid var(--border); }
         @media (min-width: 640px) { .srs-sticky-header { margin: -28px -24px 16px; padding: 24px 24px 10px; } }
@@ -1297,6 +1348,57 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .srs-batch-copy span { font-size: 10px; font-weight: 700; color: var(--text-muted); }
         .srs-batch-exit { flex-shrink: 0; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text-muted); font-size: 11px; font-weight: 800; cursor: pointer; transition: all 0.18s ease; }
         .srs-batch-exit:hover { border-color: var(--accent); color: var(--accent); }
+
+        /* ── Zen: the trainer alone on the screen ──────────────────────────
+           Everything the page carries around the card — header, counters,
+           tabs, mode switch, filters — is chrome you read once and then scroll
+           past a hundred times. Here it is simply not there: the card sits in
+           the middle of the viewport and the grades stay pinned to the bottom
+           edge, so a session is a run of taps in one place with no scrolling
+           between them. Kept under the player's z-index (40) and under the
+           modals' so speaking, looking a word up and discussing all still work
+           from inside it. */
+        .srs-zen { position: fixed; inset: 0; z-index: 35; max-width: none; margin: 0; padding: 0; background: var(--bg-primary); overscroll-behavior: contain; }
+
+        /* The !important through this block is not emphasis: several of the
+           elements being hidden carry their layout in inline styles, and an
+           override layer that only applies in zen has no other way to win. */
+        .srs-zen .srs-sticky-header,
+        .srs-zen .srs-today,
+        .srs-zen .srs-stats-panel,
+        .srs-zen .srs-tabs-container,
+        .srs-zen .srs-train-controls,
+        .srs-zen .srs-batch-banner,
+        .srs-zen .srs-train-progress,
+        .srs-zen .srs-history-open,
+        .srs-zen .srs-keys { display: none !important; }
+
+        /* The scroll container, so a card taller than the screen can still be
+            reached — while the grades stay put at the bottom of it. */
+        .srs-zen .srs-train-tab { position: absolute; inset: 0; gap: 0 !important; overflow-y: auto; overscroll-behavior: contain; padding: calc(env(safe-area-inset-top, 0px) + 8px) 14px calc(env(safe-area-inset-bottom, 0px) + 10px); }
+        .srs-zen .srs-train-stage { min-height: 100%; }
+        /* Auto margins rather than justify-content: a centred flex child whose
+            content overflows becomes unscrollable at the top; this does not. */
+        .srs-zen .flipper-perspective { margin-top: auto !important; margin-bottom: auto !important; }
+        .srs-zen .srs-history-view { margin-top: auto; margin-bottom: auto; }
+
+        .zen-topbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px; width: 100%; max-width: 420px; margin: 0 auto; padding: 2px 0 8px; background: var(--bg-primary); }
+        .zen-progress { flex: 1; min-width: 0; height: 3px; border-radius: 99px; overflow: hidden; background: rgba(240, 230, 211, 0.09); }
+        .zen-progress i { display: block; height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.35s ease; }
+        .zen-count { flex-shrink: 0; font-size: 11px; font-weight: 800; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+        .zen-exit { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex-shrink: 0; border: none; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.18s ease; }
+        .zen-exit:hover { background: rgba(240, 230, 211, 0.08); color: var(--text-primary); }
+
+        /* Pinned to the bottom of the scroll container: the four grades are the
+            only thing a session ever needs to reach, so they are never the
+            thing that scrolled away. */
+        .srs-zen .srs-grade-row { position: sticky; bottom: 0; z-index: 2; padding-top: 14px; padding-bottom: 2px; background: linear-gradient(to top, var(--bg-primary) 68%, transparent); }
+        /* The player floats over the bottom of the viewport; the grades move up
+            by its height so it never lands on a button. */
+        .srs-zen.has-player .srs-grade-row { bottom: calc(env(safe-area-inset-bottom, 16px) + 104px); }
+
+        .zen-toggle { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex-shrink: 0; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-muted); cursor: pointer; transition: all 0.2s; }
+        .zen-toggle:hover { border-color: var(--accent); color: var(--accent); }
       `}</style>
 
       {/* Word Modal */}
@@ -1453,7 +1555,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
 
       {/* TAB: TRAINING */}
       {activeTab === "train" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="srs-train-tab" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {/* A batch narrows the deck without touching the saved filters, so it
               has to say so — otherwise a session pinned to one photographed
               page looks like the whole deck having gone missing. */}
@@ -1473,7 +1575,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
           {/* Mode switch (passive recognition vs active production) + the
               filters toggle share one row so they don't cost extra vertical
               space above the fold. */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <div className="srs-train-controls" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <div className="mode-switch">
               <button className={`mode-switch-opt ${trainMode === "recognize" ? "active" : ""}`} onClick={() => { setTrainMode("recognize"); persistCardFilters({ trainMode: "recognize" }); }} type="button">Узнавание</button>
               <button className={`mode-switch-opt ${trainMode === "active" ? "active" : ""}`} onClick={() => { setTrainMode("active"); persistCardFilters({ trainMode: "active" }); }} type="button">Активно</button>
@@ -1699,11 +1801,40 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               )}
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <div className="srs-train-stage" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              {/* In zen, the whole of the surrounding page is reduced to this:
+                  where you are in the queue, and the way out. */}
+              {zenActive && (
+                <div className="zen-topbar">
+                  <span className="zen-count">{currentTrainIndex + 1} / {trainQueue.length}</span>
+                  <div className="zen-progress" role="progressbar" aria-valuenow={Math.round((currentTrainIndex / trainQueue.length) * 100)} aria-valuemin={0} aria-valuemax={100}>
+                    <i style={{ width: `${Math.round((currentTrainIndex / trainQueue.length) * 100)}%` }} />
+                  </div>
+                  <button className="zen-exit" onClick={(e) => { e.stopPropagation(); setZen(false); }} type="button" aria-label="Выйти из дзен-режима" title="Выйти из дзен-режима (Esc)">
+                    <Minimize2 size={17} />
+                  </button>
+                </div>
+              )}
+
               {/* Progress */}
-              <div style={{ width: "100%", maxWidth: 420, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, fontSize: 13, color: "var(--text-muted)", fontWeight: 700 }}>
+              <div className="srs-train-progress" style={{ width: "100%", maxWidth: 420, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, fontSize: 13, color: "var(--text-muted)", fontWeight: 700 }}>
                 <span>Карточка {currentTrainIndex + 1} из {trainQueue.length}</span>
-                <span style={{ color: "var(--accent)" }}>{Math.round((currentTrainIndex / trainQueue.length) * 100)}% пройдено</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: "var(--accent)" }}>{Math.round((currentTrainIndex / trainQueue.length) * 100)}% пройдено</span>
+                  {/* The way in, sat directly above the card it clears the
+                      screen for. Deliberately not automatic: the page around
+                      the card is where a session is set up, and it should still
+                      be there when that is what the learner came for. */}
+                  <button
+                    className="zen-toggle"
+                    onClick={(e) => { e.stopPropagation(); setZen(true); }}
+                    type="button"
+                    aria-label="Дзен-режим"
+                    title="Дзен-режим — только карточка и оценки"
+                  >
+                    <Maximize2 size={15} />
+                  </button>
+                </span>
               </div>
 
               {/* Flipper card — height adapts to content */}

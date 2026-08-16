@@ -14,7 +14,8 @@ export type TrainerAction =
   | { kind: "discuss" }
   | { kind: "historyOlder" }
   | { kind: "historyNewer" }
-  | { kind: "live" };
+  | { kind: "live" }
+  | { kind: "zenExit" };
 
 const BY_DIGIT: Record<string, TrainerAction> = {
   "1": { kind: "grade", score: 1 },
@@ -49,6 +50,10 @@ export function trainerHotkey(event: Pick<KeyboardEvent, "code" | "key" | "ctrlK
 
   const digitRow = /^Digit([0-9])$/.exec(event.code);
   if (digitRow) return BY_DIGIT[digitRow[1]] ?? null;
+
+  // The way out of a screen that has hidden everything else — the key every
+  // full-screen view is already expected to answer to.
+  if (event.code === "Escape" || event.key === "Escape") return { kind: "zenExit" };
 
   if (event.code === "ArrowLeft" || event.key === "ArrowLeft") return { kind: "historyOlder" };
   if (event.code === "ArrowRight" || event.key === "ArrowRight") return { kind: "historyNewer" };
