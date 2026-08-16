@@ -321,7 +321,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
           <p className="setting-section-title">Аккаунт</p>
           <div className="settings-list" style={{ marginBottom: 20 }}>
             <div className="setting-row">
-              <div>
+              <div className="setting-row-main">
                 <div className="setting-row-label">Email</div>
                 <div className="setting-row-value" style={{ fontSize: 14, fontWeight: 600 }}>{user.email}</div>
               </div>
@@ -338,7 +338,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
           <p className="setting-section-title">Интеграция AI</p>
           <div className="settings-list" style={{ marginBottom: 20 }}>
             <div className="setting-row">
-              <div>
+              <div className="setting-row-main">
                 <div className="setting-row-label">Использовать AI</div>
                 <div className="setting-row-value">
                   {aiProvider === "off" ? "Выключен" : "Свой ключ Gemini"}
@@ -450,7 +450,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
       <p className="setting-section-title">Языки</p>
       <div className="settings-list" style={{ marginBottom: 20 }}>
         <div className="setting-row">
-          <div>
+          <div className="setting-row-main">
             <div className="setting-row-label">Родной язык</div>
             <div className="setting-row-value">
               {SUPPORTED_LANGUAGES.find((l) => l.code === profile.nativeLanguage)?.nameNative ?? profile.nativeLanguage}
@@ -468,7 +468,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
         </div>
 
         <div className="setting-row">
-          <div>
+          <div className="setting-row-main">
             <div className="setting-row-label">Изучаемый язык</div>
             <div className="setting-row-value">
               {SUPPORTED_LANGUAGES.find((l) => l.code === profile.targetLanguage)?.nameNative ?? profile.targetLanguage}
@@ -486,7 +486,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
         </div>
 
         <div className="setting-row">
-          <div>
+          <div className="setting-row-main">
             <div className="setting-row-label">Голосовой движок</div>
             <div className="setting-row-value">
               {getTtsProviderLabel(profile.ttsProvider ?? "local")}
@@ -507,7 +507,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
 
         {supportsModelChoice(activeProvider) && (
           <div className="setting-row">
-            <div>
+            <div className="setting-row-main">
               <div className="setting-row-label">Модель</div>
               <div className="setting-row-value">
                 {modelsError ?? (modelsLoading ? "Загружаю…" : modelDescription(models, selectedModel, modelsNote))}
@@ -531,7 +531,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
 
         {supportsVoiceChoice(activeProvider) && (
           <div className="setting-row">
-            <div>
+            <div className="setting-row-main">
               <div className="setting-row-label">Голос</div>
               <div className="setting-row-value">
                 {voicesError
@@ -557,7 +557,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
 
         {supportsVoiceChoice(activeProvider) && voices.length > 0 && (
           <div className="setting-row">
-            <div>
+            <div className="setting-row-main">
               <div className="setting-row-label">Пример</div>
               <div className="setting-row-value">
                 {sampleError ?? (samplePlaying ? "Звучит…" : getVoiceSample(profile.targetLanguage))}

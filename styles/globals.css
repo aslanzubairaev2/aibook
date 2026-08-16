@@ -74,6 +74,11 @@ ol, ul { list-style: none; }
 /* ─── App Shell ──────────────────────────────────────────────────────────── */
 .app-shell {
   min-height: 100svh;
+  /* Nothing inside the app may push the page sideways: one wide row used to
+     give every screen a horizontal scrollbar and slide the bottom bar off the
+     edge. `clip` rather than `hidden` — it does not create a scroll container,
+     so sticky headers keep working and fixed modals stay unclipped. */
+  overflow-x: clip;
   background:
     radial-gradient(ellipse 80% 40% at 50% 0%, rgba(212, 168, 71, 0.1) 0%, transparent 70%),
     var(--bg-primary);
@@ -443,7 +448,10 @@ textarea,
 .flash-card-source { font-size: 12px; color: var(--text-muted); }
 
 /* ─── Settings ───────────────────────────────────────────────────────────── */
-.settings-list { display: grid; gap: 8px; }
+/* minmax(0, 1fr), not the default `auto`: an auto grid column is at least as
+   wide as its widest item's min-content, so one unshrinkable <select> widened
+   the column past the screen and took the page with it. */
+.settings-list { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); }
 
 .setting-row {
   display: flex;
@@ -454,10 +462,37 @@ textarea,
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
+  /* A control too wide to sit beside its label drops onto its own line rather
+     than off the right edge of the phone. */
+  flex-wrap: wrap;
+  row-gap: 10px;
 }
 
+/* Flex items refuse to shrink below their content by default, which is how a
+   long voice name or a wide <select> used to drag the whole page into a
+   sideways scroll. */
+.setting-row > * { min-width: 0; }
+
+/* The text half of a row. The 50% basis is the whole trick: a control that
+   still fits beside it stays on the line, and one that would squeeze the text
+   below half the row wraps underneath instead of being cut off. */
+.setting-row-main { flex: 1 1 50%; }
+
 .setting-row-label { font-size: 13px; color: var(--text-muted); margin-bottom: 2px; }
-.setting-row-value { font-size: 15px; font-weight: 700; }
+.setting-row-value { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+
+/* An info row is label · value, and the value stays on the right whether or not
+   it had to wrap onto its own line. */
+.setting-row > .setting-row-value { margin-left: auto; text-align: end; }
+
+/* Voice descriptions run to a paragraph; three lines is enough to recognise
+   one without the row growing taller than the thing it describes. */
+.setting-row-main .setting-row-value {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
 
 .setting-section-title {
   margin: 20px 0 8px;
