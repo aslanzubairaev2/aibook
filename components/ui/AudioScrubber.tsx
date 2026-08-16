@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Play, Pause, X, Repeat } from "lucide-react";
-import { subscribeTTS, pauseTTS, resumeTTS, seekTTS, stopTTS, toggleRepeat, TTSState, getTTSState } from "@/lib/tts";
+import { Play, Pause, X, Repeat, RefreshCw } from "lucide-react";
+import { subscribeTTS, pauseTTS, resumeTTS, respeak, seekTTS, stopTTS, toggleRepeat, TTSState, getTTSState } from "@/lib/tts";
 import { ActiveVoiceLabel } from "@/components/tts/ActiveVoiceLabel";
 
 function formatTime(seconds: number) {
@@ -77,6 +77,18 @@ export function AudioScrubber() {
     else if (state.status === "paused") resumeTTS();
   };
 
+  // Say it again from scratch.
+  //
+  // A recording is kept the moment it is made, so a bad reading — the word
+  // taken for another language, or acted out instead of pronounced — comes
+  // back identically every time that card does. This is the one control that
+  // can change it, and it belongs here because here is where the learner is
+  // when they hear it: the player is up, naming the engine that just spoke.
+  const handleRespeak = () => {
+    if (!state.text || !state.lang || state.status === "loading") return;
+    void respeak(state.text, state.lang);
+  };
+
   return (
     <div className={`audio-scrubber-overlay ${show ? "visible" : "hidden"}`}>
       <div className="audio-scrubber-content">
@@ -115,6 +127,17 @@ export function AudioScrubber() {
             <span>{formatTime(duration)}</span>
           </div>
         </div>
+
+        <button
+          className="audio-close-btn"
+          onClick={handleRespeak}
+          disabled={state.status === "loading" || !state.lang}
+          aria-label="Переозвучить"
+          title="Переозвучить — заново, не из кеша"
+          style={{ opacity: state.status === "loading" || !state.lang ? 0.35 : 0.6, marginLeft: 4 }}
+        >
+          <RefreshCw size={15} />
+        </button>
 
         <button 
           className="audio-close-btn" 

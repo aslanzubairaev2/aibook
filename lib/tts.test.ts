@@ -33,6 +33,9 @@ class FakeCache {
   async put(key: string, res: FakeResponse) {
     cacheStore.set(key, { body: res.body, headers: res.headers });
   }
+  async delete(key: string) {
+    return cacheStore.delete(key);
+  }
 }
 
 const localStore = new Map<string, string>();
@@ -78,7 +81,8 @@ function serve(server: Server) {
 }
 
 const {
-  speak, getLastTtsError, prefetchSpeech, prefetchSpeechAhead, SPEECH_PREFETCH_AHEAD,
+  speak, respeak, getTTSState, getLastTtsError,
+  prefetchSpeech, prefetchSpeechAhead, SPEECH_PREFETCH_AHEAD,
 } = await import("./tts.ts");
 const { saveLocalProfile } = await import("./db/local.ts");
 
@@ -154,7 +158,6 @@ test("a cache hit still names the engine that actually spoke", async () => {
   serve(server);
 
   await speak("Guten Tag!", "de");
-  const { getTTSState } = await import("./tts.ts");
   await speak("Guten Tag!", "de");
 
   assert.equal(getTTSState().activeProvider, "openai");
@@ -311,4 +314,70 @@ test("an engine that takes no direction keeps the recordings it had", async () =
   await speak("Guten Tag!", "de");
 
   assert.equal(server.calls, 0);
+});
+
+// ─── Replacing a recording that came out wrong ───────────────────────────────
+//
+// Caching is what makes a bad reading permanent rather than momentary: it is
+// kept the instant it is made, and every later press is answered from the copy.
+// So the test of a re-record is not that it plays something — it is that the
+// old copy is gone.
+
+test("a re-record ignores the cached copy and asks again", async () => {
+  useProvider("gemini");
+  const server: Server = { calls: 0, reply: () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  serve(server);
+
+  await speak("lacht", "de");
+  await speak("lacht", "de");
+  assert.equal(server.calls, 1);
+
+  await respeak("lacht", "de");
+  assert.equal(server.calls, 2);
+});
+
+test("a re-record tells the server to skip its cache too", async () => {
+  // Discarding only the browser's copy would fetch the same bad recording back
+  // out of the shared one, and nothing would appear to have happened.
+  useProvider("gemini");
+  const bodies: Record<string, unknown>[] = [];
+  g.fetch = async (_url: string, init: { body: string }) => {
+    bodies.push(JSON.parse(init.body));
+    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  };
+
+  await speak("lacht", "de");
+  await respeak("lacht", "de");
+
+  assert.equal(bodies[0].refresh, undefined);
+  assert.equal(bodies[1].refresh, true);
+});
+
+test("a re-record that fails still leaves the bad recording gone", async () => {
+  // The old copy goes before the new one is asked for, so a re-record that ends
+  // in the browser voice cannot quietly restore what it was meant to replace.
+  useProvider("gemini");
+  const server: Server = { calls: 0, reply: () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  serve(server);
+  await speak("lacht", "de");
+  assert.equal(server.calls, 1);
+
+  g.fetch = async () => ({ ok: false, status: 500, json: async () => ({ error: "нет" }) });
+  await respeak("lacht", "de");
+
+  serve(server);
+  await speak("lacht", "de");
+  assert.equal(server.calls, 2);
+});
+
+test("the player is told which language to ask for again in", async () => {
+  // The re-record control lives in the player, which knows only what the state
+  // carries — so the language has to be part of it.
+  useProvider("gemini");
+  serve({ calls: 0, reply: () => ({ audioBase64: SILENCE, provider: "gemini" }) });
+
+  await speak("lacht", "de");
+
+  assert.equal(getTTSState().text, "lacht");
+  assert.equal(getTTSState().lang, "de");
 });

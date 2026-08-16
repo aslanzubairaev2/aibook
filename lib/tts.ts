@@ -49,6 +49,8 @@ export type TTSState = {
   currentTime: number;
   duration: number;
   text: string;
+  /** The language it was asked for in, so a re-record can ask the same way. */
+  lang?: string;
   activeCharIndex?: number;
   repeat?: boolean;
   autoNext?: boolean;
@@ -339,7 +341,7 @@ async function requestTts(
    * request made ahead of time is not about anything they are hearing — letting
    * one write there would caption the wrong card.
    */
-  opts: { silent?: boolean } = {},
+  opts: { silent?: boolean; refresh?: boolean } = {},
 ): Promise<Recording | null> {
   const report = (message: string | null) => {
     if (!opts.silent) lastTtsError = message;
@@ -353,6 +355,9 @@ async function requestTts(
         text, lang, provider,
         voice: chosenVoiceFor(provider),
         model: chosenModelFor(provider),
+        // Clearing only the browser's copy would re-download the same bad
+        // recording from the server's, so the server is told to skip its own.
+        ...(opts.refresh ? { refresh: true } : {}),
       }),
     });
 
@@ -498,13 +503,44 @@ export function getVoiceSample(lang: string): string {
 export async function speak(
   text: string,
   lang: string,
-  onStart?: () => void, 
-  onEnd?: () => void
+  onStart?: () => void,
+  onEnd?: () => void,
 ): Promise<PlaybackController | null> {
+  return play(text, lang, { onStart, onEnd });
+}
+
+/**
+ * Say it again, and throw away what was said before.
+ *
+ * A recording is cached the moment it is made, so a bad one — the word read
+ * into the wrong language, or acted out instead of pronounced — is not a bad
+ * moment but a permanent fixture of that card, replayed identically every time
+ * it comes up. Nothing the learner could press would change it, because every
+ * press was answered from the cache.
+ *
+ * This is the press that changes it. The stored copy goes first, in the browser
+ * and on the server both, so that even a re-record that fails cannot leave the
+ * wrong audio behind to be served again.
+ */
+export async function respeak(
+  text: string,
+  lang: string,
+  onStart?: () => void,
+  onEnd?: () => void,
+): Promise<PlaybackController | null> {
+  return play(text, lang, { onStart, onEnd, refresh: true });
+}
+
+async function play(
+  text: string,
+  lang: string,
+  opts: { onStart?: () => void; onEnd?: () => void; refresh?: boolean },
+): Promise<PlaybackController | null> {
+  const { onStart, onEnd, refresh = false } = opts;
   const profile = getLocalProfile();
   const provider = resolveProvider(profile.ttsProvider ?? "local", lang);
 
-  updateState({ status: "loading", text, currentTime: 0, duration: 0 });
+  updateState({ status: "loading", text, lang, currentTime: 0, duration: 0 });
 
   if (isRemoteProvider(provider)) {
     stopRemoteAudio(true); // silent stop
@@ -515,10 +551,24 @@ export async function speak(
     let recording: Recording | null = null;
     const cacheKey = ttsCacheKey(text, provider, lang);
 
+    if (refresh) {
+      // Before asking for anything: the copy being replaced is the wrong one,
+      // and a re-record that fails must not leave it behind to be served again.
+      try {
+        const cache = await caches.open("aibook-tts-cache");
+        await cache.delete(cacheKey);
+      } catch (e) {
+        console.warn("Could not discard the cached recording", e);
+      }
+      // A request already on the wire is the one that produced the recording
+      // being replaced, so this must not join it.
+      inFlight.delete(cacheKey);
+    }
+
     // Check local Browser Cache API
     try {
-      const cache = await caches.open("aibook-tts-cache");
-      const cachedResponse = await cache.match(cacheKey);
+      const cache = refresh ? null : await caches.open("aibook-tts-cache");
+      const cachedResponse = await cache?.match(cacheKey);
       if (cachedResponse) {
         recording = {
           audioBase64: await cachedResponse.text(),
@@ -534,7 +584,7 @@ export async function speak(
     }
 
     if (!recording) {
-      const pending = inFlight.get(cacheKey) ?? requestTts(text, lang, provider, cacheKey);
+      const pending = inFlight.get(cacheKey) ?? requestTts(text, lang, provider, cacheKey, { refresh });
       inFlight.set(cacheKey, pending);
       try {
         recording = await pending;

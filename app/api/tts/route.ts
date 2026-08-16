@@ -54,10 +54,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { text, lang, provider = "gemini", voice, model } = await req.json() as {
+    const { text, lang, provider = "gemini", voice, model, refresh } = await req.json() as {
       text: string;
       lang: string;
       provider?: TtsProvider;
+      /**
+       * A re-record: the learner heard something wrong and asked for it again.
+       *
+       * The cached row is the wrong recording, so reading it would answer the
+       * request with exactly what was being complained about. It is skipped and
+       * then overwritten, which is also what makes the fix stick for everyone
+       * who reaches that row later.
+       */
+      refresh?: boolean;
       /** The voice the learner picked in settings, if this engine has a choice. */
       voice?: string;
       /** Likewise the model, for trying one engine's models against each other. */
@@ -66,6 +75,9 @@ export async function POST(req: Request) {
 
     // Both are about to be spent against our key, so they are held to the shape
     // provider ids share rather than forwarded as free text.
+    // A flag from the client is not a promise of a boolean; treat it as one.
+    const fresh = refresh === true;
+
     const chosenVoice = typeof voice === "string" && isValidVoiceRef(voice) ? voice.trim() : undefined;
     const chosenModel = typeof model === "string" && isValidModelRef(model) ? model.trim() : undefined;
 
@@ -81,7 +93,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ OpenAI (GPT_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithOpenAi(text, lang, chosenVoice, chosenModel);
+      const spoken = await speakWithOpenAi(text, lang, fresh, chosenVoice, chosenModel);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
@@ -96,7 +108,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ ElevenLabs (ELEVENLABS_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithElevenLabs(text, lang, chosenVoice, chosenModel);
+      const spoken = await speakWithElevenLabs(text, lang, fresh, chosenVoice, chosenModel);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
@@ -111,7 +123,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ Cartesia (CARTESIA_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithCartesia(text, lang, chosenVoice, chosenModel);
+      const spoken = await speakWithCartesia(text, lang, fresh, chosenVoice, chosenModel);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
@@ -127,7 +139,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Не задан ключ Inworld (INWORLD_API_KEY)." }, { status: 500 });
       }
 
-      const spoken = await speakWithInworld(text, lang, locale);
+      const spoken = await speakWithInworld(text, lang, fresh, locale);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
@@ -149,7 +161,7 @@ export async function POST(req: Request) {
         );
       }
 
-      const spoken = await speakWithSpeechify(text, lang, locale);
+      const spoken = await speakWithSpeechify(text, lang, fresh, locale);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
@@ -167,7 +179,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Missing Deepgram API key" }, { status: 500 });
       }
 
-      const spoken = await speakWithDeepgram(text, lang, model);
+      const spoken = await speakWithDeepgram(text, lang, fresh, model);
       if ("error" in spoken) {
         return NextResponse.json({ error: spoken.error }, { status: spoken.status });
       }
@@ -178,7 +190,7 @@ export async function POST(req: Request) {
 
     if (!apiKey) {
       const reason = "Gemini TTS не настроен: отсутствует GEMINI_API_KEY.";
-      const fallback = await speakWithAutomaticFallback(text, lang, reason);
+      const fallback = await speakWithAutomaticFallback(text, lang, fresh, reason);
       if (fallback) return NextResponse.json(fallback);
       return NextResponse.json({ error: reason }, { status: 500 });
     }
@@ -202,7 +214,7 @@ export async function POST(req: Request) {
       : `${geminiModel}:${voiceName}:${SPEECH_STYLE_VERSION}`;
 
     // 1. Check database cache
-    const cachedAudio = await sbGetCachedTts(text, lang, geminiCacheKey);
+    const cachedAudio = fresh ? null : await sbGetCachedTts(text, lang, geminiCacheKey);
     if (cachedAudio) {
       return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider: "gemini", model: geminiModel });
     }
@@ -215,7 +227,7 @@ export async function POST(req: Request) {
     } catch (error) {
       console.error("Gemini TTS request failed:", error);
       const reason = "Не удалось связаться с Gemini TTS.";
-      const fallback = await speakWithAutomaticFallback(text, lang, reason, {
+      const fallback = await speakWithAutomaticFallback(text, lang, fresh, reason, {
         voiceName,
         spentModel: geminiModel,
       });
@@ -236,7 +248,7 @@ export async function POST(req: Request) {
           err,
         );
 
-        const fallback = await speakWithAutomaticFallback(text, lang, quotaMessageRu(quota), {
+        const fallback = await speakWithAutomaticFallback(text, lang, fresh, quotaMessageRu(quota), {
           voiceName,
           spentModel: geminiModel,
         });
@@ -263,7 +275,7 @@ export async function POST(req: Request) {
 
       console.error("Gemini TTS API error:", err);
       const reason = `Gemini TTS недоступен (ошибка ${response.status}).`;
-      const fallback = await speakWithAutomaticFallback(text, lang, reason, {
+      const fallback = await speakWithAutomaticFallback(text, lang, fresh, reason, {
         voiceName,
         spentModel: geminiModel,
       });
@@ -291,7 +303,7 @@ export async function POST(req: Request) {
     }
 
     const reason = "Gemini TTS не вернул аудио.";
-    const fallback = await speakWithAutomaticFallback(text, lang, reason, {
+    const fallback = await speakWithAutomaticFallback(text, lang, fresh, reason, {
       voiceName,
       spentModel: geminiModel,
     });
@@ -317,6 +329,7 @@ type AutomaticFallback = Exclude<Spoken, { error: string; status: number }> & {
 async function speakWithAutomaticFallback(
   text: string,
   lang: string,
+  fresh: boolean,
   reason: string,
   gemini?: { voiceName: string; spentModel: string },
 ): Promise<AutomaticFallback | null> {
@@ -330,7 +343,7 @@ async function speakWithAutomaticFallback(
 
     for (const model of alternates) {
       try {
-        const spoken = await speakWithGeminiModel(text, lang, model, gemini.voiceName, apiKey);
+        const spoken = await speakWithGeminiModel(text, lang, fresh, model, gemini.voiceName, apiKey);
         if (!("error" in spoken)) {
           return { ...spoken, provider: "gemini", model, fellBackFrom: "gemini", reason };
         }
@@ -347,7 +360,7 @@ async function speakWithAutomaticFallback(
         const locale = getSpeechifyLocale(lang);
         if (!locale || !process.env.SPEECHIFY_API_KEY || !process.env.SPEECHIFY_VOICE_ID) continue;
 
-        const spoken = await speakWithSpeechify(text, lang, locale);
+        const spoken = await speakWithSpeechify(text, lang, fresh, locale);
         if (!("error" in spoken)) {
           return {
             ...spoken,
@@ -365,7 +378,7 @@ async function speakWithAutomaticFallback(
         const locale = getBcp47Locale(lang);
         if (!locale || !process.env.INWORLD_API_KEY) continue;
 
-        const spoken = await speakWithInworld(text, lang, locale);
+        const spoken = await speakWithInworld(text, lang, fresh, locale);
         if (!("error" in spoken)) {
           return {
             ...spoken,
@@ -382,7 +395,7 @@ async function speakWithAutomaticFallback(
       if (provider === "openai") {
         if (!getOpenAiApiKey()) continue;
 
-        const spoken = await speakWithOpenAi(text, lang);
+        const spoken = await speakWithOpenAi(text, lang, fresh);
         if (!("error" in spoken)) {
           return {
             ...spoken,
@@ -399,7 +412,7 @@ async function speakWithAutomaticFallback(
       if (provider === "cartesia") {
         if (!process.env.CARTESIA_API_KEY) continue;
 
-        const spoken = await speakWithCartesia(text, lang);
+        const spoken = await speakWithCartesia(text, lang, fresh);
         if (!("error" in spoken)) {
           return {
             ...spoken,
@@ -416,7 +429,7 @@ async function speakWithAutomaticFallback(
       if (provider === "elevenlabs") {
         if (!getElevenLabsApiKey()) continue;
 
-        const spoken = await speakWithElevenLabs(text, lang);
+        const spoken = await speakWithElevenLabs(text, lang, fresh);
         if (!("error" in spoken)) {
           return {
             ...spoken,
@@ -478,6 +491,7 @@ function geminiTtsRequest(
 async function speakWithGeminiModel(
   text: string,
   lang: string,
+  fresh: boolean,
   model: string,
   voiceName: string,
   apiKey: string,
@@ -487,7 +501,7 @@ async function speakWithGeminiModel(
     ? `${voiceName}:${SPEECH_STYLE_VERSION}`
     : `${model}:${voiceName}:${SPEECH_STYLE_VERSION}`;
 
-  const cached = await sbGetCachedTts(text, lang, cacheKey);
+  const cached = fresh ? null : await sbGetCachedTts(text, lang, cacheKey);
   if (cached) return { audioBase64: cached, source: "db_cache" };
 
   const response = await geminiTtsRequest(apiKey, model, voiceName, text, lang);
@@ -596,6 +610,7 @@ async function resolveCartesiaVoice(
 async function speakWithCartesia(
   text: string,
   lang: string,
+  fresh: boolean,
   requestedVoice?: string,
   requestedModel?: string,
 ): Promise<Spoken> {
@@ -610,7 +625,7 @@ async function speakWithCartesia(
   // The voice is part of the recording's identity, so it belongs in the key.
   const cacheVoiceKey = `${model}:${voice.id}`;
 
-  const cachedWav = await sbGetCachedTts(text, language, cacheVoiceKey);
+  const cachedWav = fresh ? null : await sbGetCachedTts(text, language, cacheVoiceKey);
   if (cachedWav) {
     const decoded = decodeWavBase64(cachedWav);
     if (decoded) return { ...decoded, source: "db_cache" };
@@ -756,6 +771,7 @@ async function listElevenLabsVoices(
 async function speakWithElevenLabs(
   text: string,
   lang: string,
+  fresh: boolean,
   requestedVoice?: string,
   requestedModel?: string,
 ): Promise<Spoken> {
@@ -773,7 +789,7 @@ async function speakWithElevenLabs(
   // A recording told which language to use belongs to that language. Only the
   // models that take no such hint still share the language-less "und" rows.
   const cacheLang = languageCode ?? "und";
-  const cached = await sbGetCachedTts(text, cacheLang, cacheVoiceKey);
+  const cached = fresh ? null : await sbGetCachedTts(text, cacheLang, cacheVoiceKey);
   if (cached) {
     return { audioBase64: cached, source: "db_cache", sampleRate: ELEVENLABS_PCM_SAMPLE_RATE };
   }
@@ -867,6 +883,7 @@ function getOpenAiVoiceId() {
 async function speakWithOpenAi(
   text: string,
   lang: string,
+  fresh: boolean,
   requestedVoice?: string,
   requestedModel?: string,
 ): Promise<Spoken> {
@@ -880,7 +897,7 @@ async function speakWithOpenAi(
   const language = normalizeLanguageCode(lang);
   const cacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}:teacher:${SPEECH_STYLE_VERSION}`;
 
-  const cached = await sbGetCachedTts(text, language, cacheVoiceKey);
+  const cached = fresh ? null : await sbGetCachedTts(text, language, cacheVoiceKey);
   if (cached) return { audioBase64: cached, source: "db_cache", format: "mp3" };
 
   const response = await fetch("https://api.openai.com/v1/audio/speech", {
@@ -934,7 +951,7 @@ async function speakWithOpenAi(
  * with the browser's own decoder. MP3 also means the cache stores exactly what
  * the API returned — no header to strip, no sample rate to carry.
  */
-async function speakWithInworld(text: string, lang: string, locale: string): Promise<Spoken> {
+async function speakWithInworld(text: string, lang: string, fresh: boolean, locale: string): Promise<Spoken> {
   const apiKey = process.env.INWORLD_API_KEY;
   if (!apiKey) return { error: "Missing Inworld API key", status: 500 };
 
@@ -943,7 +960,7 @@ async function speakWithInworld(text: string, lang: string, locale: string): Pro
   const cacheVoiceKey = `${INWORLD_MODEL}:${voiceId}`;
   const language = normalizeLanguageCode(lang);
 
-  const cached = await sbGetCachedTts(text, language, cacheVoiceKey);
+  const cached = fresh ? null : await sbGetCachedTts(text, language, cacheVoiceKey);
   if (cached) return { audioBase64: cached, source: "db_cache", format: "mp3" };
 
   const response = await fetch("https://api.inworld.ai/tts/v1/voice", {
@@ -994,7 +1011,7 @@ async function speakWithInworld(text: string, lang: string, locale: string): Pro
  * gets parsed on the way out. A cache hit and a fresh call then answer with the
  * same rate, instead of a cached card playing at the wrong pitch.
  */
-async function speakWithSpeechify(text: string, lang: string, locale: string): Promise<Spoken> {
+async function speakWithSpeechify(text: string, lang: string, fresh: boolean, locale: string): Promise<Spoken> {
   const apiKey = process.env.SPEECHIFY_API_KEY;
   const voiceId = process.env.SPEECHIFY_VOICE_ID;
   if (!apiKey || !voiceId) return { error: "Missing Speechify configuration", status: 500 };
@@ -1005,7 +1022,7 @@ async function speakWithSpeechify(text: string, lang: string, locale: string): P
   const cacheVoiceKey = `${model}:${voiceId}`;
   const language = normalizeLanguageCode(lang);
 
-  const cachedWav = await sbGetCachedTts(text, language, cacheVoiceKey);
+  const cachedWav = fresh ? null : await sbGetCachedTts(text, language, cacheVoiceKey);
   if (cachedWav) {
     const decoded = decodeWavBase64(cachedWav);
     if (decoded) return { ...decoded, source: "db_cache" };
@@ -1072,12 +1089,12 @@ function decodeWavBase64(wavBase64: string): { audioBase64: string; sampleRate: 
  * rate-limited card is still read out in a real voice rather than dropping to
  * the browser's robot.
  */
-async function speakWithDeepgram(text: string, lang: string, model: string): Promise<Spoken> {
+async function speakWithDeepgram(text: string, lang: string, fresh: boolean, model: string): Promise<Spoken> {
   const apiKey = process.env.DEEPGRAM_API_KEY;
   if (!apiKey) return { error: "Missing Deepgram API key", status: 500 };
 
   const language = normalizeLanguageCode(lang);
-  const cachedAudio = await sbGetCachedTts(text, language, model);
+  const cachedAudio = fresh ? null : await sbGetCachedTts(text, language, model);
   if (cachedAudio) return { audioBase64: cachedAudio, source: "db_cache" };
 
   const url = new URL("https://api.deepgram.com/v1/speak");
