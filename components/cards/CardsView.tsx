@@ -30,7 +30,7 @@ import {
 import { isTypingTarget, trainerHotkey } from "@/lib/srs/trainerHotkeys";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
-import { speak } from "@/lib/tts";
+import { prefetchSpeechAhead, speak } from "@/lib/tts";
 import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
@@ -576,6 +576,20 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     if (item?.variant === "audio") void speak(item.card.front, targetLanguage);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trainQueue, currentTrainIndex]);
+
+  // --- Fetch the audio cards still ahead, before they are reached ---
+  //
+  // An audio card is nothing but its recording: it appears and immediately
+  // plays, so its fetch cannot begin until the learner is already looking at a
+  // blank prompt waiting for sound. Asking for the ones further down the queue
+  // while this card is being answered means each arrives already fetched.
+  useEffect(() => {
+    const upcoming = trainQueue
+      .slice(currentTrainIndex + 1)
+      .filter((item) => item.variant === "audio")
+      .map((item) => item.card.front);
+    prefetchSpeechAhead(upcoming, targetLanguage);
+  }, [trainQueue, currentTrainIndex, targetLanguage]);
 
   // Switching tabs starts its list from the top again.
   useEffect(() => {

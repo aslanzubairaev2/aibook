@@ -5,7 +5,7 @@ import { CheckCircle2, RotateCcw, Ear, Mic, MicOff, PenLine, MessageSquare, Eye 
 import type { Flashcard, ProductiveSkill, SkillProgress } from "@/lib/types";
 import { calculateSM2, createDefaultSkillProgress, type SrsScore } from "@/lib/srs/sm2";
 import { getCardSkillState, saveCardSkillProgress } from "@/lib/db/local";
-import { speak } from "@/lib/tts";
+import { prefetchSpeechAhead, speak } from "@/lib/tts";
 import { startRecognition, isSpeechRecognitionSupported, type Recognizer } from "@/lib/speech/recognition";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { SkillBadges } from "@/components/cards/SkillBadges";
@@ -120,6 +120,18 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
     if (item.skill !== "produce") inputRef.current?.focus();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index]);
+
+  // Every exercise speaks its word sooner or later — a listening prompt on
+  // arrival, the others when the answer is revealed — so both waits are worth
+  // getting out of the way while the learner is still typing. This one's word
+  // goes first, since its reveal is only a few seconds off.
+  useEffect(() => {
+    const upcoming = queue
+      .slice(index)
+      .filter((next, offset) => offset > 0 || shouldSpeakOnReveal(next.skill))
+      .map((next) => next.card.front);
+    prefetchSpeechAhead(upcoming, targetLanguage);
+  }, [queue, index, targetLanguage]);
 
   function restart() {
     setQueue(buildActiveQueue(cards, getCardSkillState));
