@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCardsForEntries, saveDictionaryEntries } from "./dictionaryStore.ts";
+import { createCardsForEntries, findOrCreatePack, readBatches, saveDictionaryEntries } from "./dictionaryStore.ts";
 import type { DictionaryEntryDraft } from "../ai/buildDictionaryPrompt.ts";
 
 function createMockSupabase() {
@@ -276,4 +276,85 @@ test("createCardsForEntries re-links existing cards without creating duplicate c
   assert.equal(mockDb.flashcards[0].source_book_id, "batch-2");
   // SRS progress intact!
   assert.equal(mockDb.flashcards[0].repetitions, 5);
+});
+
+// ─── Packs ──────────────────────────────────────────────────────────────────
+//
+// A pack is no longer only a photographed page of words: a set of phrases an
+// assistant built is one too, and it has to survive a deployment whose database
+// has not learned about training preferences yet.
+
+/** A batches table that behaves like PostgREST, optionally without the newest column. */
+function createBatchesDb(rows: Record<string, unknown>[], hasTrainingColumn = true) {
+  const inserted: Record<string, unknown>[] = [];
+
+  const selectChain = (columns: string, filters: Record<string, unknown>) => {
+    const result = () => {
+      if (!hasTrainingColumn && columns.includes("training")) {
+        return Promise.resolve({
+          data: null,
+          error: { message: 'column dictionary_batches.training does not exist' },
+        });
+      }
+      const matched = rows.filter((row) => Object.entries(filters).every(([k, v]) => row[k] === v));
+      return Promise.resolve({ data: matched, error: null });
+    };
+    const chain = {
+      eq: (column: string, value: unknown) => selectChain(columns, { ...filters, [column]: value }),
+      order: () => chain,
+      limit: () => result(),
+      then: (...args: Parameters<Promise<unknown>["then"]>) => result().then(...args),
+    };
+    return chain;
+  };
+
+  return {
+    rows,
+    inserted,
+    from() {
+      return {
+        select: (columns: string) => selectChain(columns, {}),
+        insert: (row: Record<string, unknown>) => ({
+          select: () => ({
+            single: () => {
+              const stored = { ...row, id: `pack-${rows.length + 1}` };
+              rows.push(stored);
+              inserted.push(stored);
+              return Promise.resolve({ data: { id: stored.id }, error: null });
+            },
+          }),
+        }),
+      };
+    },
+  };
+}
+
+test("packs still load on a database that has not run the training migration", async () => {
+  const db = createBatchesDb([{ id: "pack-1", user_id: "user-1", title: "Страница 56" }], false);
+
+  const { batches, error } = await readBatches(db as never, "user-1");
+
+  assert.equal(error, null);
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].title, "Страница 56");
+});
+
+test("a pack is reused by title instead of being created twice", async () => {
+  const db = createBatchesDb([
+    { id: "pack-1", user_id: "user-1", title: "Akkusativ · фразы", created_at: "2026-08-16T10:00:00.000Z" },
+  ]);
+
+  const again = await findOrCreatePack(db as never, "user-1", { title: "Akkusativ · фразы", language: "de" });
+  assert.deepEqual(again, { ok: true, id: "pack-1", created: false });
+  assert.equal(db.inserted.length, 0);
+
+  const fresh = await findOrCreatePack(db as never, "user-1", {
+    title: "Dativ · фразы",
+    language: "de",
+    training: { variants: ["reverse"] },
+  });
+  assert.equal(fresh.ok && fresh.created, true);
+  assert.deepEqual(db.inserted[0].training, { variants: ["reverse"] });
+  // A pack of phrases holds no dictionary words, and must not claim to.
+  assert.equal(db.inserted[0].word_count, 0);
 });

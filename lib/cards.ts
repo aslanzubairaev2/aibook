@@ -1,4 +1,4 @@
-import type { CardFilters, CardVariantState, Flashcard, SkillProgress, TrainVariant } from "@/lib/types";
+import type { CardFilters, CardVariantState, Flashcard, PackTraining, SkillProgress, TrainVariant } from "@/lib/types";
 
 export const ALL_TRAIN_VARIANTS: TrainVariant[] = ["forward", "reverse", "audio"];
 
@@ -101,8 +101,83 @@ export function filterCardsByTrainingSource(
 
 export const DEFAULT_TRAIN_VARIANTS: TrainVariant[] = ["forward"];
 
-/** A dictionary batch being trained right now — session state, never persisted. */
-export type TrainBatch = { id: string; title: string };
+/**
+ * A pack being trained right now — session state, never persisted.
+ *
+ * `id` is empty for a pack that exists only as a group of cards sharing a
+ * source (anything an assistant added with add_flashcards before packs could
+ * hold them); those are matched by title instead.
+ */
+export type TrainBatch = { id: string; title: string; training?: PackTraining | null };
+
+const TRAIN_TYPES: NonNullable<PackTraining["type"]>[] = ["all", "word", "phrase", "sentence"];
+const TRAIN_STATUSES: NonNullable<PackTraining["status"]>[] =
+  ["all", "new", "learning", "review", "relearning", "hard"];
+
+/**
+ * A pack's stored preferences, cleaned of whatever an outside agent may have
+ * put there. Anything unrecognised is dropped rather than trusted: these values
+ * drive the trainer, and a bad one would silently empty the queue.
+ */
+export function normalizePackTraining(raw: unknown): PackTraining | null {
+  if (!raw || typeof raw !== "object") return null;
+  const source = raw as Record<string, unknown>;
+  const out: PackTraining = {};
+
+  const variants = Array.isArray(source.variants)
+    ? ALL_TRAIN_VARIANTS.filter((v) => (source.variants as unknown[]).includes(v))
+    : [];
+  if (variants.length > 0) out.variants = variants;
+
+  const type = String(source.type ?? "");
+  if (TRAIN_TYPES.includes(type as NonNullable<PackTraining["type"]>)) {
+    out.type = type as NonNullable<PackTraining["type"]>;
+  }
+
+  const status = String(source.status ?? "");
+  if (TRAIN_STATUSES.includes(status as NonNullable<PackTraining["status"]>)) {
+    out.status = status as NonNullable<PackTraining["status"]>;
+  }
+
+  if (source.mode === "recognize" || source.mode === "active") out.mode = source.mode;
+
+  const note = typeof source.note === "string" ? source.note.trim().slice(0, 200) : "";
+  if (note) out.note = note;
+
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** «Родной → Изучаемый · Аудио · только предложения» — what a pack's own setup does, in one line. */
+export function describePackTraining(training: PackTraining | null | undefined): string {
+  const t = normalizePackTraining(training);
+  if (!t) return "";
+  const parts: string[] = [];
+  if (t.variants?.length) parts.push(t.variants.map((v) => PACK_VARIANT_LABELS[v]).join(" · "));
+  if (t.mode === "active") parts.push("активная тренировка");
+  if (t.type && t.type !== "all") parts.push(PACK_TYPE_LABELS[t.type]);
+  if (t.status && t.status !== "all") parts.push(PACK_STATUS_LABELS[t.status]);
+  return parts.join(" · ");
+}
+
+const PACK_VARIANT_LABELS: Record<TrainVariant, string> = {
+  forward: "Изучаемый → Родной",
+  reverse: "Родной → Изучаемый",
+  audio: "Аудио",
+};
+
+const PACK_TYPE_LABELS: Record<string, string> = {
+  word: "только слова",
+  phrase: "только фразы",
+  sentence: "только предложения",
+};
+
+const PACK_STATUS_LABELS: Record<string, string> = {
+  new: "только новые",
+  learning: "только на изучении",
+  review: "только на повторении",
+  relearning: "только переучиваемые",
+  hard: "только сложные",
+};
 
 export type ResolvedCardFilters = {
   filterStatus: CardStatus | "all";
@@ -142,21 +217,27 @@ export function resolveCardFilters(
   const sortOrder = saved?.sortOrder ?? "added";
 
   if (batch) {
+    // A pack may carry its own answer to "how should this one be drilled" —
+    // a set of phrases to be produced from Russian is not a page of nouns to be
+    // recognised. Where it says nothing, the batch default below applies:
+    // everything in the pack, in every direction.
+    const training = normalizePackTraining(batch.training);
     return {
       filterStatus: "all",
       filterType: "all",
       filterBook: batch.title,
       filterLevel: "all",
       sortOrder,
-      trainFilter: "all",
-      trainStatus: "all",
+      trainFilter: training?.type ?? "all",
+      trainStatus: training?.status ?? "all",
       trainBook: batch.title,
-      trainSourceId: batch.id,
       // Titles repeat — every page photographed on the same day can share one —
-      // so the id above is the real filter, and the title is only what the
-      // learner sees.
-      trainVariants: [...ALL_TRAIN_VARIANTS],
-      trainMode: "recognize",
+      // so the id below is the real filter where there is one, and the title is
+      // what the learner sees. A pack that is only a group of cards sharing a
+      // source has no id, and is matched by that title alone.
+      trainSourceId: batch.id || null,
+      trainVariants: training?.variants?.length ? [...training.variants] : [...ALL_TRAIN_VARIANTS],
+      trainMode: training?.mode ?? "recognize",
       // Zen is how the learner likes to train, not part of what is being
       // trained, so a batch narrows the deck without changing the view.
       zenMode: saved?.zenMode ?? false,

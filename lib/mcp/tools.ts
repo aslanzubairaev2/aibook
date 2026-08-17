@@ -14,11 +14,15 @@ import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { normalizeCardText } from "@/lib/cards";
 import { saveGeneratedLesson } from "@/lib/db/lessonStore";
 import {
+  adoptCardsIntoPack,
   createCardsForEntries,
   dedupeDictionaryDrafts,
   discardDictionaryBatch,
+  findOrCreatePack,
+  readBatches,
   saveDictionaryEntries,
 } from "@/lib/db/dictionaryStore";
+import { describePackTraining, normalizePackTraining } from "@/lib/cards";
 import { applyNounFieldRules, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import { estimateLevel } from "@/lib/text/readability";
 import { buildKnownWordSet, buildWordCounts, computeCoverage } from "@/lib/text/vocab";
@@ -400,12 +404,7 @@ async function getOverview(ctx: Ctx): Promise<unknown> {
       .from("user_lesson_progress")
       .select("shared_book_id, status, percentage")
       .eq("user_id", ctx.userId),
-    ctx.admin
-      .from("dictionary_batches")
-      .select("id, title, topic, word_count, created_at")
-      .eq("user_id", ctx.userId)
-      .order("created_at", { ascending: false })
-      .limit(5),
+    readBatches(ctx.admin, ctx.userId, { limit: 5 }),
     ctx.admin
       .from("dictionary_entries")
       .select("id", { count: "exact", head: true })
@@ -431,10 +430,15 @@ async function getOverview(ctx: Ctx): Promise<unknown> {
     },
     dictionary: {
       words: entryCount.count ?? 0,
-      batches: (batches.data ?? []).map((b) => ({
-        id: b.id, title: b.title, topic: b.topic, words: b.word_count,
+      batches: batches.batches.map((b) => ({
+        id: b.id,
+        title: b.title,
+        topic: b.topic,
+        words: b.word_count,
+        cards: cardsOfBatch(cards, b.id, b.title).length,
+        training_summary: describePackTraining(normalizePackTraining(b.training)) || null,
       })),
-      note: "A batch («пачка») is one page of vocabulary the learner was set to learn. list_word_batches shows them all with progress.",
+      note: "A pack («пачка») is one unit of study — a photographed coursebook page, or a themed set of words, phrases or sentences. list_word_batches shows them all with progress and with the training setup each one carries.",
     },
     my_lessons: {
       total: lessonCount.count ?? (lessons.data ?? []).length,
@@ -621,9 +625,11 @@ async function deleteFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
 
 async function addFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
   const rawCards = Array.isArray(args.cards) ? args.cards.slice(0, 100) : [];
-  const source = typeof args.source === "string" && args.source.trim()
+  const batchTitle = String(args.batch_title ?? "").trim().slice(0, 200);
+  const batchIdArg = String(args.batch_id ?? "").trim();
+  const source = batchTitle || (typeof args.source === "string" && args.source.trim()
     ? args.source.trim().slice(0, 120)
-    : "Из чата с ИИ";
+    : "Из чата с ИИ");
 
   const incoming = rawCards
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
@@ -640,6 +646,32 @@ async function addFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
     throw new Error("No valid cards: each card needs non-empty 'front' (target language) and 'back' (translation).");
   }
 
+  // A themed set becomes a pack: one row in the learner's Словарь with its own
+  // progress bar, its own «тренировать» button and, if you set one, its own
+  // training setup. Without a pack the cards are only a source name buried in a
+  // filter list, which is where sets built over MCP used to disappear.
+  let packId: string | null = null;
+  let packTitle = "";
+  if (batchIdArg) {
+    const { batches } = await readBatches(ctx.admin, ctx.userId, { limit: 200 });
+    const found = batches.find((b) => b.id === batchIdArg);
+    if (!found) throw new Error("No such pack in this learner's dictionary — check list_word_batches.");
+    packId = found.id;
+    packTitle = found.title;
+  } else if (batchTitle) {
+    const langs = await getLanguages(ctx);
+    const pack = await findOrCreatePack(ctx.admin, ctx.userId, {
+      title: batchTitle,
+      kind: String(args.source ?? "от ИИ-ассистента").slice(0, 120),
+      topic: String(args.topic ?? "").trim().slice(0, 80),
+      language: langs.target,
+      training: normalizePackTraining(args.training),
+    });
+    if (!pack.ok) throw new Error(pack.error);
+    packId = pack.id;
+    packTitle = batchTitle;
+  }
+
   const existing = await getCards(ctx);
   const known = new Set(existing.map((c) => normalizeCardText(c.front)));
 
@@ -652,13 +684,13 @@ async function addFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
       continue;
     }
     known.add(norm); // also dedupes inside one call
-    const srs = createDefaultSrsFields(null, source);
+    const srs = createDefaultSrsFields(packId, packTitle || source);
     rows.push({
       user_id: ctx.userId,
       vocabulary_item_id: null,
       front: card.front,
       back: card.back,
-      source_book_title: source,
+      source_book_title: packTitle || source,
       selection_type: card.type,
       repetitions: srs.repetitions,
       lapses: srs.lapses,
@@ -666,7 +698,7 @@ async function addFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
       interval_days: srs.intervalDays,
       next_review_at: srs.dueAt,
       last_reviewed_at: srs.lastReviewedAt,
-      source_book_id: null,
+      source_book_id: packId,
       status: srs.status,
     });
   }
@@ -679,7 +711,90 @@ async function addFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
   return {
     added: rows.length,
     skipped_as_duplicates: skipped,
-    note: "Cards appear in the app after the learner reopens or refreshes it.",
+    batch_id: packId,
+    batch_title: packTitle || null,
+    note: packId
+      ? "The pack is on the learner's Словарь screen with its own progress and «тренировать» button. Cards appear after they reopen or refresh the app."
+      : "Loose cards, filed under their source name. For a themed set pass 'batch_title' so it becomes a pack the learner can see and train on its own. Cards appear after they reopen or refresh the app.",
+  };
+}
+
+/**
+ * How one pack asks to be trained.
+ *
+ * The learner's own trainer filters are the default for everything; this is the
+ * exception a particular pack carries — «эти фразы я хочу переводить с русского
+ * и на слух». Passing a title that is only a group of cards sharing a source
+ * turns that group into a real pack first, without touching a single schedule.
+ */
+async function updateBatchTraining(ctx: Ctx, args: Args): Promise<unknown> {
+  const batchId = String(args.batch_id ?? "").trim();
+  const title = String(args.title ?? "").trim().slice(0, 200);
+  if (!batchId && !title) {
+    throw new Error("Pass 'batch_id' from list_word_batches, or 'title' of the pack.");
+  }
+
+  const reset = args.reset === true;
+  const training = reset ? null : normalizePackTraining(args);
+  if (!reset && !training) {
+    throw new Error(
+      "Nothing to set. Pass 'variants' (forward / reverse / audio), and/or 'type', 'status', 'mode', 'note' — or 'reset': true to go back to the learner's own filters.",
+    );
+  }
+
+  const { batches, error } = await readBatches(ctx.admin, ctx.userId, { limit: 200 });
+  if (error) throw new Error(`batches read failed: ${error}`);
+
+  let pack = batchId
+    ? batches.find((b) => b.id === batchId)
+    : batches.find((b) => b.title === title);
+  let adopted = 0;
+
+  if (!pack) {
+    if (batchId) throw new Error("No such pack in this learner's dictionary — check list_word_batches.");
+    // A group of cards under one source name: make it the pack it already is.
+    const cards = await getCards(ctx);
+    const matching = cards.filter((c) => !c.source_book_id && (c.source_book_title ?? "") === title);
+    if (matching.length === 0) {
+      throw new Error(`Nothing called «${title}» — call list_word_batches to see the packs and the card groups.`);
+    }
+    const langs = await getLanguages(ctx);
+    const created = await findOrCreatePack(ctx.admin, ctx.userId, {
+      title,
+      kind: "от ИИ-ассистента",
+      language: langs.target,
+      training,
+    });
+    if (!created.ok) throw new Error(created.error);
+    const adoption = await adoptCardsIntoPack(ctx.admin, ctx.userId, title, created.id);
+    if (adoption.error) throw new Error(`Не удалось привязать карточки к пачке: ${adoption.error}`);
+    adopted = adoption.adopted;
+    pack = { id: created.id, title, kind: "", topic: "", language: langs.target, word_count: 0, created_at: "" };
+  }
+
+  const { error: writeError } = await ctx.admin
+    .from("dictionary_batches")
+    .update({ training: training ?? {} })
+    .eq("id", pack.id)
+    .eq("user_id", ctx.userId);
+  if (writeError) {
+    const missing = /training/.test(writeError.message);
+    throw new Error(
+      missing
+        ? "This aibook deployment has not run the pack-training migration yet, so preferences cannot be stored."
+        : `training update failed: ${writeError.message}`,
+    );
+  }
+
+  return {
+    batch_id: pack.id,
+    title: pack.title,
+    training: training ?? {},
+    summary: describePackTraining(training) || "the learner's own trainer filters",
+    cards_adopted: adopted,
+    note: training
+      ? "«Тренировать» on this pack now opens the trainer set up this way. The learner's own filters are untouched and still apply to every other pack."
+      : "Preferences cleared — this pack trains with the learner's own filters again.",
   };
 }
 
@@ -836,46 +951,73 @@ type DictRow = {
 };
 
 async function listBatches(ctx: Ctx): Promise<unknown> {
-  const [{ data: batches, error }, cards, variants] = await Promise.all([
-    ctx.admin
-      .from("dictionary_batches")
-      .select("id, title, kind, topic, language, word_count, created_at")
-      .eq("user_id", ctx.userId)
-      .order("created_at", { ascending: false })
-      .limit(100),
+  const [{ batches, error }, cards, variants] = await Promise.all([
+    readBatches(ctx.admin, ctx.userId, { limit: 100 }),
     getCards(ctx),
     getVariantProgress(ctx),
   ]);
-  if (error) throw new Error(`batches read failed: ${error.message}`);
+  if (error) throw new Error(`batches read failed: ${error}`);
   const byCard = groupByCard(directionProgress(cards, variants));
+
+  const progressOf = (batchCards: CardRow[]) =>
+    batchCards.length > 0
+      ? {
+          cards: batchCards.length,
+          started: batchCards.filter((c) => (c.repetitions ?? 0) > 0).length,
+          learned: batchCards.filter((c) => (c.repetitions ?? 0) >= LEARNED_REPETITIONS).length,
+          struggling: batchCards.filter((c) => isStruggling(c, byCard)).length,
+          percent: Math.round(
+            (batchCards.filter((c) => (c.repetitions ?? 0) > 0).length / batchCards.length) * 100,
+          ),
+        }
+      : null;
+
+  const listed = batches.map((b) => {
+    const batchCards = cardsOfBatch(cards, b.id, b.title);
+    const training = normalizePackTraining(b.training);
+    return {
+      id: b.id,
+      title: b.title,
+      topic: b.topic,
+      page: b.kind,
+      language: b.language,
+      words: b.word_count,
+      cards: batchCards.length,
+      created_at: b.created_at,
+      training,
+      training_summary: describePackTraining(training) || "the learner's own trainer filters",
+      progress: progressOf(batchCards),
+    };
+  });
+
+  // Cards an assistant added with a source name of their own, before packs
+  // could hold anything but dictionary words. They are a pack in everything but
+  // the row, and the learner sees them as one — so they are listed here too,
+  // and update_batch_training turns one into a real pack when asked.
+  const claimed = new Set(batches.map((b) => b.title));
+  const looseByTitle = new Map<string, CardRow[]>();
+  for (const card of cards) {
+    const title = card.source_book_title ?? "";
+    if (card.source_book_id || !title || claimed.has(title)) continue;
+    looseByTitle.set(title, [...(looseByTitle.get(title) ?? []), card]);
+  }
+
+  const unregistered = [...looseByTitle.entries()].map(([title, batchCards]) => ({
+    id: null,
+    title,
+    cards: batchCards.length,
+    progress: progressOf(batchCards),
+    note: "Not a pack row yet — a group of cards sharing this source. Pass this title to update_batch_training to make it a real pack with its own training setup.",
+  }));
 
   return {
     explanation:
-      "A batch («пачка») is one page of vocabulary — usually photographed from the learner's coursebook — kept together as the unit they were set to learn. In the app it has its own progress bar and its own «тренировать» button. Progress is measured from the flashcards made from those words.",
-    batches: (batches ?? []).map((b) => {
-      const batchCards = cardsOfBatch(cards, b.id as string, b.title as string);
-      const learned = batchCards.filter((c) => (c.repetitions ?? 0) >= LEARNED_REPETITIONS).length;
-      const started = batchCards.filter((c) => (c.repetitions ?? 0) > 0).length;
-      return {
-        id: b.id,
-        title: b.title,
-        topic: b.topic,
-        page: b.kind,
-        language: b.language,
-        words: b.word_count,
-        created_at: b.created_at,
-        progress: batchCards.length > 0
-          ? {
-              cards: batchCards.length,
-              started,
-              learned,
-              struggling: batchCards.filter((c) => isStruggling(c, byCard)).length,
-              percent: Math.round((started / batchCards.length) * 100),
-            }
-          : null,
-      };
-    }),
-    next: "list_batch_words shows one batch in full; add_words_to_batch adds to it; add_word_batch starts a new one.",
+      "A pack («пачка») is one set of material the learner studies as a unit — a photographed coursebook page, or a themed set of words, phrases or sentences you built with them. In the app it has its own progress bar and its own «тренировать» button. Progress is measured from the flashcards in it.",
+    training_note:
+      "Each pack may carry its own training setup (direction, card type, status, trainer mode). Where it says nothing, the learner's own trainer filters apply. Set it with update_batch_training.",
+    batches: listed,
+    card_groups_without_a_pack: unregistered,
+    next: "list_batch_words shows one pack's dictionary words; add_words_to_batch adds to it; add_word_batch starts a new one; add_flashcards with 'batch_title' builds a pack of phrases or sentences.",
   };
 }
 
@@ -1027,16 +1169,20 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
     ? args.language.trim()
     : langs.target;
 
+  const training = normalizePackTraining(args.training);
+  const batchRow: Record<string, unknown> = {
+    user_id: ctx.userId,
+    title,
+    kind: String(args.source ?? "от ИИ-ассистента").slice(0, 120),
+    topic: String(args.topic ?? "").trim().slice(0, 80),
+    language,
+    word_count: drafts.length,
+  };
+  if (training) batchRow.training = training;
+
   const { data: batch, error } = await ctx.admin
     .from("dictionary_batches")
-    .insert({
-      user_id: ctx.userId,
-      title,
-      kind: String(args.source ?? "от ИИ-ассистента").slice(0, 120),
-      topic: String(args.topic ?? "").trim().slice(0, 80),
-      language,
-      word_count: drafts.length,
-    })
+    .insert(batchRow)
     .select("id")
     .single();
   if (error || !batch) throw new Error(`batch insert failed: ${error?.message ?? "no row"}`);
@@ -1059,6 +1205,8 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
     words: drafts.length,
     cards_created: cards.created,
     cards_relinked: cards.relinked,
+    training: training ?? {},
+    training_summary: describePackTraining(training) || "the learner's own trainer filters",
     note: "The batch appears in the learner's Словарь as its own page, with its own progress and a «тренировать» button; every new word is already a flashcard. Words that were already cards kept the review history they had.",
   };
 }
@@ -1430,7 +1578,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "add_flashcards",
     title: "Добавить карточки",
     description:
-      "Add flashcards to the learner's spaced-repetition deck. 'front' is the word/phrase in the language being learned, 'back' is the translation into the learner's native language. Duplicates (same front) are skipped automatically. This is for a few loose words; a themed set belongs in add_word_batch.",
+      "Add flashcards to the learner's spaced-repetition deck. 'front' is the word/phrase/sentence in the language being learned, 'back' is the translation into the learner's native language. Duplicates (same front) are skipped automatically. Pass 'batch_title' whenever these cards belong together — a set of phrases for one grammar topic, sentences from one lesson: that makes them a pack («пачка») on the learner's Словарь screen, with its own progress bar and its own «тренировать» button, and lets you give it a training setup. Without it the cards are loose and reachable only through a filter. Use add_word_batch instead when the material is dictionary words (article, plural, verb forms) rather than phrases or sentences.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1447,12 +1595,58 @@ export const MCP_TOOLS: McpToolDef[] = [
             required: ["front", "back"],
           },
         },
-        source: { type: "string", description: "Where these came from, shown on the card (default 'Из чата с ИИ')" },
+        batch_title: {
+          type: "string",
+          description: "Makes these cards a pack under this name, in the learner's native language — «Akkusativ: мужской род · фразы». An existing pack with the same title is reused.",
+        },
+        batch_id: { type: "string", description: "Add to an existing pack by id (from list_word_batches) instead of by title" },
+        topic: { type: "string", description: "Two or three words naming the theme of the pack" },
+        training: {
+          type: "object",
+          description: "How this pack should be trained, when it is created. Same fields as update_batch_training.",
+          properties: {
+            variants: { type: "array", items: { type: "string", enum: ["forward", "reverse", "audio"] } },
+            type: { type: "string", enum: ["all", "word", "phrase", "sentence"] },
+            status: { type: "string", enum: ["all", "new", "learning", "review", "relearning", "hard"] },
+            mode: { type: "string", enum: ["recognize", "active"] },
+            note: { type: "string" },
+          },
+        },
+        source: { type: "string", description: "Where these came from, shown under the pack title (default 'Из чата с ИИ')" },
       },
       required: ["cards"],
       additionalProperties: false,
     },
     annotations: { ...WRITES, title: "Добавить карточки" },
+  },
+  {
+    name: "update_batch_training",
+    title: "Настроить тренировку пачки",
+    description:
+      "Set how one pack is trained, so «тренировать» on it opens the trainer already configured that way — «эти фразы я хочу переводить с русского и слушать». 'variants' is the prompt direction: 'forward' shows the target language and asks for the meaning, 'reverse' shows the learner's own language and asks them to produce the target one, 'audio' plays it and asks for both; pass several to mix them. 'type' and 'status' narrow which cards of the pack take part, 'mode' picks the trainer ('recognize' is the flashcard trainer, 'active' the written one). Whatever you leave out falls back to the learner's own filters, and 'reset': true clears the pack's setup entirely. Identify the pack by 'batch_id', or by 'title' — a title that is still only a group of cards sharing a source becomes a real pack.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        batch_id: { type: "string", description: "Pack id from list_word_batches" },
+        title: { type: "string", description: "Pack title, if you do not have the id" },
+        variants: {
+          type: "array",
+          items: { type: "string", enum: ["forward", "reverse", "audio"] },
+          description: "Prompt directions this pack is drilled in; omit for every direction",
+        },
+        type: { type: "string", enum: ["all", "word", "phrase", "sentence"], description: "Only cards of this type" },
+        status: {
+          type: "string",
+          enum: ["all", "new", "learning", "review", "relearning", "hard"],
+          description: "Only cards at this stage ('hard' = the ones being forgotten)",
+        },
+        mode: { type: "string", enum: ["recognize", "active"], description: "Which trainer opens; default 'recognize'" },
+        note: { type: "string", description: "One line for the learner, in their language, on why it is set up this way" },
+        reset: { type: "boolean", description: "Clear the pack's setup and go back to the learner's own filters" },
+      },
+      additionalProperties: false,
+    },
+    annotations: { ...WRITES, idempotentHint: true, title: "Настроить тренировку пачки" },
   },
   {
     name: "add_word_batch",
@@ -1466,6 +1660,17 @@ export const MCP_TOOLS: McpToolDef[] = [
         topic: { type: "string", description: "Two or three words naming the theme" },
         language: { type: "string", description: "ISO code; defaults to the learner's target language" },
         source: { type: "string", description: "Where the words came from; shown under the title" },
+        training: {
+          type: "object",
+          description: "How this pack should be trained. Same fields as update_batch_training; omit to leave the learner's own filters in charge.",
+          properties: {
+            variants: { type: "array", items: { type: "string", enum: ["forward", "reverse", "audio"] } },
+            type: { type: "string", enum: ["all", "word", "phrase", "sentence"] },
+            status: { type: "string", enum: ["all", "new", "learning", "review", "relearning", "hard"] },
+            mode: { type: "string", enum: ["recognize", "active"] },
+            note: { type: "string" },
+          },
+        },
         words: {
           type: "array",
           description: "Up to 200 words",
@@ -1613,6 +1818,7 @@ const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
   add_flashcards: addFlashcards,
   add_word_batch: addWordBatch,
   add_words_to_batch: addWordsToBatch,
+  update_batch_training: updateBatchTraining,
   create_lesson: createLesson,
   update_flashcard: updateFlashcard,
   delete_flashcards: deleteFlashcards,

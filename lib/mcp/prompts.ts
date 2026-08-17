@@ -54,7 +54,17 @@ export const MCP_PROMPTS: McpPromptDef[] = [
     title: "Разобрать пачку слов",
     description: "Work through one page of coursebook vocabulary with the learner.",
     arguments: [{ name: "batch", description: "Which batch — a title, a topic, or an id" }],
-    build: (a) => `Call list_word_batches, find ${optional(a.batch, "the batch I am currently working on")}, and read it with list_batch_words. Check with list_flashcards (filter 'struggling') which of those words are not sticking. Then teach me that page: group the words so they make sense together, point out the traps (cases, genders, separable verbs, false friends), and give me a few sentences to translate. If we produce new words along the way, add them to that same batch with add_words_to_batch.`,
+    build: (a) => `Call list_word_batches, find ${optional(a.batch, "the batch I am currently working on")}, and read it with list_batch_words. Check with list_flashcards (filter 'struggling') which of those words are not sticking. Then teach me that page: group the words so they make sense together, point out the traps (cases, genders, separable verbs, false friends), and give me a few sentences to translate. If we produce new words along the way, add them to that same batch with add_words_to_batch. If I say how I want this pack drilled — переводить с русского, только на слух — set it with update_batch_training instead of changing anything global.`,
+  },
+  {
+    name: "pack_for_a_grammar_point",
+    title: "Пачка фраз по теме",
+    description: "Build a pack of phrases or sentences for one topic, and set up how it should be trained.",
+    arguments: [
+      { name: "topic", description: "The grammar point or theme — «Akkusativ, мужской род»" },
+      { name: "how", description: "How you want to drill it — «с русского на немецкий», «на слух»" },
+    ],
+    build: (a) => `Build me a set of practice sentences on ${optional(a.topic, "the thing we have just been working on")}. Call get_progress or get_study_words first so the sentences are made of words I actually know, and keep the new element to the grammar point itself. Save them with add_flashcards, passing a 'batch_title' so they arrive as one pack in my Словарь with its own progress and «тренировать» button — the front is the sentence in the language I am learning, the back is the Russian. Then set the pack up with update_batch_training the way I want to drill it: ${optional(a.how, "ask me which direction I want — читать и понимать, переводить с русского, или на слух — before you set it")}. Afterwards tell me in Russian what is in the pack and how it will be trained.`,
   },
   {
     name: "what_should_i_read",

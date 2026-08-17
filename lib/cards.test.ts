@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, buildTrainQueue, computeDeckStats, countTrainCandidates, deckInsight, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import { ALL_TRAIN_VARIANTS, buildTrainQueue, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
 import type { CardVariantState, Flashcard, SkillProgress, TrainVariant } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
@@ -64,6 +64,61 @@ test("a dictionary batch narrows by its exact id, not only its non-unique title"
   assert.equal(session.trainFilter, "all");
   assert.equal(session.trainMode, "recognize");
   assert.deepEqual(session.trainVariants, ALL_TRAIN_VARIANTS);
+});
+
+test("a pack with its own setup is trained the way the pack asks", () => {
+  const saved = { trainStatus: "hard" as const, trainFilter: "word" as const, trainVariants: ["forward"] as TrainVariant[] };
+  const session = resolveCardFilters(saved, {
+    id: "pack-1",
+    title: "Akkusativ · фразы",
+    training: { variants: ["reverse", "audio"] as TrainVariant[], type: "sentence" as const, mode: "recognize" as const },
+  });
+
+  assert.deepEqual(session.trainVariants, ["reverse", "audio"]);
+  assert.equal(session.trainFilter, "sentence");
+  // Silent about status, so the batch default — everything in the pack — holds.
+  assert.equal(session.trainStatus, "all");
+});
+
+test("a pack that says nothing still trains as the whole pack, in every direction", () => {
+  const session = resolveCardFilters({ trainVariants: ["forward"] as TrainVariant[] }, {
+    id: "pack-2",
+    title: "Страница 56",
+    training: null,
+  });
+
+  assert.deepEqual(session.trainVariants, ALL_TRAIN_VARIANTS);
+  assert.equal(session.trainFilter, "all");
+});
+
+test("a pack that is only cards sharing a source is matched by title", () => {
+  const session = resolveCardFilters(undefined, { id: "", title: "Урок 20 — Akkusativ" });
+
+  assert.equal(session.trainSourceId, null);
+  assert.equal(session.trainBook, "Урок 20 — Akkusativ");
+});
+
+test("preferences an outside agent invented are dropped, not obeyed", () => {
+  const training = normalizePackTraining({
+    variants: ["reverse", "sideways", 7],
+    type: "haiku",
+    status: "hard",
+    mode: "telepathy",
+    note: " по-русски с озвучкой ",
+  });
+
+  assert.deepEqual(training, { variants: ["reverse"], status: "hard", note: "по-русски с озвучкой" });
+  // Nothing usable left means no preference at all, so the learner's own filters stay in charge.
+  assert.equal(normalizePackTraining({ variants: [], type: "nonsense" }), null);
+  assert.equal(normalizePackTraining("reverse"), null);
+});
+
+test("a pack's setup is described in the learner's own words", () => {
+  assert.equal(
+    describePackTraining({ variants: ["reverse", "audio"], type: "sentence" }),
+    "Родной → Изучаемый · Аудио · только предложения",
+  );
+  assert.equal(describePackTraining(null), "");
 });
 
 test("a batch never overwrites the learner's own training setup", () => {

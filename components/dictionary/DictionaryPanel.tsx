@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { getCardVariantProgressMap } from "@/lib/db/local";
-import { getCardsVariantProgress } from "@/lib/cards";
+import { describePackTraining, getCardsVariantProgress, type TrainBatch } from "@/lib/cards";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import type { AiAnalysis, CefrLevel, Flashcard, PosTag } from "@/lib/types";
 
@@ -48,8 +48,20 @@ function shortPos(pos: string): string {
 type BatchGroup = {
   batch: DictionaryBatch | null; // null = words photographed before batches existed
   entries: DictionaryEntry[];
+  /**
+   * The pack's flashcards. A pack of phrases or sentences — anything an
+   * assistant built — has these and no dictionary entries at all, and is shown
+   * through them.
+   */
+  cards: Flashcard[];
   /** Of this batch's flashcards, how many have been answered correctly at least once. */
   progress: { learned: number; total: number } | null;
+  /**
+   * A pack that exists only as cards sharing a source name: real to the
+   * learner, but with no row of its own, so it cannot be deleted or configured
+   * here. Trained by title.
+   */
+  looseTitle?: string;
 };
 
 type Props = {
@@ -64,8 +76,8 @@ type Props = {
   onOpenEntry: (entry: DictionaryEntry) => void;
   onDeleteEntry: (id: string) => void;
   onDeleteBatch: (batchId: string) => void;
-  /** Open the flashcard trainer narrowed to this batch's cards. */
-  onTrainBatch: (batch: DictionaryBatch) => void;
+  /** Open the flashcard trainer narrowed to this pack's cards. */
+  onTrainBatch: (batch: TrainBatch) => void;
 };
 
 /**
@@ -190,6 +202,23 @@ export function DictionaryPanel({
     );
   };
 
+  /** A card matches a text search on either side; the word filters are about dictionary entries, not cards. */
+  const cardMatches = (card: Flashcard): boolean => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return card.front.toLowerCase().includes(q) || card.back.toLowerCase().includes(q);
+  };
+
+  /**
+   * Packs that hold cards and no dictionary words at all — a set of phrases or
+   * sentences. Read from the unfiltered entries, so a level filter cannot make
+   * a page of nouns look like one of them.
+   */
+  const wordlessBatchIds = useMemo(() => {
+    const withWords = new Set(entries.map((e) => e.batch_id).filter(Boolean) as string[]);
+    return new Set(batches.map((b) => b.id).filter((id) => !withWords.has(id)));
+  }, [entries, batches]);
+
   const groups = useMemo<BatchGroup[]>(() => {
     const variantProgress = getCardVariantProgressMap();
     const byBatch = new Map<string, DictionaryEntry[]>();
@@ -206,27 +235,62 @@ export function DictionaryPanel({
     }
 
     const result: BatchGroup[] = [];
+    const claimedTitles = new Set(batches.map((b) => b.title));
+
     for (const batch of batches) {
       const batchEntries = byBatch.get(batch.id) ?? [];
-      // A batch with no matching words disappears while a search or filter is
-      // narrowing the view; an untouched view shows every batch, even one
-      // whose words were all deleted (so it can still be removed).
-      if (batchEntries.length === 0 && isNarrowed) continue;
       const batchCards = cards.filter((c) => c.sourceBookId === batch.id);
+      // A pack with nothing matching disappears while a search or filter is
+      // narrowing the view; an untouched view shows every pack, even one whose
+      // words were all deleted (so it can still be removed). A pack of phrases
+      // has no dictionary entries at all — its cards are what it holds, so
+      // those are what the narrowing is measured against.
+      const shownCards = batchEntries.length > 0 ? batchCards : batchCards.filter(cardMatches);
+      if (isNarrowed && batchEntries.length === 0 && shownCards.length === 0) continue;
       result.push({
         batch,
         entries: batchEntries,
+        cards: shownCards,
         progress: batchCards.length > 0
           ? getCardsVariantProgress(batchCards, variantProgress)
           : null,
       });
     }
-    if (loose.length > 0) result.push({ batch: null, entries: loose, progress: null });
+
+    // Cards an assistant filed under a source name of its own, before packs
+    // could hold phrases. They are a pack to the learner in every way that
+    // matters, so the screen treats them as one — with progress, and with the
+    // «тренировать» button that was the whole point.
+    const looseCards = new Map<string, Flashcard[]>();
+    for (const card of cards) {
+      const title = card.sourceBookTitle || card.source || "";
+      if (card.sourceBookId || !title || claimedTitles.has(title)) continue;
+      looseCards.set(title, [...(looseCards.get(title) ?? []), card]);
+    }
+    for (const [title, packCards] of looseCards) {
+      const shownCards = packCards.filter(cardMatches);
+      if (isNarrowed && shownCards.length === 0) continue;
+      result.push({
+        batch: null,
+        looseTitle: title,
+        entries: [],
+        cards: shownCards,
+        progress: getCardsVariantProgress(packCards, variantProgress),
+      });
+    }
+
+    if (loose.length > 0) result.push({ batch: null, entries: loose, cards: [], progress: null });
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, batches, cards, query, level, pos, verbType]);
 
   const shownWordCount = groups.reduce((sum, g) => sum + g.entries.length, 0);
+  // Cards of packs that hold no dictionary words — counted apart, because
+  // «482 слова» must not quietly start meaning something else.
+  const shownCardCount = groups.reduce(
+    (sum, g) => sum + (g.entries.length === 0 ? g.cards.length : 0),
+    0,
+  );
 
   const isExpanded = (key: string) => isNarrowed || expanded.has(key);
   const toggle = (key: string) =>
@@ -255,7 +319,11 @@ export function DictionaryPanel({
     );
   }
 
-  if (entries.length === 0 && batches.length === 0) {
+  // Packs an assistant built out of phrases live here too, and they are not
+  // "nothing" — offering the camera when the learner already has three packs of
+  // sentences waiting is telling them their own material does not exist.
+  const hasPackCards = cards.some((c) => !c.sourceBookId && Boolean(c.sourceBookTitle || c.source));
+  if (entries.length === 0 && batches.length === 0 && !hasPackCards) {
     return (
       <div className="empty-state">
         <BookA size={40} />
@@ -285,6 +353,7 @@ export function DictionaryPanel({
 
           <span className="dict-toolbar-count">
             {shownWordCount} {wordNoun(shownWordCount)}
+            {shownCardCount > 0 && ` · ${shownCardCount} ${cardNoun(shownCardCount)}`}
           </span>
 
           <button
@@ -394,26 +463,43 @@ export function DictionaryPanel({
 
       <div className="dict-batches">
         {groups.map((group) => {
-          const key = group.batch?.id ?? "loose";
+          const key = group.batch?.id ?? group.looseTitle ?? "loose";
           const open = isExpanded(key);
           const pct = group.progress && group.progress.total > 0
             ? Math.round((group.progress.learned / group.progress.total) * 100)
             : null;
+          const title = group.batch?.title ?? group.looseTitle ?? "Прочие слова";
+          // A pack of phrases has no dictionary words to count, so it is
+          // measured in cards — which is what it actually holds.
+          const isCardPack = group.batch
+            ? wordlessBatchIds.has(group.batch.id)
+            : Boolean(group.looseTitle);
+          const trainingSummary = describePackTraining(group.batch?.training);
+          const isPack = Boolean(group.batch || group.looseTitle);
 
           return (
             <section key={key} className="dict-batch">
               <button type="button" className="dict-batch-head" onClick={() => toggle(key)}>
                 <div className="dict-batch-title-wrap">
-                  <strong className="dict-batch-title">
-                    {group.batch ? group.batch.title : "Прочие слова"}
-                  </strong>
+                  <strong className="dict-batch-title">{title}</strong>
                   <span className="dict-batch-meta">
                     {group.batch
-                      ? [group.batch.kind, `${group.entries.length} ${wordNoun(group.entries.length)}`, formatDate(group.batch.created_at)]
-                          .filter(Boolean)
-                          .join(" · ")
-                      : `${group.entries.length} ${wordNoun(group.entries.length)} · добавлены до появления пачек`}
+                      ? [
+                          group.batch.kind,
+                          isCardPack
+                            ? `${group.cards.length} ${cardNoun(group.cards.length)}`
+                            : `${group.entries.length} ${wordNoun(group.entries.length)}`,
+                          formatDate(group.batch.created_at),
+                        ].filter(Boolean).join(" · ")
+                      : group.looseTitle
+                        ? `от ИИ-ассистента · ${group.cards.length} ${cardNoun(group.cards.length)}`
+                        : `${group.entries.length} ${wordNoun(group.entries.length)} · добавлены до появления пачек`}
                   </span>
+                  {trainingSummary && (
+                    <span className="dict-batch-training" title="Как эта пачка тренируется по умолчанию">
+                      <Dumbbell size={11} />{trainingSummary}
+                    </span>
+                  )}
                 </div>
                 {pct !== null && (
                   <span className={`dict-batch-pct${pct >= 100 ? " done" : ""}`}>{pct}%</span>
@@ -427,29 +513,63 @@ export function DictionaryPanel({
                 </div>
               )}
 
-              {group.batch && (
+              {isPack && (
                 <div className="dict-batch-actions">
-                  <button type="button" className="dict-train-btn" onClick={() => onTrainBatch(group.batch!)}>
+                  <button
+                    type="button"
+                    className="dict-train-btn"
+                    onClick={() =>
+                      onTrainBatch({
+                        id: group.batch?.id ?? "",
+                        title,
+                        training: group.batch?.training ?? null,
+                      })
+                    }
+                  >
                     <Dumbbell size={14} />
                     {pct === null || pct === 0 ? "Тренировать" : pct >= 100 ? "Повторить" : "Продолжить изучение"}
                   </button>
-                  <button
-                    type="button"
-                    className="icon-btn danger"
-                    aria-label="Удалить пачку"
-                    title="Удалить пачку (карточки и их прогресс остаются)"
-                    onClick={() => {
-                      if (confirm("Удалить пачку и её слова из словаря? Карточки и прогресс их изучения останутся.")) {
-                        onDeleteBatch(group.batch!.id);
-                      }
-                    }}
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  {group.batch && (
+                    <button
+                      type="button"
+                      className="icon-btn danger"
+                      aria-label="Удалить пачку"
+                      title="Удалить пачку (карточки и их прогресс остаются)"
+                      onClick={() => {
+                        // A pack of phrases has no dictionary words to warn
+                        // about; saying otherwise would describe a deletion
+                        // that is not the one about to happen.
+                        const question = isCardPack
+                          ? "Убрать эту пачку из словаря? Карточки и прогресс их изучения останутся — их можно будет найти во «Всех карточках»."
+                          : "Удалить пачку и её слова из словаря? Карточки и прогресс их изучения останутся.";
+                        if (confirm(question)) onDeleteBatch(group.batch!.id);
+                      }}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
               )}
 
-              {open && (
+              {open && isCardPack && (
+                <div className="dict-list">
+                  {group.cards.map((card) => (
+                    <div key={card.id} className="dict-row-wrap">
+                      <div className="dict-row dict-row-card">
+                        <div className="dict-row-main">
+                          <span className="dict-word">{card.front}</span>
+                          <span className="dict-translation">{card.back}</span>
+                        </div>
+                      </div>
+                      <span className="dict-row-side" onClick={(e) => e.stopPropagation()}>
+                        <SpeakButton text={card.front} lang={language} size={15} />
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {open && !isCardPack && (
                 <div className="dict-list">
                   {group.entries.map((entry) => (
                     <div key={entry.id} className="dict-row-wrap">
@@ -504,6 +624,15 @@ function formatDate(iso: string): string {
   } catch {
     return "";
   }
+}
+
+function cardNoun(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return "карточек";
+  if (mod10 === 1) return "карточка";
+  if (mod10 >= 2 && mod10 <= 4) return "карточки";
+  return "карточек";
 }
 
 function wordNoun(n: number): string {

@@ -577,16 +577,17 @@ function AppInner() {
   }
 
   /**
-   * "Train this batch": open the card module narrowed to exactly the cards made
-   * from that photographed page.
+   * "Train this pack": open the card module narrowed to exactly that pack's
+   * cards — a photographed page, or a set of phrases an assistant built — and
+   * set up the way the pack itself asks to be trained, where it says.
    *
    * The batch is handed over as session state, not written into the saved
    * filters. It used to overwrite them, which left the deck pinned to one
    * finished page and lost whatever the learner had configured for their own
    * training — see resolveCardFilters.
    */
-  function handleTrainWords(batchId: string, batchTitle: string) {
-    setTrainBatch({ id: batchId, title: batchTitle });
+  function handleTrainWords(batch: TrainBatch) {
+    setTrainBatch(batch);
     setCardsInitialTab("train");
     setSection("cards");
   }

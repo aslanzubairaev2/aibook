@@ -7,6 +7,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { applyNounFieldRules, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
+import type { PackTraining } from "@/lib/types";
 
 export type DictionaryBatch = {
   id: string;
@@ -16,7 +17,46 @@ export type DictionaryBatch = {
   language: string;
   word_count: number;
   created_at: string;
+  /** How this pack asks to be trained; empty when it has no preference of its own. */
+  training?: PackTraining | null;
 };
+
+export const BATCH_COLUMNS = "id, title, kind, topic, language, word_count, created_at, training";
+
+/**
+ * Reads the learner's packs.
+ *
+ * `training` arrives with a migration, and a deployment that has not run it yet
+ * must still show the dictionary rather than an error page — so a rejected
+ * column is retried without it and the packs simply come back with no
+ * preferences.
+ */
+export async function readBatches(
+  admin: SupabaseClient,
+  userId: string,
+  options: { language?: string | null; limit?: number } = {},
+): Promise<{ batches: DictionaryBatch[]; error: string | null }> {
+  const { language, limit = 200 } = options;
+
+  const run = async (columns: string) => {
+    let query = admin
+      .from("dictionary_batches")
+      .select(columns)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (language) query = query.eq("language", language);
+    return query;
+  };
+
+  let { data, error } = await run(BATCH_COLUMNS);
+  if (error && /training/.test(error.message)) {
+    ({ data, error } = await run("id, title, kind, topic, language, word_count, created_at"));
+  }
+  if (error) return { batches: [], error: error.message };
+
+  return { batches: (data ?? []) as unknown as DictionaryBatch[], error: null };
+}
 
 export type DictionaryEntry = {
   id: string;
@@ -268,6 +308,86 @@ export async function createCardsForEntries(
   }
 
   return { ok: true, created: newRows.length, relinked: relinkIds.size };
+}
+
+export type PackDraft = {
+  title: string;
+  kind?: string;
+  topic?: string;
+  language: string;
+  training?: PackTraining | null;
+};
+
+/**
+ * The pack a set of cards belongs to, creating it if the learner has none by
+ * that title.
+ *
+ * Packs of phrases and whole sentences have no dictionary entries behind them —
+ * a sentence is not a headword — but they are still the unit the learner
+ * studies, so they are the same `dictionary_batches` row. That is what puts
+ * them on the Словарь screen with their own progress and «тренировать» button
+ * instead of leaving them as a source name buried in a filter list.
+ */
+export async function findOrCreatePack(
+  admin: SupabaseClient,
+  userId: string,
+  draft: PackDraft,
+): Promise<{ ok: true; id: string; created: boolean } | { ok: false; error: string }> {
+  const title = draft.title.trim().slice(0, 200);
+  if (!title) return { ok: false, error: "A pack needs a title." };
+
+  const { data: existing, error: readError } = await admin
+    .from("dictionary_batches")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("title", title)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (readError) return { ok: false, error: `Не удалось прочитать пачки: ${readError.message}` };
+
+  const found = (existing ?? [])[0];
+  if (found) return { ok: true, id: String(found.id), created: false };
+
+  const row: Record<string, unknown> = {
+    user_id: userId,
+    title,
+    kind: (draft.kind ?? "").slice(0, 120),
+    topic: (draft.topic ?? "").slice(0, 80),
+    language: draft.language,
+    word_count: 0,
+  };
+  if (draft.training) row.training = draft.training;
+
+  const { data, error } = await admin.from("dictionary_batches").insert(row).select("id").single();
+  if (error || !data) {
+    return { ok: false, error: `Не удалось создать пачку: ${error?.message ?? "нет строки"}` };
+  }
+  return { ok: true, id: String(data.id), created: true };
+}
+
+/**
+ * Points every card that carries this source name at the pack.
+ *
+ * Cards added before packs could hold phrases sit in the deck with a source
+ * title and nothing else; this is what turns such a group into a real pack
+ * without touching a single review schedule.
+ */
+export async function adoptCardsIntoPack(
+  admin: SupabaseClient,
+  userId: string,
+  sourceTitle: string,
+  batchId: string,
+): Promise<{ adopted: number; error: string | null }> {
+  const { data, error } = await admin
+    .from("flashcards")
+    .update({ source_book_id: batchId, source_book_title: sourceTitle })
+    .eq("user_id", userId)
+    .eq("source_book_title", sourceTitle)
+    .is("source_book_id", null)
+    .select("id");
+
+  if (error) return { adopted: 0, error: error.message };
+  return { adopted: (data ?? []).length, error: null };
 }
 
 export async function discardDictionaryBatch(

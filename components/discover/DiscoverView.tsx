@@ -21,6 +21,7 @@ import { LessonRefineModal } from "./LessonRefineModal";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { DictionaryPanel, entryToCardText, entryToAnalysis } from "@/components/dictionary/DictionaryPanel";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
+import type { TrainBatch } from "@/lib/cards";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
@@ -40,7 +41,8 @@ type Props = {
   /** Turning a dictionary entry into a flashcard goes through the app's single card path. */
   onAddCard?: (card: Flashcard) => void;
   /** Open the flashcard module narrowed to one batch's cards. */
-  onTrainWords?: (batchId: string, batchTitle: string) => void;
+  /** «Тренировать эту пачку» — the pack carries its own training setup, if it has one. */
+  onTrainWords?: (batch: TrainBatch) => void;
   /** Reload user flashcards from server when a batch is added/re-linked. */
   onReloadCards?: () => void;
 };
@@ -1290,7 +1292,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 onOpenEntry={(entry) => void openDictWord(entry)}
                 onDeleteEntry={(id) => void deleteDictionaryEntry(id)}
                 onDeleteBatch={(id) => void deleteDictionaryBatch(id)}
-                onTrainBatch={(batch) => onTrainWords?.(batch.id, batch.title)}
+                onTrainBatch={(batch) => onTrainWords?.(batch)}
               />
               <button
                 type="button"

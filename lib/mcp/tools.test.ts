@@ -63,6 +63,31 @@ test("write tools are named as writes, and only deletion is destructive", () => 
   }
 });
 
+test("a themed set of cards can be filed as a pack, not left loose", () => {
+  const addCards = MCP_TOOLS.find((t) => t.name === "add_flashcards");
+  const properties = (addCards?.inputSchema.properties ?? {}) as Record<string, unknown>;
+
+  // Without this the only way an agent could group phrases was a source name,
+  // which the app showed nowhere the learner could act on.
+  assert.ok(properties.batch_title, "add_flashcards must be able to put its cards in a pack");
+  assert.ok(properties.training, "a pack made this way must be able to carry its training setup");
+});
+
+test("a pack's training setup covers every direction the trainer has", () => {
+  const tool = MCP_TOOLS.find((t) => t.name === "update_batch_training");
+  assert.ok(tool, "packs must be configurable over MCP");
+
+  const properties = (tool!.inputSchema.properties ?? {}) as Record<string, Record<string, never>>;
+  const variants = properties.variants as unknown as { items?: { enum?: string[] } };
+  assert.deepEqual(variants.items?.enum, ["forward", "reverse", "audio"]);
+  // Clearing has to be possible, or a pack could never go back to the
+  // learner's own filters.
+  assert.ok(properties.reset, "a pack's setup must be clearable");
+  // Identifying a pack by title is what lets a group of cards become one.
+  assert.ok(properties.title);
+  assert.ok(properties.batch_id);
+});
+
 test("an unknown tool name comes back with the list of real ones", async () => {
   await assert.rejects(
     () => callMcpTool({} as never, "user", "make_coffee", {}),

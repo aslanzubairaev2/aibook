@@ -62,6 +62,26 @@ export type CardFilters = {
   zenMode?: boolean;
 };
 
+/**
+ * A pack's own training preferences, set by the learner's assistant over MCP.
+ *
+ * A pack of phrases meant to be produced from Russian is not trained the same
+ * way as a page of nouns meant to be recognised, and until now the trainer had
+ * one global setting for both. These are the pack's answer to "how should this
+ * one be drilled"; the learner's own filters stay what they are and are used
+ * whenever a pack says nothing.
+ */
+export type PackTraining = {
+  /** Which prompt directions this pack is drilled in. Empty/absent = every direction. */
+  variants?: TrainVariant[];
+  /** Narrow to one card type — a pack of sentences need not offer «слово». */
+  type?: "all" | "word" | "phrase" | "sentence";
+  status?: "all" | "new" | "learning" | "review" | "relearning" | "hard";
+  mode?: "recognize" | "active";
+  /** One line, in the learner's language, on why it is set up this way. */
+  note?: string;
+};
+
 export type UserProfile = {
   nativeLanguage: string;   // ISO 639-1 code e.g. 'ru'
   targetLanguage: string;   // ISO 639-1 code e.g. 'de'

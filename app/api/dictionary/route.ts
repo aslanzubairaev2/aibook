@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
-import { DICTIONARY_COLUMNS } from "@/lib/db/dictionaryStore";
+import { DICTIONARY_COLUMNS, readBatches } from "@/lib/db/dictionaryStore";
 
 export const dynamic = "force-dynamic";
 
@@ -28,18 +28,9 @@ export async function GET(req: NextRequest) {
     .limit(2000);
   if (language) query = query.eq("language", language);
 
-  const [{ data, error }, { data: batches }] = await Promise.all([
+  const [{ data, error }, { batches }] = await Promise.all([
     query,
-    (() => {
-      let b = supabaseAdmin
-        .from("dictionary_batches")
-        .select("id, title, kind, topic, language, word_count, created_at")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (language) b = b.eq("language", language);
-      return b;
-    })(),
+    readBatches(supabaseAdmin, user.id, { language }),
   ]);
   if (error) {
     // The table is added by a migration; say so plainly instead of showing an

@@ -10,6 +10,8 @@ import {
   computeDeckStats,
   countTrainCandidates,
   deckInsight,
+  describePackTraining,
+  normalizePackTraining,
   CARD_STATUSES,
   filterCardsByTrainingSource,
   findDuplicateCard,
@@ -464,6 +466,10 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // The batch narrows this visit only. Held here so leaving it is a local
   // change of mind rather than a round trip through the owner.
   const [batch, setBatch] = useState<TrainBatch | null>(trainBatch ?? null);
+  // What this pack's own setup does, and why — shown in the banner so a
+  // session that ignores the learner's usual filters explains itself.
+  const batchTrainingSummary = describePackTraining(batch?.training);
+  const batchTrainingNote = normalizePackTraining(batch?.training)?.note ?? "";
   const [initialFilters] = useState<ResolvedCardFilters>(() => resolveCardFilters(savedFilters, trainBatch ?? null));
 
   const [activeTab, setActiveTab] = useState<"today" | "train" | "all">(initialTab ?? "today");
@@ -1020,11 +1026,21 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   }, [openWordModalFor]);
 
   // --- Dynamic font size for card text ---
+  /**
+   * How big the prompt is set, from how much of it there is.
+   *
+   * Fixed pixel sizes were tuned on a wide screen and a single German word;
+   * a whole sentence — or its Russian translation, which runs a third longer —
+   * arrived at 22px on a 360px phone and had nowhere to go. These scale with
+   * the viewport between a floor that stays readable and a ceiling that keeps
+   * a short word looking like a headline.
+   */
   function cardFontSize(text: string): string {
-    if (text.length > 200) return "13px";
-    if (text.length > 120) return "15px";
-    if (text.length > 60) return "18px";
-    return "22px";
+    if (text.length > 200) return "clamp(12px, 3.2vw, 14px)";
+    if (text.length > 120) return "clamp(13px, 3.8vw, 16px)";
+    if (text.length > 60) return "clamp(15px, 4.4vw, 19px)";
+    if (text.length > 28) return "clamp(17px, 5.4vw, 23px)";
+    return "clamp(20px, 6.6vw, 28px)";
   }
 
   // --- All Cards filtering & sorting ---
@@ -1098,7 +1114,6 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const answerText = isReversed ? currentCard?.front : currentCard?.back;
   const promptLang = isReversed ? nativeLanguage : targetLanguage;
   const currentProgress = currentCard ? getVariantProgress(currentCard, currentVariant, variantProgress) : null;
-  const currentMarkers = currentCard ? cardMarkers(currentCard, wordFacts.get(normalizeFront(currentCard.front))) : [];
   const historyPosition = getReviewHistoryPosition(reviewHistory.length, viewingHistoryIndex);
   const historyItem = historyPosition ? reviewHistory[historyPosition.index] : null;
   const historyCard = historyItem?.card;
@@ -1206,7 +1221,10 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       onClick={() => { setShowFilterPanel(false); setShowTtsMenu(false); }}
     >
       <style>{`
-        .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; border-bottom: 1px solid var(--border); }
+        /* Opaque on purpose: a sticky bar with a transparent background let the
+           statistics scroll through the title, which read as two screens
+           printed on top of each other. */
+        .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
         @media (min-width: 640px) { .srs-sticky-header { margin: -28px -24px 16px; padding: 24px 24px 10px; } }
         .srs-tabs-container { display: flex; gap: 4px; padding: 4px; margin-bottom: 14px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-lg); }
         .srs-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 4px; background: transparent; border: none; border-radius: var(--radius-md); font-weight: 700; font-size: 13px; color: var(--text-muted); transition: all 0.2s; cursor: pointer; }
@@ -1242,14 +1260,18 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .flipper-perspective { perspective: 1000px; width: 100%; max-width: 420px; margin: 0 auto 16px; }
         .flipper-card { width: 100%; position: relative; display: grid; transform-style: preserve-3d; transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: pointer; }
         .flipper-card.flipped { transform: rotateY(180deg); }
-        .flipper-face { --card-safe-zone: 62px; grid-area: 1 / 1; position: relative; width: 100%; min-width: 0; min-height: 180px; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-strong); display: grid; grid-template-rows: minmax(var(--card-safe-zone), 1fr) auto minmax(var(--card-safe-zone), 1fr); padding: 14px 18px; box-shadow: var(--shadow-sm); overflow: hidden; }
-        .flipper-face-front { padding-inline: 16px; background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(212, 168, 71, 0.04) 100%); }
-        .flipper-face-front.has-stacked-markers { --card-safe-zone: 70px; }
+        /* Three rows that know their own place: the actions, the text, the
+           footer. The column is minmax(0, 1fr) rather than the implicit auto —
+           an auto column is sized by its widest item's min-content, and the
+           footer's single nowrap line (a source title can be a whole lesson
+           name) blew that column past the card, which is what pushed long
+           sentences off the right-hand edge instead of wrapping them. */
+        .flipper-face { grid-area: 1 / 1; position: relative; width: 100%; min-width: 0; min-height: 200px; max-height: min(62vh, 560px); backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border-strong); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; padding: 12px 14px; box-shadow: var(--shadow-sm); overflow: hidden; }
+        .flipper-face-front { background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(212, 168, 71, 0.04) 100%); }
         .flipper-face-back { pointer-events: none; background: linear-gradient(135deg, var(--bg-elevated) 0%, rgba(122, 171, 106, 0.04) 100%); transform: rotateY(180deg); }
         .flipper-card.flipped .flipper-face-front { pointer-events: none; }
         .flipper-card.flipped .flipper-face-back { pointer-events: auto; }
-        .card-markers-left { position: absolute; top: 16px; left: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; z-index: 10; }
-        .card-actions-right { position: absolute; top: 16px; right: 16px; display: flex; align-items: center; gap: 8px; z-index: 10; }
+        .card-actions-right { grid-row: 1; grid-column: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
         .card-action-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--text-primary); cursor: pointer; transition: all 0.18s ease; padding: 0; box-shadow: var(--shadow-xs); }
         .card-action-btn:hover:not(:disabled) { background: var(--bg-elevated); border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
         .card-action-btn:active:not(:disabled) { transform: scale(0.95); }
@@ -1257,9 +1279,12 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .card-actions-right .speak-btn { width: 44px; height: 44px; border-radius: var(--radius-md); border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--accent); transition: all 0.18s ease; box-shadow: var(--shadow-xs); }
         .card-actions-right .speak-btn:hover { background: var(--bg-elevated); border-color: var(--accent); transform: translateY(-1px); }
         .card-actions-right .speak-btn:active { transform: scale(0.95); }
-        .card-text-area { grid-row: 2; min-width: 0; width: 100%; display: flex; align-items: center; justify-content: center; padding: 8px 0; overflow-wrap: anywhere; word-break: break-word; hyphens: auto; text-align: center; }
-        .card-footer-row { grid-row: 3; align-self: end; width: 100%; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
-        .card-footer-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+        /* A sentence that outgrows even the tallest card scrolls inside it
+           rather than reflowing the page under the grade buttons. */
+        .card-text-area { grid-row: 2; grid-column: 1; min-width: 0; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; overflow-wrap: anywhere; word-break: break-word; hyphens: auto; text-align: center; }
+        .card-text-area > * { min-width: 0; max-width: 100%; }
+        .card-footer-row { grid-row: 3; grid-column: 1; align-self: end; min-width: 0; width: 100%; display: flex; gap: 10px; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 12px; color: var(--text-muted); }
+        .card-footer-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .card-tts-wrap { position: relative; flex-shrink: 0; }
         .tts-menu { position: absolute; top: calc(100% + 6px); right: 0; background: var(--bg-card); border: 1px solid var(--border-strong); border-radius: var(--radius-md); padding: 4px; z-index: 200; min-width: 130px; box-shadow: var(--shadow-sm); }
         .tts-menu-item { padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text-primary); transition: background 0.15s; white-space: nowrap; }
@@ -1321,7 +1346,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
         .filter-chip { padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-muted); transition: all 0.2s; white-space: nowrap; }
         .filter-chip.active { background: rgba(212, 168, 71, 0.15); border-color: var(--accent); color: var(--accent); }
-        .book-select { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 20px; color: var(--text-muted); font-size: 12px; font-weight: 700; padding: 4px 10px; cursor: pointer; outline: none; max-width: 220px; }
+        .book-select { width: 100%; max-width: 100%; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 20px; color: var(--text-muted); font-size: 12px; font-weight: 700; padding: 5px 10px; cursor: pointer; outline: none; }
         .book-select:focus { border-color: var(--accent); color: var(--accent); }
         .all-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
         .all-toolbar .all-search-bar { flex: 1; margin-bottom: 0; }
@@ -1622,7 +1647,14 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               <Layers size={16} />
               <div className="srs-batch-copy">
                 <strong>Пачка «{batch.title}»</strong>
-                <span>Ваши обычные фильтры сохранены и вернутся</span>
+                {/* A pack with a setup of its own has to say what it is, or the
+                    trainer looks as if it quietly ignored the filters. */}
+                <span>
+                  {batchTrainingSummary
+                    ? `Настройка пачки: ${batchTrainingSummary}`
+                    : "Ваши обычные фильтры сохранены и вернутся"}
+                </span>
+                {batchTrainingNote && <span>{batchTrainingNote}</span>}
               </div>
               <button className="srs-batch-exit" type="button" onClick={startSavedTraining}>
                 Выйти
@@ -1677,7 +1709,11 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                     }}
                   >
                     <option value="all">Все источники</option>
-                    {allBooks.map((b) => <option key={b} value={b}>{b.length > 32 ? b.slice(0, 32) + "…" : b}</option>)}
+                    {/* Titles were cut to 32 characters here, which turned two
+                        packs from the same lesson into two identical-looking
+                        options. The select is styled to fit; the text is the
+                        only thing that tells them apart. */}
+                    {allBooks.map((b) => <option key={b} value={b}>{b}</option>)}
                   </select>
                 </div>
               )}
@@ -1899,19 +1935,11 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               <div className="flipper-perspective" style={{ marginBottom: 16 }}>
                 <div className={`flipper-card ${isFlipped ? "flipped" : ""}`}>
                   {/* Front */}
-                  <div className={`flipper-face flipper-face-front ${currentMarkers.length >= 3 ? "has-stacked-markers" : ""}`} onClick={() => setIsFlipped((f) => !f)}>
-                    {/* Left markers — independent absolute positioning */}
-                    <div className="card-markers-left">
-                      <div className="card-marker-stack">
-                        {currentMarkers.map((m, i) => (
-                          <span key={i} className={`card-marker ${m.kind}${i === 0 ? " lead" : ""}`}>
-                            {m.text}{i === 0 && isAudio ? " · Аудио" : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Right action buttons — 2x larger, independent absolute positioning */}
+                  <div className="flipper-face flipper-face-front" onClick={() => setIsFlipped((f) => !f)}>
+                    {/* One row of actions across the top. There used to be a
+                        stack of badges opposite them — type, part of speech,
+                        level — which said what the card already says and cost
+                        the text the whole top of the card. */}
                     <div className="card-actions-right">
                       <button
                         className="card-action-btn"
@@ -2006,9 +2034,6 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
 
                   {/* Back */}
                   <div className="flipper-face flipper-face-back" onClick={() => setIsFlipped((f) => !f)}>
-                    <div className="card-markers-left">
-                      <span className="flash-card-type sentence" style={{ background: "rgba(122, 171, 106, 0.15)", color: "var(--green)" }}>{isAudio ? "Текст" : isReversed ? "Ответ" : "Перевод"}</span>
-                    </div>
                     {(isReversed || isAudio) && (
                       <div className="card-actions-right">
                         <RespeakButton text={currentCard.front} lang={targetLanguage} />
