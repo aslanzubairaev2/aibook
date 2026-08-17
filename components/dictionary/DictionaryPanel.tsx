@@ -5,10 +5,10 @@ import {
   BookA, Camera, ChevronDown, Dumbbell, Loader2, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
-import { getCardVariantProgressMap } from "@/lib/db/local";
-import { describePackTraining, getCardsVariantProgress, type TrainBatch } from "@/lib/cards";
+import { getCardVariantProgressMap, getLocalPackSort, saveLocalPackSort } from "@/lib/db/local";
+import { comparePacks, describePackTraining, getCardsVariantProgress, PACK_SORT_LABELS, type TrainBatch } from "@/lib/cards";
 import { SpeakButton } from "@/components/ui/SpeakButton";
-import type { AiAnalysis, CefrLevel, Flashcard, PosTag } from "@/lib/types";
+import type { AiAnalysis, CefrLevel, Flashcard, PackSort, PosTag } from "@/lib/types";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
@@ -56,6 +56,11 @@ type BatchGroup = {
   cards: Flashcard[];
   /** Of this batch's flashcards, how many have been answered correctly at least once. */
   progress: { learned: number; total: number } | null;
+  /**
+   * When this pack appeared, for ordering. A pack row carries its own date; a
+   * pack that is only cards is as new as its newest card.
+   */
+  createdAt: number;
   /**
    * A pack that exists only as cards sharing a source name: real to the
    * learner, but with no row of its own, so it cannot be deleted or configured
@@ -139,6 +144,8 @@ export function DictionaryPanel({
   const [level, setLevel] = useState<string>("all");
   const [pos, setPos] = useState<string>("all");
   const [verbType, setVerbType] = useState<"all" | "regular" | "irregular">("all");
+  // The order is remembered per device, read the same way the profile is.
+  const [sort, setSort] = useState<PackSort>(getLocalPackSort);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [isStuck, setIsStuck] = useState(false);
   const stickyRef = useRef<HTMLDivElement>(null);
@@ -254,6 +261,7 @@ export function DictionaryPanel({
         progress: batchCards.length > 0
           ? getCardsVariantProgress(batchCards, variantProgress)
           : null,
+        createdAt: Date.parse(batch.created_at) || 0,
       });
     }
 
@@ -276,13 +284,39 @@ export function DictionaryPanel({
         entries: [],
         cards: shownCards,
         progress: getCardsVariantProgress(packCards, variantProgress),
+        createdAt: newestCardTime(packCards),
       });
     }
 
-    if (loose.length > 0) result.push({ batch: null, entries: loose, cards: [], progress: null });
+    if (loose.length > 0) {
+      result.push({ batch: null, entries: loose, cards: [], progress: null, createdAt: 0 });
+    }
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, batches, cards, query, level, pos, verbType]);
+
+  /**
+   * The packs in the order the learner asked for.
+   *
+   * Newest first by default: a pack that was just built — photographed, or
+   * added by their assistant — is the one they came to the screen for, and it
+   * used to be appended below everything else. «Прочие слова» is not a pack and
+   * stays at the bottom whatever the order is.
+   */
+  const sortedGroups = useMemo(() => {
+    const packs = groups.filter((g) => g.batch || g.looseTitle);
+    const rest = groups.filter((g) => !g.batch && !g.looseTitle);
+    const compare = comparePacks(sort);
+
+    const sorted = [...packs].sort((a, b) =>
+      compare(
+        { title: titleOf(a), createdAt: a.createdAt, percent: percentOf(a) },
+        { title: titleOf(b), createdAt: b.createdAt, percent: percentOf(b) },
+      ),
+    );
+
+    return [...sorted, ...rest];
+  }, [groups, sort]);
 
   const shownWordCount = groups.reduce((sum, g) => sum + g.entries.length, 0);
   // Cards of packs that hold no dictionary words — counted apart, because
@@ -399,6 +433,27 @@ export function DictionaryPanel({
           )}
         </div>
 
+        {/* Sorting sits in the open, not inside the filter panel: which pack is
+            on top is the first thing the learner looks for, and a control they
+            have to discover is a control they do not have. */}
+        <div className="dict-sort-row" role="group" aria-label="Сортировка пачек">
+          {(["new", "unlearned", "progress", "title"] as PackSort[]).map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={`filter-chip ${sort === option ? "active" : ""}`}
+              aria-pressed={sort === option}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSort(option);
+                saveLocalPackSort(option);
+              }}
+            >
+              {PACK_SORT_LABELS[option]}
+            </button>
+          ))}
+        </div>
+
         {filtersOpen && (
           <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
             {levelOptions.length > 0 && (
@@ -462,7 +517,7 @@ export function DictionaryPanel({
       </div>
 
       <div className="dict-batches">
-        {groups.map((group) => {
+        {sortedGroups.map((group) => {
           const key = group.batch?.id ?? group.looseTitle ?? "loose";
           const open = isExpanded(key);
           const pct = group.progress && group.progress.total > 0
@@ -606,7 +661,7 @@ export function DictionaryPanel({
             </section>
           );
         })}
-        {groups.length === 0 && <p className="dict-nothing">Ничего не нашлось.</p>}
+        {sortedGroups.length === 0 && <p className="dict-nothing">Ничего не нашлось.</p>}
       </div>
     </>
   );
@@ -624,6 +679,26 @@ function formatDate(iso: string): string {
   } catch {
     return "";
   }
+}
+
+/** How far a pack has got, 0–100. A pack with no cards has not been started. */
+function percentOf(group: BatchGroup): number {
+  if (!group.progress || group.progress.total === 0) return 0;
+  return (group.progress.learned / group.progress.total) * 100;
+}
+
+function titleOf(group: BatchGroup): string {
+  return group.batch?.title ?? group.looseTitle ?? "";
+}
+
+/** A pack of cards is as new as its newest card. */
+function newestCardTime(cards: Flashcard[]): number {
+  let newest = 0;
+  for (const card of cards) {
+    const added = Date.parse(card.addedAt);
+    if (Number.isFinite(added) && added > newest) newest = added;
+  }
+  return newest;
 }
 
 function cardNoun(n: number): string {

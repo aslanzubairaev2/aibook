@@ -1,4 +1,4 @@
-import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage, Flashcard, GrammarTable, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, TrainVariant, UserProfile } from "@/lib/types";
+import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage, Flashcard, GrammarTable, PackSort, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, TrainVariant, UserProfile } from "@/lib/types";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 
 const BOOKS_KEY = "aibook_books";
@@ -372,6 +372,33 @@ export function getLocalAiProvider(): "off" | "custom" {
 export function saveLocalAiProvider(provider: "off" | "custom"): void {
   try {
     localStorage.setItem(getNsKey(AI_PROVIDER_KEY), provider);
+  } catch {
+    // silently fail
+  }
+}
+
+// --- Dictionary: how the packs are ordered ---
+//
+// Kept on the device rather than in the profile: this is how the learner likes
+// to look at the list, not part of what they are studying.
+
+const DICT_SORT_KEY = "aibook_dict_sort";
+
+const PACK_SORTS: PackSort[] = ["new", "unlearned", "progress", "title"];
+
+export function getLocalPackSort(): PackSort {
+  if (typeof window === "undefined") return "new";
+  try {
+    const stored = localStorage.getItem(getNsKey(DICT_SORT_KEY)) as PackSort | null;
+    return stored && PACK_SORTS.includes(stored) ? stored : "new";
+  } catch {
+    return "new";
+  }
+}
+
+export function saveLocalPackSort(sort: PackSort): void {
+  try {
+    localStorage.setItem(getNsKey(DICT_SORT_KEY), sort);
   } catch {
     // silently fail
   }

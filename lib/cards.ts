@@ -1,4 +1,4 @@
-import type { CardFilters, CardVariantState, Flashcard, PackTraining, SkillProgress, TrainVariant } from "@/lib/types";
+import type { CardFilters, CardVariantState, Flashcard, PackSort, PackTraining, SkillProgress, TrainVariant } from "@/lib/types";
 
 export const ALL_TRAIN_VARIANTS: TrainVariant[] = ["forward", "reverse", "audio"];
 
@@ -145,6 +145,49 @@ export function normalizePackTraining(raw: unknown): PackTraining | null {
   if (note) out.note = note;
 
   return Object.keys(out).length > 0 ? out : null;
+}
+
+// ─── The order the packs are shown in ───────────────────────────────────────
+
+/** What ordering the packs by; enough of a pack for any of them to be decided. */
+export type SortablePack = {
+  title: string;
+  /** Milliseconds since the epoch; 0 for a pack whose date is unknown. */
+  createdAt: number;
+  /** How much of the pack is learned, 0–100. */
+  percent: number;
+};
+
+export const PACK_SORT_LABELS: Record<PackSort, string> = {
+  new: "Новые",
+  unlearned: "Неизученные",
+  progress: "По прогрессу",
+  title: "По названию",
+};
+
+/**
+ * Newest first is the default, and it is not arbitrary: the pack the learner
+ * just built — photographed, or added by their assistant — is the one they
+ * opened the screen for. It used to be appended below everything else, which
+ * is exactly the complaint that «пачка не на самом верху».
+ *
+ * The others answer the two questions asked of a list of packs: what have I
+ * not done yet, and what am I nearly finished with. Ties fall back to newest,
+ * so an untouched shelf still reads newest-first.
+ */
+export function comparePacks(sort: PackSort): (a: SortablePack, b: SortablePack) => number {
+  const newestFirst = (a: SortablePack, b: SortablePack) => b.createdAt - a.createdAt;
+
+  switch (sort) {
+    case "unlearned":
+      return (a, b) => a.percent - b.percent || newestFirst(a, b);
+    case "progress":
+      return (a, b) => b.percent - a.percent || newestFirst(a, b);
+    case "title":
+      return (a, b) => a.title.localeCompare(b.title, "ru") || newestFirst(a, b);
+    default:
+      return newestFirst;
+  }
 }
 
 /** «Родной → Изучаемый · Аудио · только предложения» — what a pack's own setup does, in one line. */

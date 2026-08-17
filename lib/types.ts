@@ -82,6 +82,9 @@ export type PackTraining = {
   note?: string;
 };
 
+/** How the packs on the Словарь screen are ordered. */
+export type PackSort = "new" | "unlearned" | "progress" | "title";
+
 export type UserProfile = {
   nativeLanguage: string;   // ISO 639-1 code e.g. 'ru'
   targetLanguage: string;   // ISO 639-1 code e.g. 'de'

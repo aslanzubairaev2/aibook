@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, buildTrainQueue, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import { ALL_TRAIN_VARIANTS, buildTrainQueue, comparePacks, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
 import type { CardVariantState, Flashcard, SkillProgress, TrainVariant } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
@@ -64,6 +64,39 @@ test("a dictionary batch narrows by its exact id, not only its non-unique title"
   assert.equal(session.trainFilter, "all");
   assert.equal(session.trainMode, "recognize");
   assert.deepEqual(session.trainVariants, ALL_TRAIN_VARIANTS);
+});
+
+// ─── The order of the packs ─────────────────────────────────────────────────
+
+const PACKS = [
+  { title: "Страница 56", createdAt: Date.parse("2026-08-13T10:00:00.000Z"), percent: 90 },
+  { title: "Akkusativ · фразы", createdAt: Date.parse("2026-08-17T10:00:00.000Z"), percent: 0 },
+  { title: "Аренда жилья", createdAt: Date.parse("2026-08-15T10:00:00.000Z"), percent: 40 },
+];
+
+const titlesSortedBy = (sort: Parameters<typeof comparePacks>[0]) =>
+  [...PACKS].sort(comparePacks(sort)).map((p) => p.title);
+
+test("by default the newest pack is the one at the top", () => {
+  // The pack the learner just had built for them is what they opened the
+  // screen for; it used to be appended under everything else.
+  assert.deepEqual(titlesSortedBy("new"), ["Akkusativ · фразы", "Аренда жилья", "Страница 56"]);
+});
+
+test("the packs can be ordered by what is left to learn, and by what is nearly done", () => {
+  assert.deepEqual(titlesSortedBy("unlearned"), ["Akkusativ · фразы", "Аренда жилья", "Страница 56"]);
+  assert.deepEqual(titlesSortedBy("progress"), ["Страница 56", "Аренда жилья", "Akkusativ · фразы"]);
+  // Russian collation, so Cyrillic titles come before Latin ones — which is
+  // the alphabet this learner reads the list in.
+  assert.deepEqual(titlesSortedBy("title"), ["Аренда жилья", "Страница 56", "Akkusativ · фразы"]);
+});
+
+test("packs at the same progress still read newest-first", () => {
+  const untouched = [
+    { title: "Старая", createdAt: Date.parse("2026-08-01T10:00:00.000Z"), percent: 0 },
+    { title: "Новая", createdAt: Date.parse("2026-08-17T10:00:00.000Z"), percent: 0 },
+  ];
+  assert.deepEqual([...untouched].sort(comparePacks("unlearned")).map((p) => p.title), ["Новая", "Старая"]);
 });
 
 test("a pack with its own setup is trained the way the pack asks", () => {
