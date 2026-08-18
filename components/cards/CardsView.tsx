@@ -1367,10 +1367,19 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       onClick={() => { setShowFilterPanel(false); setShowTtsMenu(false); }}
     >
       <style>{`
-        /* Opaque on purpose: a sticky bar with a transparent background let the
-           statistics scroll through the title, which read as two screens
-           printed on top of each other. */
-        .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
+        /* Glass, not a lid. It has to hide what scrolls under it — a
+           transparent sticky bar let the statistics run through the title,
+           which read as two screens printed on top of each other — but a flat
+           fill of --bg-primary painted a black rectangle over the warm glow the
+           app-shell puts at the top of every screen, and that rectangle was the
+           first thing on the page. A blurred, slightly translucent panel does
+           the hiding without the hole. */
+        .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; border-bottom: 1px solid var(--border); background: rgba(30, 27, 22, 0.72); backdrop-filter: blur(18px) saturate(130%); -webkit-backdrop-filter: blur(18px) saturate(130%); }
+        /* Where the browser cannot blur, fall back to a fill opaque enough to
+           hide the scrolling content — the panel is still warm, not black. */
+        @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+          .srs-sticky-header { background: var(--bg-secondary); }
+        }
         @media (min-width: 640px) { .srs-sticky-header { margin: -28px -24px 16px; padding: 24px 24px 10px; } }
         .srs-tabs-container { display: flex; gap: 4px; padding: 4px; margin-bottom: 14px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-lg); }
         .srs-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 4px; background: transparent; border: none; border-radius: var(--radius-md); font-weight: 700; font-size: 13px; color: var(--text-muted); transition: all 0.2s; cursor: pointer; }

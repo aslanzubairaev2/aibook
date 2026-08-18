@@ -642,11 +642,18 @@ async function deleteFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
 
 async function addFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
   const rawCards = Array.isArray(args.cards) ? args.cards.slice(0, 100) : [];
-  const batchTitle = String(args.batch_title ?? "").trim().slice(0, 200);
-  const batchIdArg = String(args.batch_id ?? "").trim();
-  const source = batchTitle || (typeof args.source === "string" && args.source.trim()
+  const namedSource = typeof args.source === "string" && args.source.trim()
     ? args.source.trim().slice(0, 120)
-    : "Из чата с ИИ");
+    : "";
+  // A named source is a pack by every measure the learner can see: the app
+  // groups cards by source name and shows the group with a title, a progress
+  // bar and a «тренировать» button. What it could not show was a delete or a
+  // setup, because there was no row behind it — so an agent that filled in
+  // 'source' instead of 'batch_title' left the learner with a pack they could
+  // not act on. The grouping does not change here; it just gets its row.
+  const batchTitle = String(args.batch_title ?? "").trim().slice(0, 200) || namedSource;
+  const batchIdArg = String(args.batch_id ?? "").trim();
+  const source = batchTitle || namedSource || "Из чата с ИИ";
 
   const incoming = rawCards
     .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null)
@@ -679,7 +686,7 @@ async function addFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
     const langs = await getLanguages(ctx);
     const pack = await findOrCreatePack(ctx.admin, ctx.userId, {
       title: batchTitle,
-      kind: String(args.source ?? "от ИИ-ассистента").slice(0, 120),
+      kind: namedSource && namedSource !== batchTitle ? namedSource : "от ИИ-ассистента",
       topic: String(args.topic ?? "").trim().slice(0, 80),
       language: langs.target,
       training: normalizePackTraining(args.training),
@@ -732,8 +739,8 @@ async function addFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
     batch_id: packId,
     batch_title: packTitle || null,
     note: packId
-      ? "The pack is on the learner's Словарь screen with its own progress and «тренировать» button. Cards appear after they reopen or refresh the app."
-      : "Loose cards, filed under their source name. For a themed set pass 'batch_title' so it becomes a pack the learner can see and train on its own. Cards appear after they reopen or refresh the app.",
+      ? "The pack is on the learner's Словарь screen with its own progress and «тренировать» button. Cards appear after they reopen or refresh the app. Give it a description with update_pack_details."
+      : "Loose cards, filed under «Из чата с ИИ». For a themed set pass 'batch_title' so it becomes a pack the learner can see, train and manage on its own. Cards appear after they reopen or refresh the app.",
   };
 }
 

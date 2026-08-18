@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Loader2, Search, SlidersHorizontal, Trash2, X,
+  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Layers, Loader2, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { getCardVariantProgressMap, getLocalPackSort, saveLocalPackSort } from "@/lib/db/local";
@@ -91,6 +91,23 @@ type Props = {
    * on the pattern being learned rather than one that merely contains the words.
    */
   onCreateFromPack?: (pack: { title: string; brief: string; words: string[] }) => void;
+  /**
+   * Register a group of cards that only share a source name as a real pack.
+   *
+   * Such a group is already a pack on this screen — it has a title, progress
+   * and a «тренировать» button — but with no row behind it there is nothing to
+   * delete, describe or configure. This is what gives it one, without touching
+   * a single card's schedule.
+   */
+  onRegisterPack?: (title: string) => void;
+  /**
+   * Delete the cards of an unregistered group.
+   *
+   * For a real pack «удалить» removes the pack and leaves the cards; a group
+   * that is nothing but its cards has no such halfway option, so this is the
+   * honest one and it says so before it runs.
+   */
+  onDeleteCards?: (cardIds: string[]) => void;
 };
 
 /**
@@ -145,6 +162,7 @@ function isIrregularGermanVerb(lemma: string, headword: string, forms: Record<st
 export function DictionaryPanel({
   entries, batches, cards, isLoading, error, language,
   onPhotograph, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch, onCreateFromPack,
+  onRegisterPack, onDeleteCards,
 }: Props) {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -632,6 +650,38 @@ export function DictionaryPanel({
                       })}
                     >
                       <Info size={15} />
+                    </button>
+                  )}
+                  {/* A group with no row of its own: one press makes it the
+                      pack it already looks like, after which it has the same
+                      description, setup and delete as every other pack. */}
+                  {group.looseTitle && onRegisterPack && (
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      aria-label="Оформить как пачку"
+                      title="Оформить как пачку — чтобы её можно было описать, настроить и удалить"
+                      onClick={() => onRegisterPack(group.looseTitle!)}
+                    >
+                      <Layers size={15} />
+                    </button>
+                  )}
+                  {group.looseTitle && onDeleteCards && (
+                    <button
+                      type="button"
+                      className="icon-btn danger"
+                      aria-label="Удалить пачку"
+                      title="Удалить пачку вместе с карточками"
+                      onClick={() => {
+                        const count = group.cards.length;
+                        if (confirm(
+                          `Удалить «${title}» вместе с ${count} ${cardNoun(count)} и прогрессом их изучения? Отменить это будет нельзя.`,
+                        )) {
+                          onDeleteCards(group.cards.map((c) => c.id));
+                        }
+                      }}
+                    >
+                      <Trash2 size={15} />
                     </button>
                   )}
                   {group.batch && (

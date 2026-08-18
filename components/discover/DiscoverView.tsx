@@ -45,6 +45,8 @@ type Props = {
   onTrainWords?: (batch: TrainBatch) => void;
   /** Reload user flashcards from server when a batch is added/re-linked. */
   onReloadCards?: () => void;
+  /** Delete a whole group of cards at once — a pack that is nothing but its cards. */
+  onDeleteCards?: (ids: string[]) => void;
 };
 
 type GutendexBook = {
@@ -270,7 +272,7 @@ function mergeEntryWithAnalysis(entry: DictionaryEntry, base: AiAnalysis, full: 
   };
 }
 
-export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook, onAddCard, onTrainWords, onReloadCards }: Props) {
+export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook, onAddCard, onTrainWords, onReloadCards, onDeleteCards }: Props) {
   const { user } = useAuth();
   const [prefs] = useState<DiscoverPrefs>(readPrefs);
   const [activeTab, setActiveTab] = useState<TabKey>(prefs.activeTab ?? "classic");
@@ -548,6 +550,30 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       });
     } catch {
       void loadDictionary();
+    }
+  }
+
+  /**
+   * Give a group of cards that only share a source name the pack row it lacks.
+   *
+   * Until it has one there is nothing to delete, describe or configure — the
+   * screen shows a pack the learner cannot act on. Afterwards it is an
+   * ordinary pack, with every card's schedule untouched.
+   */
+  async function registerLoosePack(title: string) {
+    try {
+      const res = await fetch("/api/dictionary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+        body: JSON.stringify({ title, language: profile.targetLanguage }),
+      });
+      const data = await res.json() as { adopted?: number; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Не удалось оформить пачку.");
+      await loadDictionary();
+      onReloadCards?.();
+      showToast(`Пачка «${title}» оформлена — карточек: ${data.adopted ?? 0}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Не удалось оформить пачку.");
     }
   }
 
@@ -1339,6 +1365,8 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 onDeleteBatch={(id) => void deleteDictionaryBatch(id)}
                 onTrainBatch={(batch) => onTrainWords?.(batch)}
                 onCreateFromPack={openComposerForPack}
+                onRegisterPack={(title) => void registerLoosePack(title)}
+                onDeleteCards={onDeleteCards}
               />
               <button
                 type="button"

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
-import { DICTIONARY_COLUMNS, readBatches } from "@/lib/db/dictionaryStore";
+import {
+  adoptCardsIntoPack,
+  DICTIONARY_COLUMNS,
+  findOrCreatePack,
+  readBatches,
+} from "@/lib/db/dictionaryStore";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +48,52 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({ entries: data ?? [], batches: batches ?? [] });
+}
+
+// POST /api/dictionary   { title, language? }
+//
+// Turns a group of cards that merely share a source name into the pack it
+// already is to the learner.
+//
+// Such groups appear whenever cards are added under a source without asking for
+// a pack — an assistant that filled in `source` and not `batch_title`, or cards
+// left behind by a pack that was deleted. The screen has always shown them as
+// packs, with progress and a «тренировать» button, but there was no row behind
+// them, so they could not be described, configured or removed: the learner was
+// left looking at a pack with no way to act on it.
+export async function POST(req: NextRequest) {
+  const user = await getUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json({ error: "Войдите, чтобы менять словарь." }, { status: 401 });
+  }
+  if (!supabaseAdmin) {
+    return NextResponse.json({ error: "Supabase не настроен на сервере." }, { status: 503 });
+  }
+
+  const body = await req.json() as { title?: string; language?: string };
+  const title = (body.title ?? "").trim().slice(0, 200);
+  if (!title) return NextResponse.json({ error: "Не указана пачка." }, { status: 400 });
+
+  // The pack is created in the language the screen is showing, so it is not
+  // filtered straight back out of the list it was made for.
+  const language = (body.language ?? "").trim() || "de";
+
+  const pack = await findOrCreatePack(supabaseAdmin, user.id, {
+    title,
+    kind: "от ИИ-ассистента",
+    language,
+  });
+  if (!pack.ok) return NextResponse.json({ error: pack.error }, { status: 500 });
+
+  const adoption = await adoptCardsIntoPack(supabaseAdmin, user.id, title, pack.id);
+  if (adoption.error) {
+    return NextResponse.json(
+      { error: `Не удалось привязать карточки к пачке: ${adoption.error}` },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({ id: pack.id, title, adopted: adoption.adopted });
 }
 
 // DELETE /api/dictionary?id=…            — one entry

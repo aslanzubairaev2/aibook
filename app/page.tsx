@@ -638,6 +638,25 @@ function AppInner() {
     }
   }
 
+  /**
+   * Delete a whole group of cards at once.
+   *
+   * The dictionary screen's only way to remove a pack that never became a pack
+   * row — it is nothing but these cards, so removing it is removing them.
+   */
+  function handleDeleteCards(ids: string[]) {
+    if (ids.length === 0) return;
+    for (const id of ids) deleteLocalCard(id);
+    setCards((prev) => prev.filter((c) => !ids.includes(c.id)));
+    const newCount = Math.max(0, profile.savedItems - ids.length);
+    const updatedProfile = { ...profile, savedItems: newCount };
+    saveLocalProfile(updatedProfile);
+    setProfile(updatedProfile);
+    if (user) {
+      for (const id of ids) void sbDeleteFlashcard(id);
+    }
+  }
+
   function handleProfileChange(updated: UserProfile) {
     setProfile(updated);
   }
@@ -960,6 +979,7 @@ function AppInner() {
           onAddCard={handleAddCard}
           onTrainWords={handleTrainWords}
           onReloadCards={handleReloadCards}
+          onDeleteCards={handleDeleteCards}
         />
       )}
 
