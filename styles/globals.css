@@ -1870,10 +1870,12 @@ textarea,
 }
 .dict-sort-row::-webkit-scrollbar { display: none; }
 .dict-sort-row .filter-chip { flex: 0 0 auto; }
+/* Round, because the «Фильтры» pill sits beside it: a round control next to a
+   square one is what made this row look assembled from two screens. */
 .dict-search-toggle {
   width: 40px; height: 40px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  border: 1px solid var(--border); border-radius: 50%;
   background: var(--bg-card); color: var(--text-muted); cursor: pointer;
   transition: all 0.2s;
 }
@@ -1955,14 +1957,20 @@ textarea,
   display: flex; align-items: center; gap: 8px;
   padding: 10px 14px 12px;
 }
+/* Same shape as the buttons beside it — see .dict-batch-actions .icon-btn. */
 .dict-train-btn {
   flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   height: 36px; font-size: 13px; font-weight: 800;
   background: rgba(212, 168, 71, 0.13); color: var(--accent);
-  border: 1px solid rgba(212, 168, 71, 0.4); border-radius: var(--radius-sm);
+  border: 1px solid rgba(212, 168, 71, 0.4); border-radius: 999px;
   cursor: pointer; transition: all 0.2s;
 }
 .dict-train-btn:hover { background: rgba(212, 168, 71, 0.22); }
+/* Circles beside a pill: one row, one shape. They are also smaller than the
+   app-wide 42px, so a row of three does not outweigh the button it follows. */
+.dict-batch-actions .icon-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+}
 .dict-batch-actions .icon-btn.active { color: var(--accent); border-color: var(--accent); }
 
 /* The brief the pack was collected to. Kept behind a tap: it is the pack's

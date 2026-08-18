@@ -98,18 +98,41 @@ export async function POST(req: Request) {
   // The page label ("стр. 56", "Lektion 4") travels inside `kind`, which the
   // batch header prints — no extra column needed.
   const kindLine = [pageKind, pageLabel].filter(Boolean).join(" · ");
-  const { data: batch, error: batchError } = await supabaseAdmin
+  // What this pack is, written from what was actually read off the page. A
+  // photographed pack gets one for the same reason an assistant-built one
+  // does: three packs named «Страница · 18 авг» tell the learner nothing.
+  const description = [
+    pageKind ? `${pageKind.charAt(0).toUpperCase()}${pageKind.slice(1)}` : "Снимок",
+    pageLabel,
+    topic ? `тема: ${topic}` : "",
+    `${entries.length} слов`,
+  ].filter(Boolean).join(" · ");
+
+  const batchRow: Record<string, unknown> = {
+    user_id: user.id,
+    title,
+    kind: kindLine,
+    topic,
+    language: targetLanguage,
+    word_count: entries.length,
+    description,
+  };
+
+  let { data: batch, error: batchError } = await supabaseAdmin
     .from("dictionary_batches")
-    .insert({
-      user_id: user.id,
-      title,
-      kind: kindLine,
-      topic,
-      language: targetLanguage,
-      word_count: entries.length,
-    })
+    .insert(batchRow)
     .select("id")
     .single();
+  // A deployment that has not run the description migration must still be able
+  // to take the photo; it just cannot keep the line describing it.
+  if (batchError && /description/.test(batchError.message)) {
+    delete batchRow.description;
+    ({ data: batch, error: batchError } = await supabaseAdmin
+      .from("dictionary_batches")
+      .insert(batchRow)
+      .select("id")
+      .single());
+  }
 
   if (batchError || !batch) {
     return NextResponse.json(
