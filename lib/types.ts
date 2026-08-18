@@ -56,6 +56,16 @@ export type CardFilters = {
   trainBook?: string;
   /** Exact dictionary batch id; avoids mixing batches that share a title. */
   trainSourceId?: string | null;
+  /**
+   * Sources a session skips: pack ids, or titles for cards older than packs.
+   *
+   * The other half of «книга / пачка». That one asks for one source and nothing
+   * else; this one asks for everything *except* the ones named — the book
+   * already finished, the pack being saved for next week. Saying it as a
+   * positive selection would mean listing every source the learner does want,
+   * and adding to that list every time a new pack arrives.
+   */
+  trainExcluded?: string[];
   trainVariants?: TrainVariant[];
   trainMode?: "recognize" | "active";
   /** Full-immersion training: nothing on screen but the card and the grades. */

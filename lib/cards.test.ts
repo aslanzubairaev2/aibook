@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, buildTrainQueue, comparePacks, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import { ALL_TRAIN_VARIANTS, buildTrainQueue, cardSourceKey, comparePacks, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, listCardSources, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
 import type { CardVariantState, Flashcard, SkillProgress, TrainVariant } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
@@ -272,6 +272,77 @@ test("a variant with no stored progress counts as new rather than being skipped"
   );
 
   assert.equal(queue.length, 3);
+});
+
+test("excluding a source trains everything but it", () => {
+  const cards = [
+    card("one", "batch-a"),
+    card("two", "batch-a"),
+    card("three", "batch-b"),
+  ];
+
+  assert.deepEqual(
+    filterCardsByTrainingSource(cards, "all", null, ["batch-a"]).map((c) => c.id),
+    ["three"],
+  );
+  // Nothing excluded is the deck as it was.
+  assert.equal(filterCardsByTrainingSource(cards, "all", null, []).length, 3);
+  // Excluding every source is a choice the learner is allowed to make, and it
+  // has to be visible as an empty queue rather than silently ignored.
+  assert.equal(filterCardsByTrainingSource(cards, "all", null, ["batch-a", "batch-b"]).length, 0);
+});
+
+test("asking for one source outranks having excluded it", () => {
+  // «Тренировать эту пачку» on a pack that is on the skip list must open that
+  // pack, not argue with the learner about what they asked for a second ago.
+  const cards = [card("one", "batch-a"), card("two", "batch-b")];
+
+  assert.deepEqual(
+    filterCardsByTrainingSource(cards, "all", "batch-a", ["batch-a"]).map((c) => c.id),
+    ["one"],
+  );
+});
+
+test("an excluded source is left out of the queue and out of the counts", () => {
+  const cards = [
+    scheduled({ id: "one", sourceBookId: "batch-a", type: "word" }),
+    scheduled({ id: "two", sourceBookId: "batch-b", type: "word" }),
+  ];
+  const selection = {
+    status: "all" as const,
+    type: "all" as const,
+    variants: ["forward"] as TrainVariant[],
+    excluded: ["batch-a"],
+  };
+
+  assert.deepEqual(
+    buildTrainQueue(cards, selection, {}, TODAY_END).map((item) => item.card.id),
+    ["two"],
+  );
+  // The chip counts have to agree, or the panel promises cards the session
+  // will not serve.
+  assert.equal(countTrainCandidates(cards, selection, {}, TODAY_END).byType.all, 1);
+});
+
+test("a source is identified by its pack id, and by its title where there is none", () => {
+  const fromPack = card("one", "batch-a");
+  const older = { ...card("two", ""), sourceBookId: null, sourceBookTitle: "Старые слова" } as Flashcard;
+
+  assert.equal(cardSourceKey(fromPack), "batch-a");
+  assert.equal(cardSourceKey(older), "Старые слова");
+
+  const sources = listCardSources([fromPack, older, card("three", "batch-a")]);
+  assert.deepEqual(
+    sources.map((s) => [s.key, s.cards]),
+    [["batch-a", 2], ["Старые слова", 1]],
+  );
+});
+
+test("the excluded sources survive a reload, and a pack being trained ignores them", () => {
+  const saved = { trainExcluded: ["batch-a"] };
+  assert.deepEqual(resolveCardFilters(saved).trainExcluded, ["batch-a"]);
+  // Opening a pack deliberately is not the moment to apply the skip list.
+  assert.deepEqual(resolveCardFilters(saved, { id: "batch-a", title: "Пачка" }).trainExcluded, []);
 });
 
 test("a drill takes the whole pack again, schedule or no schedule", () => {

@@ -88,15 +88,62 @@ export function findDuplicateCard(front: string, cards: Flashcard[]): Flashcard 
   return cards.find((c) => normalizeCardText(c.front) === norm) ?? null;
 }
 
-/** Keeps a dictionary batch distinct even when another batch has the same title. */
+/**
+ * What identifies the place a card came from.
+ *
+ * The pack's id where there is one — two packs photographed on the same day
+ * genuinely share a title — and the title itself for everything older, which
+ * is the only handle those cards have.
+ */
+export function cardSourceKey(card: Flashcard): string {
+  return card.sourceBookId || card.sourceBookTitle || card.source || "";
+}
+
+/** One entry per place the deck's cards come from, biggest first. */
+export type CardSource = { key: string; title: string; cards: number };
+
+export function listCardSources(cards: Flashcard[]): CardSource[] {
+  const sources = new Map<string, CardSource>();
+  for (const card of cards) {
+    const key = cardSourceKey(card);
+    if (!key) continue;
+    const found = sources.get(key);
+    if (found) found.cards += 1;
+    else sources.set(key, { key, title: card.sourceBookTitle || card.source || "Без источника", cards: 1 });
+  }
+  return [...sources.values()].sort((a, b) => b.cards - a.cards || a.title.localeCompare(b.title, "ru"));
+}
+
+/**
+ * Narrows the deck to what a session is allowed to draw from.
+ *
+ * Two opposite ways of saying it, and both are needed. Picking one source is
+ * how a single pack gets drilled; `excluded` is how the rest of the deck gets
+ * trained *without* something — the book that is finished, the pack the
+ * learner is deliberately leaving for later. Saying that as a positive
+ * selection would mean naming every source they do want, and re-naming them
+ * every time a new one arrives.
+ */
 export function filterCardsByTrainingSource(
   cards: Flashcard[],
   sourceTitle: string,
   sourceId: string | null,
+  excluded: string[] = [],
 ): Flashcard[] {
-  if (sourceId) return cards.filter((card) => card.sourceBookId === sourceId);
-  if (sourceTitle === "all") return cards;
-  return cards.filter((card) => (card.sourceBookTitle || card.source || "") === sourceTitle);
+  const scoped = sourceId
+    ? cards.filter((card) => card.sourceBookId === sourceId)
+    : sourceTitle === "all"
+      ? cards
+      : cards.filter((card) => (card.sourceBookTitle || card.source || "") === sourceTitle);
+
+  if (excluded.length === 0) return scoped;
+  // A source picked by hand outranks the exclusion list: asking for exactly
+  // this pack and being given nothing would be the filter arguing with the
+  // learner rather than obeying them.
+  if (sourceId || sourceTitle !== "all") return scoped;
+
+  const blocked = new Set(excluded);
+  return scoped.filter((card) => !blocked.has(cardSourceKey(card)));
 }
 
 export const DEFAULT_TRAIN_VARIANTS: TrainVariant[] = ["forward"];
@@ -232,6 +279,7 @@ export type ResolvedCardFilters = {
   trainStatus: TrainStatus;
   trainBook: string;
   trainSourceId: string | null;
+  trainExcluded: string[];
   trainVariants: TrainVariant[];
   trainMode: NonNullable<CardFilters["trainMode"]>;
   zenMode: boolean;
@@ -279,6 +327,9 @@ export function resolveCardFilters(
       // what the learner sees. A pack that is only a group of cards sharing a
       // source has no id, and is matched by that title alone.
       trainSourceId: batch.id || null,
+      // «Тренировать эту пачку» means this pack, whatever the learner has
+      // otherwise told the trainer to skip — including, quite possibly, this.
+      trainExcluded: [],
       trainVariants: training?.variants?.length ? [...training.variants] : [...ALL_TRAIN_VARIANTS],
       trainMode: training?.mode ?? "recognize",
       // Zen is how the learner likes to train, not part of what is being
@@ -297,6 +348,7 @@ export function resolveCardFilters(
     trainStatus: saved?.trainStatus ?? "all",
     trainBook: saved?.trainBook ?? "all",
     trainSourceId: saved?.trainSourceId ?? null,
+    trainExcluded: saved?.trainExcluded ?? [],
     trainVariants: saved?.trainVariants?.length ? saved.trainVariants : DEFAULT_TRAIN_VARIANTS,
     trainMode: saved?.trainMode ?? "recognize",
     zenMode: saved?.zenMode ?? false,
@@ -352,6 +404,8 @@ export type TrainSelection = {
   variants: TrainVariant[];
   book?: string;
   sourceId?: string | null;
+  /** Source keys this session leaves alone — see filterCardsByTrainingSource. */
+  excluded?: string[];
   /**
    * Drill: take everything in scope, whether or not it is due.
    *
@@ -388,7 +442,7 @@ export function buildTrainQueue(
   todayEndMs: number,
 ): TrainQueueItem[] {
   const typed = selection.type === "all" ? cards : cards.filter((c) => c.type === selection.type);
-  const scoped = filterCardsByTrainingSource(typed, selection.book ?? "all", selection.sourceId ?? null);
+  const scoped = filterCardsByTrainingSource(typed, selection.book ?? "all", selection.sourceId ?? null, selection.excluded);
 
   const items: TrainQueueItem[] = [];
   for (const card of scoped) {
@@ -436,7 +490,7 @@ export function countTrainCandidates(
     byStatus: { all: 0, new: 0, learning: 0, review: 0, relearning: 0, hard: 0 },
     byType: { all: 0, word: 0, phrase: 0, sentence: 0 },
   };
-  const scoped = filterCardsByTrainingSource(cards, selection.book ?? "all", selection.sourceId ?? null);
+  const scoped = filterCardsByTrainingSource(cards, selection.book ?? "all", selection.sourceId ?? null, selection.excluded);
 
   for (const card of scoped) {
     const typeMatches = selection.type === "all" || card.type === selection.type;

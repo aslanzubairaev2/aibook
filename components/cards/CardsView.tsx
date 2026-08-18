@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
-import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard } from "lucide-react";
+import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard, EyeOff } from "lucide-react";
 import type { AiAnalysis, CardFilters, CardSkillState, DiscussMessage, Flashcard, ReverseWordAnalysis, TrainVariant, TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
 import {
@@ -10,6 +10,7 @@ import {
   computeDeckStats,
   countTrainCandidates,
   deckInsight,
+  listCardSources,
   describePackTraining,
   normalizePackTraining,
   CARD_STATUSES,
@@ -519,6 +520,11 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // («тренировать именно эти слова» from the dictionary lands here).
   const [trainBook, setTrainBook] = useState<string>(initialFilters.trainBook);
   const [trainSourceId, setTrainSourceId] = useState<string | null>(initialFilters.trainSourceId);
+  // Sources this learner has told the trainer to leave alone — the book they
+  // have finished, the pack they are saving for next week. The opposite end of
+  // the same question as trainBook above: one names what to train, this names
+  // what to train around.
+  const [trainExcluded, setTrainExcluded] = useState<string[]>(initialFilters.trainExcluded);
   const [trainVariants, setTrainVariants] = useState<TrainVariant[]>(initialFilters.trainVariants);
   const [trainMode, setTrainMode] = useState<"recognize" | "active">(initialFilters.trainMode);
   // Zen: the trainer with everything around it taken away — no header, no
@@ -764,13 +770,14 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       book: string = trainBook,
       sourceId: string | null = trainSourceId,
       ignoreSchedule = false,
+      excluded: string[] = trainExcluded,
     ): TrainQueueItem[] =>
       // Shuffled so multi-variant sessions interleave instead of running all of
       // one variant before the next.
       shuffleTrainQueue(
-        buildTrainQueue(cards, { status, type: filter, variants, book, sourceId, ignoreSchedule }, variantProgress, todayEndTime),
+        buildTrainQueue(cards, { status, type: filter, variants, book, sourceId, excluded, ignoreSchedule }, variantProgress, todayEndTime),
       ),
-    [cards, variantProgress, todayEndTime, trainBook, trainSourceId],
+    [cards, variantProgress, todayEndTime, trainBook, trainSourceId, trainExcluded],
   );
 
   // Live counts for the filter chips, computed in a single pass. Each chip used
@@ -779,30 +786,35 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const trainCounts = useMemo(
     () => countTrainCandidates(
       cards,
-      { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId },
+      { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded },
       variantProgress,
       todayEndTime,
     ),
-    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, variantProgress, todayEndTime],
+    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, variantProgress, todayEndTime],
   );
 
   // The productive trainer keeps its own schedule but must obey the same
   // narrowing: "train this batch" means this batch in either mode.
   const trainCards = useMemo(
-    () => filterCardsByTrainingSource(cards, trainBook, trainSourceId),
-    [cards, trainBook, trainSourceId],
+    () => filterCardsByTrainingSource(cards, trainBook, trainSourceId, trainExcluded),
+    [cards, trainBook, trainSourceId, trainExcluded],
   );
+
+  // Every source the deck draws from, with its size — the list the exclusion
+  // chips are built from, and what makes «исключить» a decision rather than a
+  // guess about how much it would remove.
+  const cardSources = useMemo(() => listCardSources(cards), [cards]);
 
   // What «пройти заново» would actually serve. Shown on the empty state so the
   // offer is a number rather than a promise.
   const drillCandidates = useMemo(
     () => countTrainCandidates(
       cards,
-      { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, ignoreSchedule: true },
+      { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, ignoreSchedule: true },
       variantProgress,
       todayEndTime,
     ).byType.all,
-    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, variantProgress, todayEndTime],
+    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, variantProgress, todayEndTime],
   );
 
   function startTrainingSession(
@@ -812,8 +824,9 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     book: string = trainBook,
     sourceId: string | null = trainSourceId,
     ignoreSchedule = false,
+    excluded: string[] = trainExcluded,
   ) {
-    setTrainQueue(makeTrainQueue(status, filter, variants, book, sourceId, ignoreSchedule));
+    setTrainQueue(makeTrainQueue(status, filter, variants, book, sourceId, ignoreSchedule, excluded));
     setDrilling(ignoreSchedule);
     setCurrentTrainIndex(0);
     setReviewedIds([]);
@@ -843,6 +856,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     setTrainStatus(restored.trainStatus);
     setTrainBook(restored.trainBook);
     setTrainSourceId(restored.trainSourceId);
+    setTrainExcluded(restored.trainExcluded);
     setTrainVariants(restored.trainVariants);
     setTrainMode(restored.trainMode);
     startTrainingSession(
@@ -851,6 +865,28 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       restored.trainVariants,
       restored.trainBook,
       restored.trainSourceId,
+      false,
+      restored.trainExcluded,
+    );
+  }
+
+  /**
+   * Train around a source instead of through it.
+   *
+   * Restarts the session, because the queue was built before the learner
+   * changed their mind about what belongs in it — leaving the cards they just
+   * excluded sitting in front of them would be the filter agreeing and doing
+   * nothing.
+   */
+  function setExcludedSources(excluded: string[]) {
+    setTrainExcluded(excluded);
+    persistCardFilters({ trainExcluded: excluded });
+    startTrainingSession(trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, drilling, excluded);
+  }
+
+  function toggleExcludedSource(key: string) {
+    setExcludedSources(
+      trainExcluded.includes(key) ? trainExcluded.filter((k) => k !== key) : [...trainExcluded, key],
     );
   }
 
@@ -1187,7 +1223,10 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   );
   const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all", filterLevel !== "all"].filter(Boolean).length;
   const variantsAreDefault = trainVariants.length === 1 && trainVariants[0] === "forward";
-  const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", trainBook !== "all", !variantsAreDefault].filter(Boolean).length;
+  // With one source picked there is nothing for the exclusions to remove — the
+  // chips stay visible (so the learner can see what they set) but say so.
+  const narrowedToOneSource = trainBook !== "all" || Boolean(trainSourceId);
+  const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", trainBook !== "all", trainExcluded.length > 0, !variantsAreDefault].filter(Boolean).length;
 
   const filteredAllCards = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
@@ -1454,6 +1493,16 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         /* The three directions, in the open above the card. Fully rounded, the
            same shape as the mode switch beside them — a pill next to a
            near-rectangle is the mismatch that made this row look unfinished. */
+        /* An excluded source reads as switched off, not as selected: the same
+           chip, struck through and drained of colour, with the eye that says
+           what happened to it. A red "active" state would have looked like a
+           filter that was on. */
+        .srs-exclude-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; }
+        .srs-exclude-chip .srs-exclude-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+        .srs-exclude-chip.excluded { border-color: var(--border); background: transparent; color: var(--text-muted); opacity: 0.6; }
+        .srs-exclude-chip.excluded .srs-exclude-title { text-decoration: line-through; }
+        .srs-excluded-idle { opacity: 0.45; }
+        .srs-exclude-note { margin-top: 6px; font-size: 11px; color: var(--text-muted); }
         .srs-dir-row { display: flex; justify-content: center; gap: 6px; width: 100%; max-width: 420px; margin: 0 auto; flex-wrap: wrap; }
         .srs-dir-chip { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-muted); font-size: 12px; font-weight: 750; cursor: pointer; transition: all 0.18s ease; }
         .srs-dir-chip:hover { border-color: var(--border-strong); color: var(--text-primary); }
@@ -1927,6 +1976,52 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                 </div>
               )}
 
+              {/* The other end of the same question. The select above asks for
+                  one source; this asks for everything except the ones tapped —
+                  the book already finished, the pack being left for later. It
+                  is greyed out while a single source is selected, because there
+                  the exclusions have nothing left to act on. */}
+              {cardSources.length > 1 && (
+                <div className="filter-group">
+                  <div className="filter-group-label">
+                    Исключить из тренировки
+                    {trainExcluded.length > 0 && ` · ${trainExcluded.length}`}
+                  </div>
+                  <div className={`filter-chips${narrowedToOneSource ? " srs-excluded-idle" : ""}`}>
+                    {cardSources.map((source) => {
+                      const off = trainExcluded.includes(source.key);
+                      return (
+                        <button
+                          key={source.key}
+                          type="button"
+                          className={`filter-chip srs-exclude-chip${off ? " excluded" : ""}`}
+                          aria-pressed={off}
+                          title={off ? `Вернуть «${source.title}» в тренировку` : `Не показывать «${source.title}»`}
+                          onClick={() => toggleExcludedSource(source.key)}
+                        >
+                          {off ? <EyeOff size={11} /> : null}
+                          <span className="srs-exclude-title">{source.title}</span>
+                          <span style={{ opacity: 0.7 }}>{source.cards}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {narrowedToOneSource ? (
+                    <div className="srs-exclude-note">
+                      Сейчас выбран один источник — исключения к нему не применяются.
+                    </div>
+                  ) : trainExcluded.length > 0 ? (
+                    <button
+                      type="button"
+                      className="filter-reset-btn"
+                      onClick={() => setExcludedSources([])}
+                    >
+                      Вернуть все источники
+                    </button>
+                  ) : null}
+                </div>
+              )}
+
               <div className="filter-group">
                 <div className="filter-group-label">Тип</div>
                 <div className="filter-chips">
@@ -1996,7 +2091,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               {activeTrainFilterCount > 0 && (
                 <button
                   className="filter-reset-btn"
-                  onClick={() => { leaveBatchForOwnChoice(); setTrainFilter("all"); setTrainStatus("all"); setTrainBook("all"); setTrainSourceId(null); setTrainVariants(DEFAULT_TRAIN_VARIANTS); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainBook: "all", trainSourceId: null, trainVariants: DEFAULT_TRAIN_VARIANTS }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS, "all", null); }}
+                  onClick={() => { leaveBatchForOwnChoice(); setTrainFilter("all"); setTrainStatus("all"); setTrainBook("all"); setTrainSourceId(null); setTrainExcluded([]); setTrainVariants(DEFAULT_TRAIN_VARIANTS); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainBook: "all", trainSourceId: null, trainExcluded: [], trainVariants: DEFAULT_TRAIN_VARIANTS }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS, "all", null, false, []); }}
                   type="button"
                 >
                   Сбросить фильтры
@@ -2018,6 +2113,14 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                 {drillCandidates > 0 && (
                   <button className="primary-btn" style={{ marginTop: 12, maxWidth: 280 }} onClick={drillAgain} type="button">
                     <RotateCcw size={14} style={{ marginRight: 6 }} /> Пройти заново ({drillCandidates})
+                  </button>
+                )}
+                {/* Said out loud, because an exclusion made a while ago is
+                    exactly the thing a learner will not think to look for when
+                    the queue turns up empty. */}
+                {trainExcluded.length > 0 && (
+                  <button className="secondary-btn" style={{ marginTop: 12 }} onClick={() => setExcludedSources([])} type="button">
+                    <EyeOff size={14} /> Исключено источников: {trainExcluded.length} — вернуть
                   </button>
                 )}
               </div>
