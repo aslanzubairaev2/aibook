@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, buildTrainQueue, cardSourceKey, comparePacks, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, listCardSources, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import { ALL_TRAIN_VARIANTS, buildTrainQueue, cardSourceKey, matchesSourceQuery, comparePacks, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, listCardSources, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
 import type { CardVariantState, Flashcard, SkillProgress, TrainVariant } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
@@ -333,9 +333,22 @@ test("a source is identified by its pack id, and by its title where there is non
 
   const sources = listCardSources([fromPack, older, card("three", "batch-a")]);
   assert.deepEqual(
-    sources.map((s) => [s.key, s.cards]),
-    [["batch-a", 2], ["Старые слова", 1]],
+    sources.map((s) => [s.key, s.cards, s.packId]),
+    [["batch-a", 2, "batch-a"], ["Старые слова", 1, null]],
   );
+});
+
+test("the picker's search finds a source by its title", () => {
+  // The list is what a deck of a thousand packs is chosen from, so the search
+  // is the control that matters, not a convenience.
+  const [pack] = listCardSources([card("one", "batch-a")]);
+  const named = { ...pack, title: "Урок 20 — Akkusativ" };
+
+  assert.equal(matchesSourceQuery(named, ""), true);
+  assert.equal(matchesSourceQuery(named, "  "), true);
+  assert.equal(matchesSourceQuery(named, "akkusativ"), true, "case is not part of the question");
+  assert.equal(matchesSourceQuery(named, "Урок 20"), true);
+  assert.equal(matchesSourceQuery(named, "dativ"), false);
 });
 
 test("the excluded sources survive a reload, and a pack being trained ignores them", () => {

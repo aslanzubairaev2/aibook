@@ -100,7 +100,13 @@ export function cardSourceKey(card: Flashcard): string {
 }
 
 /** One entry per place the deck's cards come from, biggest first. */
-export type CardSource = { key: string; title: string; cards: number };
+export type CardSource = {
+  key: string;
+  title: string;
+  cards: number;
+  /** Set when the source has a pack/book row behind it; null for older cards. */
+  packId: string | null;
+};
 
 export function listCardSources(cards: Flashcard[]): CardSource[] {
   const sources = new Map<string, CardSource>();
@@ -108,10 +114,25 @@ export function listCardSources(cards: Flashcard[]): CardSource[] {
     const key = cardSourceKey(card);
     if (!key) continue;
     const found = sources.get(key);
-    if (found) found.cards += 1;
-    else sources.set(key, { key, title: card.sourceBookTitle || card.source || "Без источника", cards: 1 });
+    if (found) {
+      found.cards += 1;
+      continue;
+    }
+    sources.set(key, {
+      key,
+      title: card.sourceBookTitle || card.source || "Без источника",
+      cards: 1,
+      packId: card.sourceBookId || null,
+    });
   }
   return [...sources.values()].sort((a, b) => b.cards - a.cards || a.title.localeCompare(b.title, "ru"));
+}
+
+/** Matches a source against what was typed into the picker's search box. */
+export function matchesSourceQuery(source: CardSource, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return source.title.toLowerCase().includes(q);
 }
 
 /**

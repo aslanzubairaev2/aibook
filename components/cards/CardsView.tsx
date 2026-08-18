@@ -11,6 +11,7 @@ import {
   countTrainCandidates,
   deckInsight,
   listCardSources,
+  type CardSource,
   describePackTraining,
   normalizePackTraining,
   CARD_STATUSES,
@@ -32,6 +33,7 @@ import {
 } from "@/lib/cards";
 import { isTypingTarget, trainerHotkey } from "@/lib/srs/trainerHotkeys";
 import { TrainerKeysModal } from "@/components/cards/TrainerKeysModal";
+import { SourcePickerModal } from "@/components/cards/SourcePickerModal";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { getTTSState, prefetchSpeechAhead, respeak, speak, stopTTS, subscribeTTS, toggleRepeat } from "@/lib/tts";
@@ -141,6 +143,24 @@ const STATUS_LABELS: Record<string, string> = {
 /** The three states in which the player is on screen — same test AudioScrubber makes. */
 function isPlayerShowing(status: string): boolean {
   return status === "playing" || status === "paused" || status === "loading";
+}
+
+function cardNoun(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return "карточек";
+  if (mod10 === 1) return "карточка";
+  if (mod10 >= 2 && mod10 <= 4) return "карточки";
+  return "карточек";
+}
+
+function sourceNoun(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return "источников";
+  if (mod10 === 1) return "источник";
+  if (mod10 >= 2 && mod10 <= 4) return "источника";
+  return "источников";
 }
 
 function endOfTodayMs(): number {
@@ -498,6 +518,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const [sortOrder, setSortOrder] = useState<SortOrder>(initialFilters.sortOrder);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [showTrainFilterPanel, setShowTrainFilterPanel] = useState(false);
+  const [showSourcePicker, setShowSourcePicker] = useState(false);
   const [showTtsMenu, setShowTtsMenu] = useState(false);
   const [showKeysModal, setShowKeysModal] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -884,6 +905,23 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     startTrainingSession(trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, drilling, excluded);
   }
 
+  /**
+   * Train one source and nothing else — or, with null, the deck again.
+   *
+   * A source with a pack row behind it is matched by its id: two pages
+   * photographed on the same day can carry the same title, and matching by
+   * title would quietly train both.
+   */
+  function selectTrainingSource(source: CardSource | null) {
+    leaveBatchForOwnChoice();
+    const book = source ? source.title : "all";
+    const sourceId = source?.packId ?? null;
+    setTrainBook(book);
+    setTrainSourceId(sourceId);
+    persistCardFilters({ trainBook: book, trainSourceId: sourceId });
+    startTrainingSession(trainStatus, trainFilter, trainVariants, book, sourceId, drilling, trainExcluded);
+  }
+
   function toggleExcludedSource(key: string) {
     setExcludedSources(
       trainExcluded.includes(key) ? trainExcluded.filter((k) => k !== key) : [...trainExcluded, key],
@@ -1226,6 +1264,11 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // With one source picked there is nothing for the exclusions to remove — the
   // chips stay visible (so the learner can see what they set) but say so.
   const narrowedToOneSource = trainBook !== "all" || Boolean(trainSourceId);
+  // Which row the picker shows a tick against, and what the summary names.
+  const selectedSource = useMemo(
+    () => cardSources.find((source) => (trainSourceId ? source.key === trainSourceId : source.title === trainBook)) ?? null,
+    [cardSources, trainSourceId, trainBook],
+  );
   const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", trainBook !== "all", trainExcluded.length > 0, !variantsAreDefault].filter(Boolean).length;
 
   const filteredAllCards = useMemo(() => {
@@ -1493,16 +1536,15 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         /* The three directions, in the open above the card. Fully rounded, the
            same shape as the mode switch beside them — a pill next to a
            near-rectangle is the mismatch that made this row look unfinished. */
-        /* An excluded source reads as switched off, not as selected: the same
-           chip, struck through and drained of colour, with the eye that says
-           what happened to it. A red "active" state would have looked like a
-           filter that was on. */
-        .srs-exclude-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; }
-        .srs-exclude-chip .srs-exclude-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
-        .srs-exclude-chip.excluded { border-color: var(--border); background: transparent; color: var(--text-muted); opacity: 0.6; }
-        .srs-exclude-chip.excluded .srs-exclude-title { text-decoration: line-through; }
-        .srs-excluded-idle { opacity: 0.45; }
-        .srs-exclude-note { margin-top: 6px; font-size: 11px; color: var(--text-muted); }
+        /* What the sources are set to, in one line. The list itself is behind
+           it, because the list can be a thousand rows long. */
+        .srs-source-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; text-align: left; transition: all 0.18s ease; }
+        .srs-source-btn:hover { border-color: var(--border-strong); }
+        .srs-source-btn.active { border-color: var(--accent); color: var(--accent); }
+        .srs-source-btn svg { flex-shrink: 0; }
+        .srs-source-btn-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 1px; }
+        .srs-source-btn-copy strong { font-size: 13px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .srs-source-btn-copy small { font-size: 11px; color: var(--text-muted); }
         .srs-dir-row { display: flex; justify-content: center; gap: 6px; width: 100%; max-width: 420px; margin: 0 auto; flex-wrap: wrap; }
         .srs-dir-chip { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-muted); font-size: 12px; font-weight: 750; cursor: pointer; transition: all 0.18s ease; }
         .srs-dir-chip:hover { border-color: var(--border-strong); color: var(--text-primary); }
@@ -1720,6 +1762,18 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       />
 
       {showKeysModal && <TrainerKeysModal onClose={() => setShowKeysModal(false)} />}
+
+      {showSourcePicker && (
+        <SourcePickerModal
+          sources={cardSources}
+          selectedKey={selectedSource?.key ?? null}
+          excluded={trainExcluded}
+          onSelect={(source) => selectTrainingSource(source)}
+          onToggleExcluded={toggleExcludedSource}
+          onClearExcluded={() => setExcludedSources([])}
+          onClose={() => setShowSourcePicker(false)}
+        />
+      )}
 
       {/* Discuss with AI about a card */}
       {discuss.card && (
@@ -1951,74 +2005,33 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
           <>
           {showTrainFilterPanel && (
             <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
-              {allBooks.length > 1 && (
-                <div className="filter-group">
-                  <div className="filter-group-label">Книга / пачка</div>
-                  <select
-                    className="book-select"
-                    value={trainBook}
-                    onChange={(e) => {
-                      const book = e.target.value;
-                      leaveBatchForOwnChoice();
-                      setTrainBook(book);
-                      setTrainSourceId(null);
-                      persistCardFilters({ trainBook: book, trainSourceId: null });
-                      startTrainingSession(trainStatus, trainFilter, trainVariants, book, null);
-                    }}
-                  >
-                    <option value="all">Все источники</option>
-                    {/* Titles were cut to 32 characters here, which turned two
-                        packs from the same lesson into two identical-looking
-                        options. The select is styled to fit; the text is the
-                        only thing that tells them apart. */}
-                    {allBooks.map((b) => <option key={b} value={b}>{b}</option>)}
-                  </select>
-                </div>
-              )}
-
-              {/* The other end of the same question. The select above asks for
-                  one source; this asks for everything except the ones tapped —
-                  the book already finished, the pack being left for later. It
-                  is greyed out while a single source is selected, because there
-                  the exclusions have nothing left to act on. */}
+              {/* One control for the whole question of where the cards come
+                  from. It used to be a select for «only this one» with a wall
+                  of chips under it for «all but these» — thirty-five chips
+                  buried every other filter in the panel, and the number of
+                  packs only goes up. The summary says what is set; the picker
+                  behind it has a search box and a page at a time. */}
               {cardSources.length > 1 && (
                 <div className="filter-group">
-                  <div className="filter-group-label">
-                    Исключить из тренировки
-                    {trainExcluded.length > 0 && ` · ${trainExcluded.length}`}
-                  </div>
-                  <div className={`filter-chips${narrowedToOneSource ? " srs-excluded-idle" : ""}`}>
-                    {cardSources.map((source) => {
-                      const off = trainExcluded.includes(source.key);
-                      return (
-                        <button
-                          key={source.key}
-                          type="button"
-                          className={`filter-chip srs-exclude-chip${off ? " excluded" : ""}`}
-                          aria-pressed={off}
-                          title={off ? `Вернуть «${source.title}» в тренировку` : `Не показывать «${source.title}»`}
-                          onClick={() => toggleExcludedSource(source.key)}
-                        >
-                          {off ? <EyeOff size={11} /> : null}
-                          <span className="srs-exclude-title">{source.title}</span>
-                          <span style={{ opacity: 0.7 }}>{source.cards}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {narrowedToOneSource ? (
-                    <div className="srs-exclude-note">
-                      Сейчас выбран один источник — исключения к нему не применяются.
-                    </div>
-                  ) : trainExcluded.length > 0 ? (
-                    <button
-                      type="button"
-                      className="filter-reset-btn"
-                      onClick={() => setExcludedSources([])}
-                    >
-                      Вернуть все источники
-                    </button>
-                  ) : null}
+                  <div className="filter-group-label">Источники</div>
+                  <button
+                    type="button"
+                    className={`srs-source-btn${narrowedToOneSource || trainExcluded.length > 0 ? " active" : ""}`}
+                    onClick={() => setShowSourcePicker(true)}
+                  >
+                    <Layers size={15} />
+                    <span className="srs-source-btn-copy">
+                      <strong>{selectedSource ? selectedSource.title : "Все источники"}</strong>
+                      <small>
+                        {trainExcluded.length > 0
+                          ? `исключено: ${trainExcluded.length}`
+                          : selectedSource
+                            ? `${selectedSource.cards} ${cardNoun(selectedSource.cards)}`
+                            : `${cardSources.length} ${sourceNoun(cardSources.length)}`}
+                      </small>
+                    </span>
+                    <ChevronDown size={14} />
+                  </button>
                 </div>
               )}
 

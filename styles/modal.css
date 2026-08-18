@@ -1790,3 +1790,138 @@
     line-height: 1;
   }
 }
+
+/* ─── Source picker ───────────────────────────────────────────────────────── */
+/* A list that can be a thousand rows long: a search box, the switched-off ones
+   pinned to the top, and a page at a time. */
+.source-picker-title { font-size: 15px; font-weight: 850; }
+
+.source-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 10px;
+  padding: 0 12px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.source-picker-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+
+.source-picker-search button {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(240, 230, 211, 0.08);
+  color: var(--text-muted);
+}
+
+.source-picker-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 16px 0 6px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.source-picker-section button {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.source-row-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.source-row {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.source-row:hover { border-color: var(--border-strong); }
+.source-row.selected { border-color: var(--accent); color: var(--accent); background: rgba(212, 168, 71, 0.08); }
+
+.source-row-all { width: 100%; margin-bottom: 4px; }
+
+.source-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.source-row-count { flex-shrink: 0; font-size: 12px; font-weight: 800; color: var(--text-muted); }
+.source-row-check { flex-shrink: 0; }
+
+.source-row-eye {
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  transition: all 0.16s ease;
+}
+
+.source-row-eye:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.source-row-eye.off { border-color: rgba(196, 106, 106, 0.45); color: var(--red); }
+
+/* A switched-off source stays readable — it is a thing to switch back on, not
+   an error — but must never look like one that is training. */
+.source-row-wrap.excluded .source-row { opacity: 0.55; }
+.source-row-wrap.excluded .source-row-title { text-decoration: line-through; }
+
+.source-picker-empty { padding: 10px 2px; font-size: 13px; color: var(--text-muted); }
+.source-picker-more { width: 100%; margin-top: 4px; }
+
+.source-picker-hint {
+  margin-top: 14px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
