@@ -27,6 +27,7 @@ export async function POST(req: Request) {
 
   const body = await req.json() as {
     mode: "word" | "phrase" | "sentence";
+    direction?: "target-to-native" | "native-to-target";
     word: string;
     text?: string;
     sentence: string;

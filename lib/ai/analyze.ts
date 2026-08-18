@@ -4,6 +4,8 @@ import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
 
 interface AnalyzeParams {
   mode: AiMode;
+  /** "native-to-target" asks how to say the word, instead of what it means. */
+  direction?: "target-to-native" | "native-to-target";
   word: string;
   text?: string;
   sentence: string;

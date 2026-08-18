@@ -19,17 +19,22 @@ export type DictionaryBatch = {
   created_at: string;
   /** How this pack asks to be trained; empty when it has no preference of its own. */
   training?: PackTraining | null;
+  /** What this pack is, in the learner's language. Empty when nobody said. */
+  description?: string;
+  /** The brief it was built to — the criteria its words had to meet. */
+  instruction?: string;
 };
 
-export const BATCH_COLUMNS = "id, title, kind, topic, language, word_count, created_at, training";
+export const BATCH_COLUMNS =
+  "id, title, kind, topic, language, word_count, created_at, training, description, instruction";
 
 /**
  * Reads the learner's packs.
  *
- * `training` arrives with a migration, and a deployment that has not run it yet
- * must still show the dictionary rather than an error page — so a rejected
- * column is retried without it and the packs simply come back with no
- * preferences.
+ * `training`, `description` and `instruction` each arrive with a migration, and
+ * a deployment that has not run one yet must still show the dictionary rather
+ * than an error page — so a rejected column is retried without the columns the
+ * database does not have, and the packs simply come back without them.
  */
 export async function readBatches(
   admin: SupabaseClient,
@@ -49,9 +54,14 @@ export async function readBatches(
     return query;
   };
 
+  const BASE_COLUMNS = "id, title, kind, topic, language, word_count, created_at";
+
   let { data, error } = await run(BATCH_COLUMNS);
+  if (error && /description|instruction/.test(error.message)) {
+    ({ data, error } = await run(`${BASE_COLUMNS}, training`));
+  }
   if (error && /training/.test(error.message)) {
-    ({ data, error } = await run("id, title, kind, topic, language, word_count, created_at"));
+    ({ data, error } = await run(BASE_COLUMNS));
   }
   if (error) return { batches: [], error: error.message };
 
@@ -310,12 +320,21 @@ export async function createCardsForEntries(
   return { ok: true, created: newRows.length, relinked: relinkIds.size };
 }
 
+/** Long enough for a real paragraph about the pack, short enough to show. */
+export const PACK_DESCRIPTION_LIMIT = 1000;
+/** The brief can be the whole request the assistant was given. */
+export const PACK_INSTRUCTION_LIMIT = 2000;
+
 export type PackDraft = {
   title: string;
   kind?: string;
   topic?: string;
   language: string;
   training?: PackTraining | null;
+  /** What the pack is, in the learner's language. */
+  description?: string;
+  /** The brief it was built to. */
+  instruction?: string;
 };
 
 /**
@@ -357,8 +376,17 @@ export async function findOrCreatePack(
     word_count: 0,
   };
   if (draft.training) row.training = draft.training;
+  if (draft.description) row.description = draft.description.slice(0, PACK_DESCRIPTION_LIMIT);
+  if (draft.instruction) row.instruction = draft.instruction.slice(0, PACK_INSTRUCTION_LIMIT);
 
-  const { data, error } = await admin.from("dictionary_batches").insert(row).select("id").single();
+  let { data, error } = await admin.from("dictionary_batches").insert(row).select("id").single();
+  // Same reason as the read above: a deployment that has not run the migration
+  // yet must still be able to make a pack, just without the two new fields.
+  if (error && /description|instruction/.test(error.message)) {
+    delete row.description;
+    delete row.instruction;
+    ({ data, error } = await admin.from("dictionary_batches").insert(row).select("id").single());
+  }
   if (error || !data) {
     return { ok: false, error: `Не удалось создать пачку: ${error?.message ?? "нет строки"}` };
   }

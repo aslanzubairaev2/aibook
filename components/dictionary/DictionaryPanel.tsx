@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookA, Camera, ChevronDown, Dumbbell, Loader2, Search, SlidersHorizontal, Trash2, X,
+  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Loader2, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { getCardVariantProgressMap, getLocalPackSort, saveLocalPackSort } from "@/lib/db/local";
@@ -83,6 +83,14 @@ type Props = {
   onDeleteBatch: (batchId: string) => void;
   /** Open the flashcard trainer narrowed to this pack's cards. */
   onTrainBatch: (batch: TrainBatch) => void;
+  /**
+   * Turn a pack into something to read or work through.
+   *
+   * The pack carries both halves of the request: the words themselves, and the
+   * brief they were collected to — which is what makes the result a text built
+   * on the pattern being learned rather than one that merely contains the words.
+   */
+  onCreateFromPack?: (pack: { title: string; brief: string; words: string[] }) => void;
 };
 
 /**
@@ -136,7 +144,7 @@ function isIrregularGermanVerb(lemma: string, headword: string, forms: Record<st
 
 export function DictionaryPanel({
   entries, batches, cards, isLoading, error, language,
-  onPhotograph, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch,
+  onPhotograph, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch, onCreateFromPack,
 }: Props) {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -147,6 +155,9 @@ export function DictionaryPanel({
   // The order is remembered per device, read the same way the profile is.
   const [sort, setSort] = useState<PackSort>(getLocalPackSort);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Which packs are showing the brief they were collected to. It is the pack's
+  // specification, not its label — worth having, not worth carrying on screen.
+  const [briefsOpen, setBriefsOpen] = useState<Set<string>>(new Set());
   const [isStuck, setIsStuck] = useState(false);
   const stickyRef = useRef<HTMLDivElement>(null);
 
@@ -550,6 +561,9 @@ export function DictionaryPanel({
                         ? `от ИИ-ассистента · ${group.cards.length} ${cardNoun(group.cards.length)}`
                         : `${group.entries.length} ${wordNoun(group.entries.length)} · добавлены до появления пачек`}
                   </span>
+                  {group.batch?.description && (
+                    <span className="dict-batch-desc">{group.batch.description}</span>
+                  )}
                   {trainingSummary && (
                     <span className="dict-batch-training" title="Как эта пачка тренируется по умолчанию">
                       <Dumbbell size={11} />{trainingSummary}
@@ -584,6 +598,42 @@ export function DictionaryPanel({
                     <Dumbbell size={14} />
                     {pct === null || pct === 0 ? "Тренировать" : pct >= 100 ? "Повторить" : "Продолжить изучение"}
                   </button>
+                  {/* The pack as material rather than as a drill: its words and
+                      its brief, written up as something to read or work through. */}
+                  {onCreateFromPack && group.cards.length > 0 && (
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      aria-label="Сделать текст или урок"
+                      title="Сделать из этой пачки текст или урок"
+                      onClick={() =>
+                        onCreateFromPack({
+                          title,
+                          brief: [group.batch?.description, group.batch?.instruction].filter(Boolean).join("\n"),
+                          words: group.cards.map((c) => c.front),
+                        })
+                      }
+                    >
+                      <FileText size={15} />
+                    </button>
+                  )}
+                  {group.batch?.instruction && (
+                    <button
+                      type="button"
+                      className={`icon-btn${briefsOpen.has(key) ? " active" : ""}`}
+                      aria-label="Из чего собрана пачка"
+                      aria-expanded={briefsOpen.has(key)}
+                      title="Из чего собрана эта пачка"
+                      onClick={() => setBriefsOpen((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(key)) next.delete(key);
+                        else next.add(key);
+                        return next;
+                      })}
+                    >
+                      <Info size={15} />
+                    </button>
+                  )}
                   {group.batch && (
                     <button
                       type="button"
@@ -603,6 +653,13 @@ export function DictionaryPanel({
                       <Trash2 size={15} />
                     </button>
                   )}
+                </div>
+              )}
+
+              {briefsOpen.has(key) && group.batch?.instruction && (
+                <div className="dict-batch-brief">
+                  <strong>Из чего собрана пачка</strong>
+                  <p>{group.batch.instruction}</p>
                 </div>
               )}
 

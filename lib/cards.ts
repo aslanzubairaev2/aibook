@@ -352,11 +352,31 @@ export type TrainSelection = {
   variants: TrainVariant[];
   book?: string;
   sourceId?: string | null;
+  /**
+   * Drill: take everything in scope, whether or not it is due.
+   *
+   * A pack that has just been photographed is not on a schedule yet — it is
+   * being met for the first time, and the learner wants to go through it again,
+   * and again, until the words start to stick. The schedule is what governs
+   * *when a card comes back on its own*; it should not be what stops someone
+   * from deliberately opening the same pack twice in one evening. That was the
+   * whole of «тренировать пачку заново → нет карточек по выбранным фильтрам»:
+   * every card had just been graded, so nothing was due, so the queue was empty.
+   *
+   * Grading still schedules normally — this only decides who gets into the
+   * queue, never what a grade does to them.
+   */
+  ignoreSchedule?: boolean;
 };
 
-function matchesTrainStatus(p: VariantProgress, selection: TrainStatus, due: boolean): boolean {
+function matchesTrainStatus(
+  p: VariantProgress,
+  selection: TrainStatus,
+  due: boolean,
+  ignoreSchedule = false,
+): boolean {
   if (selection === "hard") return isHardProgress(p);
-  if (!due) return false;
+  if (!due && !ignoreSchedule) return false;
   return selection === "all" || p.status === selection;
 }
 
@@ -374,7 +394,7 @@ export function buildTrainQueue(
   for (const card of scoped) {
     for (const variant of selection.variants) {
       const p = getVariantProgress(card, variant, variantProgress);
-      if (matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs))) {
+      if (matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule)) {
         items.push({ card, variant });
       }
     }
@@ -431,7 +451,7 @@ export function countTrainCandidates(
           counts.byStatus[p.status] += 1;
         }
       }
-      if (matchesTrainStatus(p, selection.status, due)) {
+      if (matchesTrainStatus(p, selection.status, due, selection.ignoreSchedule)) {
         counts.byType.all += 1;
         counts.byType[card.type] += 1;
       }

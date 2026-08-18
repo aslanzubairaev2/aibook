@@ -6,6 +6,7 @@ import { discussWithAi } from "@/lib/ai/discuss";
 import { INITIAL_DISCUSS_REQUEST } from "@/lib/ai/buildDiscussPrompt";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 import { normalizeToken, splitIntoTokens } from "@/lib/selector/text";
+import { discussHotkey, isTypingTarget } from "@/lib/srs/trainerHotkeys";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { GrammarModal } from "@/components/word-modal/GrammarModal";
 import type {
@@ -386,9 +387,7 @@ export function DiscussAiModal({
     });
   }, [lastModelMessage, mode, selectedText]);
 
-  if (!isOpen) return null;
-
-  function toggleListening() {
+  const toggleListening = useCallback(() => {
     if (!recognitionRef.current || isSending) return;
     if (isListening) {
       recognitionRef.current.stop();
@@ -397,7 +396,67 @@ export function DiscussAiModal({
       interimRef.current = "";
       recognitionRef.current.start();
     }
-  }
+  }, [isSending, isListening]);
+
+  const handleAction = useCallback((action: DiscussAction) => {
+    if (action.kind === "word") {
+      onWordTap(action.word, sentence || selectedText);
+      return;
+    }
+    setGrammarFor({ word: action.word, posTag: ACTION_POS[action.kind] });
+  }, [onWordTap, sentence, selectedText]);
+
+  // ── The keypad, here too ────────────────────────────────────────────────
+  //
+  // The discussion is opened from the keypad mid-session; having to find the
+  // mouse to press the microphone is exactly the break in the flow the
+  // shortcuts exist to remove. The layout follows what is on screen: the three
+  // follow-up questions the model offered are 1–3, the grammar tables are 4,
+  // the microphone is 5 — the key that speaks a card — and 9 closes.
+  //
+  // Bound whenever the modal is open, and stepped over while the learner is
+  // typing their own question into the field.
+  useEffect(() => {
+    if (!isOpen) return;
+    // A grammar table opened on top of the discussion owns the screen; the
+    // digits under it would otherwise fire the chips it is covering.
+    if (grammarFor) return;
+
+    const handler = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return;
+      const action = discussHotkey(event);
+      if (!action) return;
+
+      switch (action.kind) {
+        case "suggestion": {
+          const prompt = currentPrompts[action.index];
+          if (!prompt || isSending) return;
+          void sendMessage(prompt);
+          break;
+        }
+        case "forms": {
+          // The grammar tables under the answer, in the order they are shown;
+          // «Формы слова» for the word being discussed is always among them.
+          const target = actions[0];
+          if (!target) return;
+          handleAction(target);
+          break;
+        }
+        case "mic":
+          toggleListening();
+          break;
+        case "close":
+          onClose();
+          break;
+      }
+      event.preventDefault();
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isOpen, grammarFor, onClose, currentPrompts, actions, isSending, sendMessage, handleAction, toggleListening]);
+
+  if (!isOpen) return null;
 
   function handleQuoteFromBubble(text: string) {
     if (latestSelectionRef.current) {
@@ -409,14 +468,6 @@ export function DiscussAiModal({
     }
   }
 
-  function handleAction(action: DiscussAction) {
-    if (action.kind === "word") {
-      onWordTap(action.word, sentence || selectedText);
-      return;
-    }
-    setGrammarFor({ word: action.word, posTag: ACTION_POS[action.kind] });
-  }
-
   return (
     <div className="modal-backdrop discuss-backdrop" onClick={onClose}>
       <section className="discuss-modal" role="dialog" aria-modal aria-label={DISCUSS_LABEL} onClick={(e) => e.stopPropagation()}>
@@ -425,7 +476,7 @@ export function DiscussAiModal({
             <span>{DISCUSS_LABEL}</span>
             <strong>{MODE_LABEL[mode]}: {selectedText}</strong>
           </div>
-          <button className="icon-btn" type="button" onClick={onClose} aria-label={CLOSE_LABEL}>
+          <button className="icon-btn" type="button" onClick={onClose} aria-label={CLOSE_LABEL} title={`${CLOSE_LABEL} — клавиша 9`}>
             <X size={19} />
           </button>
         </header>
@@ -490,13 +541,16 @@ export function DiscussAiModal({
           )}
           {actions.length > 0 && (
             <div className="discuss-actions">
-              {actions.map((action) => (
+              {actions.map((action, index) => (
                 <button
                   key={`${action.kind}:${action.word}`}
                   type="button"
                   onClick={() => handleAction(action)}
-                  title={action.label}
+                  title={index === 0 ? `${action.label} — клавиша 4` : action.label}
                 >
+                  {/* The key that presses it, where there is a keyboard to
+                      press it with. */}
+                  {index === 0 && <kbd className="discuss-key">4</kbd>}
                   <Table2 size={12} />
                   <span>{action.label}</span>
                 </button>
@@ -504,13 +558,15 @@ export function DiscussAiModal({
             </div>
           )}
           <div className="discuss-quick-prompts">
-            {currentPrompts.map((prompt) => (
+            {currentPrompts.map((prompt, index) => (
               <button
                 key={prompt}
                 type="button"
                 disabled={isSending}
                 onClick={() => void sendMessage(prompt)}
+                title={index < 3 ? `${prompt} — клавиша ${index + 1}` : prompt}
               >
+                {index < 3 && <kbd className="discuss-key">{index + 1}</kbd>}
                 {prompt}
               </button>
             ))}
@@ -522,7 +578,14 @@ export function DiscussAiModal({
             disabled={isSending}
           />
           {speechSupported && (
-            <button type="button" className={isListening ? "listening" : ""} onClick={toggleListening} disabled={isSending} aria-label={VOICE_INPUT_LABEL}>
+            <button
+              type="button"
+              className={isListening ? "listening" : ""}
+              onClick={toggleListening}
+              disabled={isSending}
+              aria-label={VOICE_INPUT_LABEL}
+              title={`${VOICE_INPUT_LABEL} — клавиша 5`}
+            >
               <Mic size={17} />
             </button>
           )}

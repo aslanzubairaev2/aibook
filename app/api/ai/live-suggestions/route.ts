@@ -17,15 +17,29 @@ export async function POST(req: Request) {
     nativeLanguage: string;
     targetLanguage: string;
     scenarioContext?: string;
-    kind?: "analyze" | "practice";
+    kind?: "analyze" | "practice" | "quiz";
   };
 
   const contextLine = body.scenarioContext ? `\nConversation context: ${body.scenarioContext}` : "";
 
+  // Being questioned on a text is its own case: what the learner needs is not
+  // a reply to recite but a way to say what they remember, so the suggestions
+  // are answers to the question that was actually asked.
+  const quizInstruction = `You are helping a learner of "${body.targetLanguage}" (native language "${body.nativeLanguage}") answer questions about a text they have just read, in a live voice conversation.${contextLine}
+
+The examiner just asked (in ${body.targetLanguage}): "${body.lastModelLine}"
+
+Suggest exactly 4 short answers the learner could give, in ${body.targetLanguage} — different plausible answers to that question, not four wordings of one. At least one should be a way of saying they do not remember or asking for a hint.
+Keep each one short enough to say in one breath and simple enough for a learner to pronounce.
+
+Return ONLY valid JSON: { "suggestions": [ { "text": "answer in ${body.targetLanguage}", "translation": "translation in ${body.nativeLanguage}" } ] }`;
+
   // In an analysis conversation the learner is asking about the language, in
   // their own language — offering them replies to recite in the language they
   // are learning would be answering a question they did not ask.
-  const systemInstruction = body.kind === "analyze"
+  const systemInstruction = body.kind === "quiz"
+    ? quizInstruction
+    : body.kind === "analyze"
     ? `You are helping a learner of "${body.targetLanguage}" (native language "${body.nativeLanguage}") keep a voice conversation with their teacher going. This conversation is held in ${body.nativeLanguage}: the learner asks about grammar, words and meaning, and the teacher explains.${contextLine}
 
 The teacher just said: "${body.lastModelLine}"

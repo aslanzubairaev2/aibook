@@ -2,6 +2,16 @@ import type { AiMode } from "@/lib/types";
 
 interface AnalysisPromptParams {
   mode: AiMode;
+  /**
+   * Which way round the lookup runs.
+   *
+   * The default is the reader's: a word in the language being learned,
+   * explained in the learner's own. "native-to-target" is the flashcard
+   * trainer's reverse prompt — the card shows Russian, the learner does not
+   * know one word of the phrase, and what they need is not a translation *of*
+   * it but the German for it, with the article and the forms that come with it.
+   */
+  direction?: "target-to-native" | "native-to-target";
   word: string;
   text?: string;
   sentence: string;
@@ -12,6 +22,8 @@ interface AnalysisPromptParams {
 }
 
 export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
+  if (p.direction === "native-to-target") return buildReverseWordPrompt(p);
+
   const selectedText =
     p.mode === "word" ? p.word : (p.text || (p.mode === "phrase" ? p.word : p.sentence)).trim();
   const wordShape = {
@@ -96,4 +108,54 @@ Return ONLY a valid JSON object with this exact structure:
 ${JSON.stringify(sentenceShape, null, 2)}
 
 Do not include word analysis, phrase translation, examples, markdown, or extra explanation.`;
+}
+
+/**
+ * "Как это будет на изучаемом языке" — the reverse of a dictionary entry.
+ *
+ * Asked from the trainer's reverse prompt, where the card is in the learner's
+ * own language and one word of it is the thing they cannot produce. The answer
+ * is therefore a list of ways to say it, not a definition: the usual one first,
+ * each with the grammar you cannot use the word without (an article, a plural,
+ * a verb's principal parts) and a note on when it is the right choice.
+ */
+function buildReverseWordPrompt(p: AnalysisPromptParams): string {
+  const shape = {
+    reverse: {
+      native: p.word,
+      entries: [
+        {
+          text: `the word or phrase in ${p.targetLanguage}`,
+          article: `article, if the language has one for this word — otherwise empty string`,
+          partOfSpeech: `part of speech, in ${p.nativeLanguage}`,
+          posTag: "one of: verb | noun | adjective | adverb | pronoun | numeral | other",
+          plural: "plural form for a noun, otherwise empty string",
+          forms: `other key forms, if any — e.g. a verb's principal parts, joined by " · "; otherwise empty string`,
+          note: `when this option is the right one, in ${p.nativeLanguage} — one short line, empty string if there is nothing to distinguish`,
+        },
+      ],
+      examples: [
+        { text: `short example sentence in ${p.targetLanguage} using the first option`, translation: `translation in ${p.nativeLanguage}` },
+        { text: `short example sentence in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+        { text: `short example sentence in ${p.targetLanguage}`, translation: `translation in ${p.nativeLanguage}` },
+      ],
+    },
+  };
+
+  return `You are an expert language teacher. The student's native language is "${p.nativeLanguage}" and they are studying "${p.targetLanguage}".
+
+The student is looking at a sentence in their OWN language and wants to know how to say one word of it in ${p.targetLanguage}.
+
+Word in ${p.nativeLanguage}: "${p.word}"
+The ${p.nativeLanguage} sentence it appears in, for choosing the right sense only: "${p.sentence}"
+
+Give the ways to say it in ${p.targetLanguage}, most usual first, at most 4.
+- Pick the sense the sentence actually uses; do not list senses that do not fit it.
+- Give every word the grammar it cannot be used without: the article and plural for a noun, the principal parts for an irregular verb.
+- Add a distinguishing note only where two options are genuinely used differently.
+
+Return ONLY a valid JSON object with this exact structure:
+${JSON.stringify(shape, null, 2)}
+
+No markdown, no text outside the JSON object.`;
 }

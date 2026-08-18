@@ -19,6 +19,8 @@ import {
   dedupeDictionaryDrafts,
   discardDictionaryBatch,
   findOrCreatePack,
+  PACK_DESCRIPTION_LIMIT,
+  PACK_INSTRUCTION_LIMIT,
   readBatches,
   saveDictionaryEntries,
 } from "@/lib/db/dictionaryStore";
@@ -31,6 +33,21 @@ import type { CefrLevel } from "@/lib/types";
 import { AGENT_LIMITS, AGENT_TIPS, CAPABILITY_AREAS } from "@/lib/mcp/capabilities";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
+
+/**
+ * What a pack is, and what it was built to.
+ *
+ * A title alone does not survive a month: the learner comes back to a shelf of
+ * German noun packs and cannot tell which one was «аккузатив, только мужской
+ * род, одно прилагательное». The brief that produced the pack is the only
+ * thing that does tell them apart, so every tool that can make a pack takes it.
+ */
+function packDetails(args: Args): { description: string; instruction: string } {
+  return {
+    description: String(args.description ?? "").trim().slice(0, PACK_DESCRIPTION_LIMIT),
+    instruction: String(args.instruction ?? "").trim().slice(0, PACK_INSTRUCTION_LIMIT),
+  };
+}
 const CARD_TYPES = ["word", "phrase", "sentence"] as const;
 
 // How many catalogue texts may be word-counted inside one call when their
@@ -666,6 +683,7 @@ async function addFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
       topic: String(args.topic ?? "").trim().slice(0, 80),
       language: langs.target,
       training: normalizePackTraining(args.training),
+      ...packDetails(args),
     });
     if (!pack.ok) throw new Error(pack.error);
     packId = pack.id;
@@ -795,6 +813,85 @@ async function updateBatchTraining(ctx: Ctx, args: Args): Promise<unknown> {
     note: training
       ? "«Тренировать» on this pack now opens the trainer set up this way. The learner's own filters are untouched and still apply to every other pack."
       : "Preferences cleared — this pack trains with the learner's own filters again.",
+  };
+}
+
+/**
+ * What a pack is, and what it was built to.
+ *
+ * Separate from the training setup on purpose: one says how the pack is
+ * drilled, this says what is in it and why. It is written at creation time by
+ * whoever builds the pack, and this is how it gets fixed or filled in later.
+ */
+async function describePack(ctx: Ctx, args: Args): Promise<unknown> {
+  const batchId = String(args.batch_id ?? "").trim();
+  const title = String(args.title ?? "").trim().slice(0, 200);
+  if (!batchId && !title) {
+    throw new Error("Pass 'batch_id' from list_word_batches, or 'title' of the pack.");
+  }
+
+  const details = packDetails(args);
+  if (!details.description && !details.instruction) {
+    throw new Error("Nothing to set. Pass 'description' (what this pack is, in the learner's language) and/or 'instruction' (the brief it was built to).");
+  }
+
+  const { batches, error } = await readBatches(ctx.admin, ctx.userId, { limit: 200 });
+  if (error) throw new Error(`batches read failed: ${error}`);
+
+  let pack = batchId
+    ? batches.find((b) => b.id === batchId)
+    : batches.find((b) => b.title === title);
+  let adopted = 0;
+
+  if (!pack) {
+    if (batchId) throw new Error("No such pack in this learner's dictionary — check list_word_batches.");
+    // A group of cards under one source name: make it the pack it already is,
+    // the same way update_batch_training does.
+    const cards = await getCards(ctx);
+    const matching = cards.filter((c) => !c.source_book_id && (c.source_book_title ?? "") === title);
+    if (matching.length === 0) {
+      throw new Error(`Nothing called «${title}» — call list_word_batches to see the packs and the card groups.`);
+    }
+    const langs = await getLanguages(ctx);
+    const created = await findOrCreatePack(ctx.admin, ctx.userId, {
+      title,
+      kind: "от ИИ-ассистента",
+      language: langs.target,
+      ...details,
+    });
+    if (!created.ok) throw new Error(created.error);
+    const adoption = await adoptCardsIntoPack(ctx.admin, ctx.userId, title, created.id);
+    if (adoption.error) throw new Error(`Не удалось привязать карточки к пачке: ${adoption.error}`);
+    adopted = adoption.adopted;
+    pack = { id: created.id, title, kind: "", topic: "", language: langs.target, word_count: 0, created_at: "" };
+  }
+
+  // Only what was passed is written: filling in the brief must not blank the
+  // description someone wrote a month ago.
+  const patch: Record<string, unknown> = {};
+  if (details.description) patch.description = details.description;
+  if (details.instruction) patch.instruction = details.instruction;
+
+  const { error: writeError } = await ctx.admin
+    .from("dictionary_batches")
+    .update(patch)
+    .eq("id", pack.id)
+    .eq("user_id", ctx.userId);
+  if (writeError) {
+    throw new Error(
+      /description|instruction/.test(writeError.message)
+        ? "This aibook deployment has not run the pack-description migration yet, so a pack cannot carry one."
+        : `pack description update failed: ${writeError.message}`,
+    );
+  }
+
+  return {
+    batch_id: pack.id,
+    title: pack.title,
+    description: details.description || null,
+    instruction: details.instruction || null,
+    cards_adopted: adopted,
+    note: "The description is shown under the pack title in the learner's Словарь; the brief is one tap away from it. Read the brief back before adding anything to this pack.",
   };
 }
 
@@ -986,6 +1083,11 @@ async function listBatches(ctx: Ctx): Promise<unknown> {
       created_at: b.created_at,
       training,
       training_summary: describePackTraining(training) || "the learner's own trainer filters",
+      // What the pack is, and the brief it was built to. This is how a pack is
+      // recognised months later, and how you extend one without being told its
+      // rules again.
+      description: b.description || null,
+      instruction: b.instruction || null,
       progress: progressOf(batchCards),
     };
   });
@@ -1015,6 +1117,8 @@ async function listBatches(ctx: Ctx): Promise<unknown> {
       "A pack («пачка») is one set of material the learner studies as a unit — a photographed coursebook page, or a themed set of words, phrases or sentences you built with them. In the app it has its own progress bar and its own «тренировать» button. Progress is measured from the flashcards in it.",
     training_note:
       "Each pack may carry its own training setup (direction, card type, status, trainer mode). Where it says nothing, the learner's own trainer filters apply. Set it with update_batch_training.",
+    description_note:
+      "'description' says what a pack is; 'instruction' is the brief it was built to — the criteria its material had to meet («винительный падеж, только мужской род, одно прилагательное или без него, единственное число»). Read 'instruction' before adding anything to an existing pack: material that breaks the brief is what makes a pack stop being usable. Set both with update_pack_details.",
     batches: listed,
     card_groups_without_a_pack: unregistered,
     next: "list_batch_words shows one pack's dictionary words; add_words_to_batch adds to it; add_word_batch starts a new one; add_flashcards with 'batch_title' builds a pack of phrases or sentences.",
@@ -1170,6 +1274,7 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
     : langs.target;
 
   const training = normalizePackTraining(args.training);
+  const details = packDetails(args);
   const batchRow: Record<string, unknown> = {
     user_id: ctx.userId,
     title,
@@ -1179,12 +1284,25 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
     word_count: drafts.length,
   };
   if (training) batchRow.training = training;
+  if (details.description) batchRow.description = details.description;
+  if (details.instruction) batchRow.instruction = details.instruction;
 
-  const { data: batch, error } = await ctx.admin
+  let { data: batch, error } = await ctx.admin
     .from("dictionary_batches")
     .insert(batchRow)
     .select("id")
     .single();
+  // A deployment that has not run the description migration yet must still be
+  // able to take the words; it just cannot keep the brief with them.
+  if (error && /description|instruction/.test(error.message)) {
+    delete batchRow.description;
+    delete batchRow.instruction;
+    ({ data: batch, error } = await ctx.admin
+      .from("dictionary_batches")
+      .insert(batchRow)
+      .select("id")
+      .single());
+  }
   if (error || !batch) throw new Error(`batch insert failed: ${error?.message ?? "no row"}`);
 
   const saved = await saveDictionaryEntries(ctx.admin, ctx.userId, language, drafts, title, batch.id as string);
@@ -1207,6 +1325,8 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
     cards_relinked: cards.relinked,
     training: training ?? {},
     training_summary: describePackTraining(training) || "the learner's own trainer filters",
+    description: details.description || null,
+    instruction: details.instruction || null,
     note: "The batch appears in the learner's Словарь as its own page, with its own progress and a «тренировать» button; every new word is already a flashcard. Words that were already cards kept the review history they had.",
   };
 }
@@ -1601,6 +1721,15 @@ export const MCP_TOOLS: McpToolDef[] = [
         },
         batch_id: { type: "string", description: "Add to an existing pack by id (from list_word_batches) instead of by title" },
         topic: { type: "string", description: "Two or three words naming the theme of the pack" },
+        description: {
+          type: "string",
+          description: "What this pack is, in the learner's native language — one or two sentences. Shown under the pack title, and the only thing that tells one pack of nouns from the next months later. Always write it.",
+        },
+        instruction: {
+          type: "string",
+          description: "The brief this pack was built to — the exact criteria its material had to meet («винительный падеж, только мужской род, одно прилагательное или без него, единственное число»). Write down what you were asked for, so the pack can be extended later without being explained again.",
+        },
+
         training: {
           type: "object",
           description: "How this pack should be trained, when it is created. Same fields as update_batch_training.",
@@ -1649,6 +1778,29 @@ export const MCP_TOOLS: McpToolDef[] = [
     annotations: { ...WRITES, idempotentHint: true, title: "Настроить тренировку пачки" },
   },
   {
+    name: "update_pack_details",
+    title: "Описание пачки",
+    description:
+      "Say what a pack is and what it was built to. 'description' is one or two sentences in the learner's own language, shown under the pack title on their Словарь screen — it is what lets them tell one shelf of noun packs from another months later. 'instruction' is the brief: the exact criteria the material had to meet, in the words it was asked for («винительный падеж, только мужской род, одно прилагательное или без него, единственное число»). Write both whenever you build a pack, and read the brief back with list_word_batches before adding anything to an existing one — material that breaks the brief is what makes a pack stop being usable. Identify the pack by 'batch_id', or by 'title'; a title that is still only a group of cards sharing a source becomes a real pack.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        batch_id: { type: "string", description: "Pack id from list_word_batches" },
+        title: { type: "string", description: "Pack title, if you do not have the id" },
+        description: {
+          type: "string",
+          description: "What this pack is, in the learner's native language — one or two sentences. Shown under the pack title, and the only thing that tells one pack of nouns from the next months later. Always write it.",
+        },
+        instruction: {
+          type: "string",
+          description: "The brief this pack was built to — the exact criteria its material had to meet («винительный падеж, только мужской род, одно прилагательное или без него, единственное число»). Write down what you were asked for, so the pack can be extended later without being explained again.",
+        },
+      },
+      additionalProperties: false,
+    },
+    annotations: { ...WRITES, idempotentHint: true, title: "Описание пачки" },
+  },
+  {
     name: "add_word_batch",
     title: "Новая пачка слов",
     description:
@@ -1658,6 +1810,14 @@ export const MCP_TOOLS: McpToolDef[] = [
       properties: {
         title: { type: "string", description: "What this set is, in the learner's native language — e.g. «Транспорт · из чата»" },
         topic: { type: "string", description: "Two or three words naming the theme" },
+        description: {
+          type: "string",
+          description: "What this pack is, in the learner's native language — one or two sentences. Shown under the pack title, and the only thing that tells one pack of nouns from the next months later. Always write it.",
+        },
+        instruction: {
+          type: "string",
+          description: "The brief this pack was built to — the exact criteria its material had to meet («винительный падеж, только мужской род, одно прилагательное или без него, единственное число»). Write down what you were asked for, so the pack can be extended later without being explained again.",
+        },
         language: { type: "string", description: "ISO code; defaults to the learner's target language" },
         source: { type: "string", description: "Where the words came from; shown under the title" },
         training: {
@@ -1816,6 +1976,7 @@ const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
   get_text: getText,
   list_catalogue: listCatalogue,
   add_flashcards: addFlashcards,
+  update_pack_details: describePack,
   add_word_batch: addWordBatch,
   add_words_to_batch: addWordsToBatch,
   update_batch_training: updateBatchTraining,

@@ -16,7 +16,7 @@ import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
 import { buildKnownWordSet, computeCoverage, COMFORT_MIN, COMFORT_MAX, type Coverage } from "@/lib/text/vocab";
-import { LessonComposerModal, type ComposerState } from "./LessonComposerModal";
+import { LessonComposerModal, type ComposerState, type LessonKind, type LessonLength } from "./LessonComposerModal";
 import { LessonRefineModal } from "./LessonRefineModal";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { DictionaryPanel, entryToCardText, entryToAnalysis } from "@/components/dictionary/DictionaryPanel";
@@ -93,6 +93,8 @@ type SharedBook = {
     /** Word frequency of the text, written at import; drives coverage. */
     word_counts?: Record<string, number>;
     token_total?: number;
+    /** "text" = prose to read, "lesson" = a lesson to work through. */
+    lesson_kind?: string;
     [key: string]: unknown;
   };
   created_at: string;
@@ -314,7 +316,11 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   // "Мои уроки": both forms live in bottom sheets, so the tab itself stays a
   // plain list. `composerOpen` / `refiningId` are what is on screen.
   const [composerOpen, setComposerOpen] = useState(false);
+  // Which of the two documents is being made is asked first, on its own step:
+  // a text and a lesson are different things, not one thing with a switch.
+  const [composerStep, setComposerStep] = useState<"kind" | "form">("kind");
   const [composer, setComposer] = useState<ComposerState>({
+    kind: "text",
     topic: "",
     context: "",
     level: prefs.lessonLevel ?? "A2",
@@ -356,6 +362,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   // Revising an existing lesson: which one is open, and the notes for it.
   const [refiningId, setRefiningId] = useState<string | null>(null);
   const [refineText, setRefineText] = useState("");
+  const [refineLength, setRefineLength] = useState<LessonLength | null>(null);
   const [isRefining, setIsRefining] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
 
@@ -897,24 +904,34 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     setIsGenerating(true);
     setGenerateError(null);
     try {
+      // A pack brings its own words and its own brief; without one the text is
+      // written around whatever the deck says is due.
+      const packWords = composer.packWords ?? [];
       const res = await fetch("/api/lessons/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
         body: JSON.stringify({
+          kind: composer.kind,
           topic,
           context: composer.context.trim(),
           level: composer.level,
           length: composer.length,
           targetLanguage: profile.targetLanguage,
           nativeLanguage: profile.nativeLanguage,
-          reviewWords: composer.useReviewWords ? dueReviewWords : [],
+          reviewWords: packWords.length > 0
+            ? packWords
+            : composer.useReviewWords ? dueReviewWords : [],
+          packTitle: composer.packTitle ?? "",
+          packBrief: composer.packBrief ?? "",
         }),
       });
       const data = await res.json() as { error?: string };
       if (!res.ok) throw new Error(data.error ?? `Ошибка генерации (${res.status})`);
-      // Level and length are deliberately kept for the next lesson.
-      patchComposer({ topic: "", context: "" });
+      // Level and length are deliberately kept for the next one; the pack is
+      // not — it belonged to this request.
+      patchComposer({ topic: "", context: "", packTitle: undefined, packBrief: undefined, packWords: undefined });
       setComposerOpen(false);
+      setActiveTab("lessons");
       await loadMyLessons();
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : "Неизвестная ошибка");
@@ -925,12 +942,37 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
 
   const openComposer = () => {
     setGenerateError(null);
+    setComposerStep("kind");
+    patchComposer({ packTitle: undefined, packBrief: undefined, packWords: undefined });
+    setComposerOpen(true);
+  };
+
+  /**
+   * «Сделать текст или урок» from a pack.
+   *
+   * The pack is the material and the brief at once: its words go in, and the
+   * description it was collected under tells the model what kind of language
+   * the learner is actually working on — which is the difference between a
+   * story that happens to contain the words and one built out of the pattern
+   * they were collected for.
+   */
+  const openComposerForPack = (pack: { title: string; brief: string; words: string[] }) => {
+    setGenerateError(null);
+    setComposerStep("kind");
+    setComposer((prev) => ({
+      ...prev,
+      topic: pack.title,
+      context: "",
+      packTitle: pack.title,
+      packBrief: pack.brief,
+      packWords: pack.words,
+    }));
     setComposerOpen(true);
   };
 
   const refineLesson = async (id: string) => {
     const instructions = refineText.trim();
-    if (!instructions || isRefining) return;
+    if ((!instructions && !refineLength) || isRefining) return;
 
     setIsRefining(true);
     setRefineError(null);
@@ -938,11 +980,12 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       const res = await fetch(`/api/lessons/${id}/refine`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
-        body: JSON.stringify({ instructions }),
+        body: JSON.stringify({ instructions, ...(refineLength ? { length: refineLength } : {}) }),
       });
       const data = await res.json() as { error?: string };
       if (!res.ok) throw new Error(data.error ?? `Ошибка правки (${res.status})`);
       setRefineText("");
+      setRefineLength(null);
       setRefiningId(null);
       setRefineError(null);
       await loadMyLessons();
@@ -956,12 +999,14 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const openRefine = (id: string) => {
     setRefiningId(id);
     setRefineText("");
+    setRefineLength(null);
     setRefineError(null);
   };
 
   const closeRefine = () => {
     setRefiningId(null);
     setRefineText("");
+    setRefineLength(null);
     setRefineError(null);
   };
 
@@ -1293,6 +1338,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 onDeleteEntry={(id) => void deleteDictionaryEntry(id)}
                 onDeleteBatch={(id) => void deleteDictionaryBatch(id)}
                 onTrainBatch={(batch) => onTrainWords?.(batch)}
+                onCreateFromPack={openComposerForPack}
               />
               <button
                 type="button"
@@ -1323,17 +1369,17 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 <div className="discover-meta" style={{ marginBottom: 12 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <Sparkles size={14} style={{ color: "var(--accent)" }} />
-                    {myLessons.length} уроков
+                    {myLessons.length} текстов и уроков
                   </span>
                 </div>
               )}
 
               {myLessons.length === 0 ? (
                 <div className="empty-state">
-                  <Wand2 size={40} /><strong>Уроков пока нет</strong>
-                  <p>Задайте тему — текст будет написан под ваш уровень</p>
+                  <Wand2 size={40} /><strong>Здесь пока пусто</strong>
+                  <p>Задайте тему — и получите текст для чтения или урок с упражнениями под ваш уровень</p>
                   <button type="button" className="seed-btn" onClick={openComposer} style={{ marginTop: 14 }}>
-                    <Plus size={15} />Создать урок
+                    <Plus size={15} />Создать текст или урок
                   </button>
                 </div>
               ) : (
@@ -1367,8 +1413,8 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 type="button"
                 className="add-lesson-fab"
                 onClick={openComposer}
-                aria-label="Новый урок"
-                title="Новый урок"
+                aria-label="Новый текст или урок"
+                title="Новый текст или урок"
               >
                 <Plus size={24} />
               </button>
@@ -1567,6 +1613,8 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
         <LessonComposerModal
           value={composer}
           onChange={patchComposer}
+          step={composerStep}
+          onPickKind={(kind: LessonKind) => { patchComposer({ kind }); setComposerStep("form"); }}
           dueReviewWords={dueReviewWords}
           nativeLanguage={profile.nativeLanguage}
           isGenerating={isGenerating}
@@ -1580,8 +1628,11 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       {refiningLesson && (
         <LessonRefineModal
           lessonTitle={refiningLesson.title}
+          kind={refiningLesson.metadata?.lesson_kind === "lesson" ? "lesson" : "text"}
           value={refineText}
           onChange={setRefineText}
+          length={refineLength}
+          onLengthChange={setRefineLength}
           nativeLanguage={profile.nativeLanguage}
           isRefining={isRefining}
           error={refineError}
@@ -1708,7 +1759,14 @@ function SyllabusItem({ book, progress, isLoading, showLang, coverage, onOpen, o
           </span>
         )}
         {showLang && <span>•</span>}
-        <span>{SOURCE_LABELS[book.source_type] ?? book.source_type}</span>
+        {/* A generated document says which of the two it is: reading a text and
+            working through a lesson are different intentions, and the list is
+            where they are told apart. */}
+        <span>
+          {isGenerated
+            ? book.metadata?.lesson_kind === "lesson" ? "Урок" : "Текст"
+            : SOURCE_LABELS[book.source_type] ?? book.source_type}
+        </span>
         {coverage && (
           <span
             className={`coverage-chip${coverage.isComfortable ? " fits" : ""}`}
@@ -1764,7 +1822,7 @@ function SyllabusItem({ book, progress, isLoading, showLang, coverage, onOpen, o
           ) : status === "in_progress" ? (
             <><Clock size={13} />Продолжить</>
           ) : (
-            <><PlayCircle size={13} />{isGenerated ? "Начать урок" : "Читать"}</>
+            <><PlayCircle size={13} />{isGenerated && book.metadata?.lesson_kind === "lesson" ? "Начать урок" : "Читать"}</>
           )}
         </button>
         {onRefine && (
@@ -1772,7 +1830,7 @@ function SyllabusItem({ book, progress, isLoading, showLang, coverage, onOpen, o
             type="button"
             className="mini-btn syllabus-refine"
             onClick={onRefine}
-            title="Изменить текст урока"
+            title="Изменить: правки, другой объём"
           >
             <Pencil size={13} />Изменить
           </button>
@@ -1894,6 +1952,43 @@ const STYLES = `
     font-size: 14px;
     font-weight: 600;
   }
+  /* Step one of the composer: which of the two documents this is going to be.
+     Two cards rather than a toggle, because the difference is what each one
+     produces, and that needs a sentence to say. */
+  .lesson-kind-picker { display: flex; flex-direction: column; gap: 10px; }
+  .lesson-kind-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated, rgba(0,0,0,0.2));
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.18s ease;
+  }
+  .lesson-kind-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .lesson-kind-card svg { color: var(--accent); }
+  .lesson-kind-card strong { font-size: 15px; font-weight: 850; }
+  .lesson-kind-card span { font-size: 12.5px; line-height: 1.45; color: var(--text-muted); }
+
+  /* The pack a text or lesson is being built from, and the brief behind it. */
+  .lesson-pack-note {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--accent);
+    border-radius: 9px;
+    background: rgba(212,168,71,0.06);
+  }
+  .lesson-pack-note strong { font-size: 12.5px; font-weight: 800; }
+  .lesson-pack-note span { font-size: 11.5px; line-height: 1.45; color: var(--text-muted); }
+
   .lesson-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .lesson-field { display: flex; flex-direction: column; gap: 5px; }
   .lesson-field > span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }

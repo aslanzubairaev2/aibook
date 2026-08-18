@@ -44,10 +44,10 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
   {
     area: "Dictionary & packs («пачки»)",
     summary:
-      "The learner's own dictionary: full entries (article, plural, verb forms, CEFR, example), grouped into packs. A pack is one unit of study — a photographed coursebook page, or a themed set you built with them — with its own progress bar and its own «тренировать» button on the Словарь screen. Words go in with add_word_batch; a set of phrases or whole sentences is a pack too, built with add_flashcards and a 'batch_title'. Everything in a pack is a flashcard from the moment it is added. A pack can also carry its own training setup (update_batch_training): direction, card type, status, trainer — so «тренировать» opens it drilled the way that pack is meant to be drilled, while the learner's own filters stay the default everywhere else.",
+      "The learner's own dictionary: full entries (article, plural, verb forms, CEFR, example), grouped into packs. A pack is one unit of study — a photographed coursebook page, or a themed set you built with them — with its own progress bar and its own «тренировать» button on the Словарь screen. Words go in with add_word_batch; a set of phrases or whole sentences is a pack too, built with add_flashcards and a 'batch_title'. Everything in a pack is a flashcard from the moment it is added. A pack can also carry its own training setup (update_batch_training): direction, card type, status, trainer — so «тренировать» opens it drilled the way that pack is meant to be drilled, while the learner's own filters stay the default everywhere else. And it carries what it is: update_pack_details writes a description shown under its title and the brief it was built to, which is the only thing that tells one shelf of noun packs from the next months later.",
     tools: [
       "list_word_batches", "list_batch_words", "search_dictionary",
-      "add_word_batch", "add_words_to_batch", "update_batch_training",
+      "add_word_batch", "add_words_to_batch", "update_batch_training", "update_pack_details",
     ],
     say: [
       "«сохрани слова по сегодняшней теме»",
@@ -55,6 +55,7 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
       "«найди у меня слово Haltestelle»",
       "«добавь ещё слов в ту пачку»",
       "«эту пачку я хочу переводить с русского и на слух»",
+      "«что это была за пачка? для чего я её собирал?»",
     ],
   },
   {
@@ -98,6 +99,7 @@ export const AGENT_LIMITS: string[] = [
 export const AGENT_TIPS: string[] = [
   "Write at the learner's level: pull their vocabulary with get_progress or get_study_words first, build the text mostly from confident words, and weave in a few they are forgetting.",
   "Anything you build as a set belongs in a pack, never in loose cards: words go in add_word_batch, phrases and sentences in add_flashcards with a 'batch_title'. The pack is what the learner can see on the Словарь screen, watch progress on, and train with one tap; loose cards are reachable only by hunting through a filter list.",
+  "Write down what a pack is the moment you build it: update_pack_details takes a description the learner reads under the title and the brief you were given («винительный падеж, только мужской род, одно прилагательное или без него, единственное число»). A pack whose rules are nowhere written down cannot be extended later — not by them, and not by you. Read the brief back from list_word_batches before adding anything to an existing pack.",
   "Ask how a pack should be drilled, then say so with update_batch_training. «Я хочу переводить эти фразы с русского» is 'variants': ['reverse']; «просто на слух» is ['audio']. Without it the pack trains with the learner's own filters, which is right for an ordinary page of words and wrong for a set built for one purpose.",
   "Counts here are counted the way the app counts them: a card is due if it falls before the end of today, and every card is three prompts, so «сегодня» is both a number of words and a larger number of repetitions. Quote both, or the learner's screen will contradict you.",
   "Practise a new grammar point with words the learner already knows, so the sentence tests the construction and not the vocabulary.",

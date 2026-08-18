@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isTypingTarget, trainerHotkey } from "./trainerHotkeys.ts";
+import { discussHotkey, isTypingTarget, trainerHotkey } from "./trainerHotkeys.ts";
 
 type KeyLike = Pick<KeyboardEvent, "code" | "key" | "ctrlKey" | "metaKey" | "altKey">;
 
@@ -54,6 +54,40 @@ test("shortcuts never steal a browser or system combination", () => {
 test("keys the trainer has no use for are left alone", () => {
   assert.equal(trainerHotkey(press("KeyA", "a")), null);
   assert.equal(trainerHotkey(press("Space", " ")), null);
+});
+
+test("the keypad's plus asks the engine for the recording again", () => {
+  // The card grew a «переозвучить» button; the pad grew the key beside the
+  // digits that presses it.
+  assert.deepEqual(trainerHotkey(press("NumpadAdd", "+")), { kind: "respeak" });
+  assert.deepEqual(trainerHotkey(press("Equal", "+")), { kind: "respeak" });
+  assert.equal(trainerHotkey(press("NumpadAdd", "+", { ctrlKey: true })), null);
+});
+
+test("while the player is open, two of the grades drive the player instead", () => {
+  const playing = { playerOpen: true };
+  assert.deepEqual(trainerHotkey(press("Numpad2", "2"), playing), { kind: "playerRepeat" });
+  assert.deepEqual(trainerHotkey(press("Numpad3", "3"), playing), { kind: "playerClose" });
+  // Everything else still belongs to the card.
+  assert.deepEqual(trainerHotkey(press("Numpad1", "1"), playing), { kind: "grade", score: 1 });
+  assert.deepEqual(trainerHotkey(press("Numpad4", "4"), playing), { kind: "grade", score: 4 });
+  assert.deepEqual(trainerHotkey(press("Numpad6", "6"), playing), { kind: "flip" });
+  // And they are grades again the moment it closes.
+  assert.deepEqual(trainerHotkey(press("Numpad2", "2")), { kind: "grade", score: 2 });
+});
+
+test("the discussion modal answers to the same pad, laid out the way it looks", () => {
+  assert.deepEqual(discussHotkey(press("Numpad1", "1")), { kind: "suggestion", index: 0 });
+  assert.deepEqual(discussHotkey(press("Numpad2", "2")), { kind: "suggestion", index: 1 });
+  assert.deepEqual(discussHotkey(press("Digit3", "3")), { kind: "suggestion", index: 2 });
+  assert.deepEqual(discussHotkey(press("Numpad4", "4")), { kind: "forms" });
+  assert.deepEqual(discussHotkey(press("Numpad5", "5")), { kind: "mic" });
+  assert.deepEqual(discussHotkey(press("Numpad9", "9")), { kind: "close" });
+  assert.deepEqual(discussHotkey(press("Escape")), { kind: "close" });
+  // Keys the modal has nothing for are left to the browser.
+  assert.equal(discussHotkey(press("Numpad7", "7")), null);
+  assert.equal(discussHotkey(press("KeyA", "a")), null);
+  assert.equal(discussHotkey(press("Digit1", "1", { metaKey: true })), null);
 });
 
 test("typing into a field is never treated as a shortcut", () => {

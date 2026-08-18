@@ -7,7 +7,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AI_CONFIG } from "@/lib/config";
-import { lessonToParagraphs, type GeneratedLesson } from "@/lib/ai/buildLessonPrompt";
+import { lessonToParagraphs, type GeneratedLesson, type LessonKind } from "@/lib/ai/buildLessonPrompt";
 import { vocabMetadata } from "@/lib/text/vocab";
 import type { CefrLevel } from "@/lib/types";
 
@@ -29,6 +29,16 @@ export function pickCoverColor(title: string): string {
 export type SaveLessonInput = {
   userId: string;
   lesson: GeneratedLesson;
+  /**
+   * A text to read, or a lesson to work through. Decides whether the glossary
+   * is appended to the paragraphs, and is stored so a later revision knows
+   * which of the two it is editing.
+   *
+   * Defaults to "lesson", which is what every caller did before the two were
+   * told apart: a photographed page and an assistant-written lesson both keep
+   * the word list they have always had.
+   */
+  kind?: LessonKind;
   level: CefrLevel;
   targetLanguage: string;
   nativeLanguage: string;
@@ -45,7 +55,8 @@ export async function saveGeneratedLesson(
   input: SaveLessonInput,
 ): Promise<SaveLessonResult> {
   const { lesson } = input;
-  const paragraphs = lessonToParagraphs(lesson);
+  const kind: LessonKind = input.kind ?? "lesson";
+  const paragraphs = lessonToParagraphs(lesson, kind);
   const charCount = paragraphs.join("").length;
   // source_id must stay unique per row — UNIQUE (source_type, source_id) is
   // global, not per user.
@@ -67,6 +78,7 @@ export async function saveGeneratedLesson(
       total_chars: charCount,
       metadata: {
         description: lesson.description,
+        lesson_kind: kind,
         cover_color: pickCoverColor(lesson.title),
         // Kept so a later revision can address the learner in the same language
         // without the client having to resend the profile.

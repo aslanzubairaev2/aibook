@@ -8,16 +8,33 @@ import { supabase } from "@/lib/db/supabase";
 import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
 
 /**
- * Two different activities share the live-call screen, and they are not the
- * same thing in a different costume:
+ * Three different activities share the live-call screen, and they are not the
+ * same thing in different costumes:
  *
  * - "analyze" — the learner wants to UNDERSTAND the text (why "machten" and
  *   not "gemacht"). That conversation has to run in their native language,
  *   otherwise the explanation is itself an obstacle.
  * - "practice" — the learner wants to USE the language. That one runs in the
  *   target language, because struggling is the point.
+ * - "quiz" — the learner has read the text and wants to be asked about it.
+ *   The AI holds the questions and the learner answers from memory. It exists
+ *   because "analyze" kept refusing to do this: asked to put questions, a
+ *   tutor told to explain would answer that it is here to explain, which is
+ *   correct behaviour for the wrong activity.
  */
-export type LiveScenarioKind = "analyze" | "practice";
+export type LiveScenarioKind = "analyze" | "practice" | "quiz";
+
+/**
+ * Whether a scenario is held in the learner's own language.
+ *
+ * Only the explanation is: the point of "разобрать текст" is understanding,
+ * and an explanation the learner has to decode is a failed explanation.
+ * Everything else — a roleplay, or being questioned on what they remember —
+ * is the language being learned, because struggling is the point.
+ */
+export function isNativeLanguageScenario(kind: LiveScenarioKind): boolean {
+  return kind === "analyze";
+}
 
 export type LiveScenario = {
   id: string;

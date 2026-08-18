@@ -278,8 +278,9 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
 
   const contextText = textContext?.text ?? null;
   const needsScenario = !!contextText;
-  // Analysis runs in the learner's own language; practice runs in the language
-  // being learned. Everything downstream (suggestions, placeholder) follows.
+  // Analysis runs in the learner's own language; practice and being quizzed on
+  // a text run in the language being learned. Everything downstream
+  // (suggestions, translations under the lines, placeholder) follows from this.
   const scenarioKind = needsScenario
     ? selectedScenario?.kind ?? "analyze"
     : mode === "discuss" ? "analyze" : "practice";
@@ -738,7 +739,9 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
   const placeholder = needsScenario && selectedScenario
     ? selectedScenario.kind === "analyze"
       ? "Спрашивайте по-русски всё, что непонятно в тексте: грамматику, слова, порядок слов."
-      : `Сценарий: ${selectedScenario.label}. Начните говорить!`
+      : selectedScenario.kind === "quiz"
+        ? "AI сейчас задаст первый вопрос по тексту — отвечайте по памяти, своими словами."
+        : `Сценарий: ${selectedScenario.label}. Начните говорить!`
     : EMPTY_PLACEHOLDER[mode];
   const statusLabel = reconnecting && status === "connecting"
     ? "Связь прервалась, восстанавливаю…"
@@ -791,7 +794,9 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                     <span>
                       {scenario.kind === "analyze"
                         ? "Разговор на родном языке — объяснить грамматику и слова"
-                        : `${scenario.aiRole} ↔ ${scenario.userRole} · разговор на изучаемом языке`}
+                        : scenario.kind === "quiz"
+                          ? "AI спрашивает по тексту, вы отвечаете по памяти — на изучаемом языке"
+                          : `${scenario.aiRole} ↔ ${scenario.userRole} · разговор на изучаемом языке`}
                     </span>
                   </button>
                 ))}
@@ -859,7 +864,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
                     isRevealed={revealed.has(index)}
                     isTranslating={translating.has(index)}
                     translation={translations[index]}
-                    showTranslation={scenarioKind === "practice"}
+                    showTranslation={scenarioKind !== "analyze"}
                     onWordTap={handleWordTap}
                     onReplay={playCachedAudio}
                     onReveal={revealTranslation}

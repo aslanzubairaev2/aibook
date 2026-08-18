@@ -1588,3 +1588,205 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* ─── «Как это сказать» — the reverse word lookup ─────────────────────────── */
+/* The trainer's reverse prompt is in the learner's own language; tapping one
+   word of it asks how to say that word, not what it means. */
+.reverse-word-kicker {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.reverse-word-native {
+  margin: 16px 0 14px;
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1.15;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.reverse-word-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.reverse-word-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.reverse-word-option {
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+/* The usual way of saying it leads; the alternatives sit quietly under it. */
+.reverse-word-option.primary {
+  border-color: rgba(212, 168, 71, 0.4);
+  background: rgba(212, 168, 71, 0.07);
+}
+
+.reverse-word-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.reverse-word-target {
+  flex: 1;
+  min-width: 0;
+  font-size: 19px;
+  font-weight: 850;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+
+.reverse-word-add {
+  flex-shrink: 0;
+}
+
+.reverse-word-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.reverse-word-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  opacity: 0.78;
+}
+
+.reverse-word-section {
+  margin: 18px 0 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.reverse-word-example {
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+}
+
+.reverse-word-example-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.reverse-word-example-translation {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ─── Trainer shortcuts sheet ─────────────────────────────────────────────── */
+.keys-modal-title { font-size: 15px; font-weight: 850; }
+
+.keys-modal-intro {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.keys-modal-section {
+  margin: 20px 0 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.keys-modal-hint {
+  margin: -4px 0 10px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.keys-modal-rows { display: flex; flex-direction: column; gap: 8px; }
+
+.keys-modal-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.keys-modal-keys { display: flex; flex-shrink: 0; gap: 4px; }
+
+.keys-modal-keys kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.keys-modal-copy { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.keys-modal-copy strong { font-size: 13px; font-weight: 750; }
+.keys-modal-copy small { font-size: 11px; color: var(--text-muted); }
+
+/* The key that presses this chip. Shown only where there is a keyboard: on a
+   phone it would be a label for something that does not exist. */
+.discuss-key { display: none; }
+
+@media (hover: hover) and (pointer: fine) {
+  .discuss-key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 14px;
+    margin-right: 5px;
+    padding: 0 3px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    background: rgba(240, 230, 211, 0.06);
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 1;
+  }
+}

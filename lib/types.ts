@@ -194,10 +194,38 @@ export type SentenceAnalysis = {
   structure?: string;
 };
 
+/**
+ * One way of saying a native-language word in the language being learned.
+ *
+ * The mirror image of WordAnalysis: there the question is "what does this
+ * German word mean", here it is "how do I say this Russian word in German",
+ * which is a list rather than a single answer.
+ */
+export type ReverseWordOption = {
+  text: string;
+  article?: string;
+  partOfSpeech?: string;
+  posTag?: PosTag;
+  plural?: string;
+  /** Other forms that come with the word — a verb's principal parts, say. */
+  forms?: string;
+  /** When this option is the right one, in the native language. */
+  note?: string;
+};
+
+export type ReverseWordAnalysis = {
+  /** The native-language word that was asked about. */
+  native: string;
+  entries: ReverseWordOption[];
+  examples?: { text: string; translation: string }[];
+};
+
 export type AiAnalysis = {
   word?: WordAnalysis;
   phrase?: PhraseAnalysis;
   sentence?: SentenceAnalysis;
+  /** Filled instead of `word` when the lookup ran native → target. */
+  reverse?: ReverseWordAnalysis;
   examples?: {
     text: string;
     translation: string;

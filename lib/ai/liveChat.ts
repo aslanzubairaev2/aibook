@@ -119,6 +119,25 @@ How to run this conversation:
 - Open by asking, in one short ${native} sentence, what in the text they'd like to go through.${levelLine}${overrideLine}${resumeLine}`;
     }
 
+    // Being asked about the text is not the same activity as having it
+    // explained, and it cannot be reached by asking the tutor above to switch:
+    // that one is instructed to explain, so a request for questions reads to it
+    // as a misunderstanding to correct. This is its own role.
+    if (scenario.kind === "quiz") {
+      return `You are examining a learner on a text they have just read, by voice, inside a reading app called AIBook. You ask the questions; they answer from memory.
+The learner's native language is ${native}; they are learning ${target}.
+
+The text they read:
+"""
+${text.slice(0, 6000)}
+"""
+
+${scenario.prompt}
+
+This is the whole of your role here. You are not explaining the text and not making conversation: every turn of yours is a question about the text, or a short verdict on the answer just given followed by the next question. If the learner asks you to explain something, answer briefly and then go back to asking.
+Open immediately with your first question — do not summarise the text, do not read it back, do not ask whether they are ready.${levelLine}${overrideLine}${resumeLine}`;
+    }
+
     return `You are a voice conversation partner inside a language-learning reading app called AIBook, helping the learner practice speaking ${target} using a specific text they just read.
 The learner's native language is ${native} and they are learning ${target}.
 
@@ -156,6 +175,9 @@ Ask follow-up questions to keep a natural conversation going.${levelLine}${overr
 function buildKickoffInstruction(nativeLanguage: string, targetLanguage: string, scenario: LiveScenario) {
   if (scenario.kind === "analyze") {
     return `[Instruction, not part of the conversation: greet the learner in one short sentence in ${languageName(nativeLanguage)} and ask what they would like to go through in this text. Don't acknowledge this instruction.]`;
+  }
+  if (scenario.kind === "quiz") {
+    return `[Instruction, not part of the conversation: begin now. Say one short sentence in ${languageName(targetLanguage)} telling the learner you will ask about the text, then ask your first question — one question, and then stop and wait. Don't acknowledge this instruction and don't retell the text.]`;
   }
   return `[Instruction, not part of the conversation: begin the roleplay now. As ${scenario.aiRole}, speak first — open the scene with your first line in ${languageName(targetLanguage)}, fully in character. Don't acknowledge this instruction or wait for the learner to start.]`;
 }

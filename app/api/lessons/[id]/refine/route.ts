@@ -9,6 +9,7 @@ import {
   buildLessonRefinePrompt,
   lessonToParagraphs,
   extractLessonBody,
+  type LessonKind,
 } from "@/lib/ai/buildLessonPrompt";
 import type { CefrLevel } from "@/lib/types";
 
@@ -19,13 +20,16 @@ export const dynamic = "force-dynamic";
 // Hobby plan.
 export const maxDuration = 60;
 
+const LENGTHS = ["short", "medium", "long"] as const;
+
 
 // POST /api/lessons/<id>/refine
-// Body: { instructions: string }
+// Body: { instructions?: string; length?: "short" | "medium" | "long" }
 //
-// Rewrites one of the caller's own generated lessons from their notes ("my
-// friend runs a flower shop, and we live together"). The lesson keeps its id,
-// so reading progress and any open reader stay pointed at the same row.
+// Rewrites one of the caller's own generated texts or lessons from their notes
+// ("my friend runs a flower shop, and we live together") and/or at a new size.
+// Either may be sent on its own. The document keeps its id, so reading progress
+// and any open reader stay pointed at the same row.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -48,10 +52,16 @@ export async function POST(
     return NextResponse.json({ error: "Supabase не настроен на сервере." }, { status: 503 });
   }
 
-  const body = await req.json() as { instructions?: string };
+  const body = await req.json() as { instructions?: string; length?: string };
   const instructions = (body.instructions ?? "").trim().slice(0, 2000);
-  if (!instructions) {
-    return NextResponse.json({ error: "Опишите, что нужно изменить." }, { status: 400 });
+  // Resizing is the commonest revision there is, and asking for it in prose
+  // («сделай в два раза короче») is both slower to type and vaguer than a
+  // control. So it can arrive on its own, with no note at all.
+  const length = LENGTHS.includes(body.length as typeof LENGTHS[number])
+    ? body.length as typeof LENGTHS[number]
+    : undefined;
+  if (!instructions && !length) {
+    return NextResponse.json({ error: "Опишите, что нужно изменить, или выберите другой объём." }, { status: 400 });
   }
 
   // The owner filter is the authorization check — the admin client bypasses RLS.
@@ -83,12 +93,18 @@ export async function POST(
   const bodyCount = typeof metadata.body_paragraph_count === "number" ? metadata.body_paragraph_count : undefined;
   const currentParagraphs = extractLessonBody(stored, bodyCount);
 
+  // Which of the two documents this is. Anything stored before they were told
+  // apart is a lesson, which is how it was written.
+  const kind: LessonKind = metadata.lesson_kind === "text" ? "text" : "lesson";
+
   const prompt = buildLessonRefinePrompt({
+    kind,
     level: (lessonRow.cefr_level as CefrLevel) ?? "A2",
     targetLanguage: lessonRow.language ?? "de",
     nativeLanguage: (metadata.native_language as string) ?? "ru",
     currentParagraphs,
-    instructions,
+    instructions: instructions || "Оставьте содержание как есть.",
+    length,
   });
 
   const result = await runLessonPrompt(apiKey, prompt);
@@ -97,7 +113,7 @@ export async function POST(
   }
   const lesson = result.lesson;
 
-  const paragraphs = lessonToParagraphs(lesson);
+  const paragraphs = lessonToParagraphs(lesson, kind);
   const charCount = paragraphs.join("").length;
 
   const { error: chapterError } = await supabaseAdmin
@@ -130,6 +146,7 @@ export async function POST(
         revisions: revisions + 1,
         last_revised_at: new Date().toISOString(),
         last_revision_note: instructions,
+        ...(length ? { length } : {}),
         model: AI_CONFIG.model,
       },
     })
@@ -154,6 +171,7 @@ export async function POST(
 
   return NextResponse.json({
     id,
+    kind,
     title: lesson.title,
     description: lesson.description,
     paragraphs,

@@ -4,7 +4,7 @@ import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import { runLessonPrompt } from "@/lib/ai/lessonModel";
 import { saveGeneratedLesson } from "@/lib/db/lessonStore";
-import { buildLessonPrompt, type LessonRequest } from "@/lib/ai/buildLessonPrompt";
+import { buildLessonPrompt, type LessonKind, type LessonRequest } from "@/lib/ai/buildLessonPrompt";
 import type { CefrLevel } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -45,16 +45,25 @@ export async function POST(req: Request) {
   const topic = (body.topic ?? "").trim().slice(0, 200);
   const targetLanguage = (body.targetLanguage ?? "de").trim();
   const nativeLanguage = (body.nativeLanguage ?? "ru").trim();
+  // A lesson is built out of the learner's own pack, so it gets more of it to
+  // work with than a story that only weaves a few revision words in.
+  const wordLimit = body.kind === "lesson" ? 30 : 12;
   const reviewWords = Array.isArray(body.reviewWords)
-    ? body.reviewWords.filter((w): w is string => typeof w === "string").map((w) => w.trim()).filter(Boolean).slice(0, 12)
+    ? body.reviewWords.filter((w): w is string => typeof w === "string").map((w) => w.trim()).filter(Boolean).slice(0, wordLimit)
     : [];
   const context = (body.context ?? "").trim().slice(0, 1000);
+  // A text to read, or a lesson to work through — two different documents, and
+  // the caller says which. Anything that does not say means the text it always
+  // produced.
+  const kind: LessonKind = body.kind === "lesson" ? "lesson" : "text";
+  const packTitle = (body.packTitle ?? "").trim().slice(0, 200);
+  const packBrief = (body.packBrief ?? "").trim().slice(0, 2000);
 
   if (!topic) {
-    return NextResponse.json({ error: "Укажите тему урока." }, { status: 400 });
+    return NextResponse.json({ error: kind === "lesson" ? "Укажите тему урока." : "Укажите тему текста." }, { status: 400 });
   }
 
-  const prompt = buildLessonPrompt({ level, topic, targetLanguage, nativeLanguage, reviewWords, length, context });
+  const prompt = buildLessonPrompt({ kind, level, topic, targetLanguage, nativeLanguage, reviewWords, length, context, packTitle, packBrief });
 
   const result = await runLessonPrompt(apiKey, prompt);
   if (!result.ok) {
@@ -65,14 +74,17 @@ export async function POST(req: Request) {
   const saved = await saveGeneratedLesson(supabaseAdmin, {
     userId: user.id,
     lesson,
+    kind,
     level,
     targetLanguage,
     nativeLanguage,
     extraMetadata: {
-      origin: "topic",
+      origin: packTitle ? "pack" : "topic",
       topic,
       context,
+      length,
       review_words: reviewWords,
+      ...(packTitle ? { pack_title: packTitle, pack_brief: packBrief } : {}),
     },
   });
 
@@ -82,6 +94,7 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     id: saved.id,
+    kind,
     title: lesson.title,
     description: lesson.description,
     cefr_level: level,

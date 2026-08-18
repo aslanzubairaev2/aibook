@@ -274,6 +274,45 @@ test("a variant with no stored progress counts as new rather than being skipped"
   assert.equal(queue.length, 3);
 });
 
+test("a drill takes the whole pack again, schedule or no schedule", () => {
+  // «Пройти пачку заново» straight after finishing it: every card was graded a
+  // moment ago, so nothing is due, and the ordinary queue is empty.
+  const cards = [
+    scheduled({ id: "one", status: "review", repetitions: 1, dueAt: "2026-09-01T00:00:00.000Z" }),
+    scheduled({ id: "two", status: "review", repetitions: 2, dueAt: "2026-09-05T00:00:00.000Z" }),
+  ];
+  const selection = { status: "all" as const, type: "all" as const, variants: ["forward"] as TrainVariant[] };
+
+  assert.equal(buildTrainQueue(cards, selection, {}, TODAY_END).length, 0);
+  assert.equal(buildTrainQueue(cards, { ...selection, ignoreSchedule: true }, {}, TODAY_END).length, 2);
+  // The counts the chips show follow the same rule, or the panel would promise
+  // a session the queue cannot deliver.
+  assert.equal(
+    countTrainCandidates(cards, { ...selection, ignoreSchedule: true }, {}, TODAY_END).byType.all,
+    2,
+  );
+});
+
+test("a drill still respects the narrowing it was given", () => {
+  const cards = [
+    scheduled({ id: "word", type: "word", status: "review", repetitions: 1, dueAt: "2026-09-01T00:00:00.000Z" }),
+    scheduled({ id: "phrase", type: "phrase", status: "review", repetitions: 1, dueAt: "2026-09-01T00:00:00.000Z" }),
+    scheduled({ id: "elsewhere", sourceBookId: "batch-b", status: "review", repetitions: 1, dueAt: "2026-09-01T00:00:00.000Z" }),
+  ];
+  const drill = {
+    status: "all" as const,
+    type: "word" as const,
+    variants: ["forward"] as TrainVariant[],
+    sourceId: "batch-a",
+    ignoreSchedule: true,
+  };
+
+  assert.deepEqual(
+    buildTrainQueue(cards, drill, {}, TODAY_END).map((item) => item.card.id),
+    ["word"],
+  );
+});
+
 test("chip counts match the queue each chip would build", () => {
   const cards = [
     scheduled({ id: "word-due", type: "word", status: "review", repetitions: 1, dueAt: "2026-08-14T12:00:00.000Z" }),

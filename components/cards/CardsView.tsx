@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
-import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2 } from "lucide-react";
-import type { AiAnalysis, CardFilters, CardSkillState, DiscussMessage, Flashcard, TrainVariant, TtsProvider } from "@/lib/types";
+import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard } from "lucide-react";
+import type { AiAnalysis, CardFilters, CardSkillState, DiscussMessage, Flashcard, ReverseWordAnalysis, TrainVariant, TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
 import {
   ALL_TRAIN_VARIANTS,
@@ -30,9 +30,10 @@ import {
   type VariantProgressMap,
 } from "@/lib/cards";
 import { isTypingTarget, trainerHotkey } from "@/lib/srs/trainerHotkeys";
+import { TrainerKeysModal } from "@/components/cards/TrainerKeysModal";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { SpeakButton } from "@/components/ui/SpeakButton";
-import { prefetchSpeechAhead, speak } from "@/lib/tts";
+import { getTTSState, prefetchSpeechAhead, respeak, speak, stopTTS, subscribeTTS, toggleRepeat } from "@/lib/tts";
 import { RespeakButton } from "@/components/ui/RespeakButton";
 import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
 import { analyzeSelection } from "@/lib/ai/analyze";
@@ -41,6 +42,7 @@ import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProf
 import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertCardVariantProgress, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
+import { ReverseWordModal } from "@/components/word-modal/ReverseWordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { describeCardFamiliarity } from "@/lib/ai/wordProfile";
 import { ProductiveTrainer } from "@/components/cards/ProductiveTrainer";
@@ -112,6 +114,15 @@ const TRAIN_VARIANT_LABELS: Record<TrainVariant, string> = {
   reverse: "Родной → Изучаемый",
   audio: "Аудио",
 };
+
+// The same three, short enough to sit in a row above the card. A pack is
+// learned in this order — read it, then produce it, then take it by ear — and
+// that order is the row's order.
+const VARIANT_SHORT_LABELS: Record<TrainVariant, string> = {
+  forward: "Читаю",
+  reverse: "Говорю",
+  audio: "Слышу",
+};
 const STATUS_COLORS: Record<string, string> = {
   new: "var(--accent)",
   learning: "var(--blue)",
@@ -125,6 +136,11 @@ const STATUS_LABELS: Record<string, string> = {
   review: "Повторение",
   relearning: "Переучивание",
 };
+
+/** The three states in which the player is on screen — same test AudioScrubber makes. */
+function isPlayerShowing(status: string): boolean {
+  return status === "playing" || status === "paused" || status === "loading";
+}
 
 function endOfTodayMs(): number {
   const d = new Date();
@@ -482,7 +498,15 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [showTrainFilterPanel, setShowTrainFilterPanel] = useState(false);
   const [showTtsMenu, setShowTtsMenu] = useState(false);
+  const [showKeysModal, setShowKeysModal] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Whether the audio player is on screen. While it is, two of the keypad's
+  // grades drive it instead of the card — see trainerHotkeys.
+  // `subscribeTTS` calls the listener once on subscribe, so the state is in
+  // step from the first frame without a second read.
+  const [playerOpen, setPlayerOpen] = useState(() => isPlayerShowing(getTTSState().status));
+  useEffect(() => subscribeTTS((state) => setPlayerOpen(isPlayerShowing(state.status))), []);
 
   // Training state
   const [currentTrainIndex, setCurrentTrainIndex] = useState(0);
@@ -512,6 +536,12 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // this list never touches the live queue or any SRS state.
   const [reviewHistory, setReviewHistory] = useState<TrainQueueItem[]>([]);
   const [viewingHistoryIndex, setViewingHistoryIndex] = useState<number | null>(null);
+  // This session was started as a drill: everything in scope, whether or not
+  // the schedule says it is due. It is how a pack met for the first time gets
+  // gone through again and again until the words start to stick — and it is
+  // remembered for the session, so «ещё раз» at the end of it means the same
+  // thing it meant at the start.
+  const [drilling, setDrilling] = useState(false);
 
   // Per-variant SRS progress, read from storage once and replaced (never
   // mutated) after a grade, so every memo below can key on its identity
@@ -549,6 +579,16 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     open: boolean;
     word: string;
     analysis: AiAnalysis | null;
+    loading: boolean;
+  }>({ open: false, word: "", analysis: null, loading: false });
+
+  // The other direction's lookup. A reverse card shows the learner's own
+  // language, so a word tapped there is not a word to be explained — it is a
+  // word they cannot yet say, and the answer is the target-language form.
+  const [reverseWord, setReverseWord] = useState<{
+    open: boolean;
+    word: string;
+    analysis: ReverseWordAnalysis | null;
     loading: boolean;
   }>({ open: false, word: "", analysis: null, loading: false });
 
@@ -723,11 +763,12 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       variants: TrainVariant[],
       book: string = trainBook,
       sourceId: string | null = trainSourceId,
+      ignoreSchedule = false,
     ): TrainQueueItem[] =>
       // Shuffled so multi-variant sessions interleave instead of running all of
       // one variant before the next.
       shuffleTrainQueue(
-        buildTrainQueue(cards, { status, type: filter, variants, book, sourceId }, variantProgress, todayEndTime),
+        buildTrainQueue(cards, { status, type: filter, variants, book, sourceId, ignoreSchedule }, variantProgress, todayEndTime),
       ),
     [cards, variantProgress, todayEndTime, trainBook, trainSourceId],
   );
@@ -752,14 +793,28 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     [cards, trainBook, trainSourceId],
   );
 
+  // What «пройти заново» would actually serve. Shown on the empty state so the
+  // offer is a number rather than a promise.
+  const drillCandidates = useMemo(
+    () => countTrainCandidates(
+      cards,
+      { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, ignoreSchedule: true },
+      variantProgress,
+      todayEndTime,
+    ).byType.all,
+    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, variantProgress, todayEndTime],
+  );
+
   function startTrainingSession(
     status: TrainStatus,
     filter: FilterType,
     variants: TrainVariant[],
     book: string = trainBook,
     sourceId: string | null = trainSourceId,
+    ignoreSchedule = false,
   ) {
-    setTrainQueue(makeTrainQueue(status, filter, variants, book, sourceId));
+    setTrainQueue(makeTrainQueue(status, filter, variants, book, sourceId, ignoreSchedule));
+    setDrilling(ignoreSchedule);
     setCurrentTrainIndex(0);
     setReviewedIds([]);
     setIsFlipped(false);
@@ -836,6 +891,36 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   };
 
   const restartTraining = () => startTrainingSession(trainStatus, trainFilter, trainVariants);
+
+  /**
+   * Go through the same selection again, schedule or no schedule.
+   *
+   * This is what «пройти пачку заново» has to mean. The old button rebuilt an
+   * ordinary queue, which asks "what is due"; every card had been graded
+   * seconds earlier, so the honest answer was "nothing", and the learner was
+   * shown «нет карточек по выбранным фильтрам» over a pack they had just
+   * finished. A first pass through new material is not a review — it is
+   * repetition until the words stop being strangers — so this takes everything
+   * in scope. Grading still schedules exactly as before.
+   */
+  const drillAgain = () =>
+    startTrainingSession(trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, true);
+
+  /**
+   * Switch the direction being drilled without leaving the card.
+   *
+   * The way a pack is actually learned is a sequence: read it изучаемый →
+   * родной first, then turn it round and produce it, then do it by ear. Each
+   * of those was three taps into a filter panel; here it is one, right above
+   * the card, and it keeps the session's drill setting so a second pass
+   * through a pack does not empty itself out.
+   */
+  const switchDirection = (variant: TrainVariant) => {
+    const variants = [variant];
+    setTrainVariants(variants);
+    persistCardFilters({ trainVariants: variants });
+    startTrainingSession(trainStatus, trainFilter, variants, trainBook, trainSourceId, drilling);
+  };
 
   const openLatestReviewedCard = () => {
     if (reviewHistory.length === 0) return;
@@ -1025,6 +1110,53 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     void openWordModalFor(word);
   }, [openWordModalFor]);
 
+  /**
+   * «Как это сказать» for one word of a native-language prompt.
+   *
+   * Cached under its own key so it can never be confused with the ordinary
+   * analysis of a word that happens to be spelled the same — the two answers
+   * are in different languages.
+   */
+  const openReverseWordFor = useCallback(async (word: string, sentence: string) => {
+    const norm = word.trim();
+    if (!norm) return;
+
+    setReverseWord({ open: true, word: norm, analysis: null, loading: true });
+
+    const cacheKey = makeAiCacheKey("reverse-word", norm, targetLanguage, nativeLanguage);
+    const cached = getLocalAiAnalysis(cacheKey);
+    if (cached?.reverse?.entries?.length) {
+      setReverseWord({ open: true, word: norm, analysis: cached.reverse, loading: false });
+      return;
+    }
+
+    try {
+      const result = await analyzeSelection({
+        mode: "word",
+        direction: "native-to-target",
+        word: norm,
+        text: norm,
+        sentence: sentence || norm,
+        sentenceBefore: "",
+        sentenceAfter: "",
+        nativeLanguage,
+        targetLanguage,
+      });
+      if (result.reverse?.entries?.length) saveLocalAiAnalysis(cacheKey, result);
+      setReverseWord({ open: true, word: norm, analysis: result.reverse ?? null, loading: false });
+    } catch {
+      setReverseWord({ open: true, word: norm, analysis: null, loading: false });
+    }
+  }, [targetLanguage, nativeLanguage]);
+
+  // Bound to the prompt it belongs to, so the sentence the word sits in can
+  // pick the right sense of it.
+  const handleNativeWordTap = useCallback((word: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const sentence = (e.currentTarget as HTMLElement | null)?.closest(".card-text-area")?.textContent ?? "";
+    void openReverseWordFor(word, sentence.trim());
+  }, [openReverseWordFor]);
+
   // --- Dynamic font size for card text ---
   /**
    * How big the prompt is set, from how much of it there is.
@@ -1146,6 +1278,8 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const hotkeysActive = activeTab === "train"
     && trainMode === "recognize"
     && !wordModal.open
+    && !reverseWord.open
+    && !showKeysModal
     && !discuss.open
     && (Boolean(currentCard) || Boolean(historyPosition));
 
@@ -1154,7 +1288,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
 
     const handler = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target)) return;
-      const action = trainerHotkey(e);
+      const action = trainerHotkey(e, { playerOpen });
       if (!action) return;
 
       // Browsing a graded card is read-only by design, so the keys that would
@@ -1171,6 +1305,18 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         case "speak":
           if (!speakTarget) return;
           void speak(speakTarget.front, targetLanguage);
+          break;
+        case "respeak":
+          // Same rule as the button on the card: what is spoken is always the
+          // language being learned, whichever side is showing.
+          if (!speakTarget) return;
+          void respeak(speakTarget.front, targetLanguage);
+          break;
+        case "playerRepeat":
+          toggleRepeat();
+          break;
+        case "playerClose":
+          stopTTS();
           break;
         case "flip":
           if (browsing || !currentCard) return;
@@ -1213,7 +1359,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hotkeysActive, historyPosition?.index, historyPosition?.canGoOlder, historyPosition?.canGoNewer, reviewHistory.length, currentCard?.id, historyCard?.id, targetLanguage, currentTrainIndex, trainQueue, viewingHistoryIndex, miniStory, zenActive, setZen]);
+  }, [hotkeysActive, playerOpen, historyPosition?.index, historyPosition?.canGoOlder, historyPosition?.canGoNewer, reviewHistory.length, currentCard?.id, historyCard?.id, targetLanguage, currentTrainIndex, trainQueue, viewingHistoryIndex, miniStory, zenActive, setZen]);
 
   return (
     <section
@@ -1291,12 +1437,18 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .tts-menu-item:hover { background: var(--bg-elevated); }
         .tts-menu-item.active { color: var(--accent); }
         .srs-grade-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; width: 100%; max-width: 420px; margin: 0 auto; }
-        .srs-keys { display: none; }
+        .srs-keys-link { display: none; }
         @media (hover: hover) and (pointer: fine) {
-          .srs-keys { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; width: 100%; max-width: 420px; margin: 12px auto 0; font-size: 10px; font-weight: 700; color: var(--text-muted); }
-          .srs-keys span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-          .srs-keys kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 3px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--bg-elevated); color: var(--text-primary); font-family: inherit; font-size: 9px; font-weight: 800; line-height: 1; }
+          .srs-keys-link { display: inline-flex; align-items: center; gap: 5px; margin: 12px auto 0; padding: 4px 8px; border: none; border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 10.5px; font-weight: 700; cursor: pointer; transition: color 0.18s; }
+          .srs-keys-link:hover { color: var(--accent); }
         }
+        /* The three directions, in the open above the card. Fully rounded, the
+           same shape as the mode switch beside them — a pill next to a
+           near-rectangle is the mismatch that made this row look unfinished. */
+        .srs-dir-row { display: flex; justify-content: center; gap: 6px; width: 100%; max-width: 420px; margin: 0 auto; flex-wrap: wrap; }
+        .srs-dir-chip { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-muted); font-size: 12px; font-weight: 750; cursor: pointer; transition: all 0.18s ease; }
+        .srs-dir-chip:hover { border-color: var(--border-strong); color: var(--text-primary); }
+        .srs-dir-chip.active { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
         .grade-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px 4px; border: 1px solid var(--border); border-radius: var(--radius-md); font-weight: 700; font-size: 12px; cursor: pointer; background: var(--bg-elevated); transition: all 0.2s; color: var(--text-primary); }
         .grade-btn:active { transform: scale(0.96); }
         .grade-btn-1 { border-color: rgba(224, 136, 136, 0.3); }
@@ -1350,7 +1502,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .book-select:focus { border-color: var(--accent); color: var(--accent); }
         .all-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
         .all-toolbar .all-search-bar { flex: 1; margin-bottom: 0; }
-        .all-filter-toggle { display: flex; align-items: center; gap: 6px; padding: 0 14px; height: 40px; flex-shrink: 0; white-space: nowrap; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-card); color: var(--text-muted); font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
+        .all-filter-toggle { display: flex; align-items: center; gap: 6px; padding: 0 14px; height: 40px; flex-shrink: 0; white-space: nowrap; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-muted); font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
         .all-filter-toggle.active { border-color: var(--accent); color: var(--accent); }
         .all-filter-count { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--bg-primary); font-size: 10px; font-weight: 800; }
         .all-filter-panel { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card); padding: 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow-sm); }
@@ -1439,7 +1591,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .srs-zen .srs-train-controls,
         .srs-zen .srs-batch-banner,
         .srs-zen .srs-train-progress,
-        .srs-zen .srs-keys { display: none !important; }
+        .srs-zen .srs-keys-link, .srs-zen .srs-dir-row { display: none !important; }
 
         /* The scroll container, so a card taller than the screen can still be
             reached. Its bottom padding is the player's own strip, reserved
@@ -1497,6 +1649,19 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         onWordTap={(word) => void openWordModalFor(word)}
         onAddExample={(text, translation) => void addCard(text, translation, "phrase")}
       />
+
+      {/* «Как это сказать» — a word tapped on a native-language prompt */}
+      <ReverseWordModal
+        isOpen={reverseWord.open}
+        isLoading={reverseWord.loading}
+        word={reverseWord.word}
+        analysis={reverseWord.analysis}
+        lang={targetLanguage}
+        onClose={() => setReverseWord((s) => ({ ...s, open: false }))}
+        onAddCard={(front, back) => void addCard(front, back, "word", currentCard ?? null)}
+      />
+
+      {showKeysModal && <TrainerKeysModal onClose={() => setShowKeysModal(false)} />}
 
       {/* Discuss with AI about a card */}
       {discuss.card && (
@@ -1672,7 +1837,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
             </div>
             {trainMode === "recognize" && (
               <button
-                className={`all-filter-toggle ${showTrainFilterPanel ? "active" : ""}`}
+                className={`all-filter-toggle pill ${showTrainFilterPanel ? "active" : ""}`}
                 onClick={(e) => { e.stopPropagation(); setShowTrainFilterPanel((v) => !v); }}
                 type="button"
               >
@@ -1682,6 +1847,41 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               </button>
             )}
           </div>
+
+          {/* Direction, in the open. It is the one setting that changes what
+              a pass through a pack *is* — read it, produce it, or hear it —
+              and burying it three taps deep in the filter panel made going
+              round the same pack a second way an errand. */}
+          {trainMode === "recognize" && (
+            <div className="srs-dir-row" role="group" aria-label="Направление тренировки">
+              {ALL_TRAIN_VARIANTS.map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  className={`srs-dir-chip${trainVariants.length === 1 && trainVariants[0] === v ? " active" : ""}`}
+                  aria-pressed={trainVariants.length === 1 && trainVariants[0] === v}
+                  onClick={(e) => { e.stopPropagation(); switchDirection(v); }}
+                  title={TRAIN_VARIANT_LABELS[v]}
+                >
+                  {VARIANT_SHORT_LABELS[v]}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`srs-dir-chip${trainVariants.length > 1 ? " active" : ""}`}
+                aria-pressed={trainVariants.length > 1}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTrainVariants([...ALL_TRAIN_VARIANTS]);
+                  persistCardFilters({ trainVariants: [...ALL_TRAIN_VARIANTS] });
+                  startTrainingSession(trainStatus, trainFilter, [...ALL_TRAIN_VARIANTS], trainBook, trainSourceId, drilling);
+                }}
+                title="Все направления вперемешку"
+              >
+                Всё
+              </button>
+            </div>
+          )}
 
           {trainMode === "active" ? (
             <ProductiveTrainer
@@ -1801,13 +2001,36 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               <div className="empty-state">
                 <CheckCircle2 size={44} style={{ color: "var(--green)" }} />
                 <strong>Нечего повторять!</strong>
-                <p>Нет карточек для тренировки. Добавьте новые слова во время чтения.</p>
+                <p>
+                  {drillCandidates > 0
+                    ? "По расписанию на сегодня всё сделано. Но пройти этот набор ещё раз можно когда угодно — на расписание это не влияет."
+                    : "Нет карточек для тренировки. Добавьте новые слова во время чтения."}
+                </p>
+                {drillCandidates > 0 && (
+                  <button className="primary-btn" style={{ marginTop: 12, maxWidth: 280 }} onClick={drillAgain} type="button">
+                    <RotateCcw size={14} style={{ marginRight: 6 }} /> Пройти заново ({drillCandidates})
+                  </button>
+                )}
               </div>
             ) : (
               <div className="empty-state">
                 <AlertCircle size={40} />
-                <strong>Нет карточек по выбранным фильтрам</strong>
-                <p>{trainStatus === "hard" ? "Отлично — сложных карточек нет!" : "Попробуйте другой тип или статус."}</p>
+                <strong>{drillCandidates > 0 ? "На сегодня по расписанию ничего нет" : "Нет карточек по выбранным фильтрам"}</strong>
+                <p>
+                  {trainStatus === "hard"
+                    ? "Отлично — сложных карточек нет!"
+                    : drillCandidates > 0
+                      ? "Расписание решает, когда карточка вернётся сама. Пройти этот набор ещё раз можно когда угодно."
+                      : "Попробуйте другой тип или статус."}
+                </p>
+                {/* The way out of the dead end the learner actually hit:
+                    everything in this selection is scheduled for later, and
+                    they want to go through it now anyway. */}
+                {drillCandidates > 0 && (
+                  <button className="primary-btn" style={{ marginTop: 12, maxWidth: 280 }} onClick={drillAgain} type="button">
+                    <RotateCcw size={14} style={{ marginRight: 6 }} /> Пройти заново ({drillCandidates})
+                  </button>
+                )}
               </div>
             )
           ) : historyPosition && historyCard && historyItem ? (
@@ -1881,9 +2104,24 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                   <Play size={14} fill="currentColor" style={{ marginRight: 6 }} /> Продолжить обычную тренировку
                 </button>
               )}
-              <button className="secondary-btn" style={{ marginTop: 12 }} onClick={restartTraining} type="button">
+              <button className="secondary-btn" style={{ marginTop: 12 }} onClick={drillAgain} type="button">
                 <RotateCcw size={14} /> {batch ? "Пройти пачку заново" : "Начать заново"}
               </button>
+              {/* Which is the point of a first pass: the same material, in the
+                  other direction, straight away. */}
+              <div className="srs-dir-row" style={{ marginTop: 12 }}>
+                {ALL_TRAIN_VARIANTS.map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={`srs-dir-chip${trainVariants.length === 1 && trainVariants[0] === v ? " active" : ""}`}
+                    onClick={() => switchDirection(v)}
+                    title={`Пройти заново: ${TRAIN_VARIANT_LABELS[v]}`}
+                  >
+                    {VARIANT_SHORT_LABELS[v]}
+                  </button>
+                ))}
+              </div>
               {reviewHistory.length > 0 && (
                 <button className="srs-history-open" onClick={openLatestReviewedCard} type="button">
                   <Eye size={15} />
@@ -2014,7 +2252,16 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                           <span className="audio-prompt-lbl">Нажмите, чтобы услышать</span>
                         </div>
                       ) : isReversed ? (
-                        <div style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}>{promptText}</div>
+                        /* Tappable, like the other side — but asking the
+                           opposite question. One unknown word in a phrase the
+                           learner otherwise understands used to cost them the
+                           whole card: flipping it to find that one word gives
+                           away the answer they were about to produce. */
+                        <TokenizedText
+                          text={promptText}
+                          style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
+                          onWordTap={handleNativeWordTap}
+                        />
                       ) : (
                         <TokenizedText
                           text={promptText}
@@ -2108,17 +2355,17 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                 </button>
               )}
 
-              {/* Only where there is a keyboard to press. On a touch screen the
-                  row would be a line of instructions for keys that do not exist. */}
-              <div className="srs-keys">
-                <span><kbd>1</kbd>–<kbd>4</kbd> оценка</span>
-                <span><kbd>5</kbd> звук</span>
-                <span><kbd>6</kbd> перевернуть</span>
-                <span><kbd>7</kbd> рассказ</span>
-                <span><kbd>8</kbd> обсудить</span>
-                <span><kbd>←</kbd><kbd>→</kbd> история</span>
-                <span><kbd>0</kbd> к текущей</span>
-              </div>
+              {/* Only where there is a keyboard to press. On a touch screen a
+                  list of keys would be instructions for something that does not
+                  exist — and even on a desktop it is read once, so it is a line
+                  rather than a wall under the card. */}
+              <button
+                type="button"
+                className="srs-keys-link"
+                onClick={(e) => { e.stopPropagation(); setShowKeysModal(true); }}
+              >
+                <Keyboard size={12} /> Горячие клавиши
+              </button>
             </div>
           )}
           </>
