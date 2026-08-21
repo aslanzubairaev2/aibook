@@ -25,9 +25,9 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
   {
     area: "Overview & discovery",
     summary:
-      "Where to start. get_overview is the learner's state in one call — languages, deck size, dictionary size, lessons, reading progress. get_capabilities is this map, if you need it again mid-conversation.",
-    tools: ["get_overview", "get_capabilities"],
-    say: ["«что у меня в приложении?»", "«покажи мой прогресс»"],
+      "Where to start. get_overview is the learner's state in one call — languages, deck size, dictionary size, lessons, reading progress. get_capabilities is this map, if you need it again mid-conversation. get_action_history is what this connection has actually changed so far — every add/create/update/delete call, most recent first — useful for checking what you already did before doing it again, or for showing the learner an audit trail.",
+    tools: ["get_overview", "get_capabilities", "get_action_history"],
+    say: ["«что у меня в приложении?»", "«покажи мой прогресс»", "«что ты уже поменял?»", "«покажи историю изменений»"],
   },
   {
     area: "Flashcards (spaced repetition)",
@@ -44,10 +44,10 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
   {
     area: "Dictionary & packs («пачки»)",
     summary:
-      "The learner's own dictionary: full entries (article, plural, verb forms, CEFR, example), grouped into packs. A pack is one unit of study — a photographed coursebook page, or a themed set you built with them — with its own progress bar and its own «тренировать» button on the Словарь screen. Words go in with add_word_batch; a set of phrases or whole sentences is a pack too, built with add_flashcards and a 'batch_title'. Everything in a pack is a flashcard from the moment it is added. A pack can also carry its own training setup (update_batch_training): direction, card type, status, trainer — so «тренировать» opens it drilled the way that pack is meant to be drilled, while the learner's own filters stay the default everywhere else. And it carries what it is: update_pack_details writes a description shown under its title and the brief it was built to, which is the only thing that tells one shelf of noun packs from the next months later.",
+      "The learner's own dictionary: full entries (article, plural, verb forms, CEFR, example), grouped into packs. A pack is one unit of study — a photographed coursebook page, or a themed set you built with them — with its own progress bar and its own «тренировать» button on the Словарь screen. Words go in with add_word_batch; a set of phrases or whole sentences is a pack too, built with add_flashcards and a 'batch_title'. Everything in a pack is a flashcard from the moment it is added. A pack can also carry its own training setup (update_batch_training): direction, card type, status, trainer — so «тренировать» opens it drilled the way that pack is meant to be drilled, while the learner's own filters stay the default everywhere else. And it carries what it is: update_pack_details writes a description shown under its title and the brief it was built to, which is the only thing that tells one shelf of noun packs from the next months later. delete_pack removes a pack and its entries when it turned out empty, wrong, or the learner asked for it gone — the cards it made stay in the deck unless you delete_flashcards them too.",
     tools: [
       "list_word_batches", "list_batch_words", "search_dictionary",
-      "add_word_batch", "add_words_to_batch", "update_batch_training", "update_pack_details",
+      "add_word_batch", "add_words_to_batch", "update_batch_training", "update_pack_details", "delete_pack",
     ],
     say: [
       "«сохрани слова по сегодняшней теме»",
@@ -56,6 +56,8 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
       "«добавь ещё слов в ту пачку»",
       "«эту пачку я хочу переводить с русского и на слух»",
       "«что это была за пачка? для чего я её собирал?»",
+      "«удали эту пачку»",
+      "«убери пустые пачки»",
     ],
   },
   {
@@ -92,7 +94,7 @@ export const AGENT_LIMITS: string[] = [
   "The active trainer («Активно» — the written test over вспоминаю / слушаю / говорю) keeps its record on the learner's own device. Nothing about it reaches this connection; what you can read is the «Повторение» deck.",
   "Audio: the app speaks cards and texts itself, through whichever voice engine the learner has chosen in their settings. You cannot make it speak, and no audio comes back through this connection.",
   "The live voice tutor, photo recognition of coursebook pages and in-app AI analysis run inside the app on the learner's own AI budget; this connection is plain data and costs them nothing.",
-  "Deleting texts, batches or the dictionary: removal is the learner's own action in the app (delete_flashcards is the one exception, for cleaning up mistakes you made).",
+  "Deleting a text, or a single dictionary entry on its own: still the learner's own action in the app. Packs and flashcards are different — delete_pack and delete_flashcards are both available here, for a pack that turned out wrong or empty and for cleaning up mistakes you made.",
 ];
 
 /** Practical advice that changes what a good agent does, not decoration. */

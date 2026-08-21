@@ -51,7 +51,7 @@ test("required arguments exist among the declared properties", () => {
 
 test("write tools are named as writes, and only deletion is destructive", () => {
   const destructive = MCP_TOOLS.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
-  assert.deepEqual(destructive, ["delete_flashcards"]);
+  assert.deepEqual(destructive, ["delete_flashcards", "delete_pack"]);
 
   for (const tool of MCP_TOOLS) {
     if (tool.annotations?.readOnlyHint) continue;

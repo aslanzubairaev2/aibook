@@ -495,6 +495,52 @@ function getCapabilities(): unknown {
   };
 }
 
+/**
+ * What this connection has changed, most recent first.
+ *
+ * Every non-read tool call is logged centrally in callMcpTool, whether it
+ * succeeded or not — this just reads that trail back. It answers "what did
+ * you already do?" inside one long conversation, and gives the learner
+ * something to audit besides trusting an agent's own account of itself.
+ */
+async function getActionHistory(ctx: Ctx, args: Args): Promise<unknown> {
+  const limit = Math.min(Math.max(Number(args.limit) || 30, 1), 200);
+  const toolName = typeof args.tool_name === "string" ? args.tool_name.trim() : "";
+  const onlyFailed = args.only_failed === true;
+
+  let request = ctx.admin
+    .from("mcp_action_log")
+    .select("tool_name, args, result_summary, ok, error, created_at")
+    .eq("user_id", ctx.userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (toolName) request = request.eq("tool_name", toolName);
+  if (onlyFailed) request = request.eq("ok", false);
+
+  const { data, error } = await request;
+  if (error) {
+    const missing = error.message.includes("mcp_action_log") || error.code === "PGRST205";
+    throw new Error(
+      missing
+        ? "This aibook deployment has not run the action-history migration yet."
+        : `action history read failed: ${error.message}`,
+    );
+  }
+
+  return {
+    returned: (data ?? []).length,
+    actions: (data ?? []).map((row) => ({
+      tool: row.tool_name,
+      at: row.created_at,
+      ok: row.ok,
+      args: row.args,
+      result: row.result_summary,
+      error: row.error,
+    })),
+    note: "Only tools that change data (add_/create_/update_/delete_) are logged; reads never are. This is a plain record of MCP calls, separate from anything the app itself logs.",
+  };
+}
+
 async function getStudyWords(ctx: Ctx, args: Args): Promise<unknown> {
   const limit = Math.min(Math.max(Number(args.limit) || 200, 1), 500);
   const cards = await getCards(ctx);
@@ -535,6 +581,7 @@ async function listFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
   const limit = Math.min(Math.max(Number(args.limit) || 100, 1), 500);
   const search = typeof args.search === "string" ? normalizeCardText(args.search) : "";
   const batchId = typeof args.batch_id === "string" ? args.batch_id.trim() : "";
+  const type = typeof args.type === "string" ? args.type.trim() : "";
 
   const [allCards, variants] = await Promise.all([getCards(ctx), getVariantProgress(ctx)]);
   let cards = allCards;
@@ -550,6 +597,9 @@ async function listFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
   if (filter === "new") cards = cards.filter((c) => (c.repetitions ?? 0) === 0);
   if (filter === "struggling") cards = cards.filter((c) => isStruggling(c, byCard));
   if (batchId) cards = cards.filter((c) => c.source_book_id === batchId);
+  if (CARD_TYPES.includes(type as typeof CARD_TYPES[number])) {
+    cards = cards.filter((c) => (c.selection_type ?? "word") === type);
+  }
   if (search) {
     cards = cards.filter(
       (c) => normalizeCardText(c.front).includes(search) || normalizeCardText(c.back).includes(search),
@@ -637,6 +687,59 @@ async function deleteFlashcards(ctx: Ctx, args: Args): Promise<unknown> {
     deleted: owned.map((c) => c.front),
     skipped_unknown_ids: ids.filter((id) => !owned.some((c) => c.id === id)),
     note: "Deleting a card throws away its review history. The dictionary entry the card came from is left alone.",
+  };
+}
+
+/**
+ * Remove a whole pack — the entries that make it up, and the row itself.
+ *
+ * The flashcards it produced are deliberately left alone, for the same reason
+ * DELETE /api/dictionary?batchId= leaves them alone: review history is not
+ * something a cleanup should destroy. What is left of the pack afterwards is
+ * a group of cards sharing a source name, exactly like a pack that was never
+ * given a row — list_word_batches shows it under card_groups_without_a_pack,
+ * and delete_flashcards is the tool for taking the cards too, once asked.
+ */
+async function deletePack(ctx: Ctx, args: Args): Promise<unknown> {
+  const batchId = String(args.batch_id ?? "").trim();
+  if (!batchId) throw new Error("Pass 'batch_id' from list_word_batches.");
+
+  const { data: pack, error: readError } = await ctx.admin
+    .from("dictionary_batches")
+    .select("id, title")
+    .eq("id", batchId)
+    .eq("user_id", ctx.userId)
+    .maybeSingle();
+  if (readError) throw new Error(`pack read failed: ${readError.message}`);
+  if (!pack) throw new Error("No such pack in this learner's dictionary — check list_word_batches.");
+
+  const { error: entriesError } = await ctx.admin
+    .from("dictionary_entries")
+    .delete()
+    .eq("batch_id", batchId)
+    .eq("user_id", ctx.userId);
+  if (entriesError) throw new Error(`dictionary entries delete failed: ${entriesError.message}`);
+
+  const { error: batchError } = await ctx.admin
+    .from("dictionary_batches")
+    .delete()
+    .eq("id", batchId)
+    .eq("user_id", ctx.userId);
+  if (batchError) throw new Error(`pack delete failed: ${batchError.message}`);
+
+  const { count } = await ctx.admin
+    .from("flashcards")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", ctx.userId)
+    .eq("source_book_id", batchId);
+  const cardsLeft = count ?? 0;
+
+  return {
+    deleted_pack: pack.title,
+    cards_left_behind: cardsLeft,
+    note: cardsLeft > 0
+      ? "The pack row is gone, but its flashcards are still in the deck — deleting a pack must not throw away review history. They now show as a card group sharing this source name; call list_flashcards with this same batch_id, then delete_flashcards if the learner wants the cards gone too."
+      : "The pack and its dictionary entries are gone. No flashcards were left behind.",
   };
 }
 
@@ -1572,6 +1675,22 @@ export const MCP_TOOLS: McpToolDef[] = [
     annotations: { ...READ_ONLY, title: "Что этот сервер умеет" },
   },
   {
+    name: "get_action_history",
+    title: "История действий",
+    description:
+      "What this connection has changed in the learner's aibook, most recent first — every add/create/update/delete call, whether it succeeded, and what it did. Use it to check what you already did earlier in this conversation before doing it again, or to show the learner an audit trail of what an agent changed on their behalf.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Default 30, max 200" },
+        tool_name: { type: "string", description: "Only actions from this tool, e.g. 'delete_flashcards'" },
+        only_failed: { type: "boolean", description: "Only calls that errored" },
+      },
+      additionalProperties: false,
+    },
+    annotations: { ...READ_ONLY, title: "История действий" },
+  },
+  {
     name: "get_progress",
     title: "Как идёт учёба",
     description:
@@ -1601,7 +1720,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "list_flashcards",
     title: "Карточки",
     description:
-      "List the learner's flashcards with their scheduling state and ids. Filter by 'due', 'learned', 'new' or 'struggling', narrow to one dictionary batch, or search the text of the cards. Each card says which of its three trainings are waiting today ('due_directions'). The ids are what update_flashcard and delete_flashcards take.",
+      "List the learner's flashcards with their scheduling state and ids. Filter by 'due', 'learned', 'new' or 'struggling', narrow to one dictionary batch or one card 'type', or search the text of the cards. Each card says which of its three trainings are waiting today ('due_directions'). The ids are what update_flashcard and delete_flashcards take. Use 'type': 'sentence' to find full-sentence cards mixed into what should be a pack of words or set phrases.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1609,6 +1728,11 @@ export const MCP_TOOLS: McpToolDef[] = [
           type: "string",
           enum: ["all", "due", "learned", "new", "struggling"],
           description: "Default 'all'. 'due' = any direction waiting today, the same list the app shows. 'struggling' = repeatedly forgotten.",
+        },
+        type: {
+          type: "string",
+          enum: ["word", "phrase", "sentence"],
+          description: "Only cards of this kind — 'word' a single word, 'phrase' a short fixed expression (e.g. Sicher ist sicher), 'sentence' a full clause. Set when the card was added; older cards default to 'word'.",
         },
         search: { type: "string", description: "Substring of the front or back text" },
         batch_id: { type: "string", description: "Only cards from this dictionary batch (see list_word_batches)" },
@@ -1968,11 +2092,27 @@ export const MCP_TOOLS: McpToolDef[] = [
     },
     annotations: { ...DESTRUCTIVE, idempotentHint: true, title: "Удалить карточки" },
   },
+  {
+    name: "delete_pack",
+    title: "Удалить пачку",
+    description:
+      "Delete a whole pack («пачка») and its dictionary entries — for a pack that turned out empty, wrong, or that the learner asked you to remove. The flashcards it produced are left in the deck untouched: deleting a pack must not throw away review history. If cards remain, they show as a plain group by source name (list_word_batches, card_groups_without_a_pack) — delete_flashcards is the tool for removing those too, once asked. Ask the learner first unless they named this pack themselves or you are cleaning up a mistake you just made.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        batch_id: { type: "string", description: "Pack id from list_word_batches" },
+      },
+      required: ["batch_id"],
+      additionalProperties: false,
+    },
+    annotations: { ...DESTRUCTIVE, title: "Удалить пачку" },
+  },
 ];
 
 const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
   get_overview: (ctx) => getOverview(ctx),
   get_capabilities: async () => getCapabilities(),
+  get_action_history: getActionHistory,
   get_progress: getProgress,
   get_study_words: getStudyWords,
   list_flashcards: listFlashcards,
@@ -1990,6 +2130,7 @@ const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
   create_lesson: createLesson,
   update_flashcard: updateFlashcard,
   delete_flashcards: deleteFlashcards,
+  delete_pack: deletePack,
 };
 
 /** Every tool that is advertised must be callable, and vice versa. */
@@ -2044,6 +2185,51 @@ ${AGENT_LIMITS.map((l) => `- ${l}`).join("\n")}
 `;
 }
 
+// How much of an argument or a result the log keeps. Generous enough to read
+// back what actually happened (a batch of card fronts, a pack id) without
+// letting one call — a lesson's full paragraphs, say — blow up a row.
+const LOG_VALUE_LIMIT = 4000;
+
+function truncateForLog(value: unknown): unknown {
+  let json: string;
+  try {
+    json = JSON.stringify(value) ?? "null";
+  } catch {
+    return null;
+  }
+  if (json.length <= LOG_VALUE_LIMIT) return value;
+  return { truncated: true, preview: json.slice(0, LOG_VALUE_LIMIT) };
+}
+
+/**
+ * One row per non-read tool call, success or failure — the record that
+ * get_action_history reads back. Logging is best-effort: a deployment
+ * without the migration, or any failure to write the row, must never turn
+ * an action that actually happened into an error the caller sees.
+ */
+async function logAction(
+  admin: SupabaseClient,
+  userId: string,
+  name: string,
+  args: Args,
+  result: unknown,
+  ok: boolean,
+  errorMessage: string | null,
+): Promise<void> {
+  try {
+    await admin.from("mcp_action_log").insert({
+      user_id: userId,
+      tool_name: name,
+      args: truncateForLog(args),
+      result_summary: ok ? truncateForLog(result) : null,
+      ok,
+      error: errorMessage,
+    });
+  } catch {
+    // Logging must not be able to break the action it is describing.
+  }
+}
+
 export async function callMcpTool(
   admin: SupabaseClient,
   userId: string,
@@ -2054,5 +2240,17 @@ export async function callMcpTool(
   if (!handler) {
     throw new Error(`Unknown tool: ${name}. Available: ${MCP_TOOLS.map((t) => t.name).join(", ")}.`);
   }
-  return handler({ admin, userId }, args);
+
+  const readOnly = MCP_TOOLS.find((t) => t.name === name)?.annotations?.readOnlyHint === true;
+  if (readOnly) return handler({ admin, userId }, args);
+
+  try {
+    const result = await handler({ admin, userId }, args);
+    await logAction(admin, userId, name, args, result, true, null);
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await logAction(admin, userId, name, args, null, false, message);
+    throw err;
+  }
 }
