@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ChevronDown, Dumbbell, Loader2, Repeat, SlidersHorizontal } from "lucide-react";
+import { ArrowLeft, Camera, ChevronDown, Dumbbell, Loader2, Repeat, SlidersHorizontal, Wand2 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { entryToAnalysis, entryToCardText } from "@/components/dictionary/DictionaryPanel";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { VerbsQuiz } from "@/components/verbs/VerbsQuiz";
+import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
 import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders, sbInsertFlashcard } from "@/lib/db/supabase";
@@ -29,13 +30,16 @@ type VerbGroup = {
   verbs: DictionaryEntry[];
 };
 
+type FillResult = { ok: true } | { ok: false; error: string };
+
 const SOURCE_LABEL = "Глаголы";
 
 /**
  * Every verb already in the learner's dictionary, laid out the way their
  * teacher's notebook is: Infinitiv · Präteritum · Partizip II, one pack at a
- * time. No new photo pipeline — this reads the same `dictionary_entries`
- * every other screen does, and only shows the ones with principal parts.
+ * time. Reads the same `dictionary_entries` every other screen does, can
+ * photograph a new page itself, and can ask the AI to backfill principal
+ * parts for a "глагол" entry that was saved without them.
  */
 export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
   const { user } = useAuth();
@@ -50,7 +54,11 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
 
   const [wordModal, setWordModal] = useState<{ entry: DictionaryEntry; analysis: AiAnalysis } | null>(null);
   const [quizVerbs, setQuizVerbs] = useState<DictionaryEntry[] | null>(null);
+  const [photoOpen, setPhotoOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  const [fillingIds, setFillingIds] = useState<Set<string>>(new Set());
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   const loadDictionary = useCallback(async () => {
     if (!user) { setEntries([]); setBatches([]); setIsLoading(false); return; }
@@ -79,12 +87,26 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // Every entry the teacher's table is actually about: a verb with at least
-  // one principal part recorded. A "глагол" with nothing in `forms` has
-  // nothing this module can show.
-  const allVerbs = useMemo(
-    () => entries.filter((e) => normalizePos(e.part_of_speech).includes("глагол") && (e.forms?.praeteritum || e.forms?.partizip2)),
+  // Every "глагол" entry in the dictionary, whether or not it has forms yet —
+  // used to split into the real table below and the "Без форм" backlog.
+  const allGlagolEntries = useMemo(
+    () => entries.filter((e) => normalizePos(e.part_of_speech).includes("глагол")),
     [entries],
+  );
+
+  // The teacher's table is about verbs with at least one principal part
+  // recorded — a "глагол" with nothing in `forms` has nothing to show here.
+  const allVerbs = useMemo(
+    () => allGlagolEntries.filter((e) => e.forms?.praeteritum || e.forms?.partizip2),
+    [allGlagolEntries],
+  );
+
+  // Saved as verbs, but with no Präteritum/Partizip II on file — typed in by
+  // hand, added by an assistant, or read from a photo the model missed them
+  // on. Shown separately with a way to ask the AI to fill them in.
+  const missingForms = useMemo(
+    () => allGlagolEntries.filter((e) => !e.forms?.praeteritum && !e.forms?.partizip2),
+    [allGlagolEntries],
   );
 
   const verbs = useMemo(() => {
@@ -171,6 +193,66 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
     }
   }
 
+  /** Asks the AI for one verb's principal parts and saves them, merged into whatever `forms` it already has. */
+  async function fillEntryForms(entry: DictionaryEntry): Promise<FillResult> {
+    try {
+      const res = await freshFetch("/api/ai/verb-forms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+        body: JSON.stringify({
+          lemma: entry.lemma,
+          headword: entry.headword,
+          targetLanguage: profile.targetLanguage,
+          nativeLanguage: profile.nativeLanguage,
+        }),
+      });
+      const data = await res.json() as { forms?: Record<string, string>; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Не удалось получить формы.");
+      const forms = data.forms ?? {};
+      if (!forms.praeteritum && !forms.partizip2) throw new Error(`ИИ не смог определить формы «${entry.headword}»`);
+
+      const saveRes = await freshFetch("/api/dictionary", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+        body: JSON.stringify({ id: entry.id, forms }),
+      });
+      const saveData = await saveRes.json() as { ok?: boolean; error?: string };
+      if (!saveRes.ok) throw new Error(saveData.error ?? "Не удалось сохранить формы.");
+
+      setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, forms: { ...e.forms, ...forms } } : e)));
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : "Не удалось заполнить формы." };
+    }
+  }
+
+  async function fillOne(entry: DictionaryEntry) {
+    setFillingIds((prev) => new Set(prev).add(entry.id));
+    const result = await fillEntryForms(entry);
+    setFillingIds((prev) => { const next = new Set(prev); next.delete(entry.id); return next; });
+    setToast(result.ok ? "✓ Формы заполнены" : result.error);
+  }
+
+  async function fillAllMissing() {
+    const targets = missingForms;
+    if (targets.length === 0 || bulkProgress) return;
+    setBulkProgress({ done: 0, total: targets.length });
+    setFillingIds(new Set(targets.map((e) => e.id)));
+    let failures = 0;
+    for (const entry of targets) {
+      const result = await fillEntryForms(entry);
+      if (!result.ok) failures += 1;
+      setFillingIds((prev) => { const next = new Set(prev); next.delete(entry.id); return next; });
+      setBulkProgress((prev) => (prev ? { done: prev.done + 1, total: prev.total } : prev));
+    }
+    setBulkProgress(null);
+    setToast(
+      failures === 0
+        ? `✓ Заполнено форм: ${targets.length}`
+        : `Заполнено ${targets.length - failures} из ${targets.length}, ${failures} не удалось`,
+    );
+  }
+
   const activeFilterCount = verbType !== "all" ? 1 : 0;
 
   if (quizVerbs) {
@@ -182,6 +264,8 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
       />
     );
   }
+
+  const hasNothing = !isLoading && !error && allVerbs.length === 0 && missingForms.length === 0;
 
   return (
     <section className="screen verbs-view">
@@ -205,33 +289,41 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
           <strong>Не удалось загрузить</strong>
           <p>{error}</p>
         </div>
-      ) : allVerbs.length === 0 ? (
+      ) : hasNothing ? (
         <div className="empty-state">
           <Repeat size={40} />
           <strong>Глаголов пока нет</strong>
-          <p>Сфотографируйте страницу с глаголами в Словаре — те, что с формами прошедшего времени, появятся здесь автоматически.</p>
+          <p>Сфотографируйте страницу с глаголами — те, что с формами прошедшего времени, появятся здесь автоматически.</p>
+          <button type="button" className="primary-btn" style={{ maxWidth: 260, margin: "12px auto 0" }} onClick={() => setPhotoOpen(true)}>
+            <Camera size={16} style={{ marginRight: 6 }} />Сфотографировать глаголы
+          </button>
         </div>
       ) : (
         <>
           <div className="verbs-toolbar">
-            <button
-              type="button"
-              className={`all-filter-toggle dict-filter-toggle ${filtersOpen || activeFilterCount > 0 ? "active" : ""}`}
-              onClick={() => setFiltersOpen((v) => !v)}
-            >
-              <SlidersHorizontal size={15} /> Тип
-              {activeFilterCount > 0 && <span className="all-filter-count">{activeFilterCount}</span>}
-              <ChevronDown size={12} />
-            </button>
+            {allVerbs.length > 0 && (
+              <button
+                type="button"
+                className={`all-filter-toggle dict-filter-toggle ${filtersOpen || activeFilterCount > 0 ? "active" : ""}`}
+                onClick={() => setFiltersOpen((v) => !v)}
+              >
+                <SlidersHorizontal size={15} /> Тип
+                {activeFilterCount > 0 && <span className="all-filter-count">{activeFilterCount}</span>}
+                <ChevronDown size={12} />
+              </button>
+            )}
             <span className="dict-toolbar-count">{verbs.length} {verbNoun(verbs.length)}</span>
             {verbs.length > 0 && (
               <button type="button" className="dict-train-btn verbs-train-all-btn" onClick={() => setQuizVerbs(verbs)}>
                 <Dumbbell size={14} /> Тренировать всё
               </button>
             )}
+            <button type="button" className="icon-btn" onClick={() => setPhotoOpen(true)} aria-label="Сфотографировать страницу">
+              <Camera size={18} />
+            </button>
           </div>
 
-          {filtersOpen && (
+          {filtersOpen && allVerbs.length > 0 && (
             <div className="all-filter-panel">
               <div className="filter-group">
                 <div className="filter-group-label">Тип глаголов</div>
@@ -244,59 +336,101 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
             </div>
           )}
 
-          <div className="verbs-groups">
-            {groups.map((group) => {
-              const open = !collapsed.has(group.key);
-              return (
-                <section key={group.key} className="verb-batch">
-                  <button type="button" className="verb-batch-head" onClick={() => toggleGroup(group.key)}>
-                    <strong className="verb-batch-title">{group.title}</strong>
-                    <span className="dict-batch-meta">{group.verbs.length} {verbNoun(group.verbs.length)}</span>
-                    <ChevronDown size={17} className={`dict-batch-chevron${open ? " open" : ""}`} />
-                  </button>
+          {allVerbs.length > 0 && (
+            <div className="verbs-groups">
+              {groups.map((group) => {
+                const open = !collapsed.has(group.key);
+                return (
+                  <section key={group.key} className="verb-batch">
+                    <button type="button" className="verb-batch-head" onClick={() => toggleGroup(group.key)}>
+                      <strong className="verb-batch-title">{group.title}</strong>
+                      <span className="dict-batch-meta">{group.verbs.length} {verbNoun(group.verbs.length)}</span>
+                      <ChevronDown size={17} className={`dict-batch-chevron${open ? " open" : ""}`} />
+                    </button>
 
-                  {open && (
-                    <>
-                      <button type="button" className="dict-train-btn verb-batch-train-btn" onClick={() => setQuizVerbs(group.verbs)}>
-                        <Dumbbell size={14} /> Тренировать эту пачку
-                      </button>
+                    {open && (
+                      <>
+                        <button type="button" className="dict-train-btn verb-batch-train-btn" onClick={() => setQuizVerbs(group.verbs)}>
+                          <Dumbbell size={14} /> Тренировать эту пачку
+                        </button>
 
-                      <div className="verb-table-wrap">
-                        <table className="verb-table">
-                          <thead>
-                            <tr>
-                              <th>Infinitiv</th>
-                              <th>Präteritum</th>
-                              <th>Partizip II</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {group.verbs.map((entry) => {
-                              const irregular = isIrregularGermanVerb(entry.lemma, entry.headword, entry.forms);
-                              return (
-                                <tr
-                                  key={entry.id}
-                                  className={`verb-row ${irregular ? "verb-row-irregular" : "verb-row-regular"}`}
-                                  onClick={() => openEntry(entry)}
-                                >
-                                  <td className="verb-cell-infinitive">
-                                    <span className="verb-infinitive">{entry.headword}</span>
-                                    {entry.translation && <span className="verb-translation">{entry.translation}</span>}
-                                  </td>
-                                  <td>{entry.forms?.praeteritum || "—"}</td>
-                                  <td>{partizipCell(entry)}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </>
-                  )}
-                </section>
-              );
-            })}
-          </div>
+                        <div className="verb-table-wrap">
+                          <table className="verb-table">
+                            <thead>
+                              <tr>
+                                <th>Infinitiv</th>
+                                <th>Präteritum</th>
+                                <th>Partizip II</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.verbs.map((entry) => {
+                                const irregular = isIrregularGermanVerb(entry.lemma, entry.headword, entry.forms);
+                                return (
+                                  <tr
+                                    key={entry.id}
+                                    className={`verb-row ${irregular ? "verb-row-irregular" : "verb-row-regular"}`}
+                                    onClick={() => openEntry(entry)}
+                                  >
+                                    <td className="verb-cell-infinitive">
+                                      <span className="verb-infinitive">{entry.headword}</span>
+                                      {entry.translation && <span className="verb-translation">{entry.translation}</span>}
+                                    </td>
+                                    <td>{entry.forms?.praeteritum || "—"}</td>
+                                    <td>{partizipCell(entry)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
+
+          {missingForms.length > 0 && (
+            <section className="verb-missing">
+              <div className="verb-missing-head">
+                <strong>Без форм — {missingForms.length}</strong>
+                <button
+                  type="button"
+                  className="dict-train-btn verb-missing-fill-all"
+                  onClick={() => void fillAllMissing()}
+                  disabled={bulkProgress !== null}
+                >
+                  {bulkProgress
+                    ? `Заполняю ${bulkProgress.done} из ${bulkProgress.total}…`
+                    : <><Wand2 size={14} /> Дозаполнить все</>}
+                </button>
+              </div>
+              <p className="verb-missing-hint">
+                Эти глаголы уже в Словаре, но без Präteritum/Partizip II — ИИ может определить их сам.
+              </p>
+              <div className="verb-missing-list">
+                {missingForms.map((entry) => (
+                  <div key={entry.id} className="verb-missing-row">
+                    <span className="verb-missing-word">
+                      {entry.headword}
+                      {entry.translation && <em> — {entry.translation}</em>}
+                    </span>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      aria-label={`Заполнить формы для ${entry.headword}`}
+                      onClick={() => void fillOne(entry)}
+                      disabled={fillingIds.has(entry.id)}
+                    >
+                      {fillingIds.has(entry.id) ? <Loader2 className="spin" size={15} /> : <Wand2 size={15} />}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </>
       )}
 
@@ -309,6 +443,22 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
           selectedWord={wordModal.entry.headword}
           onClose={() => setWordModal(null)}
           onAddCard={() => addCardFromEntry(wordModal.entry)}
+        />
+      )}
+
+      {photoOpen && (
+        <PhotoLessonModal
+          targetLanguage={profile.targetLanguage}
+          nativeLanguage={profile.nativeLanguage}
+          mode="dictionary"
+          authHeaders={sbAuthHeaders}
+          onClose={() => setPhotoOpen(false)}
+          onCreated={() => {}}
+          onWordsAdded={({ added, updated, warning }) => {
+            setPhotoOpen(false);
+            void loadDictionary();
+            setToast(warning ? warning : updated > 0 ? `Добавлено слов: ${added}, обновлено: ${updated}` : `Добавлено слов: ${added}`);
+          }}
         />
       )}
 

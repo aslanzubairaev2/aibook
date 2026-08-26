@@ -418,6 +418,40 @@ export async function adoptCardsIntoPack(
   return { adopted: (data ?? []).length, error: null };
 }
 
+/**
+ * Backfills the principal parts of one verb the learner already has —
+ * saved without them because it was typed in by hand, added by an
+ * assistant, or read from a photo where the model missed them.
+ *
+ * Merges rather than replaces: an AI call that only returned
+ * `praeteritum`/`partizip2` must not blank out a `trennbar` the entry
+ * already had.
+ */
+export async function updateEntryForms(
+  admin: SupabaseClient,
+  userId: string,
+  entryId: string,
+  forms: Record<string, string>,
+): Promise<string | null> {
+  const { data: existing, error: readError } = await admin
+    .from("dictionary_entries")
+    .select("forms")
+    .eq("id", entryId)
+    .eq("user_id", userId)
+    .single();
+  if (readError) return `Не удалось прочитать слово: ${readError.message}`;
+
+  const merged = { ...(existing?.forms as Record<string, string> ?? {}), ...forms };
+
+  const { error } = await admin
+    .from("dictionary_entries")
+    .update({ forms: merged })
+    .eq("id", entryId)
+    .eq("user_id", userId);
+
+  return error?.message ?? null;
+}
+
 export async function discardDictionaryBatch(
   admin: SupabaseClient,
   userId: string,

@@ -2136,6 +2136,25 @@ textarea,
 }
 .verb-quiz-summary strong { font-size: 18px; color: var(--text-primary); }
 
+/* Verbs already in the dictionary but saved without Präteritum/Partizip II —
+   a backlog the AI can fill in, rather than a silently missing pile. */
+.verb-missing {
+  border: 1px dashed var(--border); border-radius: var(--radius-md);
+  background: var(--bg-card); padding: 14px; margin-top: 4px;
+}
+.verb-missing-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.verb-missing-head strong { font-size: 14px; color: var(--text-primary); }
+.verb-missing-fill-all { flex: 0 0 auto; padding: 0 14px; height: 32px; font-size: 12px; }
+.verb-missing-hint { font-size: 12px; color: var(--text-muted); margin: 6px 0 10px; }
+.verb-missing-list { display: flex; flex-direction: column; gap: 2px; }
+.verb-missing-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 4px; border-top: 1px solid var(--border);
+}
+.verb-missing-row:first-child { border-top: none; }
+.verb-missing-word { font-size: 13.5px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.verb-missing-word em { font-style: normal; color: var(--text-muted); }
+
 /* ── Card markers ──────────────────────────────────────────────────────────
    Type, part of speech and level, stacked top-left like the badges on a shop
    tile: the lead marker keeps the familiar size, the rest are smaller so the

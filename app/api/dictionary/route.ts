@@ -6,6 +6,7 @@ import {
   DICTIONARY_COLUMNS,
   findOrCreatePack,
   readBatches,
+  updateEntryForms,
 } from "@/lib/db/dictionaryStore";
 
 export const dynamic = "force-dynamic";
@@ -128,5 +129,28 @@ export async function DELETE(req: NextRequest) {
     .eq("user_id", user.id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}
+
+// PATCH /api/dictionary   body: { id, forms }
+//
+// Backfills the principal parts of one verb already in the dictionary —
+// merged into whatever `forms` it already has, never a blind overwrite.
+export async function PATCH(req: NextRequest) {
+  const user = await getUserFromRequest(req);
+  if (!user) {
+    return NextResponse.json({ error: "Войдите, чтобы менять словарь." }, { status: 401 });
+  }
+  if (!supabaseAdmin) {
+    return NextResponse.json({ error: "Supabase не настроен на сервере." }, { status: 503 });
+  }
+
+  const body = await req.json() as { id?: string; forms?: Record<string, string> };
+  const id = (body.id ?? "").trim();
+  if (!id) return NextResponse.json({ error: "Не указано слово." }, { status: 400 });
+  const forms = body.forms && typeof body.forms === "object" ? body.forms : {};
+
+  const error = await updateEntryForms(supabaseAdmin, user.id, id, forms);
+  if (error) return NextResponse.json({ error }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
