@@ -181,6 +181,32 @@ textarea,
 }
 .icon-btn:hover { border-color: var(--border-strong); background: var(--bg-card); }
 
+/* Voice-dictation button (DictateButton) — sits beside a text field wherever
+   speaking an answer is offered, so it lives here rather than duplicated in
+   each screen that uses it. */
+.dictate-btn {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+}
+.dictate-btn:hover { color: var(--accent); border-color: var(--accent); }
+.dictate-btn:disabled { opacity: 0.5; cursor: default; }
+.dictate-btn.live {
+  color: #e08888;
+  border-color: #e08888;
+  background: rgba(224, 136, 136, 0.12);
+  animation: dictate-pulse 1.2s ease-in-out infinite;
+}
+@keyframes dictate-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
 .pill-btn {
   display: inline-flex;
   align-items: center;
@@ -2122,6 +2148,8 @@ textarea,
 .verb-quiz-translation { font-size: 13px; color: var(--text-muted); margin-top: -10px; }
 .verb-quiz-field { display: flex; flex-direction: column; gap: 5px; }
 .verb-quiz-field label { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.verb-quiz-input-row { display: flex; align-items: center; gap: 8px; }
+.verb-quiz-input-row .verb-quiz-input { flex: 1; min-width: 0; }
 .verb-quiz-input {
   height: 42px; padding: 0 12px; font-size: 15px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);

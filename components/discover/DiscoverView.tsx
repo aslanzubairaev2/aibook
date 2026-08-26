@@ -2039,30 +2039,10 @@ const STYLES = `
     resize: vertical;
   }
 
-  /* Text field paired with its dictation button. */
+  /* Text field paired with its dictation button. .dictate-btn itself lives in
+     globals.css since DictateButton is shared across screens. */
   .lesson-input-row { display: flex; align-items: flex-start; gap: 8px; }
   .lesson-input-row > input, .lesson-input-row > textarea { flex: 1; min-width: 0; }
-  .dictate-btn {
-    flex-shrink: 0;
-    width: 38px;
-    height: 38px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border-strong);
-    border-radius: 9px;
-    background: var(--bg-card);
-    color: var(--text-muted);
-    transition: all var(--transition-fast);
-  }
-  .dictate-btn:hover { color: var(--accent); border-color: var(--accent); }
-  .dictate-btn.live {
-    color: #e08888;
-    border-color: #e08888;
-    background: rgba(224,136,136,0.12);
-    animation: dictate-pulse 1.2s ease-in-out infinite;
-  }
-  @keyframes dictate-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
   .syllabus-refine { gap: 4px; color: var(--text-muted); background: rgba(240,230,211,0.05); }
   .syllabus-refine:hover { color: var(--accent); }

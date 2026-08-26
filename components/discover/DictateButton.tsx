@@ -15,10 +15,11 @@ type Props = {
   lang: string;
   title: string;
   onText: (text: string) => void;
+  disabled?: boolean;
 };
 
 /** Renders nothing where the Web Speech API is missing (Firefox, older Safari). */
-export function DictateButton({ lang, title, onText }: Props) {
+export function DictateButton({ lang, title, onText, disabled }: Props) {
   const [listening, setListening] = useState(false);
   const recognizerRef = useRef<Recognizer | null>(null);
   const supported = isSpeechRecognitionSupported();
@@ -28,6 +29,7 @@ export function DictateButton({ lang, title, onText }: Props) {
   if (!supported) return null;
 
   const toggle = () => {
+    if (disabled) return;
     if (listening) {
       recognizerRef.current?.stop();
       recognizerRef.current = null;
@@ -47,6 +49,7 @@ export function DictateButton({ lang, title, onText }: Props) {
       type="button"
       className={`dictate-btn ${listening ? "live" : ""}`}
       onClick={toggle}
+      disabled={disabled}
       aria-label={title}
       title={title}
     >

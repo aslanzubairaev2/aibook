@@ -5,6 +5,7 @@ import { ArrowLeft, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, type AnswerVerdict } from "@/lib/srs/activeTraining";
 import { SpeakButton } from "@/components/ui/SpeakButton";
+import { DictateButton } from "@/components/discover/DictateButton";
 
 type Props = {
   verbs: DictionaryEntry[];
@@ -141,23 +142,31 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
           return (
             <div key={f} className="verb-quiz-field">
               <label htmlFor={`verb-quiz-${f}`}>{FIELD_LABEL[f]}</label>
-              <input
-                id={`verb-quiz-${f}`}
-                type="text"
-                value={inputs[f]}
-                disabled={revealed}
-                onChange={(e) => setInputs((prev) => ({ ...prev, [f]: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  if (revealed) nextItem();
-                  else submit();
-                }}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                className={`verb-quiz-input${revealed && result ? ` ${result.verdict}` : ""}`}
-              />
+              <div className="verb-quiz-input-row">
+                <input
+                  id={`verb-quiz-${f}`}
+                  type="text"
+                  value={inputs[f]}
+                  disabled={revealed}
+                  onChange={(e) => setInputs((prev) => ({ ...prev, [f]: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    if (revealed) nextItem();
+                    else submit();
+                  }}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  className={`verb-quiz-input${revealed && result ? ` ${result.verdict}` : ""}`}
+                />
+                <DictateButton
+                  lang={targetLanguage}
+                  title="Сказать голосом"
+                  disabled={revealed}
+                  onText={(text) => setInputs((prev) => ({ ...prev, [f]: text }))}
+                />
+              </div>
               {revealed && result?.verdict === "wrong" && (
                 <span className="verb-quiz-expected">{result.expected}</span>
               )}
