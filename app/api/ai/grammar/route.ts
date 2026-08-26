@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType, type Schema } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 import { buildGrammarPrompt, type GrammarPromptParams } from "@/lib/ai/buildGrammarPrompt";
 import { AI_CONFIG } from "@/lib/config";
@@ -16,6 +16,68 @@ function parseJsonObject(text: string) {
   }
 }
 
+// The full verb view requires a 3×3 (tense × polarity) matrix of 6-person
+// arrays. The model does not always comply with that shape from prompt text
+// alone (it sometimes just returns "sections" instead, like the brief view),
+// so we force it structurally here rather than rely on the wording.
+const personSchema: Schema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    form: { type: SchemaType.STRING },
+    native: { type: SchemaType.STRING },
+  },
+  required: ["form", "native"],
+};
+
+const verbMatrixResponseSchema: Schema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    word: { type: SchemaType.STRING },
+    lemma: { type: SchemaType.STRING },
+    language: { type: SchemaType.STRING },
+    partOfSpeech: { type: SchemaType.STRING },
+    kind: { type: SchemaType.STRING },
+    detail: { type: SchemaType.STRING },
+    matrix: {
+      type: SchemaType.OBJECT,
+      properties: {
+        rowLabels: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+        colLabels: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+        cells: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.ARRAY, items: personSchema },
+          },
+        },
+      },
+      required: ["rowLabels", "colLabels", "cells"],
+    },
+    languageWarning: { type: SchemaType.STRING },
+  },
+  required: ["word", "lemma", "language", "partOfSpeech", "kind", "detail", "matrix"],
+};
+
+// Reject a matrix that is missing rows/columns/persons or has empty forms —
+// this is what let a broken "full" response through and get cached as if it
+// were a real conjugation table.
+function isValidVerbMatrix(matrix: unknown): boolean {
+  if (!matrix || typeof matrix !== "object") return false;
+  const m = matrix as Record<string, unknown>;
+  return (
+    Array.isArray(m.rowLabels) && m.rowLabels.length === 3 &&
+    Array.isArray(m.colLabels) && m.colLabels.length === 3 &&
+    Array.isArray(m.cells) && m.cells.length === 3 &&
+    m.cells.every((row) =>
+      Array.isArray(row) && row.length === 3 &&
+      row.every((col) =>
+        Array.isArray(col) && col.length > 0 &&
+        col.every((p) => !!p && typeof p === "object" && typeof (p as { form?: unknown }).form === "string" && (p as { form: string }).form.trim())
+      )
+    )
+  );
+}
+
 export async function POST(req: Request) {
   let apiKey: string;
   try {
@@ -27,6 +89,7 @@ export async function POST(req: Request) {
 
   const body = (await req.json()) as GrammarPromptParams;
   const prompt = buildGrammarPrompt(body);
+  const isVerbFull = body.detail === "full" && body.posTag === "verb";
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -34,6 +97,7 @@ export async function POST(req: Request) {
       model: AI_CONFIG.model,
       generationConfig: {
         responseMimeType: "application/json",
+        ...(isVerbFull ? { responseSchema: verbMatrixResponseSchema } : {}),
         // The full verb view is a 3×3 Petrov matrix (~54 phrases) — needs room.
         maxOutputTokens: body.detail === "full" ? 6144 : 1536,
         temperature: AI_CONFIG.temperature,
@@ -43,6 +107,11 @@ export async function POST(req: Request) {
     const result = await model.generateContent(prompt);
     const text = result.response.text();
     const parsed = parseJsonObject(text);
+
+    if (isVerbFull && !isValidVerbMatrix(parsed.matrix)) {
+      throw new Error("AI не вернул полную таблицу спряжения — попробуйте ещё раз");
+    }
+
     return NextResponse.json(parsed);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
