@@ -92,11 +92,15 @@ function PetrovMatrix({ matrix, lang }: { matrix: GrammarMatrix; lang: string })
         {cols.map((c, ci) => <div key={ci} className="petrov-col-head">{c}</div>)}
         {rows.map((r, ri) => {
           const row: unknown[] = Array.isArray(rawCells[ri]) ? (rawCells[ri] as unknown[]) : [];
+          // Row 0 of the 4-row grid is the Präteritum (written-past) row that
+          // sits above the everyday-speech Perfekt row — set apart with its
+          // own accent so it doesn't read as just another equal tense.
+          const isWrittenPast = ri === 0 && rows.length === 4;
           return (
             <Fragment key={ri}>
-              <div className="petrov-row-head">{r}</div>
+              <div className={`petrov-row-head${isWrittenPast ? " petrov-row-head-alt" : ""}`}>{r}</div>
               {cols.map((_, ci) => (
-                <div key={ci} className="petrov-cell">
+                <div key={ci} className={`petrov-cell${isWrittenPast ? " petrov-cell-alt" : ""}`}>
                   {toRows(row[ci]).map((p, pi) => (
                     <GrammarLine key={pi} form={p.form} native={p.native} lang={lang} />
                   ))}
@@ -174,7 +178,13 @@ export function GrammarModal({ word, lemma, posTag, defaultLang, nativeLang, onC
 
   return (
     <div className="modal-backdrop grammar-modal-backdrop" onClick={(e) => { e.stopPropagation(); onClose(); }}>
-      <section className="grammar-modal" role="dialog" aria-modal aria-label={POS_GRAMMAR_LABEL[posTag]} onClick={(e) => e.stopPropagation()}>
+      <section
+        className={`grammar-modal${current?.matrix ? " grammar-modal-wide" : ""}`}
+        role="dialog"
+        aria-modal
+        aria-label={POS_GRAMMAR_LABEL[posTag]}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="grammar-modal-bar">
           <button className="icon-btn" onClick={onClose} type="button" aria-label="Закрыть">
             <X size={20} />

@@ -265,6 +265,11 @@
   background: var(--bg-secondary);
   animation: modal-slide-up 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+/* The full verb matrix (tenses × polarities) needs ~700px to show its 3
+   columns side by side. On a phone this is still 100% (no room to give), but
+   on a wider screen let the modal use the space instead of capping at the
+   width sized for the plain brief/declension lists and forcing a scrollbar. */
+.grammar-modal.grammar-modal-wide { width: min(100%, 820px); }
 
 .grammar-modal-bar {
   position: sticky;
@@ -526,6 +531,12 @@
 .petrov-cell .petrov-line { border-top: 1px solid var(--border); padding: 7px 0; }
 .petrov-cell .petrov-line:first-child { border-top: 0; }
 .petrov-cell .petrov-form { font-size: 14px; }
+
+/* The Präteritum (written-past) row — same accent family as the "phrase"
+   tag elsewhere, so it reads as "a related but different category" rather
+   than a fourth equal tense. */
+.petrov-row-head-alt { color: var(--blue); }
+.petrov-cell-alt { border-color: rgba(106, 152, 196, 0.3); background: rgba(106, 152, 196, 0.05); }
 
 .discuss-backdrop {
   z-index: 55;

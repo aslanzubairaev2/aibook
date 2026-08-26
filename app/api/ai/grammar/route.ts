@@ -16,7 +16,7 @@ function parseJsonObject(text: string) {
   }
 }
 
-// The full verb view requires a 3×3 (tense × polarity) matrix of 6-person
+// The full verb view requires a 4×3 (tense × polarity) matrix of 6-person
 // arrays. The model does not always comply with that shape from prompt text
 // alone (it sometimes just returns "sections" instead, like the brief view),
 // so we force it structurally here rather than rely on the wording.
@@ -65,9 +65,9 @@ function isValidVerbMatrix(matrix: unknown): boolean {
   if (!matrix || typeof matrix !== "object") return false;
   const m = matrix as Record<string, unknown>;
   return (
-    Array.isArray(m.rowLabels) && m.rowLabels.length === 3 &&
+    Array.isArray(m.rowLabels) && m.rowLabels.length === 4 &&
     Array.isArray(m.colLabels) && m.colLabels.length === 3 &&
-    Array.isArray(m.cells) && m.cells.length === 3 &&
+    Array.isArray(m.cells) && m.cells.length === 4 &&
     m.cells.every((row) =>
       Array.isArray(row) && row.length === 3 &&
       row.every((col) =>
@@ -98,8 +98,8 @@ export async function POST(req: Request) {
       generationConfig: {
         responseMimeType: "application/json",
         ...(isVerbFull ? { responseSchema: verbMatrixResponseSchema } : {}),
-        // The full verb view is a 3×3 Petrov matrix (~54 phrases) — needs room.
-        maxOutputTokens: body.detail === "full" ? 6144 : 1536,
+        // The full verb view is a 4×3 Petrov matrix (~72 phrases) — needs room.
+        maxOutputTokens: body.detail === "full" ? 8192 : 1536,
         temperature: AI_CONFIG.temperature,
       },
     });

@@ -26,5 +26,8 @@ export function makeGrammarCacheKey(
   targetLanguage: string,
   nativeLanguage: string,
 ) {
-  return `v2:grammar:${detail}:${normalizeAiCacheText(text)}:${targetLanguage}:${nativeLanguage}`;
+  // v3: the full verb matrix gained a Präteritum row above Perfekt — bump so a
+  // learner who already cached the old 3-row table gets the new shape instead
+  // of the incomplete one sticking around forever.
+  return `v3:grammar:${detail}:${normalizeAiCacheText(text)}:${targetLanguage}:${nativeLanguage}`;
 }

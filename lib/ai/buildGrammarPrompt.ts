@@ -28,7 +28,7 @@ const shape = {
       ],
     },
   ],
-  matrix: "FILL ONLY for a VERB on the FULL view (otherwise omit). 3×3 Petrov grid — see the VERB rules below for its exact shape.",
+  matrix: "FILL ONLY for a VERB on the FULL view (otherwise omit). 4×3 Petrov grid — see the VERB rules below for its exact shape.",
   languageWarning: "OMIT this field unless the word clearly belongs to another language",
 };
 
@@ -64,22 +64,24 @@ Rules:
 
 VERB:
 - brief: use "sections" — ONE section, the present tense, affirmative, the 6 core persons. "label" = the FULL native translation of the phrase (e.g. "я играю"), "pronoun" = target pronoun (e.g. "ich"), "form" = the conjugated verb (without the pronoun).
-- full: OMIT "sections" and instead fill the "matrix" object. "rowLabels" and "colLabels" set the headers; "cells" is a 3×3 grid.
-  EXACT order — rows top→bottom = PAST, PRESENT, FUTURE; columns left→right = negation, affirmation, question.
-  "cells" MUST be a JSON array of exactly 3 elements (one per row, in the order past, present, future). Each row element MUST be a JSON array of exactly 3 elements (one per column: negation, affirmation, question). Each column element MUST be a JSON array of the 6 core persons (1sg, 2sg, 3sg, 1pl, 2pl, 3pl). Each person is an object { "form": ..., "native": ... }.
+- full: OMIT "sections" and instead fill the "matrix" object. "rowLabels" and "colLabels" set the headers; "cells" is a 4×3 grid.
+  EXACT order — rows top→bottom = PRÄTERITUM (written past), PERFEKT (spoken past), PRESENT, FUTURE; columns left→right = negation, affirmation, question.
+  "cells" MUST be a JSON array of exactly 4 elements (one per row, in that order). Each row element MUST be a JSON array of exactly 3 elements (one per column: negation, affirmation, question). Each column element MUST be a JSON array of the 6 core persons (1sg, 2sg, 3sg, 1pl, 2pl, 3pl). Each person is an object { "form": ..., "native": ... }.
   "form" = the COMPLETE natural ${p.targetLanguage} phrase for that person+tense+polarity, correct word order (questions begin with the verb and end with "?"; negation uses the proper negator). "native" = the FULL ${p.nativeLanguage} translation of that whole phrase (e.g. "я играю", "я не играю", "играю ли я?") — NOT just the pronoun.
-  PAST row: use the tense a native speaker actually uses in everyday SPEECH for a COMPLETED action — NOT the literary/written tense. For German that means the Perfekt (haben/sein + Partizip II with the participle at the END: "ich habe geschickt", question "habe ich geschickt?", negation "ich habe nicht geschickt"); use the simple past (Präteritum) only for sein/haben/modal verbs (war, hatte, musste). For French use the passé composé. Translate the past as a completed action in ${p.nativeLanguage} (Russian: perfective "я послал", NOT "я посылал"). Label this row accordingly (e.g. "Прошедшее время (Perfekt)").
+  Row 1, PRÄTERITUM: the simple past used in writing/narration — for German the classic Präteritum ("ich spielte", question "spielte ich?", negation "ich spielte nicht"); for French the imparfait. For a language with no such written-past form, repeat the same tense as row 2. Label it to say so, e.g. "Прошедшее время (Präteritum)".
+  Row 2, PERFEKT: the tense a native speaker actually uses in everyday SPEECH for a COMPLETED action — NOT the literary/written tense. For German that means the Perfekt (haben/sein + Partizip II with the participle at the END: "ich habe gespielt", question "habe ich gespielt?", negation "ich habe nicht gespielt"); use the Präteritum form here too only for sein/haben/modal verbs (war, hatte, musste), since for those the spoken form already is the Präteritum. For French use the passé composé. Translate this row as a completed action in ${p.nativeLanguage} (Russian: perfective "я сыграл", NOT "я играл"). Label it accordingly, e.g. "Прошедшее время (Perfekt)".
   Concrete shape (illustrative, for "spielen"):
     "matrix": {
-      "rowLabels": ["Прошедшее время", "Настоящее время", "Будущее время"],
+      "rowLabels": ["Прошедшее время (Präteritum)", "Прошедшее время (Perfekt)", "Настоящее время", "Будущее время"],
       "colLabels": ["Отрицание", "Утверждение", "Вопрос"],
       "cells": [
         [ [ {"form":"ich spielte nicht","native":"я не играл"}, "...5 more persons" ], [ {"form":"ich spielte","native":"я играл"}, "..." ], [ {"form":"spielte ich?","native":"играл ли я?"}, "..." ] ],
+        [ [ {"form":"ich habe nicht gespielt","native":"я не сыграл"}, "...5 more persons" ], [ {"form":"ich habe gespielt","native":"я сыграл"}, "..." ], [ {"form":"habe ich gespielt?","native":"сыграл ли я?"}, "..." ] ],
         [ "...present: negation, affirmation, question..." ],
         [ "...future: negation, affirmation, question..." ]
       ]
     }
-  Choose the single most standard past and future tense for the language. Never nest differently or use objects where an array is required.
+  Choose the single most standard written-past, spoken-past, and future tense for the language. Never nest differently or use objects where an array is required.
 
 NOUN:
 - set the top-level "gender" field (m/f/n, or pl for plural-only nouns).
