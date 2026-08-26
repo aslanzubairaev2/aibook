@@ -97,7 +97,7 @@ ol, ul { list-style: none; }
   inset: auto 12px 12px;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 2px;
   max-width: 620px;
   margin: 0 auto;

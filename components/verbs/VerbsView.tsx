@@ -184,7 +184,7 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
   }
 
   return (
-    <section className="verbs-view">
+    <section className="screen verbs-view">
       <header className="screen-header">
         <button className="icon-btn" onClick={onBack} type="button" aria-label="Назад">
           <ArrowLeft size={20} />

@@ -91,7 +91,7 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
 
   if (done) {
     return (
-      <section className="verbs-view verb-quiz">
+      <section className="screen verbs-view verb-quiz">
         <header className="screen-header">
           <button className="icon-btn" onClick={onExit} type="button" aria-label="Назад">
             <ArrowLeft size={20} />
@@ -118,7 +118,7 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
   if (!entry) return null;
 
   return (
-    <section className="verbs-view verb-quiz">
+    <section className="screen verbs-view verb-quiz">
       <header className="screen-header">
         <button className="icon-btn" onClick={onExit} type="button" aria-label="Назад">
           <ArrowLeft size={20} />
