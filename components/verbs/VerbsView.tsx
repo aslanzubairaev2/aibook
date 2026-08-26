@@ -44,6 +44,13 @@ const SOURCE_LABEL = "Глаголы";
  */
 export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
   const { user } = useAuth();
+  // Supabase hands back a brand-new `user` object on every auth event,
+  // including the token refresh it fires when the tab regains focus — same
+  // account, new JS reference. Depending on that object (instead of the id
+  // that actually identifies it) recreated loadDictionary, and with it the
+  // effect that calls it, on every single tab switch: a real network refetch
+  // each time, not just on a genuine reload.
+  const userId = user?.id ?? null;
   // Read once at mount so the screen shows the learner's own verbs straight
   // away — including on a hard refresh — instead of a blank spinner every
   // single time the network round trip that already ran once repeats itself.
@@ -69,7 +76,7 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   const loadDictionary = useCallback(async () => {
-    if (!user) { setEntries([]); setBatches([]); setIsLoading(false); return; }
+    if (!userId) { setEntries([]); setBatches([]); setIsLoading(false); return; }
     // Cached data is already on screen — refresh quietly in the background
     // instead of hiding it behind a spinner again.
     if (!hasDataRef.current) setIsLoading(true);
@@ -94,7 +101,7 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
     } finally {
       setIsLoading(false);
     }
-  }, [user, profile.targetLanguage]);
+  }, [userId, profile.targetLanguage]);
 
   useEffect(() => { void loadDictionary(); }, [loadDictionary]);
 
