@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Camera, ChevronDown, Dumbbell, Loader2, Repeat, SlidersHorizontal, Wand2 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { entryToAnalysis, entryToCardText } from "@/components/dictionary/DictionaryPanel";
@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders, sbInsertFlashcard } from "@/lib/db/supabase";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { freshFetch } from "@/lib/net/freshFetch";
+import { getLocalVerbsDict, getLocalVerbsOpenGroups, saveLocalVerbsDict, saveLocalVerbsOpenGroups } from "@/lib/db/local";
 import type { AiAnalysis, Flashcard, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -43,14 +44,21 @@ const SOURCE_LABEL = "Глаголы";
  */
 export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
   const { user } = useAuth();
-  const [entries, setEntries] = useState<DictionaryEntry[]>([]);
-  const [batches, setBatches] = useState<DictionaryBatch[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  // Read once at mount so the screen shows the learner's own verbs straight
+  // away — including on a hard refresh — instead of a blank spinner every
+  // single time the network round trip that already ran once repeats itself.
+  const cachedDict = useState(() => getLocalVerbsDict(profile.targetLanguage))[0];
+  const [entries, setEntries] = useState<DictionaryEntry[]>(cachedDict?.entries ?? []);
+  const [batches, setBatches] = useState<DictionaryBatch[]>(cachedDict?.batches ?? []);
+  const [isLoading, setIsLoading] = useState(cachedDict === null);
   const [error, setError] = useState<string | null>(null);
+  const hasDataRef = useRef(!!cachedDict && (cachedDict.entries.length > 0 || cachedDict.batches.length > 0));
 
   const [verbType, setVerbType] = useState<VerbType>("all");
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Which packs are expanded — persisted so the learner's choice survives a
+  // reload, and empty by default so every pack starts closed.
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => getLocalVerbsOpenGroups());
 
   const [wordModal, setWordModal] = useState<{ entry: DictionaryEntry; analysis: AiAnalysis } | null>(null);
   const [quizVerbs, setQuizVerbs] = useState<DictionaryEntry[] | null>(null);
@@ -62,7 +70,9 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
 
   const loadDictionary = useCallback(async () => {
     if (!user) { setEntries([]); setBatches([]); setIsLoading(false); return; }
-    setIsLoading(true);
+    // Cached data is already on screen — refresh quietly in the background
+    // instead of hiding it behind a spinner again.
+    if (!hasDataRef.current) setIsLoading(true);
     setError(null);
     try {
       const res = await freshFetch(`/api/dictionary?language=${encodeURIComponent(profile.targetLanguage)}`, {
@@ -70,16 +80,27 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
       });
       const data = await res.json() as { entries?: DictionaryEntry[]; batches?: DictionaryBatch[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Не удалось загрузить глаголы.");
-      setEntries(data.entries ?? []);
-      setBatches(data.batches ?? []);
+      const nextEntries = data.entries ?? [];
+      const nextBatches = data.batches ?? [];
+      setEntries(nextEntries);
+      setBatches(nextBatches);
+      saveLocalVerbsDict(profile.targetLanguage, nextEntries, nextBatches);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось загрузить глаголы.");
+      const message = err instanceof Error ? err.message : "Не удалось загрузить глаголы.";
+      // A cached list is still shown behind it — don't blank the screen for a
+      // background refresh that failed, just say so quietly.
+      if (hasDataRef.current) setToast(message);
+      else setError(message);
     } finally {
       setIsLoading(false);
     }
   }, [user, profile.targetLanguage]);
 
   useEffect(() => { void loadDictionary(); }, [loadDictionary]);
+
+  useEffect(() => {
+    hasDataRef.current = entries.length > 0 || batches.length > 0;
+  }, [entries, batches]);
 
   useEffect(() => {
     if (!toast) return;
@@ -144,10 +165,11 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
   }, [verbs, batches]);
 
   const toggleGroup = (key: string) =>
-    setCollapsed((prev) => {
+    setOpenGroups((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
+      saveLocalVerbsOpenGroups(next);
       return next;
     });
 
@@ -339,7 +361,7 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
           {allVerbs.length > 0 && (
             <div className="verbs-groups">
               {groups.map((group) => {
-                const open = !collapsed.has(group.key);
+                const open = openGroups.has(group.key);
                 return (
                   <section key={group.key} className="verb-batch">
                     <button type="button" className="verb-batch-head" onClick={() => toggleGroup(group.key)}>

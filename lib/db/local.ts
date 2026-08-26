@@ -1,4 +1,5 @@
 import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage, Flashcard, GrammarTable, PackSort, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, TrainVariant, UserProfile } from "@/lib/types";
+import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 
 const BOOKS_KEY = "aibook_books";
@@ -12,6 +13,8 @@ const VARIANT_PROGRESS_KEY = "aibook_variant_progress";
 const DISCUSS_CACHE_KEY = "aibook_discuss_cache";
 const READER_SELECTION_KEY = "aibook_reader_selection";
 const LAST_VIEW_KEY = "aibook_last_view";
+const VERBS_DICT_CACHE_KEY = "aibook_verbs_dict_cache";
+const VERBS_OPEN_GROUPS_KEY = "aibook_verbs_open_groups";
 
 let activeNamespace = "guest";
 // The stored namespace is read once. Re-reading it inside getNsKey meant a
@@ -550,6 +553,58 @@ export function saveLocalGrammar(key: string, value: GrammarTable): void {
     if (idx >= 0) all[idx] = entry;
     else all.push(entry);
     localStorage.setItem(getNsKey(GRAMMAR_CACHE_KEY), JSON.stringify(all.slice(-150)));
+  } catch {
+    // silently fail
+  }
+}
+
+// The Глаголы screen's dictionary read, cached so the screen shows the
+// learner's verbs instantly on every open — including a fresh page load —
+// instead of a blank "Загружаю глаголы..." spinner while the network round
+// trip that already ran once repeats itself. The screen still refreshes from
+// the server in the background; this is only what renders while that runs.
+type VerbsDictCache = { language: string; entries: DictionaryEntry[]; batches: DictionaryBatch[] };
+
+export function getLocalVerbsDict(language: string): { entries: DictionaryEntry[]; batches: DictionaryBatch[] } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(getNsKey(VERBS_DICT_CACHE_KEY));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as VerbsDictCache;
+    if (parsed.language !== language) return null;
+    return { entries: parsed.entries ?? [], batches: parsed.batches ?? [] };
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalVerbsDict(language: string, entries: DictionaryEntry[], batches: DictionaryBatch[]): void {
+  try {
+    const payload: VerbsDictCache = { language, entries, batches };
+    localStorage.setItem(getNsKey(VERBS_DICT_CACHE_KEY), JSON.stringify(payload));
+  } catch {
+    // silently fail
+  }
+}
+
+// Which verb packs are expanded on the Глаголы screen. Stored as the OPEN set
+// (not collapsed) so a pack never seen before defaults to closed, per the
+// learner's request — only packs they actually opened stay open next time.
+export function getLocalVerbsOpenGroups(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(getNsKey(VERBS_OPEN_GROUPS_KEY));
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveLocalVerbsOpenGroups(keys: Set<string>): void {
+  try {
+    localStorage.setItem(getNsKey(VERBS_OPEN_GROUPS_KEY), JSON.stringify([...keys]));
   } catch {
     // silently fail
   }
