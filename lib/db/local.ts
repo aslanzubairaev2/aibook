@@ -11,7 +11,6 @@ const SKILL_PROGRESS_KEY = "aibook_skill_progress";
 const VARIANT_PROGRESS_KEY = "aibook_variant_progress";
 const DISCUSS_CACHE_KEY = "aibook_discuss_cache";
 const READER_SELECTION_KEY = "aibook_reader_selection";
-const LAST_VIEW_KEY = "aibook_last_view";
 
 let activeNamespace = "guest";
 // The stored namespace is read once. Re-reading it inside getNsKey meant a
@@ -413,12 +412,6 @@ interface ProgressEntry {
   updatedAt: string;
 }
 
-export type LocalLastView = {
-  section: string;
-  bookId?: string | null;
-  updatedAt?: string;
-};
-
 export function getLocalProgress(bookId: string): number {
   if (typeof window === "undefined") return 0;
   try {
@@ -712,26 +705,5 @@ export function clearSrsSession(): void {
     localStorage.removeItem(getNsKey(SRS_SESSION_KEY));
   } catch {
     // ignore
-  }
-}
-
-export function getLocalLastView(): LocalLastView | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return JSON.parse(localStorage.getItem(getNsKey(LAST_VIEW_KEY)) ?? "null") as LocalLastView | null;
-  } catch {
-    return null;
-  }
-}
-
-export function saveLocalLastView(section: string, bookId?: string | null): void {
-  try {
-    localStorage.setItem(getNsKey(LAST_VIEW_KEY), JSON.stringify({
-      section,
-      bookId: bookId ?? null,
-      updatedAt: new Date().toISOString(),
-    }));
-  } catch {
-    // silently fail
   }
 }
