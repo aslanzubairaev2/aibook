@@ -2071,6 +2071,71 @@ textarea,
 .filter-reset-btn { align-self: flex-start; font-size: 12px; font-weight: 700; color: var(--text-muted); background: transparent; border: none; cursor: pointer; padding: 4px 0; text-decoration: underline; }
 .filter-reset-btn:hover { color: var(--accent); }
 
+/* ── Verbs module: Infinitiv · Präteritum · Partizip II ─────────────────────
+   The teacher's notebook table, read from the same dictionary entries the
+   catalogue's Словарь screen shows — grouped the same way, by pack. */
+.verbs-view { padding-bottom: 90px; }
+.verbs-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.verbs-train-all-btn { flex: 0 0 auto; padding: 0 16px; }
+
+.verbs-groups { display: flex; flex-direction: column; gap: 10px; }
+.verb-batch { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card); overflow: hidden; }
+.verb-batch-head {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 13px 14px; text-align: left;
+  background: none; border: none; cursor: pointer; color: inherit;
+}
+.verb-batch-title { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 800; color: var(--text-primary); }
+.verb-batch-train-btn { width: calc(100% - 28px); margin: 0 14px 12px; }
+
+.verb-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-top: 1px solid var(--border); }
+.verb-table { width: 100%; min-width: 420px; border-collapse: collapse; }
+.verb-table thead th {
+  text-align: left; font-size: 11px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.03em; color: var(--text-muted);
+  padding: 8px 14px; border-bottom: 1px solid var(--border);
+}
+/* Left border echoes the teacher's own pen: gold for weak/schwach, red for
+   strong/stark — the distinction the whole table exists to drill. */
+.verb-row { cursor: pointer; border-left: 3px solid transparent; transition: background 0.15s; }
+.verb-row:hover { background: rgba(212, 168, 71, 0.06); }
+.verb-row td { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 14px; color: var(--text-primary); }
+.verb-row:last-child td { border-bottom: none; }
+.verb-row-regular { border-left-color: var(--accent); }
+.verb-row-irregular { border-left-color: var(--red); }
+
+.verb-cell-infinitive { display: flex; flex-direction: column; gap: 1px; }
+.verb-infinitive { font-weight: 700; }
+.verb-translation { font-size: 12px; color: var(--text-muted); }
+
+/* Self-test drill: session-only, not part of the SM-2 flashcard schedule. */
+.verb-quiz-card {
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--bg-card); padding: 20px;
+  display: flex; flex-direction: column; gap: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.verb-quiz-infinitive { display: flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 800; color: var(--text-primary); }
+.verb-quiz-translation { font-size: 13px; color: var(--text-muted); margin-top: -10px; }
+.verb-quiz-field { display: flex; flex-direction: column; gap: 5px; }
+.verb-quiz-field label { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.verb-quiz-input {
+  height: 42px; padding: 0 12px; font-size: 15px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-elevated); color: var(--text-primary);
+}
+.verb-quiz-input:focus { outline: none; border-color: var(--accent); }
+.verb-quiz-input.correct { border-color: var(--green); background: rgba(122, 171, 106, 0.12); }
+.verb-quiz-input.almost { border-color: var(--accent); background: rgba(212, 168, 71, 0.12); }
+.verb-quiz-input.wrong { border-color: var(--red); background: rgba(196, 106, 106, 0.12); }
+.verb-quiz-expected { font-size: 12px; color: var(--red); }
+
+.verb-quiz-summary {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 40px 20px; text-align: center;
+}
+.verb-quiz-summary strong { font-size: 18px; color: var(--text-primary); }
+
 /* ── Card markers ──────────────────────────────────────────────────────────
    Type, part of speech and level, stacked top-left like the badges on a shop
    tile: the lead marker keeps the familiar size, the rest are smaller so the

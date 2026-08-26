@@ -10,6 +10,7 @@ import { LibraryView } from "@/components/library/LibraryView";
 import { DiscoverView } from "@/components/discover/DiscoverView";
 import { ReaderView } from "@/components/reader/ReaderView";
 import { CardsView } from "@/components/cards/CardsView";
+import { VerbsView } from "@/components/verbs/VerbsView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { AuthScreen } from "@/components/auth/AuthScreen";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
@@ -67,7 +68,7 @@ const SAVING_TO_LIBRARY_MESSAGE = "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0
 const BOOK_IN_LIBRARY_MESSAGE = "\u041a\u043d\u0438\u0433\u0430 \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435";
 const DOWNLOAD_ERROR_MESSAGE = "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438";
 const DEFAULT_CHAPTER_TITLE = "\u0413\u043b\u0430\u0432\u0430 1";
-const APP_SECTIONS: AppSection[] = ["home", "discover", "books", "reader", "cards", "settings", "auth"];
+const APP_SECTIONS: AppSection[] = ["home", "discover", "books", "reader", "cards", "verbs", "settings", "auth"];
 
 function pickColor(title: string) {
   let hash = 0;
@@ -370,7 +371,7 @@ function AppInner() {
         setActiveBook(null);
         setSection("books");
       }
-    } else if (lastView?.section && ["home", "discover", "books", "cards", "settings"].includes(lastView.section)) {
+    } else if (lastView?.section && ["home", "discover", "books", "cards", "verbs", "settings"].includes(lastView.section)) {
       const lastBook = lastView.bookId ? localBooks.find((b) => b.id === lastView.bookId) : null;
       setActiveBook(lastBook ?? null);
       setSection(lastView.section as AppSection);
@@ -525,7 +526,7 @@ function AppInner() {
             setActiveBook(null);
             setSection("books");
           }
-        } else if (lastView?.section && ["home", "discover", "books", "cards", "settings"].includes(lastView.section)) {
+        } else if (lastView?.section && ["home", "discover", "books", "cards", "verbs", "settings"].includes(lastView.section)) {
           const lastBook = lastView.bookId ? guestBooks.find((b) => b.id === lastView.bookId) : null;
           setActiveBook(lastBook ?? null);
           setSection(lastView.section as AppSection);
@@ -1014,6 +1015,15 @@ function AppInner() {
           onAddCard={handleAddCard}
           onUpdateCard={handleUpdateCard}
           onDeleteCard={handleDeleteCard}
+        />
+      )}
+
+      {section === "verbs" && (
+        <VerbsView
+          profile={profile}
+          cards={cards}
+          onAddCard={handleAddCard}
+          onBack={() => setSection("home")}
         />
       )}
 

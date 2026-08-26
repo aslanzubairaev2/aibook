@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Home, Library, Settings, SquareStack, Globe } from "lucide-react";
+import { BookOpen, Home, Library, Repeat, Settings, SquareStack, Globe } from "lucide-react";
 import type { AppSection } from "@/lib/types";
 
 type Props = {
@@ -14,6 +14,7 @@ const NAV = [
   { id: "discover" as AppSection, label: "Каталог", Icon: Globe },
   { id: "books" as AppSection, label: "Книги", Icon: Library },
   { id: "cards" as AppSection, label: "Карточки", Icon: SquareStack },
+  { id: "verbs" as AppSection, label: "Глаголы", Icon: Repeat },
   { id: "settings" as AppSection, label: "Настройки", Icon: Settings },
 ];
 
