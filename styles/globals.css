@@ -2075,8 +2075,11 @@ textarea,
    The teacher's notebook table, read from the same dictionary entries the
    catalogue's Словарь screen shows — grouped the same way, by pack. */
 .verbs-view { padding-bottom: 90px; }
-.verbs-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.verbs-train-all-btn { flex: 0 0 auto; padding: 0 16px; }
+/* Four controls (filter, count, train-all, camera) don't all fit on a narrow
+   phone in one row — wrap instead of letting the camera button run off the
+   screen edge. */
+.verbs-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
+.verbs-train-all-btn { flex: 1 1 auto; min-width: 0; padding: 0 16px; }
 
 .verbs-groups { display: flex; flex-direction: column; gap: 10px; }
 .verb-batch { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card); overflow: hidden; }
