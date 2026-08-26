@@ -265,11 +265,16 @@
   background: var(--bg-secondary);
   animation: modal-slide-up 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
-/* The full verb matrix (tenses × polarities) needs ~700px to show its 3
-   columns side by side. On a phone this is still 100% (no room to give), but
-   on a wider screen let the modal use the space instead of capping at the
-   width sized for the plain brief/declension lists and forcing a scrollbar. */
-.grammar-modal.grammar-modal-wide { width: min(100%, 820px); }
+/* The full verb matrix (tenses × polarities) needs ~700-900px to show its 3
+   columns side by side, depending on how long the phrases in them are. Below
+   640px there is no room to give — stays the same 100% bottom sheet as the
+   brief/declension views. From 640px up, size the modal to whatever the grid
+   actually needs — up to 80% of the viewport — instead of either capping at
+   the width sized for the plain lists (forcing a scrollbar) or always
+   claiming a fixed width regardless of how much of it the content uses. */
+@media (min-width: 640px) {
+  .grammar-modal.grammar-modal-wide { width: fit-content; max-width: 80vw; }
+}
 
 .grammar-modal-bar {
   position: sticky;

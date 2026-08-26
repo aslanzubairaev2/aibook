@@ -87,7 +87,7 @@ function PetrovMatrix({ matrix, lang }: { matrix: GrammarMatrix; lang: string })
   if (!rows.length || !cols.length) return null;
   return (
     <div className="petrov-scroll">
-      <div className="petrov-grid" style={{ gridTemplateColumns: `72px repeat(${cols.length}, minmax(210px, 1fr))` }}>
+      <div className="petrov-grid" style={{ gridTemplateColumns: `72px repeat(${cols.length}, minmax(210px, max-content))` }}>
         <div className="petrov-corner" />
         {cols.map((c, ci) => <div key={ci} className="petrov-col-head">{c}</div>)}
         {rows.map((r, ri) => {
