@@ -204,11 +204,13 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
           )}
         </div>
 
-        {/* Examples */}
+        {/* Examples — hidden rather than shown empty: a dictionary entry opened
+            without an AI call (per entryToAnalysis) often has none stored. */}
+        {analysis?.examples && analysis.examples.length > 0 && (
         <div className="modal-section">
           <span className="modal-section-label">{EXAMPLES_LABEL}</span>
           <div className="examples-list">
-            {(analysis?.examples ?? []).slice(0, 5).map((exItem, i) => {
+            {analysis.examples.slice(0, 5).map((exItem, i) => {
               const text = typeof exItem === "string" ? exItem : exItem.text;
               const translation = typeof exItem === "string" ? "" : exItem.translation;
               const tokens = splitIntoTokens(text);
@@ -265,6 +267,7 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
             })}
           </div>
         </div>
+        )}
 
         {/* Grammar — opens a dedicated modal; button label depends on part of speech */}
         <button
