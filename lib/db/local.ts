@@ -15,6 +15,7 @@ const READER_SELECTION_KEY = "aibook_reader_selection";
 const LAST_VIEW_KEY = "aibook_last_view";
 const VERBS_DICT_CACHE_KEY = "aibook_verbs_dict_cache";
 const VERBS_OPEN_GROUPS_KEY = "aibook_verbs_open_groups";
+const VERBS_HIDE_FORMS_KEY = "aibook_verbs_hide_forms";
 
 let activeNamespace = "guest";
 // The stored namespace is read once. Re-reading it inside getNsKey meant a
@@ -582,6 +583,25 @@ export function saveLocalVerbsDict(language: string, entries: DictionaryEntry[],
   try {
     const payload: VerbsDictCache = { language, entries, batches };
     localStorage.setItem(getNsKey(VERBS_DICT_CACHE_KEY), JSON.stringify(payload));
+  } catch {
+    // silently fail
+  }
+}
+
+// Whether the Глаголы table is covering its Präteritum/Partizip II columns —
+// the learner's self-test mode, remembered so it survives leaving the screen.
+export function getLocalVerbsHideForms(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(getNsKey(VERBS_HIDE_FORMS_KEY)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveLocalVerbsHideForms(hidden: boolean): void {
+  try {
+    localStorage.setItem(getNsKey(VERBS_HIDE_FORMS_KEY), hidden ? "1" : "0");
   } catch {
     // silently fail
   }

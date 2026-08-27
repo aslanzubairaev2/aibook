@@ -1,25 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Camera, ChevronDown, Dumbbell, Loader2, Repeat, SlidersHorizontal, Wand2 } from "lucide-react";
+import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, Loader2, Repeat, SlidersHorizontal, Wand2 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
-import { entryToAnalysis, entryToCardText } from "@/components/dictionary/DictionaryPanel";
-import { WordModal } from "@/components/word-modal/WordModal";
+import { GrammarModal } from "@/components/word-modal/GrammarModal";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { VerbsQuiz } from "@/components/verbs/VerbsQuiz";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
 import { useAuth } from "@/lib/auth/useAuth";
-import { sbAuthHeaders, sbInsertFlashcard } from "@/lib/db/supabase";
-import { createDefaultSrsFields } from "@/lib/srs/sm2";
+import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
-import { getLocalVerbsDict, getLocalVerbsOpenGroups, saveLocalVerbsDict, saveLocalVerbsOpenGroups } from "@/lib/db/local";
-import type { AiAnalysis, Flashcard, UserProfile } from "@/lib/types";
+import { getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups } from "@/lib/db/local";
+import type { UserProfile } from "@/lib/types";
 
 type Props = {
   profile: UserProfile;
-  cards: Flashcard[];
-  onAddCard: (card: Flashcard) => void;
   onBack: () => void;
 };
 
@@ -34,8 +30,6 @@ type VerbGroup = {
 
 type FillResult = { ok: true } | { ok: false; error: string };
 
-const SOURCE_LABEL = "Глаголы";
-
 /**
  * Every verb already in the learner's dictionary, laid out the way their
  * teacher's notebook is: Infinitiv · Präteritum · Partizip II, one pack at a
@@ -43,7 +37,7 @@ const SOURCE_LABEL = "Глаголы";
  * photograph a new page itself, and can ask the AI to backfill principal
  * parts for a "глагол" entry that was saved without them.
  */
-export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
+export function VerbsView({ profile, onBack }: Props) {
   const { user } = useAuth();
   // Supabase hands back a brand-new `user` object on every auth event,
   // including the token refresh it fires when the tab regains focus — same
@@ -64,11 +58,14 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
 
   const [verbType, setVerbType] = useState<VerbType>("all");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Covers the Präteritum/Partizip II columns so the table becomes a self-test
+  // on the spot — the infinitive and its translation stay visible to ask from.
+  const [hideForms, setHideForms] = useState(() => getLocalVerbsHideForms());
   // Which packs are expanded — persisted so the learner's choice survives a
   // reload, and empty by default so every pack starts closed.
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => getLocalVerbsOpenGroups());
 
-  const [wordModal, setWordModal] = useState<{ entry: DictionaryEntry; analysis: AiAnalysis } | null>(null);
+  const [conjugateEntry, setConjugateEntry] = useState<DictionaryEntry | null>(null);
   const [quizVerbs, setQuizVerbs] = useState<DictionaryEntry[] | null>(null);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -181,46 +178,11 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
       return next;
     });
 
+  // On this screen every row is a verb and the reason to tap one is always the
+  // conjugation, so the table opens it directly instead of going through the
+  // generic word modal first.
   function openEntry(entry: DictionaryEntry) {
-    setWordModal({ entry, analysis: entryToAnalysis(entry) });
-  }
-
-  function addCardFromEntry(entry: DictionaryEntry) {
-    const { front, back } = entryToCardText(entry);
-    if (cards.some((c) => c.front.trim().toLowerCase() === front.trim().toLowerCase())) {
-      setToast("Такая карточка уже есть");
-      return;
-    }
-    const srs = createDefaultSrsFields(null, SOURCE_LABEL);
-    const card: Flashcard = {
-      id: `card-${Date.now()}`,
-      type: "word",
-      source: SOURCE_LABEL,
-      addedAt: new Date().toISOString(),
-      ...srs,
-      front,
-      back,
-    };
-    onAddCard(card);
-    setToast("✓ Карточка добавлена");
-    if (user) {
-      void sbInsertFlashcard({
-        user_id: user.id,
-        vocabulary_item_id: null,
-        front: card.front,
-        back: card.back,
-        source_book_title: SOURCE_LABEL,
-        selection_type: "word",
-        repetitions: srs.repetitions,
-        lapses: srs.lapses,
-        easiness_factor: srs.easeFactor,
-        interval_days: srs.intervalDays,
-        next_review_at: srs.dueAt,
-        last_reviewed_at: srs.lastReviewedAt,
-        source_book_id: null,
-        status: srs.status,
-      });
-    }
+    setConjugateEntry(entry);
   }
 
   /** Asks the AI for one verb's principal parts and saves them, merged into whatever `forms` it already has. */
@@ -348,9 +310,6 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
                 <Dumbbell size={14} /> Тренировать всё
               </button>
             )}
-            <button type="button" className="icon-btn" onClick={() => setPhotoOpen(true)} aria-label="Сфотографировать страницу">
-              <Camera size={18} />
-            </button>
           </div>
 
           {filtersOpen && allVerbs.length > 0 && (
@@ -409,20 +368,26 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
                                       </span>
                                       {entry.translation && <span className="verb-translation">{entry.translation}</span>}
                                     </td>
-                                    <td>
+                                    <td className={hideForms ? "verb-cell-hidden" : undefined}>
                                       {entry.forms?.praeteritum ? (
-                                        <span className="verb-form-row">
-                                          <span>{praeteritumFirstPerson(entry)}</span>
-                                          <SpeakButton text={praeteritumFirstPerson(entry)} lang={profile.targetLanguage} size={13} />
-                                        </span>
+                                        <>
+                                          <span className="verb-form-row">
+                                            <span>{entry.forms.praeteritum}</span>
+                                            <SpeakButton text={praeteritumFirstPerson(entry)} lang={profile.targetLanguage} size={13} />
+                                          </span>
+                                          <span className="verb-form-example">{praeteritumFirstPerson(entry)}</span>
+                                        </>
                                       ) : "—"}
                                     </td>
-                                    <td>
+                                    <td className={hideForms ? "verb-cell-hidden" : undefined}>
                                       {entry.forms?.partizip2 ? (
-                                        <span className="verb-form-row">
-                                          <span>{partizipFirstPerson(entry)}</span>
-                                          <SpeakButton text={partizipFirstPerson(entry)} lang={profile.targetLanguage} size={13} />
-                                        </span>
+                                        <>
+                                          <span className="verb-form-row">
+                                            <span>{partizipCell(entry)}</span>
+                                            <SpeakButton text={partizipFirstPerson(entry)} lang={profile.targetLanguage} size={13} />
+                                          </span>
+                                          <span className="verb-form-example">{partizipFirstPerson(entry)}</span>
+                                        </>
                                       ) : "—"}
                                     </td>
                                   </tr>
@@ -481,15 +446,41 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
         </>
       )}
 
-      {wordModal && (
-        <WordModal
-          analysis={wordModal.analysis}
-          isOpen
-          lang={profile.targetLanguage}
+      {/* Float above the bottom bar rather than sitting in the toolbar: both are
+          reached with the thumb, and the eye is wanted mid-scroll — while
+          looking at a row — not back at the top of the page. */}
+      {!hasNothing && !isLoading && !error && (
+        <div className="verbs-fabs">
+          <button
+            type="button"
+            className={`verbs-fab${hideForms ? " active" : ""}`}
+            onClick={() => setHideForms((v) => { saveLocalVerbsHideForms(!v); return !v; })}
+            aria-pressed={hideForms}
+            aria-label={hideForms ? "Показать формы" : "Скрыть формы для самопроверки"}
+            title={hideForms ? "Показать формы" : "Скрыть формы для самопроверки"}
+          >
+            {hideForms ? <EyeOff size={19} /> : <Eye size={19} />}
+          </button>
+          <button
+            type="button"
+            className="verbs-fab"
+            onClick={() => setPhotoOpen(true)}
+            aria-label="Сфотографировать страницу"
+            title="Сфотографировать страницу"
+          >
+            <Camera size={19} />
+          </button>
+        </div>
+      )}
+
+      {conjugateEntry && (
+        <GrammarModal
+          word={conjugateEntry.headword}
+          lemma={conjugateEntry.lemma}
+          posTag="verb"
+          defaultLang={profile.targetLanguage}
           nativeLang={profile.nativeLanguage}
-          selectedWord={wordModal.entry.headword}
-          onClose={() => setWordModal(null)}
-          onAddCard={() => addCardFromEntry(wordModal.entry)}
+          onClose={() => setConjugateEntry(null)}
         />
       )}
 
@@ -512,6 +503,16 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
       {toast && <div className="toast">{toast}</div>}
     </section>
   );
+}
+
+/** «ist geschwommen» / «hat gemacht» — the auxiliary is half of what Partizip II is for. */
+function partizipCell(entry: DictionaryEntry): string {
+  const p2 = (entry.forms?.partizip2 || "").trim();
+  if (!p2) return "—";
+  const aux = (entry.forms?.hilfsverb || "").trim().toLowerCase();
+  if (aux === "sein") return `ist ${p2}`;
+  if (aux === "haben") return `hat ${p2}`;
+  return p2;
 }
 
 // Präteritum's 1st and 3rd person singular are always identical in German

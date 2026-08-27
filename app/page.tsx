@@ -271,6 +271,23 @@ function AppInner() {
     availableBooks: Book[],
     lessonProgress: Record<string, LessonProgressInfo> = {},
   ) {
+    // Last-write-wins between this device and the account, by timestamp.
+    //
+    // The account's row is not automatically the truth: every section change
+    // is saved locally at once but only reaches Supabase once this very load
+    // has finished (isRemoteSyncReady), so the server's copy is routinely
+    // BEHIND what this device did last. Letting it win unconditionally is
+    // what yanked the learner back to an old screen — usually "home" — after
+    // a reload, a tab switch, or the phone waking the page back up.
+    //
+    // A device with no local view (a fresh install, a new phone) has
+    // localTime = 0, so the account's view still restores there, which is the
+    // case cross-device sync actually exists for.
+    const localView = getLocalLastView();
+    const localTime = localView?.updatedAt ? Date.parse(localView.updatedAt) : 0;
+    const remoteTime = settings?.last_view_updated_at ? Date.parse(settings.last_view_updated_at) : 0;
+    if (localTime > 0 && localTime >= remoteTime) return;
+
     const latestProgress = getLatestProgress(progress);
     const latestLesson = getLatestLessonProgress(lessonProgress);
     const remoteSection = isAppSection(settings?.last_section) ? settings.last_section : null;
@@ -353,9 +370,16 @@ function AppInner() {
     // Set dynamic namespace for the specific user before loading from cache
     setLocalNamespace(`user:${userId}`);
     
+    // The saved screen is restored before anything is awaited: it needs no
+    // books to be known, and waiting on IndexedDB first is what made a wake-up
+    // or a reload show "home" for a moment before snapping back.
+    const lastView = getLocalLastView();
+    if (lastView?.section && lastView.section !== "reader" && isAppSection(lastView.section)) {
+      setSection(lastView.section);
+    }
+
     // Load from cache immediately for instant UI
     const localBooks = await getLocalBooks();
-    const lastView = getLocalLastView();
     // Shared lessons are cached alongside own books for instant resume,
     // but they don't belong in the library list.
     setBooks(localBooks.filter((b) => !b.sharedBookId));
@@ -1021,8 +1045,6 @@ function AppInner() {
       {section === "verbs" && (
         <VerbsView
           profile={profile}
-          cards={cards}
-          onAddCard={handleAddCard}
           onBack={() => setSection("home")}
         />
       )}
