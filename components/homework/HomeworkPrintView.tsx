@@ -140,12 +140,12 @@ const PRINT_STYLES = `
 
   .hw-print-page { max-width: 720px; margin: 0 auto; padding: 28px 24px 60px; }
   .hw-print-header h1 { font-size: 20px; margin-bottom: 4px; }
-  .hw-print-meta { display: flex; gap: 12px; font-size: 12.5px; color: #666; margin-bottom: 20px; }
-  .hw-print-exercise { margin-bottom: 22px; }
-  .hw-print-exercise h2 { font-size: 14.5px; font-weight: 700; margin-bottom: 8px; }
-  .hw-print-item { font-size: 14px; line-height: 1.9; margin-bottom: 6px; }
-  .hw-print-verb { margin-bottom: 10px; font-size: 14px; }
-  .hw-print-verb ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
+  .hw-print-meta { display: flex; gap: 12px; font-size: 12.5px; color: #666; margin-bottom: 16px; }
+  .hw-print-exercise { margin-bottom: 14px; }
+  .hw-print-exercise h2 { font-size: 14.5px; font-weight: 700; margin-bottom: 4px; }
+  .hw-print-item { font-size: 14px; line-height: 1.3; margin-bottom: 1px; }
+  .hw-print-verb { margin-bottom: 4px; font-size: 14px; line-height: 1.25; }
+  .hw-print-verb ul { list-style: none; margin: 2px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 
   .hw-print-answer {
     font-family: "Caveat", cursive;
