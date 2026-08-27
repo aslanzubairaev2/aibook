@@ -30,8 +30,6 @@
 // renderers below, and all four are written once, by hand — the model never
 // generates UI, only this JSON.
 
-import { Type } from "@google/genai";
-
 // ─── Shape ────────────────────────────────────────────────────────────────
 
 export type HomeworkBlank = {
@@ -117,54 +115,12 @@ Return ONLY valid JSON with this exact shape:
 No markdown, no commentary, nothing outside the JSON object.`;
 }
 
-// ─── Gemini response schema ────────────────────────────────────────────────
-
-export const HOMEWORK_SCHEMA = {
-  type: Type.OBJECT,
-  properties: {
-    title: { type: Type.STRING },
-    description: { type: Type.STRING },
-    sourceKind: { type: Type.STRING },
-    exercises: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          number: { type: Type.INTEGER },
-          instruction: { type: Type.STRING },
-          widget: { type: Type.STRING },
-          items: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                number: { type: Type.INTEGER },
-                text: { type: Type.STRING },
-                blanks: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: { select: { type: Type.BOOLEAN } },
-                    required: ["select"],
-                  },
-                },
-                bank: { type: Type.ARRAY, items: { type: Type.STRING } },
-              },
-              required: ["number", "text"],
-            },
-          },
-          bank: { type: Type.ARRAY, items: { type: Type.STRING } },
-          verbs: { type: Type.ARRAY, items: { type: Type.STRING } },
-          pronouns: { type: Type.ARRAY, items: { type: Type.STRING } },
-        },
-        required: ["number", "instruction", "widget"],
-      },
-    },
-  },
-  required: ["title", "description", "exercises"],
-} as const;
-
 // ─── Parsing ────────────────────────────────────────────────────────────────
+//
+// The Gemini response schema (Type.OBJECT/Type.ARRAY…) lives in lessonModel.ts
+// next to the other response shapes, not here — this module stays free of the
+// @google/genai import so client components can pull HomeworkLesson etc.
+// straight from it.
 
 const WIDGETS = new Set(["cloze", "compose", "open", "conjugation", "text"]);
 
@@ -194,7 +150,8 @@ function parseItem(raw: unknown): HomeworkItem | null {
   };
 }
 
-function parseExercise(raw: unknown): HomeworkExercise | null {
+/** Exported so a saved lesson's stored exercises (read back from shared_book_chapters.paragraphs) can be re-validated the same way a fresh model answer is. */
+export function parseExercise(raw: unknown): HomeworkExercise | null {
   if (typeof raw !== "object" || raw === null) return null;
   const obj = raw as Record<string, unknown>;
   const instruction = typeof obj.instruction === "string" ? obj.instruction.trim() : "";

@@ -22,7 +22,6 @@ import { GoogleGenAI, Type, type GenerateContentResponse, type Part } from "@goo
 import { AI_CONFIG } from "@/lib/config";
 import { parseModelJson } from "./jsonResponse";
 import { parseGeneratedLesson, type GeneratedLesson } from "./buildLessonPrompt";
-import { HOMEWORK_SCHEMA } from "./buildHomeworkPrompt";
 
 /**
  * Room for a dense page of text plus the glossary around it. Well under the
@@ -296,6 +295,51 @@ export async function runDictionaryPrompt(
   if (!result.ok) return { ok: false, error: result.error, status: result.status };
   return { ok: true, data: result.value, truncated: result.repaired };
 }
+
+const HOMEWORK_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    title: { type: Type.STRING },
+    description: { type: Type.STRING },
+    sourceKind: { type: Type.STRING },
+    exercises: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          number: { type: Type.INTEGER },
+          instruction: { type: Type.STRING },
+          widget: { type: Type.STRING },
+          items: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                number: { type: Type.INTEGER },
+                text: { type: Type.STRING },
+                blanks: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: { select: { type: Type.BOOLEAN } },
+                    required: ["select"],
+                  },
+                },
+                bank: { type: Type.ARRAY, items: { type: Type.STRING } },
+              },
+              required: ["number", "text"],
+            },
+          },
+          bank: { type: Type.ARRAY, items: { type: Type.STRING } },
+          verbs: { type: Type.ARRAY, items: { type: Type.STRING } },
+          pronouns: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+        required: ["number", "instruction", "widget"],
+      },
+    },
+  },
+  required: ["title", "description", "exercises"],
+} as const;
 
 // ─── Reading a photo into a homework exercise set ────────────────────────────
 

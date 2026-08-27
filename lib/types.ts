@@ -1,4 +1,4 @@
-export type AppSection = "home" | "discover" | "books" | "reader" | "cards" | "verbs" | "settings" | "auth";
+export type AppSection = "home" | "discover" | "books" | "reader" | "homework" | "cards" | "verbs" | "settings" | "auth";
 
 export type SelectionType = "word" | "phrase" | "sentence";
 export type TtsProvider =
