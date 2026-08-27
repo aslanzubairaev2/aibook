@@ -1,4 +1,4 @@
-export type AppSection = "home" | "discover" | "books" | "reader" | "cards" | "verbs" | "settings" | "auth";
+export type AppSection = "home" | "discover" | "books" | "reader" | "homework" | "cards" | "verbs" | "settings" | "auth";
 
 export type SelectionType = "word" | "phrase" | "sentence";
 export type TtsProvider =
@@ -242,7 +242,8 @@ export type AiAnalysis = {
   }[];
 };
 
-export type AiMode = SelectionType;
+/** "homework" is a fourth AI-discussion mode alongside the three selection types — not a selection kind, so kept separate from SelectionType rather than widening it. */
+export type AiMode = SelectionType | "homework";
 
 export type DiscussContentPart = {
   type: "text" | "learning";
@@ -309,7 +310,8 @@ export type DiscussWordProfile = {
 };
 
 export type ReaderSelectionSnapshot = {
-  mode: AiMode;
+  /** The reader's own word/phrase/sentence tab — never "homework", that AiMode is for the discuss chat only. */
+  mode: SelectionType;
   token: string;
   isCustomSentence?: boolean;
   paraIndex: number;

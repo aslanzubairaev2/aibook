@@ -42,7 +42,7 @@ import { findDuplicateCard } from "@/lib/cards";
 import { describeTextFamiliarity } from "@/lib/ai/wordProfile";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { getTTSState, prepareFullTextAudio, speak, stopTTS, subscribeTTS, type TTSState } from "@/lib/tts";
-import type { AiAnalysis, AiMode, Book, DiscussMessage, Flashcard, LessonContext, ReaderProgressSnapshot, ReaderSelectionSnapshot, UserProfile } from "@/lib/types";
+import type { AiAnalysis, Book, DiscussMessage, Flashcard, LessonContext, ReaderProgressSnapshot, ReaderSelectionSnapshot, SelectionType, UserProfile } from "@/lib/types";
 
 const PAGE_TARGET_CHARS = 7200;
 const PAGE_MAX_PARAGRAPHS = 28;
@@ -81,7 +81,7 @@ function snapshotToActive(snapshot: ReaderSelectionSnapshot): ActiveToken {
   return activeToken;
 }
 
-function activeToSnapshot(activeToken: ActiveToken, mode: AiMode): ReaderSelectionSnapshot {
+function activeToSnapshot(activeToken: ActiveToken, mode: SelectionType): ReaderSelectionSnapshot {
   return {
     ...activeToken,
     mode,
@@ -178,7 +178,9 @@ export function ReaderView({
   ));
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<AiMode>(initialProgress?.selectionState?.mode ?? "word");
+  // The reader only ever switches between these three tabs — "homework" is a
+  // fourth AiMode that exists for the discuss chat, never for this tab strip.
+  const [activeTab, setActiveTab] = useState<SelectionType>(initialProgress?.selectionState?.mode ?? "word");
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
   const [wordModalSelection, setWordModalSelection] = useState("");
   const [wordModalAnalysis, setWordModalAnalysis] = useState<AiAnalysis | null>(null);
@@ -539,7 +541,7 @@ export function ReaderView({
     };
   }, [dragSelection]);
 
-  const saveReadingAnchor = useCallback((token: ActiveToken, charOffset = token.sentEnd, mode: AiMode = activeTab) => {
+  const saveReadingAnchor = useCallback((token: ActiveToken, charOffset = token.sentEnd, mode: SelectionType = activeTab) => {
     const progress = Math.round((token.paraIndex / Math.max(book.paragraphs.length - 1, 1)) * 100);
     const updated = { ...book, paragraphIndex: token.paraIndex, progress };
     const selection = activeToSnapshot(token, mode);
@@ -593,7 +595,7 @@ export function ReaderView({
     }
   }, [activeTab, book, user, onProgressUpdate, onReaderProgressSync]);
 
-  function getTextForMode(token: ActiveToken, mode: AiMode) {
+  function getTextForMode(token: ActiveToken, mode: SelectionType) {
     if (mode === "word") return token.token;
     if (mode === "phrase") return token.phraseText;
     return token.sentence;
@@ -607,12 +609,12 @@ export function ReaderView({
     [active, activeTab, cards],
   );
 
-  function getRegularSelectionForMode(token: ActiveToken, mode: AiMode) {
+  function getRegularSelectionForMode(token: ActiveToken, mode: SelectionType) {
     if (!token.isCustomSentence || mode === "sentence") return token;
     return createTokenSelectionFromPosition(token.paraIndex, token.sentStart) ?? token;
   }
 
-  function handleTabChange(mode: AiMode) {
+  function handleTabChange(mode: SelectionType) {
     if (activeTab === mode && (!active?.isCustomSentence || mode === "sentence")) return;
     const nextActive = active ? getRegularSelectionForMode(active, mode) : null;
     setActiveTab(mode);
@@ -674,7 +676,7 @@ export function ReaderView({
     };
   }
 
-  async function loadAnalysisForMode(token: ActiveToken, mode: AiMode) {
+  async function loadAnalysisForMode(token: ActiveToken, mode: SelectionType) {
     const selectedText = getTextForMode(token, mode);
     const cacheKey = makeAiCacheKey(mode, selectedText, book.language, profile.nativeLanguage);
 

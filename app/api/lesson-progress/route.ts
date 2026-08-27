@@ -55,6 +55,8 @@ export async function POST(req: NextRequest) {
     percentage?: number;
     words_analyzed?: number;
     completed_at?: string | null;
+    /** Homework's own answers, opaque here — see the migration comment on user_lesson_progress.answers. Omitted entirely for a normal reading-progress save, so it is never overwritten with nothing. */
+    answers?: Record<string, unknown>;
   };
 
   const { shared_book_id, status } = body;
@@ -74,6 +76,7 @@ export async function POST(req: NextRequest) {
       words_analyzed: body.words_analyzed ?? 0,
       last_read_at: new Date().toISOString(),
       completed_at: status === "completed" ? (body.completed_at ?? new Date().toISOString()) : null,
+      ...(body.answers !== undefined ? { answers: body.answers } : {}),
     }, { onConflict: "user_id,shared_book_id" });
 
   if (error) {

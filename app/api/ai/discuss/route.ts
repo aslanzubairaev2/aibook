@@ -82,7 +82,7 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json() as {
-    mode: "word" | "phrase" | "sentence";
+    mode: "word" | "phrase" | "sentence" | "homework";
     selectedText: string;
     sentence: string;
     sentenceBefore?: string;
@@ -91,6 +91,7 @@ export async function POST(req: Request) {
     targetLanguage: string;
     learnerLevel?: string;
     wordProfile?: DiscussWordProfile;
+    homeworkContext?: { instruction: string; items: string[] };
     history: DiscussMessage[];
     message: string;
   };
@@ -105,6 +106,7 @@ export async function POST(req: Request) {
     targetLanguage: body.targetLanguage,
     learnerLevel: body.learnerLevel,
     wordProfile: body.wordProfile,
+    homeworkContext: body.homeworkContext,
   });
 
   const contents = [

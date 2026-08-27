@@ -26,6 +26,9 @@ import { parseBook } from "@/lib/parser/index";
 import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress, type TrainBatch } from "@/lib/cards";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 import type { AppSection, Book, CardVariantState, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
+import { HomeworkView, type HomeworkBook } from "@/components/homework/HomeworkView";
+import type { HomeworkAnswers } from "@/components/homework/homeworkAnswers";
+import { parseExercise, type HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
 
 // ─── Inner app (needs auth context) ─────────────────────────────────────────
 
@@ -68,7 +71,7 @@ const SAVING_TO_LIBRARY_MESSAGE = "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0
 const BOOK_IN_LIBRARY_MESSAGE = "\u041a\u043d\u0438\u0433\u0430 \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435";
 const DOWNLOAD_ERROR_MESSAGE = "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438";
 const DEFAULT_CHAPTER_TITLE = "\u0413\u043b\u0430\u0432\u0430 1";
-const APP_SECTIONS: AppSection[] = ["home", "discover", "books", "reader", "cards", "verbs", "settings", "auth"];
+const APP_SECTIONS: AppSection[] = ["home", "discover", "books", "reader", "homework", "cards", "verbs", "settings", "auth"];
 
 function pickColor(title: string) {
   let hash = 0;
@@ -246,6 +249,7 @@ function AppInner() {
     savedItems: 0,
   });
   const [activeBook, setActiveBook] = useState<Book | null>(null);
+  const [activeHomework, setActiveHomework] = useState<{ book: HomeworkBook; exercises: HomeworkExercise[]; initialAnswers: HomeworkAnswers } | null>(null);
   const [readerOrigin, setReaderOrigin] = useState<AppSection>("home");
   const [isHydrated, setIsHydrated] = useState(false);
   const [isRemoteSyncReady, setIsRemoteSyncReady] = useState(false);
@@ -596,6 +600,59 @@ function AppInner() {
       // Better an empty reader with a retry than a dead tap.
       setActiveBook(book);
       setSection("reader");
+    } finally {
+      setOpeningBookId(null);
+    }
+  }
+
+  /**
+   * Open a saved homework set — its own view, not the reader, since it is
+   * filled in rather than read. The exercises come back from the same
+   * shared-books chapters endpoint every generated lesson uses (its
+   * "paragraphs" column just happens to hold exercise objects here instead of
+   * prose), re-validated with parseExercise rather than trusted as-is. Prior
+   * answers, if any, come from user_lesson_progress the same way reading
+   * position does for a book.
+   */
+  async function handleOpenHomework(sharedBook: { id: string; title: string; language: string; metadata: Record<string, unknown> }) {
+    setReaderOrigin(section === "reader" ? readerOrigin : section);
+    setOpeningBookId(sharedBook.id);
+    try {
+      const [chaptersRes, progressRes] = await Promise.all([
+        freshFetch(`/api/shared-books/${sharedBook.id}/chapters`, { headers: await sbAuthHeaders() }),
+        freshFetch("/api/lesson-progress", { headers: await sbAuthHeaders() }),
+      ]);
+      const chaptersData = await chaptersRes.json() as { paragraphs?: unknown[] };
+      const exercises = (chaptersData.paragraphs ?? [])
+        .map(parseExercise)
+        .filter((e): e is HomeworkExercise => e !== null);
+
+      const progressData = await progressRes.json() as {
+        progress?: Array<{ shared_book_id: string; answers?: Partial<HomeworkAnswers> }>;
+      };
+      const row = progressData.progress?.find((p) => p.shared_book_id === sharedBook.id);
+      const initialAnswers: HomeworkAnswers = {
+        items: row?.answers?.items ?? {},
+        conjugations: row?.answers?.conjugations ?? {},
+      };
+
+      setActiveHomework({
+        book: {
+          id: sharedBook.id,
+          title: sharedBook.title,
+          description: String(sharedBook.metadata?.description ?? ""),
+          sourceKind: String(sharedBook.metadata?.source_kind ?? ""),
+          homeworkDate: String(sharedBook.metadata?.homework_date ?? ""),
+          targetLanguage: sharedBook.language,
+          nativeLanguage: profile.nativeLanguage,
+        },
+        exercises,
+        initialAnswers,
+      });
+      setSection("homework");
+    } catch (err) {
+      console.error("handleOpenHomework:", err);
+      alert("Не удалось загрузить домашнее задание.");
     } finally {
       setOpeningBookId(null);
     }
@@ -998,6 +1055,7 @@ function AppInner() {
           profile={profile}
           onBooksChange={handleBooksChange}
           onOpenBook={(book) => void handleOpenBook(book)}
+          onOpenHomework={(sb) => void handleOpenHomework(sb)}
           openingBookId={openingBookId}
           downloadTasks={downloadTasks}
           onDownloadBook={(book) => void handleCatalogDownload(book)}
@@ -1027,6 +1085,19 @@ function AppInner() {
         />
       ) : section === "reader" ? (
         <>{setSection("books")}</>
+      ) : null}
+
+      {section === "homework" && activeHomework ? (
+        <HomeworkView
+          book={activeHomework.book}
+          exercises={activeHomework.exercises}
+          initialAnswers={activeHomework.initialAnswers}
+          cards={cards}
+          onAddCard={handleAddCard}
+          onBack={() => { setActiveHomework(null); setSection(readerOrigin); }}
+        />
+      ) : section === "homework" ? (
+        <>{setSection("discover")}</>
       ) : null}
 
       {section === "cards" && (

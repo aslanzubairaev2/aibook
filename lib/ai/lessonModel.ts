@@ -296,6 +296,82 @@ export async function runDictionaryPrompt(
   return { ok: true, data: result.value, truncated: result.repaired };
 }
 
+const HOMEWORK_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    title: { type: Type.STRING },
+    description: { type: Type.STRING },
+    sourceKind: { type: Type.STRING },
+    exercises: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          number: { type: Type.INTEGER },
+          instruction: { type: Type.STRING },
+          widget: { type: Type.STRING },
+          items: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                number: { type: Type.INTEGER },
+                text: { type: Type.STRING },
+                blanks: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: { select: { type: Type.BOOLEAN } },
+                    required: ["select"],
+                  },
+                },
+                bank: { type: Type.ARRAY, items: { type: Type.STRING } },
+              },
+              required: ["number", "text"],
+            },
+          },
+          bank: { type: Type.ARRAY, items: { type: Type.STRING } },
+          verbs: { type: Type.ARRAY, items: { type: Type.STRING } },
+          pronouns: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+        required: ["number", "instruction", "widget"],
+      },
+    },
+  },
+  required: ["title", "description", "exercises"],
+} as const;
+
+// ─── Reading a photo into a homework exercise set ────────────────────────────
+
+/**
+ * A whole page of exercises in one multimodal call, no second step.
+ *
+ * Unlike the document flow (read, then rewrite/translate) there is nothing to
+ * rewrite here — the page is worked as printed, in its own language — so one
+ * call is enough. Thinking stays off and temperature at 0 for the same reason
+ * as the plain image read: this is transcription-and-structure, not
+ * composition, and the one rule that matters (never fill in an answer) holds
+ * better the less the model improvises.
+ */
+export async function runHomeworkPrompt(
+  apiKey: string,
+  prompt: string,
+  imageBase64: string,
+  mimeType: string,
+): Promise<ImageModelResult> {
+  const result = await callJson({
+    apiKey,
+    parts: [{ inlineData: { data: imageBase64, mimeType } }, prompt],
+    schema: HOMEWORK_SCHEMA,
+    maxOutputTokens: PAGE_MAX_OUTPUT_TOKENS,
+    temperature: 0,
+    think: false,
+  });
+
+  if (!result.ok) return { ok: false, error: result.error, status: result.status };
+  return { ok: true, data: result.value, truncated: result.repaired };
+}
+
 // ─── Writing the lesson ──────────────────────────────────────────────────────
 
 export type LessonModelResult =

@@ -15,10 +15,12 @@ type Props = {
   nativeLanguage: string;
   /**
    * "lesson" turns the photo into a reading text; "dictionary" turns it into
-   * word entries. Same camera and cropper, different destination — and in the
-   * dictionary case there is no lesson to open afterwards.
+   * word entries; "homework" turns it into a fillable exercise set. Same
+   * camera and cropper, different destination — and in the dictionary and
+   * homework cases there is no language-choice step, so the photo goes
+   * straight from reading to saved.
    */
-  mode?: "lesson" | "dictionary";
+  mode?: "lesson" | "dictionary" | "homework";
   /** Called with the new lesson id once it is saved. */
   /** `warning` is set when the lesson was saved in a degraded form (raw transcription, or text that may be cut short). */
   onCreated: (lessonId: string, warning?: string) => void;
@@ -65,6 +67,7 @@ export function PhotoLessonModal({
   targetLanguage, nativeLanguage, mode = "lesson", onCreated, onWordsAdded, onClose, authHeaders,
 }: Props) {
   const toDictionary = mode === "dictionary";
+  const toHomework = mode === "homework";
   const [stage, setStage] = useState<Stage>("camera");
   // Kept so a failed rewrite can be retried without paying to read the photo again.
   const [retry, setRetry] = useState<{ source: Extracted; language: string } | null>(null);
@@ -74,6 +77,9 @@ export function PhotoLessonModal({
   // Free-text instruction: "just list these words", "write a text using them",
   // "make it about the kitchen". Sent with the photo and outranks the defaults.
   const [note, setNote] = useState("");
+  // Required for homework: the date the assignment is for, as it appears on
+  // the page — there is no reliable way to infer it, and the printout needs it.
+  const [homeworkDate, setHomeworkDate] = useState(() => new Date().toISOString().slice(0, 10));
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -188,6 +194,29 @@ export function PhotoLessonModal({
     }
   };
 
+  /**
+   * Homework mode: one call, straight from the picture to a saved exercise
+   * set — like the dictionary path, there is no document to rewrite or
+   * language to pick, so nothing is held back for a second step.
+   */
+  const readHomework = async (cropped: string) => {
+    setStage("reading");
+    setError(null);
+    try {
+      const res = await fetch("/api/lessons/from-homework-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+        body: JSON.stringify({ image: cropped, homeworkDate, targetLanguage, nativeLanguage, note: note.trim() }),
+      });
+      const data = await res.json() as { id?: string; error?: string; warning?: string };
+      if (!res.ok || !data.id) throw new Error(data.error ?? `Ошибка распознавания (${res.status})`);
+      onCreated(data.id, data.warning);
+    } catch (err) {
+      setError(describeNetworkFailure(err, "Не удалось разобрать упражнения."));
+      setStage("crop");
+    }
+  };
+
   /** Step 1: send the cropped region and get back what it says. */
   const readPhoto = async () => {
     const cropped = cropperRef.current?.exportCropped(MAX_UPLOAD_SIZE, JPEG_QUALITY);
@@ -198,6 +227,11 @@ export function PhotoLessonModal({
 
     if (toDictionary) {
       await readWords(cropped);
+      return;
+    }
+
+    if (toHomework) {
+      await readHomework(cropped);
       return;
     }
 
@@ -271,9 +305,9 @@ export function PhotoLessonModal({
           <X size={22} />
         </button>
         <span className="photo-bar-title">
-          {stage === "camera" && (toDictionary ? "Сфотографируйте слова" : "Сфотографируйте текст")}
+          {stage === "camera" && (toDictionary ? "Сфотографируйте слова" : toHomework ? "Сфотографируйте задание" : "Сфотографируйте текст")}
           {stage === "crop" && "Выделите нужный участок"}
-          {stage === "reading" && "Читаю снимок..."}
+          {stage === "reading" && (toHomework ? "Разбираю упражнения..." : "Читаю снимок...")}
           {stage === "language" && "Язык перевода"}
           {stage === "building" && "Перевожу текст..."}
           {stage === "failed" && "Не получилось"}
@@ -303,11 +337,25 @@ export function PhotoLessonModal({
 
         {stage === "crop" && (
           <div className="photo-note">
+            {toHomework && (
+              <div className="photo-date-row">
+                <label htmlFor="hw-capture-date">Дата задания</label>
+                <input
+                  id="hw-capture-date"
+                  type="date"
+                  value={homeworkDate}
+                  onChange={(e) => setHomeworkDate(e.target.value)}
+                  required
+                />
+              </div>
+            )}
             <div className="lesson-input-row">
               <input
                 type="text"
                 placeholder={toDictionary
                   ? "Примечание для ИИ — например: только существительные"
+                  : toHomework
+                  ? "Примечание — необязательно"
                   : "Что сделать с этим? Например: просто список слов"}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
@@ -376,7 +424,7 @@ export function PhotoLessonModal({
             <Loader2 className="spin" size={34} />
             <span>
               {stage === "reading"
-                ? (toDictionary ? "Собираю слова со снимка..." : "Разбираю текст на снимке...")
+                ? (toDictionary ? "Собираю слова со снимка..." : toHomework ? "Разбираю упражнения..." : "Разбираю текст на снимке...")
                 : "Готовлю текст..."}
             </span>
           </div>
@@ -429,7 +477,12 @@ export function PhotoLessonModal({
             <button type="button" className="photo-tool" onClick={() => cropperRef.current?.reset()}>
               Весь кадр
             </button>
-            <button type="button" className="photo-confirm" onClick={() => void readPhoto()}>
+            <button
+              type="button"
+              className="photo-confirm"
+              onClick={() => void readPhoto()}
+              disabled={toHomework && !homeworkDate}
+            >
               <Check size={18} />Готово
             </button>
           </>
@@ -553,6 +606,7 @@ const STYLES = `
     white-space: nowrap;
   }
   .photo-confirm { border-color: transparent; background: var(--accent); color: var(--text-dark); }
+  .photo-confirm:disabled { opacity: 0.4; }
 
   .photo-note {
     position: absolute;
@@ -561,6 +615,24 @@ const STYLES = `
     border-radius: 12px;
     background: rgba(11,10,9,0.82);
     backdrop-filter: blur(8px);
+  }
+  .photo-date-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 0 2px;
+  }
+  .photo-date-row label { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; }
+  .photo-date-row input {
+    flex: 1;
+    height: 34px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.35);
+    color: var(--text-primary);
+    font-size: 13px;
   }
   .photo-note input {
     width: 100%;

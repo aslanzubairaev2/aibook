@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
   Sparkles, CheckCircle2, PlayCircle, Clock, Circle,
-  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, BookA,
+  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, BookA, ClipboardList,
 } from "lucide-react";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
@@ -34,6 +34,8 @@ type Props = {
   profile: UserProfile;
   onBooksChange: (books: Book[]) => void;
   onOpenBook: (book: Book) => void;
+  /** A saved homework set (metadata.lesson_kind === "homework") opens into its own interactive view, not the reader. */
+  onOpenHomework: (sharedBook: { id: string; title: string; language: string; metadata: Record<string, unknown> }) => void;
   /** Book whose text is being fetched right now, so its tile can show a spinner. */
   openingBookId?: string | null;
   downloadTasks: Record<number, DownloadTask>;
@@ -272,7 +274,7 @@ function mergeEntryWithAnalysis(entry: DictionaryEntry, base: AiAnalysis, full: 
   };
 }
 
-export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, downloadTasks, onDownloadBook, onAddCard, onTrainWords, onReloadCards, onDeleteCards }: Props) {
+export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, onOpenHomework, downloadTasks, onDownloadBook, onAddCard, onTrainWords, onReloadCards, onDeleteCards }: Props) {
   const { user } = useAuth();
   const [prefs] = useState<DiscoverPrefs>(readPrefs);
   const [activeTab, setActiveTab] = useState<TabKey>(prefs.activeTab ?? "classic");
@@ -337,7 +339,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [photoOpen, setPhotoOpen] = useState(false);
   // "lesson" photographs a text to read; "dictionary" photographs words to learn.
-  const [photoMode, setPhotoMode] = useState<"lesson" | "dictionary">("lesson");
+  const [photoMode, setPhotoMode] = useState<"lesson" | "dictionary" | "homework">("lesson");
 
   // The shared shelves are paged; only the visible page is fetched.
   const [klexPage, setKlexPage] = useState(1);
@@ -775,6 +777,12 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
 
   // ── Open a shared lesson ─────────────────────────────────────────────────────
   const openSharedLesson = useCallback(async (sharedBook: SharedBook, courseBooks: SharedBook[]) => {
+    // A homework set is filled in, not read — it opens into its own
+    // interactive view, which does its own fetch of the exercises.
+    if (sharedBook.metadata?.lesson_kind === "homework") {
+      onOpenHomework(sharedBook);
+      return;
+    }
     setOpeningLesson(sharedBook.id);
     try {
       // Generated lessons are owner-scoped, so the chapters call needs the token.
@@ -827,7 +835,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     } finally {
       setOpeningLesson(null);
     }
-  }, [lessonProgress, onOpenBook]);
+  }, [lessonProgress, onOpenBook, onOpenHomework]);
 
   function submitSearch() { setSubmittedQuery(query.trim()); setPage(1); }
   function clearSearch() { setQuery(""); setSubmittedQuery(""); setPage(1); }
@@ -1421,13 +1429,22 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                       coverage={coverageOf(lesson)}
                       onOpen={() => void openSharedLesson(lesson, myLessons)}
                       onDelete={() => void deleteLesson(lesson.id)}
-                      onRefine={() => openRefine(lesson.id)}
+                      onRefine={lesson.metadata?.lesson_kind === "homework" ? undefined : () => openRefine(lesson.id)}
                     />
                   ))}
                 </div>
               )}
 
-              {/* Both within thumb reach: photograph a text, or write a topic */}
+              {/* All three within thumb reach: photograph a homework page, photograph a text, or write a topic */}
+              <button
+                type="button"
+                className="add-lesson-fab tertiary"
+                onClick={() => { setPhotoMode("homework"); setPhotoOpen(true); }}
+                aria-label="Домашка из фотографии"
+                title="Домашка из фотографии"
+              >
+                <ClipboardList size={20} />
+              </button>
               <button
                 type="button"
                 className="add-lesson-fab secondary"
@@ -1792,7 +1809,8 @@ function SyllabusItem({ book, progress, isLoading, showLang, coverage, onOpen, o
             where they are told apart. */}
         <span>
           {isGenerated
-            ? book.metadata?.lesson_kind === "lesson" ? "Урок" : "Текст"
+            ? book.metadata?.lesson_kind === "homework" ? "Домашка"
+              : book.metadata?.lesson_kind === "lesson" ? "Урок" : "Текст"
             : SOURCE_LABELS[book.source_type] ?? book.source_type}
         </span>
         {coverage && (
@@ -1850,7 +1868,10 @@ function SyllabusItem({ book, progress, isLoading, showLang, coverage, onOpen, o
           ) : status === "in_progress" ? (
             <><Clock size={13} />Продолжить</>
           ) : (
-            <><PlayCircle size={13} />{isGenerated && book.metadata?.lesson_kind === "lesson" ? "Начать урок" : "Читать"}</>
+            <><PlayCircle size={13} />
+              {isGenerated && book.metadata?.lesson_kind === "homework" ? "Открыть"
+                : isGenerated && book.metadata?.lesson_kind === "lesson" ? "Начать урок" : "Читать"}
+            </>
           )}
         </button>
         {onRefine && (
@@ -1930,6 +1951,8 @@ const STYLES = `
     box-shadow: 0 4px 14px rgba(0,0,0,0.4), 0 0 0 1px rgba(212,168,71,0.35);
   }
   .add-lesson-fab.secondary:hover { background: rgba(212,168,71,0.18); }
+  /* A third tier, stacked the same distance above .secondary as .secondary sits above the primary FAB. */
+  .add-lesson-fab.tertiary { bottom: 202px; }
 
   /* "You already know N% of the words here" — the closer to the comfort band,
      the more useful the text, so the band gets the accent colour. */

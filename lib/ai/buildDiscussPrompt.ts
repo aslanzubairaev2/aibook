@@ -28,7 +28,7 @@ import type {
 } from "@/lib/types";
 
 export type DiscussPromptInput = {
-  mode: "word" | "phrase" | "sentence";
+  mode: "word" | "phrase" | "sentence" | "homework";
   selectedText: string;
   sentence: string;
   sentenceBefore?: string;
@@ -38,6 +38,13 @@ export type DiscussPromptInput = {
   /** Free-text CEFR estimate from the learner's books and deck, when known. */
   learnerLevel?: string;
   wordProfile?: DiscussWordProfile;
+  /**
+   * mode "homework" only: the exercise being discussed, exactly as printed —
+   * blanks still blank. This is what the never-reveal-the-answer rule below
+   * is checked against, so it has to be the real, complete item list, not a
+   * summary of it.
+   */
+  homeworkContext?: { instruction: string; items: string[] };
 };
 
 /**
@@ -107,6 +114,7 @@ const MODE_FOCUS: Record<DiscussPromptInput["mode"], string> = {
 ${WORD_PHRASES}`,
   phrase: `They tapped a phrase. Say what it means as a whole and when a person would actually say it (situation, tone, who says it to whom). Show two or three variations of it they could use themselves, and one natural reply to it. Only take it apart word by word if a part is surprising.`,
   sentence: `They tapped a whole sentence. Give a natural translation first, then show the pattern it is built on as something reusable: the same frame with two or three different fillings, so they can say their own version of it. Point out only what would actually trip them up.`,
+  homework: `They opened help on one exercise from their own paper homework, which they must complete themselves — you are a tutor talking them through the rule, not a solver. Explain in plain words what the exercise is asking for and which grammatical pattern it is testing, then demonstrate the pattern with ONE worked example built from words that do NOT appear anywhere in the exercise below. Do not go item by item through their exercise. If they ask a follow-up, answer it the same way: explain the rule further, never by completing one of their blanks.`,
 };
 
 // ─── The prompt ──────────────────────────────────────────────────────────────
@@ -121,13 +129,23 @@ export function buildDiscussSystemPrompt(input: DiscussPromptInput): string {
   const nativeLanguage = languageName(input.nativeLanguage);
   const targetLanguage = languageName(input.targetLanguage);
 
+  const homework = input.homeworkContext;
   const context =
-    mode === "sentence"
+    mode === "homework" && homework
+      ? `Exercise instruction: "${homework.instruction}"\nItems, exactly as printed (blanks are blanks — "..." or similar — never filled in): ${homework.items.map((t, i) => `\n  ${i + 1}. "${t}"`).join("")}`
+      : mode === "sentence"
       ? `Previous sentence: "${input.sentenceBefore || ""}"\nSelected sentence: "${input.selectedText}"\nNext sentence: "${input.sentenceAfter || ""}"`
       : `Selected ${mode}: "${input.selectedText}"\nIt appeared in: "${input.sentence}"`;
 
-  return `You are a warm, practical language tutor talking to an adult learner inside a mobile app. They speak ${nativeLanguage} and are learning ${targetLanguage}.
+  const wantLine = mode === "homework"
+    ? `This is their own paper homework, which their teacher will grade — they must complete every blank themselves. The question behind opening help is "what is this exercise actually asking me to do, and how does the rule work?", never "what's the answer".`
+    : `They want to be able to SAY things, not to pass a grammar exam. They tapped this while reading or revising, and the question behind the tap is always "what does this mean, and how would I use it myself?".`;
 
+  return `You are a warm, practical language tutor talking to an adult learner inside a mobile app. They speak ${nativeLanguage} and are learning ${targetLanguage}.
+${mode === "homework" ? `
+CRITICAL RULE — read this first, it overrides everything else below:
+NEVER state, spell out, or strongly imply the specific word(s) that fill any blank in the exercise items listed below. Not the target word, not its exact form, not "the first letter is...". Do not construct any of the items' sentences completed, not even partially. If asked directly for an answer, decline warmly and point back at the rule instead. This holds for every message in this conversation, not only the first one.
+` : ""}
 WHO YOU ARE TALKING TO
 ${describeLearner(input)}
 
@@ -135,7 +153,7 @@ WHAT THEY TAPPED
 ${context}
 
 WHAT THEY WANT
-They want to be able to SAY things, not to pass a grammar exam. They tapped this while reading or revising, and the question behind the tap is always "what does this mean, and how would I use it myself?".
+${wantLine}
 
 HOW TO WRITE
 - Answer in ${nativeLanguage}, in short plain sentences, like a friend who speaks the language well. Never like a textbook.
