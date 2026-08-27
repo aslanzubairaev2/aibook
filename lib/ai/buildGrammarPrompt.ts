@@ -63,7 +63,8 @@ Rules:
 - Pick "kind" from the part of speech: verb → "conjugation", noun → "declension", adjective → "comparison", anything else → "forms".
 
 VERB:
-- brief: use "sections" — ONE section, the present tense, affirmative, the 6 core persons. "label" = the FULL native translation of the phrase (e.g. "я играю"), "pronoun" = target pronoun (e.g. "ich"), "form" = the conjugated verb (without the pronoun).
+- brief: use "sections" — ONE section, the present tense, affirmative. "label" = the FULL native translation of the phrase (e.g. "я играю"), "pronoun" = target pronoun (e.g. "ich"), "form" = the conjugated verb (without the pronoun).
+  Include all 6 core persons (1sg, 2sg, 3sg, 1pl, 2pl, 3pl) UNLESS the verb is genuinely impersonal or usage-restricted in ${p.targetLanguage} — a weather verb ("regnen", "schneien"), or one that only ever takes "es"/"it"/a 3rd-person subject in real usage ("dauern" = "to take [time]", never *"ich dauere"). For such a verb return ONLY the person(s) it is actually used with (often just "es"), not all 6 filled in with grammatically-constructible-but-never-said forms. Most verbs are NOT like this — only skip persons when a native speaker would find them genuinely wrong or absurd to hear, not merely uncommon.
 - full: OMIT "sections" and instead fill the "matrix" object. "rowLabels" and "colLabels" set the headers; "cells" is a 4×3 grid.
   EXACT order — rows top→bottom = PRÄTERITUM (written past), PERFEKT (spoken past), PRESENT, FUTURE; columns left→right = negation, affirmation, question.
   "cells" MUST be a JSON array of exactly 4 elements (one per row, in that order). Each row element MUST be a JSON array of exactly 3 elements (one per column: negation, affirmation, question). Each column element MUST be a JSON array of the 6 core persons (1sg, 2sg, 3sg, 1pl, 2pl, 3pl). Each person is an object { "form": ..., "native": ... }.

@@ -9,6 +9,7 @@ const PROFILE_KEY = "aibook_profile";
 const PROGRESS_KEY = "aibook_progress";
 const AI_CACHE_KEY = "aibook_ai_selection_cache";
 const GRAMMAR_CACHE_KEY = "aibook_grammar_cache";
+const VERB_PHRASE_CACHE_KEY = "aibook_verb_phrase_cache";
 const SKILL_PROGRESS_KEY = "aibook_skill_progress";
 const VARIANT_PROGRESS_KEY = "aibook_variant_progress";
 const DISCUSS_CACHE_KEY = "aibook_discuss_cache";
@@ -556,6 +557,35 @@ export function saveLocalGrammar(key: string, value: GrammarTable): void {
     if (idx >= 0) all[idx] = entry;
     else all.push(entry);
     localStorage.setItem(getNsKey(GRAMMAR_CACHE_KEY), JSON.stringify(all.slice(-150)));
+  } catch {
+    // silently fail
+  }
+}
+
+export type VerbPhrase = { example: string; exampleTranslation: string };
+type VerbPhraseCacheEntry = { key: string; value: VerbPhrase; updatedAt: string };
+
+// One generated example sentence per verb, for the "phrases" quiz drill —
+// cached exactly like the grammar tables so retraining the same verb (or
+// retrying a mistake in the same session) costs no second AI call.
+export function getLocalVerbPhrase(key: string): VerbPhrase | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const all = JSON.parse(localStorage.getItem(getNsKey(VERB_PHRASE_CACHE_KEY)) ?? "[]") as VerbPhraseCacheEntry[];
+    return all.find((entry) => entry.key === key)?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalVerbPhrase(key: string, value: VerbPhrase): void {
+  try {
+    const all = JSON.parse(localStorage.getItem(getNsKey(VERB_PHRASE_CACHE_KEY)) ?? "[]") as VerbPhraseCacheEntry[];
+    const idx = all.findIndex((entry) => entry.key === key);
+    const entry: VerbPhraseCacheEntry = { key, value, updatedAt: new Date().toISOString() };
+    if (idx >= 0) all[idx] = entry;
+    else all.push(entry);
+    localStorage.setItem(getNsKey(VERB_PHRASE_CACHE_KEY), JSON.stringify(all.slice(-150)));
   } catch {
     // silently fail
   }

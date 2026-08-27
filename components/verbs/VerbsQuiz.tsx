@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Loader2, RotateCcw } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Loader2, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
 import { fetchGrammar } from "@/lib/ai/grammar";
-import { makeGrammarCacheKey } from "@/lib/ai/cacheKeys";
-import { getLocalGrammar, saveLocalGrammar } from "@/lib/db/local";
+import { fetchVerbPhrase } from "@/lib/ai/verbPhrase";
+import { makeGrammarCacheKey, makeVerbPhraseCacheKey } from "@/lib/ai/cacheKeys";
+import { getLocalGrammar, getLocalVerbPhrase, saveLocalGrammar, saveLocalVerbPhrase } from "@/lib/db/local";
 import { QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type QuizMode } from "@/lib/verbsQuizModes";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
@@ -27,8 +28,10 @@ type QuizStep = {
   key: string;
   entry: DictionaryEntry;
   mode: QuizMode;
-  /** null while a conjugation step's grammar table is still loading, [] if it failed and the step should be skipped. */
+  /** null while a conjugation/phrase step's AI data is still loading, [] if it failed and the step should be skipped. */
   fields: QuizField[] | null;
+  /** The Russian sentence a phrase step asks to translate — the entry's own once it has one, an AI-generated one once fetched. */
+  promptText?: string;
 };
 
 function shuffle<T>(items: T[]): T[] {
@@ -63,9 +66,12 @@ function stepsForEntry(entry: DictionaryEntry, modes: Set<QuizMode>): QuizStep[]
     } else if (mode === "phrase") {
       const example = entry.example?.trim();
       const exampleTranslation = entry.example_translation?.trim();
-      if (example && exampleTranslation) {
-        steps.push({ key: `${entry.id}:phrase`, entry, mode, fields: [{ key: "german", label: "Немецкий", expected: example }] });
-      }
+      // Use the entry's own example when it has one — no AI call needed.
+      // Most verbs don't (backfilled ones especially), so the step still
+      // gets created; its sentence is generated the moment it comes up.
+      steps.push(example && exampleTranslation
+        ? { key: `${entry.id}:phrase`, entry, mode, fields: [{ key: "german", label: "Немецкий", expected: example }], promptText: exampleTranslation }
+        : { key: `${entry.id}:phrase`, entry, mode, fields: null });
     }
   }
   return steps;
@@ -88,6 +94,9 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState(false);
   const [results, setResults] = useState<Record<string, FieldResult>>({});
+  // Fields peeked at before submitting — a look, not a graded answer, so it
+  // does not touch `results` or count against the verdict.
+  const [peeked, setPeeked] = useState<Set<string>>(new Set());
   const [mistakes, setMistakes] = useState<QuizStep[]>([]);
   const [correctCount, setCorrectCount] = useState(0);
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
@@ -97,10 +106,14 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
   const step = queue[index];
   const done = index >= queue.length;
 
-  // A fresh step: put the cursor straight into the first field, on a computer,
-  // so typing can start without reaching for the mouse first. Re-fires once a
-  // conjugation step's fields actually arrive, since there is nothing to focus
-  // before that.
+  // A fresh step: put the cursor straight into the first field, on a
+  // computer, so typing can start without reaching for the mouse first.
+  // (revealed/inputs/results/peeked are already at their defaults by the time
+  // any step becomes current — nextItem()/retryMistakes() below clear them
+  // before ever advancing, and the very first step starts from useState's own
+  // defaults — so there is nothing to reset here.) Re-fires once a
+  // conjugation/phrase step's fields actually arrive, since there is nothing
+  // to focus before that.
   useEffect(() => {
     inputRefs.current[0]?.focus();
   }, [step?.key, step?.fields]);
@@ -114,46 +127,70 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
     if (revealed) primaryButtonRef.current?.focus();
   }, [revealed]);
 
-  // Fetches a conjugation step's present-tense forms the moment it becomes
-  // current — not for the whole queue up front, which would mean an AI call
-  // per verb before the session could even start. Reuses the exact cache the
-  // grammar modal's "Кратко" view already fills, so a verb looked up there
-  // once needs no network call here at all.
+  // Fetches a conjugation or phrase step's AI-generated content the moment it
+  // becomes current — not for the whole queue up front, which would mean an
+  // AI call per verb before the session could even start. Conjugation reuses
+  // the exact cache the grammar modal's "Кратко" view already fills, so a
+  // verb looked up there once needs no network call here at all; a phrase
+  // step only ever gets here when the entry had no example of its own.
   useEffect(() => {
-    if (!step || step.mode !== "conjugation" || step.fields !== null) return;
+    if (!step || step.fields !== null) return;
+    if (step.mode !== "conjugation" && step.mode !== "phrase") return;
     let cancelled = false;
     const entry = step.entry;
+    const stepKey = step.key;
+
     (async () => {
-      const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "brief", targetLanguage, nativeLanguage);
-      let table = getLocalGrammar(cacheKey);
-      if (!table) {
-        try {
-          table = await fetchGrammar({
-            word: entry.headword,
-            lemma: entry.lemma,
-            posTag: "verb",
-            targetLanguage,
-            nativeLanguage,
-            detail: "brief",
-          });
-          saveLocalGrammar(cacheKey, table);
-        } catch {
-          table = null;
+      if (step.mode === "conjugation") {
+        const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "brief", targetLanguage, nativeLanguage);
+        let table = getLocalGrammar(cacheKey);
+        if (!table) {
+          try {
+            table = await fetchGrammar({
+              word: entry.headword,
+              lemma: entry.lemma,
+              posTag: "verb",
+              targetLanguage,
+              nativeLanguage,
+              detail: "brief",
+            });
+            saveLocalGrammar(cacheKey, table);
+          } catch {
+            table = null;
+          }
         }
+        if (cancelled) return;
+        const cells = table?.sections?.[0]?.cells ?? [];
+        const fields: QuizField[] = cells
+          .filter((c) => c.pronoun?.trim() && c.form.trim())
+          .map((c) => ({ key: c.pronoun!, label: c.pronoun!, expected: c.form }));
+        if (fields.length === 0) {
+          // No cached table and the AI call failed or returned nothing usable
+          // — nothing left to ask, so skip past it rather than leaving the
+          // learner staring at a blank card.
+          setIndex((i) => i + 1);
+          return;
+        }
+        setQueue((prev) => prev.map((s) => (s.key === stepKey ? { ...s, fields } : s)));
+      } else {
+        const cacheKey = makeVerbPhraseCacheKey(entry.lemma || entry.headword, targetLanguage, nativeLanguage);
+        let phrase = getLocalVerbPhrase(cacheKey);
+        if (!phrase) {
+          try {
+            phrase = await fetchVerbPhrase({ lemma: entry.lemma, headword: entry.headword, targetLanguage, nativeLanguage });
+            saveLocalVerbPhrase(cacheKey, phrase);
+          } catch {
+            phrase = null;
+          }
+        }
+        if (cancelled) return;
+        if (!phrase?.example.trim() || !phrase.exampleTranslation.trim()) {
+          setIndex((i) => i + 1);
+          return;
+        }
+        const fields: QuizField[] = [{ key: "german", label: "Немецкий", expected: phrase.example }];
+        setQueue((prev) => prev.map((s) => (s.key === stepKey ? { ...s, fields, promptText: phrase!.exampleTranslation } : s)));
       }
-      if (cancelled) return;
-      const cells = table?.sections?.[0]?.cells ?? [];
-      const fields: QuizField[] = cells
-        .filter((c) => c.pronoun?.trim() && c.form.trim())
-        .map((c) => ({ key: c.pronoun!, label: c.pronoun!, expected: c.form }));
-      if (fields.length === 0) {
-        // No cached table and the AI call failed or returned nothing usable —
-        // nothing left to ask, so skip past it instead of leaving the learner
-        // staring at a blank card.
-        setIndex((i) => i + 1);
-        return;
-      }
-      setQueue((prev) => prev.map((s) => (s.key === step.key ? { ...s, fields } : s)));
     })();
     return () => { cancelled = true; };
   }, [step, targetLanguage, nativeLanguage]);
@@ -177,6 +214,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
     setRevealed(false);
     setInputs({});
     setResults({});
+    setPeeked(new Set());
     setIndex((i) => i + 1);
   }
 
@@ -188,6 +226,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
     setRevealed(false);
     setInputs({});
     setResults({});
+    setPeeked(new Set());
   }
 
   if (queue.length === 0) {
@@ -203,7 +242,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
           </div>
         </header>
         <div className="verb-quiz-summary">
-          <p>Ни у одного слова нет данных для включённых режимов — например, для «Фраз» нужен сохранённый пример предложения.</p>
+          <p>Ни у одного слова нет данных для включённых режимов — например, для «Перевода» нужен сохранённый перевод.</p>
           <button type="button" className="secondary-btn" onClick={onExit}>Назад</button>
         </div>
       </section>
@@ -259,10 +298,17 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
 
       <div className="verb-quiz-card">
         {isPhrase ? (
-          <>
-            <p className="verb-quiz-phrase-prompt">{entry.example_translation}</p>
-            <p className="verb-quiz-translation">с глаголом «{entry.headword}»</p>
-          </>
+          step.fields === null ? (
+            <div className="verb-quiz-skeleton">
+              <div className="verb-quiz-skeleton-line loading-shimmer" style={{ width: "88%" }} />
+              <div className="verb-quiz-skeleton-line loading-shimmer" style={{ width: "50%", height: 13 }} />
+            </div>
+          ) : (
+            <>
+              <p className="verb-quiz-phrase-prompt">{step.promptText}</p>
+              <p className="verb-quiz-translation">с глаголом «{entry.headword}»</p>
+            </>
+          )
         ) : (
           <>
             <div className="verb-quiz-infinitive">
@@ -274,7 +320,11 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
         )}
 
         {step.fields === null ? (
-          <div className="verb-quiz-loading"><Loader2 className="spin" size={18} /> Загружаю спряжение...</div>
+          isPhrase ? (
+            <div className="verb-quiz-skeleton-line input loading-shimmer" />
+          ) : (
+            <div className="verb-quiz-loading"><Loader2 className="spin" size={18} /> Загружаю спряжение...</div>
+          )
         ) : (
           <div className={isConjugation ? "verb-quiz-conjugation-grid" : undefined}>
             {step.fields.map((field, i) => {
@@ -315,14 +365,31 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
                       disabled={revealed}
                       onText={(text) => setInputs((prev) => ({ ...prev, [field.key]: text }))}
                     />
+                    <button
+                      type="button"
+                      className={`dictate-btn${peeked.has(field.key) ? " peek-active" : ""}`}
+                      disabled={revealed}
+                      onClick={() => setPeeked((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(field.key)) next.delete(field.key);
+                        else next.add(field.key);
+                        return next;
+                      })}
+                      aria-label={peeked.has(field.key) ? "Скрыть подсказку" : "Подсмотреть подсказку"}
+                      title={peeked.has(field.key) ? "Скрыть подсказку" : "Подсмотреть подсказку"}
+                    >
+                      {peeked.has(field.key) ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
                   </div>
-                  {revealed && result && result.verdict !== "correct" && (
+                  {revealed && result && result.verdict !== "correct" ? (
                     <span className={`verb-quiz-expected ${result.verdict}`}>
                       {diffExpected(inputs[field.key] ?? "", result.expected).map((seg, si) => (
                         <span key={si} className={seg.changed ? "verb-quiz-diff" : undefined}>{seg.text}</span>
                       ))}
                     </span>
-                  )}
+                  ) : !revealed && peeked.has(field.key) ? (
+                    <span className="verb-quiz-peek-hint">{field.expected}</span>
+                  ) : null}
                 </div>
               );
             })}

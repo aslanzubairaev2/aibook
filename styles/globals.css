@@ -2227,10 +2227,21 @@ textarea,
 
 .verb-quiz-loading { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 14px; padding: 8px 0; }
 
+/* A phrase step generates its sentence on the spot — the skeleton stands in
+   for both the prompt (still unknown) and the answer field while that runs. */
+.verb-quiz-skeleton { display: flex; flex-direction: column; gap: 8px; }
+.verb-quiz-skeleton-line { height: 20px; border-radius: 6px; background: var(--bg-elevated); }
+.verb-quiz-skeleton-line.input { height: 42px; border-radius: var(--radius-sm); }
+
+/* The peek button sits beside the mic — same shape, gold instead of red so it
+   never reads as "recording". */
+.dictate-btn.peek-active { color: var(--accent); border-color: var(--accent); background: rgba(212, 168, 71, 0.14); }
+.verb-quiz-peek-hint { font-size: 12px; color: var(--accent); font-style: italic; }
+
 /* Conjugation asks for up to six short forms — a 2-column grid keeps that from
    reading as a long vertical list of near-identical one-word fields. */
 .verb-quiz-conjugation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 10px; }
-@media (max-width: 380px) { .verb-quiz-conjugation-grid { grid-template-columns: 1fr; } }
+@media (max-width: 460px) { .verb-quiz-conjugation-grid { grid-template-columns: 1fr; } }
 
 .verb-quiz-summary {
   display: flex; flex-direction: column; align-items: center; gap: 14px;

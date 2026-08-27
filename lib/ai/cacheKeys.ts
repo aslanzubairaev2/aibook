@@ -26,8 +26,12 @@ export function makeGrammarCacheKey(
   targetLanguage: string,
   nativeLanguage: string,
 ) {
-  // v3: the full verb matrix gained a Präteritum row above Perfekt — bump so a
-  // learner who already cached the old 3-row table gets the new shape instead
-  // of the incomplete one sticking around forever.
-  return `v3:grammar:${detail}:${normalizeAiCacheText(text)}:${targetLanguage}:${nativeLanguage}`;
+  // v4: brief verb tables now skip persons an impersonal/usage-restricted verb
+  // (dauern, regnen) is never actually said in — bump so an already-cached
+  // "full sheet" for one of those gets replaced instead of sticking around.
+  return `v4:grammar:${detail}:${normalizeAiCacheText(text)}:${targetLanguage}:${nativeLanguage}`;
+}
+
+export function makeVerbPhraseCacheKey(text: string, targetLanguage: string, nativeLanguage: string) {
+  return `v1:verb-phrase:${normalizeAiCacheText(text)}:${targetLanguage}:${nativeLanguage}`;
 }
