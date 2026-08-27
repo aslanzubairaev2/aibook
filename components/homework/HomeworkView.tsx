@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, MessageCircle, Printer } from "lucide-react";
 import type { HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
-import { sbAuthHeaders } from "@/lib/db/supabase";
+import { sbAuthHeaders, sbGetCachedAnalysis, sbSaveCachedAnalysis } from "@/lib/db/supabase";
+import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
+import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { findDuplicateCard } from "@/lib/cards";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
@@ -125,10 +127,27 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
     setAnswers((prev) => ({ ...prev, conjugations: { ...prev.conjugations, [verbKey(exerciseNumber, verb)]: forms } }));
   };
 
+  // Same cache chain as the reader's own word tap (local IndexedDB first, then
+  // the remote cache, only then a real model call) — a word tapped twice
+  // should not pay for the analysis twice.
   async function loadWordModalAnalysis(word: string, contextSentence: string) {
+    const cacheKey = makeAiCacheKey("word", word, book.targetLanguage, book.nativeLanguage);
     setIsWordModalLoading(true);
     setWordModalAnalysis(null);
     try {
+      const localCached = getLocalAiAnalysis(cacheKey);
+      if (localCached?.word) {
+        setWordModalAnalysis(localCached);
+        return;
+      }
+
+      const remoteCached = await sbGetCachedAnalysis(cacheKey);
+      if (remoteCached?.word) {
+        saveLocalAiAnalysis(cacheKey, remoteCached);
+        setWordModalAnalysis(remoteCached);
+        return;
+      }
+
       const result = await analyzeSelection({
         mode: "word",
         word,
@@ -138,6 +157,8 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
         nativeLanguage: book.nativeLanguage,
         targetLanguage: book.targetLanguage,
       });
+      saveLocalAiAnalysis(cacheKey, result);
+      void sbSaveCachedAnalysis(cacheKey, "word", result);
       setWordModalAnalysis(result);
     } catch {
       // WordModal renders its own empty state for a null analysis; nothing more to show.
@@ -326,12 +347,21 @@ const STYLES = `
   .hw-tappable-word:active { color: var(--accent); }
 
   .hw-blank {
-    display: inline-block; min-width: 44px; margin: 0 2px;
+    /* Two blanks can sit back to back with nothing printed between them (a
+       pronoun slot immediately followed by an ending slot, e.g.
+       "Besuch{{0}}{{1}} einen…") — enough side margin that they read as two
+       separate controls, not one merged box with a stray line down the middle. */
+    display: inline-block; min-width: 40px; margin: 0 5px;
     border: 0; border-bottom: 2px solid var(--accent); background: transparent;
     color: var(--text-primary); font-size: 14.5px; font-family: inherit; text-align: center;
     padding: 0 2px;
   }
   .hw-blank-select { min-width: 90px; text-align: left; }
+  /* The dropdown's OPEN option list is native OS/browser chrome — it ignores
+     the app's dark theme and renders on a light popup surface in most
+     browsers, so light theme text on it is nearly invisible unless the option
+     colour is pinned explicitly rather than inherited. */
+  .hw-blank-select option { color: #1a1a1a; background: #fff; }
 
   .hw-compose-input, .hw-open-input {
     width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px;
