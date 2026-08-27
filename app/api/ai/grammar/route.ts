@@ -71,7 +71,15 @@ function isValidVerbMatrix(matrix: unknown): boolean {
     m.cells.every((row) =>
       Array.isArray(row) && row.length === 3 &&
       row.every((col) =>
-        Array.isArray(col) && col.length > 0 &&
+        // Exactly 6, not merely non-empty: the prompt requires all 6 core
+        // persons for the full matrix (no impersonal-verb exception there,
+        // unlike "brief"), and the client labels each cell by fixed position
+        // (CONJUGATION_PRONOUNS[i] in VerbsQuiz.tsx) with no per-person marker
+        // in the schema to check against. A model that returns fewer — say,
+        // one form for an impersonal verb like "regnen" — would otherwise
+        // pass validation and get mislabeled "ich" at position 0 instead of
+        // the "er/sie/es" it actually meant.
+        Array.isArray(col) && col.length === 6 &&
         col.every((p) => !!p && typeof p === "object" && typeof (p as { form?: unknown }).form === "string" && (p as { form: string }).form.trim())
       )
     )
