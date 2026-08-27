@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, ListChecks, Loader2, Repeat, SlidersHorizontal, Wand2 } from "lucide-react";
+import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, ListChecks, Loader2, Repeat, Search, SlidersHorizontal, Wand2, X } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { GrammarModal } from "@/components/word-modal/GrammarModal";
 import { SpeakButton } from "@/components/ui/SpeakButton";
@@ -59,6 +59,8 @@ export function VerbsView({ profile, onBack }: Props) {
 
   const [verbType, setVerbType] = useState<VerbType>("all");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   // Which drills a training session runs — persisted, defaulting to just the
   // original forms drill so nobody who never opens this gets a bigger session.
   const [quizModes, setQuizModes] = useState<Set<QuizMode>>(() => getLocalVerbsQuizModes());
@@ -121,6 +123,18 @@ export function VerbsView({ profile, onBack }: Props) {
     return () => clearTimeout(t);
   }, [toast]);
 
+  useEffect(() => {
+    const handler = (e: PointerEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".dict-search-float, .dict-search-toggle")) {
+        setSearchOpen(false);
+        setQuery("");
+      }
+    };
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
+  }, []);
+
   // Every "глагол" entry in the dictionary, whether or not it has forms yet —
   // used to split into the real table below and the "Без форм" backlog.
   const allGlagolEntries = useMemo(
@@ -144,12 +158,21 @@ export function VerbsView({ profile, onBack }: Props) {
   );
 
   const verbs = useMemo(() => {
-    if (verbType === "all") return allVerbs;
+    const q = query.trim().toLowerCase();
     return allVerbs.filter((e) => {
-      const irregular = isIrregularGermanVerb(e.lemma, e.headword, e.forms);
-      return verbType === "irregular" ? irregular : !irregular;
+      if (verbType !== "all") {
+        const irregular = isIrregularGermanVerb(e.lemma, e.headword, e.forms);
+        if (verbType === "irregular" ? !irregular : irregular) return false;
+      }
+      if (q && !(e.headword.toLowerCase().includes(q) || e.lemma.toLowerCase().includes(q) || e.translation.toLowerCase().includes(q))) return false;
+      return true;
     });
-  }, [allVerbs, verbType]);
+  }, [allVerbs, verbType, query]);
+
+  // A search or type filter narrows the table — the matching packs should be
+  // visible right away, not stuck behind the "closed by default" rule that
+  // exists for browsing, not for looking something specific up.
+  const isNarrowed = query.trim().length > 0 || verbType !== "all";
 
   const groups = useMemo<VerbGroup[]>(() => {
     const byBatch = new Map<string, DictionaryEntry[]>();
@@ -328,6 +351,48 @@ export function VerbsView({ profile, onBack }: Props) {
         </div>
       ) : (
         <>
+          {allVerbs.length > 0 && (
+            <div className="dict-toolbar-row">
+              <span className="dict-toolbar-count">{verbs.length} {verbNoun(verbs.length)}</span>
+              <button
+                type="button"
+                className={`icon-btn dict-search-toggle${searchOpen || query ? " active" : ""}`}
+                aria-label={searchOpen ? "Закрыть поиск" : "Поиск по глаголам"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setQuery("");
+                  setSearchOpen(!searchOpen);
+                }}
+              >
+                {searchOpen ? <X size={18} /> : <Search size={18} />}
+              </button>
+
+              {searchOpen && (
+                <div className="dict-search-float" onClick={(e) => e.stopPropagation()}>
+                  <Search size={15} />
+                  <input
+                    autoFocus
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Инфинитив или перевод"
+                    aria-label="Поиск по глаголам"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    enterKeyHint="search"
+                  />
+                  {query.length > 0 && (
+                    <button type="button" className="dict-search-clear-btn" aria-label="Очистить поле поиска" onClick={() => setQuery("")}>
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="verbs-toolbar">
             {allVerbs.length > 0 && (
               <button
@@ -340,7 +405,6 @@ export function VerbsView({ profile, onBack }: Props) {
                 <ChevronDown size={12} />
               </button>
             )}
-            <span className="dict-toolbar-count">{verbs.length} {verbNoun(verbs.length)}</span>
             {allVerbs.length > 0 && (
               <button
                 type="button"
@@ -417,10 +481,12 @@ export function VerbsView({ profile, onBack }: Props) {
             </div>
           )}
 
+          {allVerbs.length > 0 && groups.length === 0 && <p className="dict-nothing">Ничего не нашлось.</p>}
+
           {allVerbs.length > 0 && (
             <div className="verbs-groups">
               {groups.map((group) => {
-                const open = openGroups.has(group.key);
+                const open = isNarrowed || openGroups.has(group.key);
                 return (
                   <section key={group.key} className="verb-batch">
                     <button type="button" className="verb-batch-head" onClick={() => toggleGroup(group.key)}>
