@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
 import type { HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
-import { FALLBACK_PRONOUNS, verbKey, type HomeworkAnswers } from "./homeworkAnswers";
+import { CONJUGATION_PRONOUNS, verbKey, type HomeworkAnswers } from "./homeworkAnswers";
 
 type Props = {
   exercise: HomeworkExercise;
@@ -11,9 +11,8 @@ type Props = {
   onFormsChange: (verb: string, forms: string[]) => void;
 };
 
-function ConjugationPopup({ verb, pronouns, forms, onChange, onClose }: {
+function ConjugationPopup({ verb, forms, onChange, onClose }: {
   verb: string;
-  pronouns: string[];
   forms: string[];
   onChange: (forms: string[]) => void;
   onClose: () => void;
@@ -30,32 +29,35 @@ function ConjugationPopup({ verb, pronouns, forms, onChange, onClose }: {
 
   return (
     <div className="hw-popup-backdrop" onClick={onClose}>
-      <div className="hw-popup" onClick={(e) => e.stopPropagation()}>
+      <div className="verb-quiz-card hw-conj-popup" onClick={(e) => e.stopPropagation()}>
         <div className="hw-popup-header">
-          <span>{verb}</span>
+          <span className="verb-quiz-infinitive">{verb}</span>
           <button type="button" className="hw-popup-close" onClick={onClose} aria-label="Закрыть"><X size={18} /></button>
         </div>
-        <div className="hw-popup-fields">
-          {pronouns.map((pronoun, i) => (
-            <div key={pronoun} className="hw-popup-field">
+        <div className="verb-quiz-conjugation-grid">
+          {CONJUGATION_PRONOUNS.map((pronoun, i) => (
+            <div key={pronoun} className="verb-quiz-field">
               <label htmlFor={`hw-conj-${verb}-${i}`}>{pronoun}</label>
-              <input
-                id={`hw-conj-${verb}-${i}`}
-                ref={(el) => { inputRefs.current[i] = el; }}
-                type="text"
-                value={forms[i] ?? ""}
-                onChange={(e) => setForm(i, e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  e.preventDefault();
-                  if (i === pronouns.length - 1) onClose();
-                  else inputRefs.current[i + 1]?.focus();
-                }}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-              />
+              <div className="verb-quiz-input-row">
+                <input
+                  id={`hw-conj-${verb}-${i}`}
+                  ref={(el) => { inputRefs.current[i] = el; }}
+                  type="text"
+                  className="verb-quiz-input"
+                  value={forms[i] ?? ""}
+                  onChange={(e) => setForm(i, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    if (i === CONJUGATION_PRONOUNS.length - 1) onClose();
+                    else inputRefs.current[i + 1]?.focus();
+                  }}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                />
+              </div>
             </div>
           ))}
         </div>
@@ -65,10 +67,9 @@ function ConjugationPopup({ verb, pronouns, forms, onChange, onClose }: {
   );
 }
 
-/** A verb list where tapping one opens a small pronoun-by-pronoun form, Enter hopping from field to field. */
+/** A verb list where tapping one opens a small pronoun-by-pronoun form, Enter hopping from field to field — same card look as the Глаголы trainer's own conjugation drill. */
 export function ConjugationExercise({ exercise, answers, onFormsChange }: Props) {
   const [openVerb, setOpenVerb] = useState<string | null>(null);
-  const pronouns = exercise.pronouns?.length ? exercise.pronouns : FALLBACK_PRONOUNS;
 
   return (
     <div className="hw-verb-list">
@@ -79,11 +80,11 @@ export function ConjugationExercise({ exercise, answers, onFormsChange }: Props)
           <button
             key={verb}
             type="button"
-            className={`hw-verb-chip${filledCount === pronouns.length ? " done" : ""}`}
+            className={`hw-verb-chip${filledCount === CONJUGATION_PRONOUNS.length ? " done" : ""}`}
             onClick={() => setOpenVerb(verb)}
           >
             {verb}
-            {filledCount > 0 && <span className="hw-verb-count">{filledCount}/{pronouns.length}</span>}
+            {filledCount > 0 && <span className="hw-verb-count">{filledCount}/{CONJUGATION_PRONOUNS.length}</span>}
           </button>
         );
       })}
@@ -91,7 +92,6 @@ export function ConjugationExercise({ exercise, answers, onFormsChange }: Props)
       {openVerb && (
         <ConjugationPopup
           verb={openVerb}
-          pronouns={pronouns}
           forms={answers.conjugations[verbKey(exercise.number, openVerb)] ?? []}
           onChange={(forms) => onFormsChange(openVerb, forms)}
           onClose={() => setOpenVerb(null)}

@@ -614,7 +614,7 @@ function AppInner() {
    * answers, if any, come from user_lesson_progress the same way reading
    * position does for a book.
    */
-  async function handleOpenHomework(sharedBook: { id: string; title: string; metadata: Record<string, unknown> }) {
+  async function handleOpenHomework(sharedBook: { id: string; title: string; language: string; metadata: Record<string, unknown> }) {
     setReaderOrigin(section === "reader" ? readerOrigin : section);
     setOpeningBookId(sharedBook.id);
     try {
@@ -643,6 +643,7 @@ function AppInner() {
           description: String(sharedBook.metadata?.description ?? ""),
           sourceKind: String(sharedBook.metadata?.source_kind ?? ""),
           homeworkDate: String(sharedBook.metadata?.homework_date ?? ""),
+          targetLanguage: sharedBook.language,
           nativeLanguage: profile.nativeLanguage,
         },
         exercises,
@@ -1091,6 +1092,8 @@ function AppInner() {
           book={activeHomework.book}
           exercises={activeHomework.exercises}
           initialAnswers={activeHomework.initialAnswers}
+          cards={cards}
+          onAddCard={handleAddCard}
           onBack={() => { setActiveHomework(null); setSection(readerOrigin); }}
         />
       ) : section === "homework" ? (

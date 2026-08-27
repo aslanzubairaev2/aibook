@@ -35,7 +35,7 @@ type Props = {
   onBooksChange: (books: Book[]) => void;
   onOpenBook: (book: Book) => void;
   /** A saved homework set (metadata.lesson_kind === "homework") opens into its own interactive view, not the reader. */
-  onOpenHomework: (sharedBook: { id: string; title: string; metadata: Record<string, unknown> }) => void;
+  onOpenHomework: (sharedBook: { id: string; title: string; language: string; metadata: Record<string, unknown> }) => void;
   /** Book whose text is being fetched right now, so its tile can show a spinner. */
   openingBookId?: string | null;
   downloadTasks: Record<number, DownloadTask>;

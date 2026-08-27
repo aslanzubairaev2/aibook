@@ -40,12 +40,15 @@ type Props = {
    * that keeps being forgotten and skip the basics for one that is known.
    */
   wordProfile?: DiscussWordProfile;
+  /** mode "homework" only: the exercise being discussed, blanks and all — required for that mode, since it is what the model's no-spoiler rule is checked against. */
+  homeworkContext?: { instruction: string; items: string[] };
 };
 
 const MODE_LABEL: Record<AiMode, string> = {
   word: "слово",
   phrase: "фраза",
   sentence: "предложение",
+  homework: "упражнение",
 };
 
 // Shown only until the model's own follow-ups arrive with its first answer.
@@ -55,6 +58,7 @@ const BASE_QUICK_PROMPTS: Record<AiMode, string[]> = {
   word: ["Как сказать «я …»", "Примеры из жизни", "Как запомнить"],
   phrase: ["Когда так говорят", "Сказать иначе", "Что ответить"],
   sentence: ["Скажи проще", "Разбери по частям", "Как ответить"],
+  homework: ["Объясни ещё раз проще", "Похожий пример", "На что обратить внимание"],
 };
 
 /** Which grammar table each button kind opens. */
@@ -93,6 +97,7 @@ export function DiscussAiModal({
   onAddExample,
   isHistoryLoading = false,
   wordProfile,
+  homeworkContext,
 }: Props) {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -287,6 +292,7 @@ export function DiscussAiModal({
         targetLanguage,
         learnerLevel: learnerLevel.summary,
         wordProfile,
+        homeworkContext,
         history: [],
         message: INITIAL_DISCUSS_REQUEST,
       });
@@ -335,6 +341,7 @@ export function DiscussAiModal({
         targetLanguage,
         learnerLevel: learnerLevel.summary,
         wordProfile,
+        homeworkContext,
         history: messages,
         message: fullText,
       });
@@ -350,7 +357,7 @@ export function DiscussAiModal({
     } finally {
       setIsSending(false);
     }
-  }, [isSending, quotedText, messages, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage, learnerLevel.summary, wordProfile]);
+  }, [isSending, quotedText, messages, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage, learnerLevel.summary, wordProfile, homeworkContext]);
 
   // Keep ref updated to prevent SpeechRecognition from getting stale values
   useEffect(() => {

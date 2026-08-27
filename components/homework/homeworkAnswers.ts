@@ -23,8 +23,14 @@ export function verbKey(exerciseNumber: number, verb: string): string {
   return `${exerciseNumber}:${verb}`;
 }
 
-/** No page ever leaves this unlabelled, but a cropped photo occasionally does. */
-export const FALLBACK_PRONOUNS = ["1", "2", "3", "4", "5", "6"];
+/**
+ * The 6 subject markers a conjugation field is labelled with — same fixed set
+ * components/verbs/VerbsQuiz.tsx already uses for its own conjugation drill
+ * (that component doesn't localize them per target language either). Used
+ * unconditionally rather than trusting the photo extraction's own "pronouns"
+ * guess, which is exactly the kind of thing a page never actually varies.
+ */
+export const CONJUGATION_PRONOUNS = ["ich", "du", "er/sie/es", "wir", "ihr", "sie/Sie"];
 
 function isFilled(v: string | undefined): boolean {
   return (v ?? "").trim().length > 0;
@@ -37,9 +43,8 @@ export function computeHomeworkProgress(exercises: HomeworkExercise[], answers: 
 
   for (const exercise of exercises) {
     if (exercise.widget === "conjugation") {
-      const pronouns = exercise.pronouns?.length ? exercise.pronouns : FALLBACK_PRONOUNS;
       for (const verb of exercise.verbs ?? []) {
-        total += pronouns.length;
+        total += CONJUGATION_PRONOUNS.length;
         const forms = answers.conjugations[verbKey(exercise.number, verb)] ?? [];
         filled += forms.filter(isFilled).length;
       }

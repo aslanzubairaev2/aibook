@@ -1,14 +1,15 @@
 "use client";
 
-import { HelpCircle } from "lucide-react";
-import type { HomeworkExercise, HomeworkItem } from "@/lib/ai/buildHomeworkPrompt";
+import { useRef } from "react";
+import type { HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
 import { itemKey, type HomeworkAnswers } from "./homeworkAnswers";
+import { TappableText } from "./TappableText";
 
 type Props = {
   exercise: HomeworkExercise;
   answers: HomeworkAnswers;
   onItemChange: (itemNumber: number, value: string) => void;
-  onHelp: (item: HomeworkItem) => void;
+  onWordTap: (word: string, contextSentence: string) => void;
 };
 
 /**
@@ -18,13 +19,17 @@ type Props = {
  * a real answer often needs the same word twice ("Wer ist das? — Das ist
  * Monika Weker, sie ist ...").
  */
-export function ComposeExercise({ exercise, answers, onItemChange, onHelp }: Props) {
+export function ComposeExercise({ exercise, answers, onItemChange, onWordTap }: Props) {
+  const items = exercise.items ?? [];
+  const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
+
   return (
     <div className="hw-items">
-      {(exercise.items ?? []).map((item) => {
+      {items.map((item, index) => {
         const key = itemKey(exercise.number, item.number);
         const value = typeof answers.items[key] === "string" ? answers.items[key] as string : "";
         const bank = item.bank ?? exercise.bank ?? [];
+        const isLast = index === items.length - 1;
 
         const tap = (word: string) => {
           const sep = value && !value.endsWith(" ") ? " " : "";
@@ -35,16 +40,19 @@ export function ComposeExercise({ exercise, answers, onItemChange, onHelp }: Pro
           <div key={item.number} className="hw-item hw-item-block">
             <div className="hw-item-row">
               <span className="hw-item-number">{item.number}.</span>
-              <p className="hw-item-text">{item.text}</p>
-              <button type="button" className="hw-help-btn" onClick={() => onHelp(item)} aria-label="Помощь ИИ" title="Помощь ИИ">
-                <HelpCircle size={15} />
-              </button>
+              <p className="hw-item-text"><TappableText text={item.text} onWordTap={onWordTap} /></p>
             </div>
             <input
+              ref={(el) => { inputRefs.current[index] = el; }}
               type="text"
               className="hw-compose-input"
               value={value}
               onChange={(e) => onItemChange(item.number, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || isLast) return;
+                e.preventDefault();
+                inputRefs.current[index + 1]?.focus();
+              }}
               placeholder="Ответ — тапайте слова или пишите сами"
               autoComplete="off"
               autoCorrect="off"

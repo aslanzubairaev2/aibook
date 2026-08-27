@@ -13,6 +13,11 @@ import { AI_CONFIG } from "@/lib/config";
 import { pickCoverColor } from "@/lib/db/lessonStore";
 import type { HomeworkLesson } from "@/lib/ai/buildHomeworkPrompt";
 
+function formatRuDate(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  return y && m && d ? `${d}.${m}.${y}` : iso;
+}
+
 /** Flattened text for shared_book_chapters.plain_text and the char_count column — search and length only, never rendered. */
 function homeworkToPlainText(lesson: HomeworkLesson): string {
   const lines: string[] = [];
@@ -46,6 +51,12 @@ export async function saveHomeworkLesson(
   const { lesson } = input;
   const plainText = homeworkToPlainText(lesson);
   const sourceId = `generated_${crypto.randomUUID()}`;
+  // "УПРАЖНЕНИЯ" (whatever the model titled the page) tells the learner
+  // nothing when they have several of these in the list — the date the
+  // homework is actually for is the one thing that identifies it at a glance,
+  // so that becomes the card's title. The model's own title survives in
+  // metadata for reference, but is not shown as the title anywhere.
+  const title = `Урок от ${formatRuDate(input.homeworkDate)}`;
 
   const { data: bookData, error: bookError } = await admin
     .from("shared_books")
@@ -53,7 +64,7 @@ export async function saveHomeworkLesson(
       source_type: "generated",
       source_id: sourceId,
       owner_user_id: input.userId,
-      title: lesson.title,
+      title,
       author: "AI",
       language: input.targetLanguage,
       cefr_level: null,
@@ -64,7 +75,9 @@ export async function saveHomeworkLesson(
       metadata: {
         description: lesson.description,
         lesson_kind: "homework",
-        cover_color: pickCoverColor(lesson.title),
+        cover_color: pickCoverColor(title),
+        // What the model called the page — kept for reference, never shown as the title.
+        page_title: lesson.title,
         native_language: input.nativeLanguage,
         source_kind: lesson.sourceKind,
         homework_date: input.homeworkDate,

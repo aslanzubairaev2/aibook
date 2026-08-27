@@ -2,7 +2,7 @@
 
 import { Printer, X } from "lucide-react";
 import type { HomeworkExercise, HomeworkItem } from "@/lib/ai/buildHomeworkPrompt";
-import { FALLBACK_PRONOUNS, itemKey, verbKey, type HomeworkAnswers } from "./homeworkAnswers";
+import { CONJUGATION_PRONOUNS, itemKey, verbKey, type HomeworkAnswers } from "./homeworkAnswers";
 
 type Props = {
   title: string;
@@ -69,7 +69,7 @@ export function HomeworkPrintView({ title, sourceKind, homeworkDate, exercises, 
             {exercise.widget === "conjugation" && (
               <div className="hw-print-conjugations">
                 {(exercise.verbs ?? []).map((verb) => {
-                  const pronouns = exercise.pronouns?.length ? exercise.pronouns : FALLBACK_PRONOUNS;
+                  const pronouns = CONJUGATION_PRONOUNS;
                   const forms = answers.conjugations[verbKey(exercise.number, verb)] ?? [];
                   return (
                     <div key={verb} className="hw-print-verb">
@@ -155,8 +155,14 @@ const PRINT_STYLES = `
   }
 
   @media print {
+    /* Print only this overlay's subtree — otherwise the browser prints the
+       whole document, including HomeworkView sitting behind it (header, the
+       still-interactive form, bottom nav): position:fixed hides it on screen
+       but does nothing for the printed page, which lays out full flow. */
+    body * { visibility: hidden; }
+    .hw-print-overlay, .hw-print-overlay * { visibility: visible; }
+    .hw-print-overlay { position: absolute; inset: 0; overflow: visible; }
     .no-print { display: none !important; }
-    .hw-print-overlay { position: static; overflow: visible; }
     .hw-print-page { max-width: none; padding: 0; }
   }
 `;

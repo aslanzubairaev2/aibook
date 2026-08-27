@@ -14,6 +14,8 @@ export type DiscussRequest = {
   learnerLevel?: string;
   /** How well this learner already knows this item, from its card's schedule. */
   wordProfile?: DiscussWordProfile;
+  /** mode "homework" only: the exercise being discussed, blanks and all. */
+  homeworkContext?: { instruction: string; items: string[] };
   history: DiscussMessage[];
   message: string;
 };
