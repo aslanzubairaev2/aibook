@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, type AnswerVerdict } from "@/lib/srs/activeTraining";
@@ -48,6 +48,7 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
   const [results, setResults] = useState(EMPTY_RESULTS);
   const [mistakes, setMistakes] = useState<DictionaryEntry[]>([]);
   const [correctCount, setCorrectCount] = useState(0);
+  const firstInputRef = useRef<HTMLInputElement>(null);
 
   const entry = queue[index];
   const done = index >= queue.length;
@@ -56,6 +57,12 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
     if (!entry) return [];
     return (["praeteritum", "partizip2"] as FieldKey[]).filter((f) => Boolean(entry.forms?.[f]));
   }, [entry]);
+
+  // A fresh word: put the cursor straight into the first field, on a computer,
+  // so typing can start without reaching for the mouse first.
+  useEffect(() => {
+    firstInputRef.current?.focus();
+  }, [entry?.id]);
 
   function submit() {
     if (!entry || revealed) return;
@@ -130,14 +137,25 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
         </div>
       </header>
 
-      <div className="verb-quiz-card">
+      <div
+        className="verb-quiz-card"
+        onKeyDown={(e) => {
+          // Enter always means "the primary action", wherever focus is —
+          // an input, or the mic button next to it (which would otherwise
+          // just toggle itself, since Enter is its native activation key).
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          if (revealed) nextItem();
+          else submit();
+        }}
+      >
         <div className="verb-quiz-infinitive">
           <span>{entry.headword}</span>
           <SpeakButton text={entry.headword} lang={targetLanguage} size={16} />
         </div>
         {entry.translation && <p className="verb-quiz-translation">{entry.translation}</p>}
 
-        {fields.map((f) => {
+        {fields.map((f, i) => {
           const result = results[f];
           return (
             <div key={f} className="verb-quiz-field">
@@ -145,15 +163,11 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
               <div className="verb-quiz-input-row">
                 <input
                   id={`verb-quiz-${f}`}
+                  ref={i === 0 ? firstInputRef : undefined}
                   type="text"
                   value={inputs[f]}
                   disabled={revealed}
                   onChange={(e) => setInputs((prev) => ({ ...prev, [f]: e.target.value }))}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter") return;
-                    if (revealed) nextItem();
-                    else submit();
-                  }}
                   autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="off"
