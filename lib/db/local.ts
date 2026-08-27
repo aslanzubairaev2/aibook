@@ -1,6 +1,6 @@
 import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage, Flashcard, GrammarTable, PackSort, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, TrainVariant, UserProfile } from "@/lib/types";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
-import { DEFAULT_QUIZ_MODES, QUIZ_MODE_ORDER, type QuizMode } from "@/lib/verbsQuizModes";
+import { CONJUGATION_TENSE_ORDER, DEFAULT_CONJUGATION_TENSES, DEFAULT_QUIZ_MODES, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 
 const BOOKS_KEY = "aibook_books";
@@ -19,6 +19,7 @@ const VERBS_DICT_CACHE_KEY = "aibook_verbs_dict_cache";
 const VERBS_OPEN_GROUPS_KEY = "aibook_verbs_open_groups";
 const VERBS_HIDE_FORMS_KEY = "aibook_verbs_hide_forms";
 const VERBS_QUIZ_MODES_KEY = "aibook_verbs_quiz_modes";
+const VERBS_CONJUGATION_TENSES_KEY = "aibook_verbs_conjugation_tenses";
 
 let activeNamespace = "guest";
 // The stored namespace is read once. Re-reading it inside getNsKey meant a
@@ -658,6 +659,30 @@ export function getLocalVerbsQuizModes(): Set<QuizMode> {
 export function saveLocalVerbsQuizModes(modes: Set<QuizMode>): void {
   try {
     localStorage.setItem(getNsKey(VERBS_QUIZ_MODES_KEY), JSON.stringify([...modes]));
+  } catch {
+    // silently fail
+  }
+}
+
+// Which tense(s) the "Спряжения" drill covers. Defaults to just present, same
+// reasoning as the modes above — the original single-tense drill for anyone
+// who never opens this setting.
+export function getLocalConjugationTenses(): Set<ConjugationTense> {
+  if (typeof window === "undefined") return new Set(DEFAULT_CONJUGATION_TENSES);
+  try {
+    const raw = localStorage.getItem(getNsKey(VERBS_CONJUGATION_TENSES_KEY));
+    if (!raw) return new Set(DEFAULT_CONJUGATION_TENSES);
+    const arr = JSON.parse(raw) as string[];
+    const valid = Array.isArray(arr) ? arr.filter((t): t is ConjugationTense => CONJUGATION_TENSE_ORDER.includes(t as ConjugationTense)) : [];
+    return new Set(valid.length ? valid : DEFAULT_CONJUGATION_TENSES);
+  } catch {
+    return new Set(DEFAULT_CONJUGATION_TENSES);
+  }
+}
+
+export function saveLocalConjugationTenses(tenses: Set<ConjugationTense>): void {
+  try {
+    localStorage.setItem(getNsKey(VERBS_CONJUGATION_TENSES_KEY), JSON.stringify([...tenses]));
   } catch {
     // silently fail
   }

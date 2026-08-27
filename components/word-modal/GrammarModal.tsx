@@ -55,7 +55,7 @@ function GrammarLine({ form, native, lang }: { form: string; native?: string; la
 // Coerce whatever the model put in a matrix cell into a clean person list.
 // The AI does not always nest exactly as asked, so we defend against strings,
 // alternate key names, and {persons:[…]} wrappers rather than crashing.
-function toRows(cell: unknown): { form: string; native: string }[] {
+export function toRows(cell: unknown): { form: string; native: string }[] {
   if (Array.isArray(cell)) {
     return cell
       .map((p) => {

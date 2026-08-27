@@ -11,8 +11,8 @@ import { isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
 import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
-import { getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes } from "@/lib/db/local";
-import { QUIZ_MODE_HINT, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type QuizMode } from "@/lib/verbsQuizModes";
+import { getLocalConjugationTenses, getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, saveLocalConjugationTenses, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes } from "@/lib/db/local";
+import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_HINT, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import type { UserProfile } from "@/lib/types";
 
 type Props = {
@@ -63,6 +63,9 @@ export function VerbsView({ profile, onBack }: Props) {
   // original forms drill so nobody who never opens this gets a bigger session.
   const [quizModes, setQuizModes] = useState<Set<QuizMode>>(() => getLocalVerbsQuizModes());
   const [modesOpen, setModesOpen] = useState(false);
+  // Which tense(s) the conjugation drill covers — only meaningful once
+  // "Спряжения" is one of the active modes above.
+  const [conjugationTenses, setConjugationTenses] = useState<Set<ConjugationTense>>(() => getLocalConjugationTenses());
   // Covers the Präteritum/Partizip II columns so the table becomes a self-test
   // on the spot — the infinitive and its translation stay visible to ask from.
   const [hideForms, setHideForms] = useState(() => getLocalVerbsHideForms());
@@ -187,6 +190,18 @@ export function VerbsView({ profile, onBack }: Props) {
     });
   }
 
+  function toggleConjugationTense(tense: ConjugationTense) {
+    setConjugationTenses((prev) => {
+      const next = new Set(prev);
+      if (next.has(tense)) next.delete(tense);
+      else next.add(tense);
+      // At least one tense, same reasoning as the modes themselves.
+      const safe = next.size ? next : new Set<ConjugationTense>(["present"]);
+      saveLocalConjugationTenses(safe);
+      return safe;
+    });
+  }
+
   const toggleGroup = (key: string) =>
     setOpenGroups((prev) => {
       const next = new Set(prev);
@@ -272,6 +287,7 @@ export function VerbsView({ profile, onBack }: Props) {
         targetLanguage={profile.targetLanguage}
         nativeLanguage={profile.nativeLanguage}
         modes={quizModes}
+        conjugationTenses={conjugationTenses}
         onExit={() => setQuizVerbs(null)}
       />
     );
@@ -377,6 +393,27 @@ export function VerbsView({ profile, onBack }: Props) {
                   Несколько режимов — по каждому слову подряд: {QUIZ_MODE_ORDER.map((m) => QUIZ_MODE_LABEL[m]).join(" → ")}.
                 </p>
               </div>
+
+              {quizModes.has("conjugation") && (
+                <div className="filter-group">
+                  <div className="filter-group-label">Времена для спряжений</div>
+                  <div className="filter-chips">
+                    {CONJUGATION_TENSE_ORDER.map((tense) => (
+                      <button
+                        key={tense}
+                        type="button"
+                        className={`filter-chip ${conjugationTenses.has(tense) ? "active" : ""}`}
+                        onClick={() => toggleConjugationTense(tense)}
+                      >
+                        {CONJUGATION_TENSE_LABEL[tense]}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="verb-modes-hint">
+                    Настоящее — короткая форма («singe»). Прошедшее и будущее — целой фразой («ich habe gesungen», «ich werde singen»), каждое отдельным шагом.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

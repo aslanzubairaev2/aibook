@@ -8,26 +8,40 @@ import { fetchGrammar } from "@/lib/ai/grammar";
 import { fetchVerbPhrase } from "@/lib/ai/verbPhrase";
 import { makeGrammarCacheKey, makeVerbPhraseCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalGrammar, getLocalVerbPhrase, saveLocalGrammar, saveLocalVerbPhrase } from "@/lib/db/local";
-import { QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type QuizMode } from "@/lib/verbsQuizModes";
+import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
+import { toRows } from "@/components/word-modal/GrammarModal";
 
 type Props = {
   verbs: DictionaryEntry[];
   targetLanguage: string;
   nativeLanguage: string;
   modes: Set<QuizMode>;
+  conjugationTenses: Set<ConjugationTense>;
   onExit: () => void;
 };
 
 type QuizField = { key: string; label: string; expected: string };
 type FieldResult = { verdict: AnswerVerdict; expected: string };
 
+// 1sg, 2sg, 3sg, 1pl, 2pl, 3pl — the fixed person order the grammar prompt
+// always uses, so the full matrix's rows (which give a whole phrase, not a
+// separate pronoun field like the brief table does) can still be labelled.
+const CONJUGATION_PRONOUNS = ["ich", "du", "er/sie/es", "wir", "ihr", "sie/Sie"];
+// Row index of each tense in the full grammar matrix (Präteritum, Perfekt,
+// Präsens, Future) — "past" here means Perfekt, the everyday spoken past;
+// Präteritum is what the "Формы" drill already covers on its own.
+const CONJUGATION_TENSE_ROW: Record<ConjugationTense, number> = { past: 1, present: 2, future: 3 };
+const AFFIRMATION_COLUMN = 1;
+
 type QuizStep = {
-  /** `${entry.id}:${mode}` — stable across reshuffles, so React keys and refs track the right step. */
+  /** `${entry.id}:${mode}[:tense]` — stable across reshuffles, so React keys and refs track the right step. */
   key: string;
   entry: DictionaryEntry;
   mode: QuizMode;
+  /** Which tense a conjugation step drills — every conjugation step has exactly one. */
+  tense?: ConjugationTense;
   /** null while a conjugation/phrase step's AI data is still loading, [] if it failed and the step should be skipped. */
   fields: QuizField[] | null;
   /** The Russian sentence a phrase step asks to translate — the entry's own once it has one, an AI-generated one once fetched. */
@@ -49,7 +63,7 @@ function shuffle<T>(items: T[]): T[] {
  * verb that has nothing for it to ask (no stored translation, no example
  * sentence) rather than asking an unanswerable question.
  */
-function stepsForEntry(entry: DictionaryEntry, modes: Set<QuizMode>): QuizStep[] {
+function stepsForEntry(entry: DictionaryEntry, modes: Set<QuizMode>, conjugationTenses: Set<ConjugationTense>): QuizStep[] {
   const steps: QuizStep[] = [];
   for (const mode of QUIZ_MODE_ORDER) {
     if (!modes.has(mode)) continue;
@@ -62,7 +76,12 @@ function stepsForEntry(entry: DictionaryEntry, modes: Set<QuizMode>): QuizStep[]
       if (entry.forms?.partizip2) fields.push({ key: "partizip2", label: "Partizip II", expected: entry.forms.partizip2 });
       if (fields.length) steps.push({ key: `${entry.id}:forms`, entry, mode, fields });
     } else if (mode === "conjugation") {
-      steps.push({ key: `${entry.id}:conjugation`, entry, mode, fields: null });
+      // Each selected tense is its own step (up to 6 fields, same as the
+      // original present-only drill) rather than one step with as many as 18.
+      for (const tense of CONJUGATION_TENSE_ORDER) {
+        if (!conjugationTenses.has(tense)) continue;
+        steps.push({ key: `${entry.id}:conjugation:${tense}`, entry, mode, tense, fields: null });
+      }
     } else if (mode === "phrase") {
       const example = entry.example?.trim();
       const exampleTranslation = entry.example_translation?.trim();
@@ -77,8 +96,8 @@ function stepsForEntry(entry: DictionaryEntry, modes: Set<QuizMode>): QuizStep[]
   return steps;
 }
 
-function buildQueue(verbs: DictionaryEntry[], modes: Set<QuizMode>): QuizStep[] {
-  return shuffle(verbs).flatMap((entry) => stepsForEntry(entry, modes));
+function buildQueue(verbs: DictionaryEntry[], modes: Set<QuizMode>, conjugationTenses: Set<ConjugationTense>): QuizStep[] {
+  return shuffle(verbs).flatMap((entry) => stepsForEntry(entry, modes, conjugationTenses));
 }
 
 /**
@@ -88,8 +107,8 @@ function buildQueue(verbs: DictionaryEntry[], modes: Set<QuizMode>): QuizStep[] 
  * flashcard schedule — this is a drill on top of the dictionary the learner
  * already has, not a second spaced-repetition track for the same words.
  */
-export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit }: Props) {
-  const [queue, setQueue] = useState<QuizStep[]>(() => buildQueue(verbs, modes));
+export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, onExit }: Props) {
+  const [queue, setQueue] = useState<QuizStep[]>(() => buildQueue(verbs, modes, conjugationTenses));
   const [index, setIndex] = useState(0);
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState(false);
@@ -142,28 +161,66 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
 
     (async () => {
       if (step.mode === "conjugation") {
-        const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "brief", targetLanguage, nativeLanguage);
-        let table = getLocalGrammar(cacheKey);
-        if (!table) {
-          try {
-            table = await fetchGrammar({
-              word: entry.headword,
-              lemma: entry.lemma,
-              posTag: "verb",
-              targetLanguage,
-              nativeLanguage,
-              detail: "brief",
-            });
-            saveLocalGrammar(cacheKey, table);
-          } catch {
-            table = null;
+        const tense = step.tense ?? "present";
+        let fields: QuizField[];
+
+        if (tense === "present") {
+          // The original drill: a bare conjugated word ("singe"), from the
+          // same cheap "brief" table the grammar modal's "Кратко" tab already
+          // fills and caches — unchanged from before tenses existed.
+          const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "brief", targetLanguage, nativeLanguage);
+          let table = getLocalGrammar(cacheKey);
+          if (!table) {
+            try {
+              table = await fetchGrammar({
+                word: entry.headword,
+                lemma: entry.lemma,
+                posTag: "verb",
+                targetLanguage,
+                nativeLanguage,
+                detail: "brief",
+              });
+              saveLocalGrammar(cacheKey, table);
+            } catch {
+              table = null;
+            }
           }
+          if (cancelled) return;
+          const cells = table?.sections?.[0]?.cells ?? [];
+          fields = cells
+            .filter((c) => c.pronoun?.trim() && c.form.trim())
+            .map((c) => ({ key: c.pronoun!, label: c.pronoun!, expected: c.form }));
+        } else {
+          // Past (Perfekt) and future have no dedicated "brief" shape — pull
+          // them from the same 4×3 matrix the "Полная" grammar view uses and
+          // caches, one row of it. Each cell there is already the complete
+          // phrase ("ich habe gesungen"), not a bare word, since that is what
+          // the full table actually gives.
+          const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "full", targetLanguage, nativeLanguage);
+          let table = getLocalGrammar(cacheKey);
+          if (!table) {
+            try {
+              table = await fetchGrammar({
+                word: entry.headword,
+                lemma: entry.lemma,
+                posTag: "verb",
+                targetLanguage,
+                nativeLanguage,
+                detail: "full",
+              });
+              saveLocalGrammar(cacheKey, table);
+            } catch {
+              table = null;
+            }
+          }
+          if (cancelled) return;
+          const rowIndex = CONJUGATION_TENSE_ROW[tense];
+          const cell = table?.matrix?.cells?.[rowIndex]?.[AFFIRMATION_COLUMN];
+          fields = toRows(cell)
+            .map((p, i) => ({ key: `${tense}-${i}`, label: CONJUGATION_PRONOUNS[i] ?? p.form, expected: p.form }))
+            .filter((f) => f.expected);
         }
-        if (cancelled) return;
-        const cells = table?.sections?.[0]?.cells ?? [];
-        const fields: QuizField[] = cells
-          .filter((c) => c.pronoun?.trim() && c.form.trim())
-          .map((c) => ({ key: c.pronoun!, label: c.pronoun!, expected: c.form }));
+
         if (fields.length === 0) {
           // No cached table and the AI call failed or returned nothing usable
           // — nothing left to ask, so skip past it rather than leaving the
@@ -291,7 +348,10 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
           <ArrowLeft size={20} />
         </button>
         <div>
-          <p className="eyebrow">Глаголы · тренировка · {QUIZ_MODE_LABEL[step.mode]}</p>
+          <p className="eyebrow">
+            Глаголы · тренировка · {QUIZ_MODE_LABEL[step.mode]}
+            {step.tense ? ` · ${CONJUGATION_TENSE_LABEL[step.tense]}` : ""}
+          </p>
           <h1>{index + 1} / {queue.length}</h1>
         </div>
       </header>
@@ -326,7 +386,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, onExit
             <div className="verb-quiz-loading"><Loader2 className="spin" size={18} /> Загружаю спряжение...</div>
           )
         ) : (
-          <div className={isConjugation ? "verb-quiz-conjugation-grid" : undefined}>
+          <div className={isConjugation && step.tense === "present" ? "verb-quiz-conjugation-grid" : undefined}>
             {step.fields.map((field, i) => {
               const result = results[field.key];
               return (
