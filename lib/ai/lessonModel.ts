@@ -22,6 +22,7 @@ import { GoogleGenAI, Type, type GenerateContentResponse, type Part } from "@goo
 import { AI_CONFIG } from "@/lib/config";
 import { parseModelJson } from "./jsonResponse";
 import { parseGeneratedLesson, type GeneratedLesson } from "./buildLessonPrompt";
+import { HOMEWORK_SCHEMA } from "./buildHomeworkPrompt";
 
 /**
  * Room for a dense page of text plus the glossary around it. Well under the
@@ -287,6 +288,37 @@ export async function runDictionaryPrompt(
     apiKey,
     parts: [{ inlineData: { data: imageBase64, mimeType } }, prompt],
     schema: DICTIONARY_SCHEMA,
+    maxOutputTokens: PAGE_MAX_OUTPUT_TOKENS,
+    temperature: 0,
+    think: false,
+  });
+
+  if (!result.ok) return { ok: false, error: result.error, status: result.status };
+  return { ok: true, data: result.value, truncated: result.repaired };
+}
+
+// ─── Reading a photo into a homework exercise set ────────────────────────────
+
+/**
+ * A whole page of exercises in one multimodal call, no second step.
+ *
+ * Unlike the document flow (read, then rewrite/translate) there is nothing to
+ * rewrite here — the page is worked as printed, in its own language — so one
+ * call is enough. Thinking stays off and temperature at 0 for the same reason
+ * as the plain image read: this is transcription-and-structure, not
+ * composition, and the one rule that matters (never fill in an answer) holds
+ * better the less the model improvises.
+ */
+export async function runHomeworkPrompt(
+  apiKey: string,
+  prompt: string,
+  imageBase64: string,
+  mimeType: string,
+): Promise<ImageModelResult> {
+  const result = await callJson({
+    apiKey,
+    parts: [{ inlineData: { data: imageBase64, mimeType } }, prompt],
+    schema: HOMEWORK_SCHEMA,
     maxOutputTokens: PAGE_MAX_OUTPUT_TOKENS,
     temperature: 0,
     think: false,
