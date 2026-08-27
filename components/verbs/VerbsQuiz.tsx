@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
-import { checkTypedAnswer, type AnswerVerdict } from "@/lib/srs/activeTraining";
+import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton } from "@/components/discover/DictateButton";
 
@@ -191,8 +191,12 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
                   onText={(text) => setInputs((prev) => ({ ...prev, [f]: text }))}
                 />
               </div>
-              {revealed && result?.verdict === "wrong" && (
-                <span className="verb-quiz-expected">{result.expected}</span>
+              {revealed && result && result.verdict !== "correct" && (
+                <span className={`verb-quiz-expected ${result.verdict}`}>
+                  {diffExpected(inputs[f], result.expected).map((seg, si) => (
+                    <span key={si} className={seg.changed ? "verb-quiz-diff" : undefined}>{seg.text}</span>
+                  ))}
+                </span>
               )}
             </div>
           );

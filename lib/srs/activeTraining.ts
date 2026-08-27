@@ -201,6 +201,58 @@ export function checkTypedAnswer(input: string, expected: string): AnswerCheck {
   return { verdict: "wrong" };
 }
 
+export type DiffSegment = { text: string; changed: boolean };
+
+/**
+ * Points at exactly the letters that separate what the learner typed from the
+ * correct answer — the missing "c" in "geschickt", the umlaut left off "schön"
+ * — instead of leaving them to compare two words by eye and guess. Alignment
+ * runs case-insensitively (a longest-common-subsequence match), but every
+ * returned segment carries `expected`'s own original characters, so accents
+ * and capitalisation still display exactly as they should be written.
+ */
+export function diffExpected(given: string, expected: string): DiffSegment[] {
+  const a = given.trim().toLowerCase();
+  const b = expected;
+  const bLower = b.toLowerCase();
+  const n = a.length;
+  const m = b.length;
+
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = a[i - 1] === bLower[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  // Backtrack once to mark which of `expected`'s characters took part in the
+  // match — anything left over is what actually differs.
+  const matched = new Array<boolean>(m).fill(false);
+  let i = n;
+  let j = m;
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === bLower[j - 1]) {
+      matched[j - 1] = true;
+      i--; j--;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+
+  const segments: DiffSegment[] = [];
+  for (let k = 0; k < m; k++) {
+    const changed = !matched[k];
+    const last = segments[segments.length - 1];
+    if (last && last.changed === changed) last.text += b[k];
+    else segments.push({ text: b[k], changed });
+  }
+  return segments;
+}
+
 // ─── Schedule preview ───────────────────────────────────────────────────────
 
 /** Days until the next review if the learner picks this grade — shown on the buttons. */
