@@ -49,6 +49,7 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
   const [mistakes, setMistakes] = useState<DictionaryEntry[]>([]);
   const [correctCount, setCorrectCount] = useState(0);
   const firstInputRef = useRef<HTMLInputElement>(null);
+  const primaryButtonRef = useRef<HTMLButtonElement>(null);
 
   const entry = queue[index];
   const done = index >= queue.length;
@@ -63,6 +64,15 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
   useEffect(() => {
     firstInputRef.current?.focus();
   }, [entry?.id]);
+
+  // Revealing disables every input — the one Enter was just pressed in among
+  // them — so the browser drops focus onto <body>, outside .verb-quiz-card.
+  // The next Enter then never reaches its keydown handler, since bubbling only
+  // goes from the event's target up through its ancestors, and body isn't a
+  // descendant of the card. Moving focus onto "Далее" keeps it inside.
+  useEffect(() => {
+    if (revealed) primaryButtonRef.current?.focus();
+  }, [revealed]);
 
   function submit() {
     if (!entry || revealed) return;
@@ -191,7 +201,7 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
         {!revealed ? (
           <button type="button" className="primary-btn" onClick={submit}>Проверить</button>
         ) : (
-          <button type="button" className="primary-btn" onClick={nextItem}>Далее</button>
+          <button type="button" ref={primaryButtonRef} className="primary-btn" onClick={nextItem}>Далее</button>
         )}
       </div>
     </section>
