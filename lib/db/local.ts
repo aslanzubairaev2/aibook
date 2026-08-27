@@ -1,5 +1,6 @@
 import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage, Flashcard, GrammarTable, PackSort, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, TrainVariant, UserProfile } from "@/lib/types";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
+import { DEFAULT_QUIZ_MODES, QUIZ_MODE_ORDER, type QuizMode } from "@/lib/verbsQuizModes";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 
 const BOOKS_KEY = "aibook_books";
@@ -16,6 +17,7 @@ const LAST_VIEW_KEY = "aibook_last_view";
 const VERBS_DICT_CACHE_KEY = "aibook_verbs_dict_cache";
 const VERBS_OPEN_GROUPS_KEY = "aibook_verbs_open_groups";
 const VERBS_HIDE_FORMS_KEY = "aibook_verbs_hide_forms";
+const VERBS_QUIZ_MODES_KEY = "aibook_verbs_quiz_modes";
 
 let activeNamespace = "guest";
 // The stored namespace is read once. Re-reading it inside getNsKey meant a
@@ -602,6 +604,30 @@ export function getLocalVerbsHideForms(): boolean {
 export function saveLocalVerbsHideForms(hidden: boolean): void {
   try {
     localStorage.setItem(getNsKey(VERBS_HIDE_FORMS_KEY), hidden ? "1" : "0");
+  } catch {
+    // silently fail
+  }
+}
+
+// Which drills the verb trainer runs. Defaults to just "forms" — the trainer
+// that existed before modes did — so nobody who never opens the settings gets
+// a heavier session than the one they already knew.
+export function getLocalVerbsQuizModes(): Set<QuizMode> {
+  if (typeof window === "undefined") return new Set(DEFAULT_QUIZ_MODES);
+  try {
+    const raw = localStorage.getItem(getNsKey(VERBS_QUIZ_MODES_KEY));
+    if (!raw) return new Set(DEFAULT_QUIZ_MODES);
+    const arr = JSON.parse(raw) as string[];
+    const valid = Array.isArray(arr) ? arr.filter((m): m is QuizMode => QUIZ_MODE_ORDER.includes(m as QuizMode)) : [];
+    return new Set(valid.length ? valid : DEFAULT_QUIZ_MODES);
+  } catch {
+    return new Set(DEFAULT_QUIZ_MODES);
+  }
+}
+
+export function saveLocalVerbsQuizModes(modes: Set<QuizMode>): void {
+  try {
+    localStorage.setItem(getNsKey(VERBS_QUIZ_MODES_KEY), JSON.stringify([...modes]));
   } catch {
     // silently fail
   }

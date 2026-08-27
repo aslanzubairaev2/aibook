@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, Loader2, Repeat, SlidersHorizontal, Wand2 } from "lucide-react";
+import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, ListChecks, Loader2, Repeat, SlidersHorizontal, Wand2 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { GrammarModal } from "@/components/word-modal/GrammarModal";
 import { SpeakButton } from "@/components/ui/SpeakButton";
@@ -11,7 +11,8 @@ import { isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
 import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
-import { getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups } from "@/lib/db/local";
+import { getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes } from "@/lib/db/local";
+import { QUIZ_MODE_HINT, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type QuizMode } from "@/lib/verbsQuizModes";
 import type { UserProfile } from "@/lib/types";
 
 type Props = {
@@ -58,6 +59,10 @@ export function VerbsView({ profile, onBack }: Props) {
 
   const [verbType, setVerbType] = useState<VerbType>("all");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Which drills a training session runs — persisted, defaulting to just the
+  // original forms drill so nobody who never opens this gets a bigger session.
+  const [quizModes, setQuizModes] = useState<Set<QuizMode>>(() => getLocalVerbsQuizModes());
+  const [modesOpen, setModesOpen] = useState(false);
   // Covers the Präteritum/Partizip II columns so the table becomes a self-test
   // on the spot — the infinitive and its translation stay visible to ask from.
   const [hideForms, setHideForms] = useState(() => getLocalVerbsHideForms());
@@ -169,6 +174,19 @@ export function VerbsView({ profile, onBack }: Props) {
     return result;
   }, [verbs, batches]);
 
+  function toggleMode(mode: QuizMode) {
+    setQuizModes((prev) => {
+      const next = new Set(prev);
+      if (next.has(mode)) next.delete(mode);
+      else next.add(mode);
+      // Never let the session end up with nothing to ask — fall back to the
+      // original drill rather than an empty quiz.
+      const safe = next.size ? next : new Set<QuizMode>(["forms"]);
+      saveLocalVerbsQuizModes(safe);
+      return safe;
+    });
+  }
+
   const toggleGroup = (key: string) =>
     setOpenGroups((prev) => {
       const next = new Set(prev);
@@ -252,6 +270,8 @@ export function VerbsView({ profile, onBack }: Props) {
       <VerbsQuiz
         verbs={quizVerbs}
         targetLanguage={profile.targetLanguage}
+        nativeLanguage={profile.nativeLanguage}
+        modes={quizModes}
         onExit={() => setQuizVerbs(null)}
       />
     );
@@ -305,6 +325,17 @@ export function VerbsView({ profile, onBack }: Props) {
               </button>
             )}
             <span className="dict-toolbar-count">{verbs.length} {verbNoun(verbs.length)}</span>
+            {allVerbs.length > 0 && (
+              <button
+                type="button"
+                className={`all-filter-toggle dict-filter-toggle ${modesOpen ? "active" : ""}`}
+                onClick={() => setModesOpen((v) => !v)}
+              >
+                <ListChecks size={15} /> Режимы
+                <span className="all-filter-count">{quizModes.size}</span>
+                <ChevronDown size={12} />
+              </button>
+            )}
             {verbs.length > 0 && (
               <button type="button" className="dict-train-btn verbs-train-all-btn" onClick={() => setQuizVerbs(verbs)}>
                 <Dumbbell size={14} /> Тренировать всё
@@ -321,6 +352,30 @@ export function VerbsView({ profile, onBack }: Props) {
                   <button type="button" className={`filter-chip ${verbType === "regular" ? "active" : ""}`} onClick={() => setVerbType("regular")}>Слабые</button>
                   <button type="button" className={`filter-chip ${verbType === "irregular" ? "active" : ""}`} onClick={() => setVerbType("irregular")}>Сильные</button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {modesOpen && allVerbs.length > 0 && (
+            <div className="all-filter-panel">
+              <div className="filter-group">
+                <div className="filter-group-label">Что тренировать</div>
+                <div className="filter-chips">
+                  {QUIZ_MODE_ORDER.map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`filter-chip ${quizModes.has(mode) ? "active" : ""}`}
+                      onClick={() => toggleMode(mode)}
+                      title={QUIZ_MODE_HINT[mode]}
+                    >
+                      {QUIZ_MODE_LABEL[mode]}
+                    </button>
+                  ))}
+                </div>
+                <p className="verb-modes-hint">
+                  Несколько режимов — по каждому слову подряд: {QUIZ_MODE_ORDER.map((m) => QUIZ_MODE_LABEL[m]).join(" → ")}.
+                </p>
               </div>
             </div>
           )}

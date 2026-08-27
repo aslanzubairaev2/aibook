@@ -2096,6 +2096,7 @@ textarea,
 .filter-chip.active { background: rgba(212, 168, 71, 0.15); border-color: var(--accent); color: var(--accent); }
 .filter-reset-btn { align-self: flex-start; font-size: 12px; font-weight: 700; color: var(--text-muted); background: transparent; border: none; cursor: pointer; padding: 4px 0; text-decoration: underline; }
 .filter-reset-btn:hover { color: var(--accent); }
+.verb-modes-hint { font-size: 11px; color: var(--text-muted); margin: 2px 0 0; }
 
 /* ── Verbs module: Infinitiv · Präteritum · Partizip II ─────────────────────
    The teacher's notebook table, read from the same dictionary entries the
@@ -2198,9 +2199,9 @@ textarea,
 }
 .verb-quiz-infinitive { display: flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 800; color: var(--text-primary); }
 .verb-quiz-translation { font-size: 13px; color: var(--text-muted); margin-top: -10px; }
-.verb-quiz-field { display: flex; flex-direction: column; gap: 5px; }
+.verb-quiz-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .verb-quiz-field label { font-size: 12px; font-weight: 700; color: var(--text-muted); }
-.verb-quiz-input-row { display: flex; align-items: center; gap: 8px; }
+.verb-quiz-input-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .verb-quiz-input-row .verb-quiz-input { flex: 1; min-width: 0; }
 .verb-quiz-input {
   height: 42px; padding: 0 12px; font-size: 15px;
@@ -2218,6 +2219,18 @@ textarea,
 .verb-quiz-expected.wrong { color: var(--red); }
 .verb-quiz-expected.almost { color: var(--text-muted); }
 .verb-quiz-diff { color: var(--accent-bright); font-weight: 800; text-decoration: underline; text-underline-offset: 2px; }
+
+/* The phrase-translation drill shows a Russian sentence in place of the
+   infinitive — the biggest, most prominent thing on the card, since it is
+   the question rather than context for one. */
+.verb-quiz-phrase-prompt { font-size: 18px; font-weight: 700; color: var(--text-primary); line-height: 1.35; }
+
+.verb-quiz-loading { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 14px; padding: 8px 0; }
+
+/* Conjugation asks for up to six short forms — a 2-column grid keeps that from
+   reading as a long vertical list of near-identical one-word fields. */
+.verb-quiz-conjugation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 10px; }
+@media (max-width: 380px) { .verb-quiz-conjugation-grid { grid-template-columns: 1fr; } }
 
 .verb-quiz-summary {
   display: flex; flex-direction: column; align-items: center; gap: 14px;
