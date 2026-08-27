@@ -366,7 +366,11 @@ export function VerbsView({ profile, onBack }: Props) {
                                         <span className="verb-infinitive">{entry.headword}</span>
                                         <SpeakButton text={entry.headword} lang={profile.targetLanguage} size={13} />
                                       </span>
-                                      {entry.translation && <span className="verb-translation">{entry.translation}</span>}
+                                      {entry.translation && (
+                                        <span className={`verb-translation${hideForms ? " verb-translation-hidden" : ""}`}>
+                                          {entry.translation}
+                                        </span>
+                                      )}
                                     </td>
                                     <td className={hideForms ? "verb-cell-hidden" : undefined}>
                                       {entry.forms?.praeteritum ? (

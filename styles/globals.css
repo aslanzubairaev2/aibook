@@ -2148,11 +2148,15 @@ textarea,
    infinitive: the form is what is being learned, "ich …" is how to say it. */
 .verb-form-example { display: block; font-size: 12px; color: var(--text-muted); margin-top: 1px; }
 
-/* Self-test: cover the answers, keep the infinitive and its translation to be
-   asked from. Blurred rather than blanked so the row keeps its height and the
-   learner can still reveal one by tapping it. */
+/* Self-test: cover the answers, keep the bare infinitive to be asked from.
+   Blurred rather than blanked so the row keeps its height and the learner
+   can still reveal one by hovering it. The translation is the easiest hint
+   there is, so it hides right along with the forms — recalling the meaning
+   from the German alone is as much the drill as recalling the conjugation. */
 .verb-cell-hidden > * { filter: blur(6px); opacity: 0.55; transition: filter 0.15s, opacity 0.15s; }
 .verb-cell-hidden:hover > *, .verb-cell-hidden:focus-within > * { filter: none; opacity: 1; }
+.verb-translation-hidden { filter: blur(6px); opacity: 0.55; transition: filter 0.15s, opacity 0.15s; }
+.verb-translation-hidden:hover { filter: none; opacity: 1; }
 
 /* Thumb-reachable controls that follow the scroll, clear of the bottom bar. */
 .verbs-fabs {
