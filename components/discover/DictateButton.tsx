@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Mic, MicOff } from "lucide-react";
 import { startRecognition, isSpeechRecognitionSupported, type Recognizer } from "@/lib/speech/recognition";
 
@@ -18,15 +18,20 @@ type Props = {
   disabled?: boolean;
 };
 
+/** Lets a caller start/stop listening without owning a click event — e.g. a
+ * keyboard shortcut on the text field this button sits beside. */
+export type DictateButtonHandle = { toggle: () => void };
+
 /** Renders nothing where the Web Speech API is missing (Firefox, older Safari). */
-export function DictateButton({ lang, title, onText, disabled }: Props) {
+export const DictateButton = forwardRef<DictateButtonHandle, Props>(function DictateButton(
+  { lang, title, onText, disabled },
+  ref,
+) {
   const [listening, setListening] = useState(false);
   const recognizerRef = useRef<Recognizer | null>(null);
   const supported = isSpeechRecognitionSupported();
 
   useEffect(() => () => { recognizerRef.current?.stop(); }, []);
-
-  if (!supported) return null;
 
   const toggle = () => {
     if (disabled) return;
@@ -44,6 +49,10 @@ export function DictateButton({ lang, title, onText, disabled }: Props) {
     if (rec) { recognizerRef.current = rec; setListening(true); }
   };
 
+  useImperativeHandle(ref, () => ({ toggle }));
+
+  if (!supported) return null;
+
   return (
     <button
       type="button"
@@ -56,4 +65,4 @@ export function DictateButton({ lang, title, onText, disabled }: Props) {
       {listening ? <MicOff size={16} /> : <Mic size={16} />}
     </button>
   );
-}
+});

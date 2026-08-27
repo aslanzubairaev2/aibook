@@ -5,7 +5,7 @@ import { ArrowLeft, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
 import { SpeakButton } from "@/components/ui/SpeakButton";
-import { DictateButton } from "@/components/discover/DictateButton";
+import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
 
 type Props = {
   verbs: DictionaryEntry[];
@@ -48,7 +48,8 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
   const [results, setResults] = useState(EMPTY_RESULTS);
   const [mistakes, setMistakes] = useState<DictionaryEntry[]>([]);
   const [correctCount, setCorrectCount] = useState(0);
-  const firstInputRef = useRef<HTMLInputElement>(null);
+  const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const dictateRefs = useRef<Array<DictateButtonHandle | null>>([]);
   const primaryButtonRef = useRef<HTMLButtonElement>(null);
 
   const entry = queue[index];
@@ -62,7 +63,7 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
   // A fresh word: put the cursor straight into the first field, on a computer,
   // so typing can start without reaching for the mouse first.
   useEffect(() => {
-    firstInputRef.current?.focus();
+    inputRefs.current[0]?.focus();
   }, [entry?.id]);
 
   // Revealing disables every input — the one Enter was just pressed in among
@@ -147,18 +148,7 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
         </div>
       </header>
 
-      <div
-        className="verb-quiz-card"
-        onKeyDown={(e) => {
-          // Enter always means "the primary action", wherever focus is —
-          // an input, or the mic button next to it (which would otherwise
-          // just toggle itself, since Enter is its native activation key).
-          if (e.key !== "Enter") return;
-          e.preventDefault();
-          if (revealed) nextItem();
-          else submit();
-        }}
-      >
+      <div className="verb-quiz-card">
         <div className="verb-quiz-infinitive">
           <span>{entry.headword}</span>
           <SpeakButton text={entry.headword} lang={targetLanguage} size={16} />
@@ -173,11 +163,25 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
               <div className="verb-quiz-input-row">
                 <input
                   id={`verb-quiz-${f}`}
-                  ref={i === 0 ? firstInputRef : undefined}
+                  ref={(el) => { inputRefs.current[i] = el; }}
                   type="text"
                   value={inputs[f]}
                   disabled={revealed}
                   onChange={(e) => setInputs((prev) => ({ ...prev, [f]: e.target.value }))}
+                  onKeyDown={(e) => {
+                    // Ctrl+Space starts dictation without leaving the keyboard —
+                    // the mic button beside this field, activated from the field.
+                    if (e.ctrlKey && e.code === "Space") {
+                      e.preventDefault();
+                      dictateRefs.current[i]?.toggle();
+                      return;
+                    }
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    const isLast = i === fields.length - 1;
+                    if (isLast) submit();
+                    else inputRefs.current[i + 1]?.focus();
+                  }}
                   autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="off"
@@ -185,8 +189,9 @@ export function VerbsQuiz({ verbs, targetLanguage, onExit }: Props) {
                   className={`verb-quiz-input${revealed && result ? ` ${result.verdict}` : ""}`}
                 />
                 <DictateButton
+                  ref={(el) => { dictateRefs.current[i] = el; }}
                   lang={targetLanguage}
-                  title="Сказать голосом"
+                  title="Сказать голосом (или Ctrl+Space в поле)"
                   disabled={revealed}
                   onText={(text) => setInputs((prev) => ({ ...prev, [f]: text }))}
                 />
