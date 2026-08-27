@@ -5,6 +5,7 @@ import { ArrowLeft, Camera, ChevronDown, Dumbbell, Loader2, Repeat, SlidersHoriz
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { entryToAnalysis, entryToCardText } from "@/components/dictionary/DictionaryPanel";
 import { WordModal } from "@/components/word-modal/WordModal";
+import { SpeakButton } from "@/components/ui/SpeakButton";
 import { VerbsQuiz } from "@/components/verbs/VerbsQuiz";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
@@ -402,11 +403,28 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
                                     onClick={() => openEntry(entry)}
                                   >
                                     <td className="verb-cell-infinitive">
-                                      <span className="verb-infinitive">{entry.headword}</span>
+                                      <span className="verb-form-row">
+                                        <span className="verb-infinitive">{entry.headword}</span>
+                                        <SpeakButton text={entry.headword} lang={profile.targetLanguage} size={13} />
+                                      </span>
                                       {entry.translation && <span className="verb-translation">{entry.translation}</span>}
                                     </td>
-                                    <td>{entry.forms?.praeteritum || "—"}</td>
-                                    <td>{partizipCell(entry)}</td>
+                                    <td>
+                                      {entry.forms?.praeteritum ? (
+                                        <span className="verb-form-row">
+                                          <span>{praeteritumFirstPerson(entry)}</span>
+                                          <SpeakButton text={praeteritumFirstPerson(entry)} lang={profile.targetLanguage} size={13} />
+                                        </span>
+                                      ) : "—"}
+                                    </td>
+                                    <td>
+                                      {entry.forms?.partizip2 ? (
+                                        <span className="verb-form-row">
+                                          <span>{partizipFirstPerson(entry)}</span>
+                                          <SpeakButton text={partizipFirstPerson(entry)} lang={profile.targetLanguage} size={13} />
+                                        </span>
+                                      ) : "—"}
+                                    </td>
                                   </tr>
                                 );
                               })}
@@ -496,14 +514,19 @@ export function VerbsView({ profile, cards, onAddCard, onBack }: Props) {
   );
 }
 
-/** «ist geschwommen» / «hat gemacht» — the auxiliary is half of what Partizip II is for. */
-function partizipCell(entry: DictionaryEntry): string {
+// Präteritum's 1st and 3rd person singular are always identical in German
+// ("ich redete" / "er redete"), so the stored form only needs the pronoun.
+function praeteritumFirstPerson(entry: DictionaryEntry): string {
+  const pr = (entry.forms?.praeteritum || "").trim();
+  return pr ? `ich ${pr}` : "";
+}
+
+/** «ich bin geschwommen» / «ich habe gemacht» — a model sentence, not just the bare participle. */
+function partizipFirstPerson(entry: DictionaryEntry): string {
   const p2 = (entry.forms?.partizip2 || "").trim();
-  if (!p2) return "—";
+  if (!p2) return "";
   const aux = (entry.forms?.hilfsverb || "").trim().toLowerCase();
-  if (aux === "sein") return `ist ${p2}`;
-  if (aux === "haben") return `hat ${p2}`;
-  return p2;
+  return aux === "sein" ? `ich bin ${p2}` : `ich habe ${p2}`;
 }
 
 function verbNoun(n: number): string {

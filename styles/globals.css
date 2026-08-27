@@ -2118,7 +2118,7 @@ textarea,
 .verb-batch-train-btn { width: calc(100% - 28px); margin: 0 14px 12px; }
 
 .verb-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-top: 1px solid var(--border); }
-.verb-table { width: 100%; min-width: 420px; border-collapse: collapse; }
+.verb-table { width: 100%; min-width: 480px; border-collapse: collapse; }
 .verb-table thead th {
   text-align: left; font-size: 11px; font-weight: 800; text-transform: uppercase;
   letter-spacing: 0.03em; color: var(--text-muted);
@@ -2136,6 +2136,12 @@ textarea,
 .verb-cell-infinitive { display: flex; flex-direction: column; gap: 1px; }
 .verb-infinitive { font-weight: 700; }
 .verb-translation { font-size: 12px; color: var(--text-muted); }
+
+/* Infinitiv, Präteritum and Partizip II each pair their text with a speak
+   button — the pronunciation the learner actually needs is the whole model
+   phrase ("ich redete", "ich habe geredet"), not just the bare form. */
+.verb-form-row { display: flex; align-items: center; gap: 6px; }
+.verb-form-row .speak-btn { flex-shrink: 0; }
 
 /* Self-test drill: session-only, not part of the SM-2 flashcard schedule. */
 .verb-quiz-card {
