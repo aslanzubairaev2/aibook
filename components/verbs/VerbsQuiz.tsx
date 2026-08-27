@@ -29,11 +29,21 @@ type FieldResult = { verdict: AnswerVerdict; expected: string };
 // always uses, so the full matrix's rows (which give a whole phrase, not a
 // separate pronoun field like the brief table does) can still be labelled.
 const CONJUGATION_PRONOUNS = ["ich", "du", "er/sie/es", "wir", "ihr", "sie/Sie"];
-// Row index of each tense in the full grammar matrix (Präteritum, Perfekt,
-// Präsens, Future) — "past" here means Perfekt, the everyday spoken past;
-// Präteritum is what the "Формы" drill already covers on its own.
-const CONJUGATION_TENSE_ROW: Record<ConjugationTense, number> = { past: 1, present: 2, future: 3 };
+// Row index of each tense in the full grammar matrix: Präteritum, Perfekt,
+// Präsens, Future, in that fixed order.
+const CONJUGATION_TENSE_ROW: Record<ConjugationTense, number> = { preteritum: 0, perfekt: 1, present: 2, future: 3 };
 const AFFIRMATION_COLUMN = 1;
+
+// The full matrix writes each cell as a complete sentence starting with its
+// subject ("ich habe gesungen") — but the field's own label already says
+// "ich", so repeating it in the answer would just be retyping the label.
+// The person is always the sentence's first word in an affirmative statement,
+// so dropping it is a plain "cut the first token" rather than needing to know
+// which exact pronoun the model chose for 3rd person (er/sie/es).
+function stripLeadingPronoun(phrase: string): string {
+  const parts = phrase.trim().split(/\s+/);
+  return parts.slice(1).join(" ");
+}
 
 type QuizStep = {
   /** `${entry.id}:${mode}[:tense]` — stable across reshuffles, so React keys and refs track the right step. */
@@ -191,11 +201,12 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
             .filter((c) => c.pronoun?.trim() && c.form.trim())
             .map((c) => ({ key: c.pronoun!, label: c.pronoun!, expected: c.form }));
         } else {
-          // Past (Perfekt) and future have no dedicated "brief" shape — pull
-          // them from the same 4×3 matrix the "Полная" grammar view uses and
-          // caches, one row of it. Each cell there is already the complete
-          // phrase ("ich habe gesungen"), not a bare word, since that is what
-          // the full table actually gives.
+          // Präteritum, Perfekt and future have no dedicated "brief" shape —
+          // pull them from the same 4×3 matrix the "Полная" grammar view uses
+          // and caches, one row of it. Each cell there is a complete sentence
+          // ("ich habe gesungen"); the leading pronoun is stripped since the
+          // field's own label already says it — what is actually being tested
+          // is the rest ("habe gesungen"), auxiliary included.
           const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "full", targetLanguage, nativeLanguage);
           let table = getLocalGrammar(cacheKey);
           if (!table) {
@@ -217,7 +228,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
           const rowIndex = CONJUGATION_TENSE_ROW[tense];
           const cell = table?.matrix?.cells?.[rowIndex]?.[AFFIRMATION_COLUMN];
           fields = toRows(cell)
-            .map((p, i) => ({ key: `${tense}-${i}`, label: CONJUGATION_PRONOUNS[i] ?? p.form, expected: p.form }))
+            .map((p, i) => ({ key: `${tense}-${i}`, label: CONJUGATION_PRONOUNS[i] ?? p.form, expected: stripLeadingPronoun(p.form) }))
             .filter((f) => f.expected);
         }
 
@@ -386,7 +397,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
             <div className="verb-quiz-loading"><Loader2 className="spin" size={18} /> Загружаю спряжение...</div>
           )
         ) : (
-          <div className={isConjugation && step.tense === "present" ? "verb-quiz-conjugation-grid" : undefined}>
+          <div className={isConjugation ? "verb-quiz-conjugation-grid" : undefined}>
             {step.fields.map((field, i) => {
               const result = results[field.key];
               return (

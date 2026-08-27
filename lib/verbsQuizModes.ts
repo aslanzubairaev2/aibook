@@ -25,18 +25,23 @@ export const QUIZ_MODE_HINT: Record<QuizMode, string> = {
 export const DEFAULT_QUIZ_MODES: QuizMode[] = ["forms"];
 
 // Which tense(s) the "Спряжения" drill covers. Present is the original,
-// default-on drill (a bare conjugated word, e.g. "singe" for "ich"); past and
-// future are opt-in and ask for the whole natural phrase instead ("ich habe
-// gesungen", "ich werde singen"), since that is what the AI grammar table
-// actually gives for those tenses. Each selected tense becomes its own step
-// (6 fields, same as present today) rather than one step with up to 18.
-export type ConjugationTense = "present" | "past" | "future";
+// default-on drill. The past has two distinct forms in German, not one —
+// Präteritum (the written/narrative form: "sang") and Perfekt (what a native
+// speaker actually says out loud: "habe gesungen") — so they are two separate
+// toggles, not a single "past". Every field asks only for what the pronoun
+// label doesn't already say — the field's own person is never retyped, but
+// Perfekt/future still require the conjugated auxiliary ("habe"/"bin"/
+// "werde"), which is exactly the point of drilling them. Each selected tense
+// becomes its own step (6 fields, same as present today) rather than one step
+// with as many as 24.
+export type ConjugationTense = "present" | "preteritum" | "perfekt" | "future";
 
-export const CONJUGATION_TENSE_ORDER: ConjugationTense[] = ["present", "past", "future"];
+export const CONJUGATION_TENSE_ORDER: ConjugationTense[] = ["present", "preteritum", "perfekt", "future"];
 
 export const CONJUGATION_TENSE_LABEL: Record<ConjugationTense, string> = {
   present: "Настоящее",
-  past: "Прошедшее",
+  preteritum: "Прошедшее (книжное)",
+  perfekt: "Прошедшее (разговорное)",
   future: "Будущее",
 };
 
