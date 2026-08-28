@@ -313,7 +313,7 @@ export function AudiobookReadAlongModal({
         </div>
 
         {/* Audio Scrubber & Controls Bar */}
-        <div className="audio-player-bar">
+        <div className="read-along-player-bar">
           <div className="audio-progress-row">
             <span className="audio-time-label">{formatAudioDuration(currentTime)}</span>
             <input
