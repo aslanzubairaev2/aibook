@@ -168,9 +168,14 @@ export class LiveTranslateSession {
         this.workletUrl = URL.createObjectURL(new Blob([CAPTURE_WORKLET_SOURCE], { type: "application/javascript" }));
         await this.capture.audioWorklet.addModule(this.workletUrl);
         if (this.closed) return;
-        this.worklet = new AudioWorkletNode(this.capture, "live-capture", { numberOfInputs: 1, numberOfOutputs: 0 });
+        this.worklet = new AudioWorkletNode(this.capture, "live-capture", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
         this.worklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => this.sendAudio(bytesToBase64(new Uint8Array(event.data)));
+        // A node with nothing downstream is not guaranteed to be pulled by the
+        // graph; routing it to the destination through a muted gain keeps it
+        // running everywhere without making a sound. Same trick as the
+        // ScriptProcessor path below.
         source.connect(this.worklet);
+        this.worklet.connect(this.silentSink(this.capture));
         return;
       } catch {
         // Falls through to the ScriptProcessor path below.
@@ -179,9 +184,16 @@ export class LiveTranslateSession {
 
     this.processor = this.capture.createScriptProcessor(CAPTURE_FRAME, 1, 1);
     this.processor.onaudioprocess = (event) => this.sendAudio(pcmBase64(event.inputBuffer.getChannelData(0)));
-    const silent = this.capture.createGain();
-    silent.gain.value = 0;
-    source.connect(this.processor); this.processor.connect(silent); silent.connect(this.capture.destination);
+    source.connect(this.processor);
+    this.processor.connect(this.silentSink(this.capture));
+  }
+
+  /** A muted gain wired to the destination: keeps a capture node scheduled without playing it back. */
+  private silentSink(ctx: AudioContext): GainNode {
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    gain.connect(ctx.destination);
+    return gain;
   }
 
   /** Drops every scheduled chunk and rewinds the play cursor to "now". */
