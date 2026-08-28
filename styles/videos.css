@@ -549,6 +549,55 @@
   line-height: 1.45;
 }
 
+.video-cue-copy {
+  min-width: 0;
+}
+
+.video-cue-translation {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.video-cue-translation.blurred > span {
+  filter: blur(4px);
+  opacity: 0.62;
+  user-select: none;
+}
+
+.video-cue-translation.revealed > span {
+  filter: none;
+  opacity: 1;
+}
+
+.video-translation-eye {
+  display: inline-grid;
+  place-items: center;
+  width: 25px;
+  height: 23px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 5px;
+  background: rgba(212, 168, 71, 0.11);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.video-translation-eye:hover {
+  background: rgba(212, 168, 71, 0.22);
+}
+
+.video-translation-error {
+  padding: 7px 16px;
+  color: #f2a5a5;
+  background: rgba(150, 44, 44, 0.16);
+  font-size: 11px;
+}
+
 /* Interactive clickable word */
 .sub-interactive-word {
   display: inline;
@@ -650,6 +699,11 @@
 .transcript-line {
   flex: 1;
   line-height: 1.4;
+}
+
+.transcript-line .video-cue-translation {
+  justify-content: space-between;
+  padding-right: 0;
 }
 
 /* ── Footer ─────────────────────────────────────────────────────────────── */

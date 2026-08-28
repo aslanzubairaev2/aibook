@@ -20,6 +20,22 @@ type Candidate = Pick<VideoItem, "id" | "youtubeId" | "title" | "channel" | "dur
 
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const searchCache = new Map<string, { expiresAt: number; value: YouTubeSearchPage }>();
+const DEFAULT_SEARCH_TOPICS: Record<"de" | "en", string[]> = {
+  de: [
+    "Deutsch lernen mit Untertiteln",
+    "Deutsch A1 Alltag Dialog",
+    "Deutsch lernen kurze Geschichten",
+    "Deutsch Grammatik einfach erklärt",
+    "Deutsch hören A2",
+  ],
+  en: [
+    "learn English with subtitles",
+    "English A1 everyday dialogue",
+    "short English stories for learners",
+    "English grammar explained simply",
+    "English listening practice A2",
+  ],
+};
 
 function durationInSeconds(duration: string): number {
   const parts = duration.split(":").map(Number);
@@ -59,8 +75,7 @@ function matchesFilters(video: VideoItem, options: SearchOptions): boolean {
 
 function getSearchTerms(query: string, lang: "de" | "en"): string {
   const cleaned = query.trim();
-  if (cleaned) return lang === "de" ? `${cleaned} deutsch lernen` : `${cleaned} learn english`;
-  return lang === "de" ? "Deutsch lernen mit Untertiteln" : "learn English with subtitles";
+  return cleaned || DEFAULT_SEARCH_TOPICS[lang][Math.floor(Date.now() / (30 * 60 * 1000)) % DEFAULT_SEARCH_TOPICS[lang].length];
 }
 
 function parseCandidates(html: string, lang: "de" | "en"): Candidate[] {
@@ -116,11 +131,12 @@ async function validateCandidate(candidate: Candidate): Promise<VideoItem | null
 export async function searchYouTube(query: string, lang: "de" | "en" = "de", options: SearchOptions = {}): Promise<YouTubeSearchPage> {
   const page = Math.max(0, options.page ?? 0);
   const limit = Math.min(12, Math.max(1, options.limit ?? 12));
-  const cacheKey = JSON.stringify({ query: query.trim().toLowerCase(), lang, page, limit, ...options });
+  const searchTerms = getSearchTerms(query, lang);
+  const cacheKey = JSON.stringify({ query: searchTerms.toLowerCase(), lang, page, limit, ...options });
   const cached = searchCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   try {
-    const response = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(getSearchTerms(query, lang))}`, {
+    const response = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(searchTerms)}`, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept-Language": lang === "de" ? "de-DE,de;q=0.9,en;q=0.8" : "en-US,en;q=0.9",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { X, ExternalLink, Subtitles, ListMusic, Loader2, Play } from "lucide-react";
+import { X, ExternalLink, Subtitles, ListMusic, Loader2, Eye, EyeOff } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 import type { SubtitleCue } from "@/lib/videos/youtubeTranscript";
 import type { UserProfile, Flashcard, AiAnalysis } from "@/lib/types";
@@ -24,6 +24,8 @@ type Props = {
   onAddCard?: (card: Flashcard) => void;
 };
 
+const TRANSLATION_PREFETCH_CUES = 4;
+
 export function VideoPlayerModal({
   video,
   profile,
@@ -34,6 +36,11 @@ export function VideoPlayerModal({
   const [isLoadingCues, setIsLoadingCues] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
+  const [showLiveTranslation, setShowLiveTranslation] = useState(false);
+  const [revealedTranslations, setRevealedTranslations] = useState<Set<number>>(new Set());
+  const [translations, setTranslations] = useState<Record<number, string>>({});
+  const [translatingCueIndexes, setTranslatingCueIndexes] = useState<Set<number>>(new Set());
+  const [translationError, setTranslationError] = useState<string | null>(null);
   const [playerReady, setPlayerReady] = useState(false);
 
   // Word modal state for live translation & flashcard adding
@@ -64,6 +71,10 @@ export function VideoPlayerModal({
           const c = data.cues || [];
           setCues(c);
           cuesRef.current = c;
+          setShowLiveTranslation(false);
+          setRevealedTranslations(new Set());
+          setTranslations({});
+          setTranslationError(null);
           setIsLoadingCues(false);
         }
       })
@@ -169,6 +180,95 @@ export function VideoPlayerModal({
   }, [cues, currentTime]);
 
   const activeCue = activeCueIndex >= 0 ? cues[activeCueIndex] : null;
+
+  const requestTranslations = useCallback(async (indexes: number[]) => {
+    const missing = indexes.filter((index) => cues[index] && !translations[index] && !translatingCueIndexes.has(index));
+    if (missing.length === 0) return;
+
+    setTranslationError(null);
+    setTranslatingCueIndexes((current) => new Set([...current, ...missing]));
+    try {
+      const { getAiHeaders } = await import("@/lib/ai/analyze");
+      const response = await fetch("/api/videos/translate", {
+        method: "POST",
+        headers: await getAiHeaders(),
+        body: JSON.stringify({
+          cues: missing.map((index) => cues[index].text),
+          sourceLanguage: targetLanguage,
+          targetLanguage: nativeLanguage,
+        }),
+      });
+      const data = await response.json() as { translations?: string[]; error?: string };
+      if (!response.ok) throw new Error(data.error || "Не удалось перевести субтитры.");
+      setTranslations((current) => {
+        const next = { ...current };
+        missing.forEach((index, translationIndex) => {
+          const translation = data.translations?.[translationIndex];
+          if (translation) next[index] = translation;
+        });
+        return next;
+      });
+    } catch (error) {
+      setTranslationError(error instanceof Error ? error.message : "Не удалось перевести субтитры.");
+    } finally {
+      setTranslatingCueIndexes((current) => {
+        const next = new Set(current);
+        missing.forEach((index) => next.delete(index));
+        return next;
+      });
+    }
+  }, [cues, nativeLanguage, targetLanguage, translations, translatingCueIndexes]);
+
+  const isTranslationVisible = useCallback((index: number) => revealedTranslations.has(index), [revealedTranslations]);
+
+  const toggleAllTranslations = () => {
+    const nextVisible = !showLiveTranslation;
+    setShowLiveTranslation(nextVisible);
+    if (nextVisible && activeCueIndex >= 0) {
+      void requestTranslations(cues.slice(activeCueIndex, activeCueIndex + TRANSLATION_PREFETCH_CUES).map((_, offset) => activeCueIndex + offset));
+    }
+  };
+
+  useEffect(() => {
+    if (!showLiveTranslation || activeCueIndex < 0) return;
+    void requestTranslations(cues.slice(activeCueIndex, activeCueIndex + TRANSLATION_PREFETCH_CUES).map((_, offset) => activeCueIndex + offset));
+  }, [activeCueIndex, cues, requestTranslations, showLiveTranslation]);
+
+  const toggleCueTranslation = (index: number) => {
+    if (isTranslationVisible(index)) {
+      setRevealedTranslations((current) => {
+        const next = new Set(current);
+        next.delete(index);
+        return next;
+      });
+      return;
+    }
+    setRevealedTranslations((current) => new Set(current).add(index));
+    void requestTranslations([index]);
+  };
+
+  const renderCueTranslation = (index: number, compact = false, forceVisible?: boolean, showToggle = true) => {
+    const visible = forceVisible ?? isTranslationVisible(index);
+    const isLoading = translatingCueIndexes.has(index);
+    const translation = translations[index];
+    return (
+      <div className={`video-cue-translation ${compact ? "compact" : ""} ${visible ? "revealed" : "blurred"}`}>
+        <span>{isLoading ? "Переводим…" : translation || "Перевод скрыт"}</span>
+        {showToggle && <button
+          type="button"
+          className="video-translation-eye"
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleCueTranslation(index);
+          }}
+          aria-label={visible ? "Скрыть перевод строки" : "Показать перевод строки"}
+          title={visible ? "Скрыть перевод строки" : "Показать перевод строки"}
+        >
+          {visible ? <EyeOff size={14} /> : <Eye size={14} />}
+        </button>}
+      </div>
+    );
+  };
 
   // ── 3b. Auto-scroll transcript to keep active cue centered ────────────────
   useEffect(() => {
@@ -356,9 +456,10 @@ export function VideoPlayerModal({
                 {activeCue ? (
                   <div className="video-live-cue">
                     <span className="video-cue-time">{formatTime(activeCue.start)}</span>
-                    <span className="video-cue-text">
-                      {renderInteractiveSubtitleText(activeCue.text)}
-                    </span>
+                    <div className="video-cue-copy">
+                      <span className="video-cue-text">{renderInteractiveSubtitleText(activeCue.text)}</span>
+                      {renderCueTranslation(activeCueIndex, true, showLiveTranslation, false)}
+                    </div>
                   </div>
                 ) : (
                   <div className="video-live-cue placeholder">
@@ -378,8 +479,20 @@ export function VideoPlayerModal({
                 <ListMusic size={14} />
                 <span>{showFullTranscript ? "Скрыть текст" : `Текст (${cues.length})`}</span>
               </button>
+              <button
+                type="button"
+                className={`video-transcript-toggle-btn ${showLiveTranslation ? "active" : ""}`}
+                onClick={toggleAllTranslations}
+                title={showLiveTranslation ? "Скрыть перевод текущей фразы" : "Показать перевод текущей фразы"}
+                aria-label={showLiveTranslation ? "Скрыть перевод текущей фразы" : "Показать перевод текущей фразы"}
+              >
+                {showLiveTranslation ? <EyeOff size={14} /> : <Eye size={14} />}
+                <span>{showLiveTranslation ? "Скрыть перевод" : "Перевод"}</span>
+              </button>
             </div>
           ) : null}
+
+          {translationError && <div className="video-translation-error" role="status">{translationError}</div>}
 
           {/* ── Full Scrollable Transcript (Optional Accordion) ─────────────── */}
           {showFullTranscript && cues.length > 0 && (
@@ -397,6 +510,7 @@ export function VideoPlayerModal({
                       <span className="transcript-time">{formatTime(cue.start)}</span>
                       <span className="transcript-line">
                         {renderInteractiveSubtitleText(cue.text)}
+                        {renderCueTranslation(idx)}
                       </span>
                     </div>
                   );
