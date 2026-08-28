@@ -3,7 +3,7 @@
 - Агент: Codex
 - Ветка: `feature/live-translate-mvp`
 - База: `release/audiobooks-pause`
-- Commit SHA: `77d538d` (`feat: add live translation MVP`)
+- Commit SHA: `6b02638` (`feat: add live translation MVP`)
 - Статус: ready-for-review
 
 ## Сделано
@@ -53,9 +53,9 @@ Standard rates сверены 28.08.2026 по [официальной pricing do
 
 ## Preview и ручной сценарий
 
-- Preview URL: локальный `http://localhost:3000` проверен; публичный Preview не создавался.
+- Preview URL: https://aibook-hqzwcxz81-azamats-projects-799bf3a6.vercel.app (Vercel `READY`, deployment `dpl_JBk6sxdsYySQjeD2APmzLQXA9dq5`, собран из `6b02638`).
 - Модель: `gemini-3.5-live-translate-preview` (единая константа `LIVE_TRANSLATE_MODEL` используется route, клиентской сессией и UI).
-- Реальное соединение Gemini Live не проверено: в окружении отсутствуют `GEMINI_API_KEY`, Supabase auth/owner env и пользовательский Gemini key. `/api/ai/live-translate-token` проверен на честный отказ 503.
+- Реальное соединение Gemini Live и микрофон в Preview не проверены: в окружении отсутствуют `GEMINI_API_KEY`, Supabase auth/owner env и пользовательский Gemini key. `/api/ai/live-translate-token` локально проверен на честный отказ 503 без credentials.
 - После установки зависимостей и настройки `GEMINI_API_KEY` или пользовательского Gemini key: открыть главную → «Live перевод» → «Начать перевод» → разрешить микрофон → говорить на иностранном языке → проверить русский аудиовыход, «Показать текст», остановку и повторный старт. Отдельно проверить отказ микрофона и отсутствие сети.
 
 ## Ограничения и риски
