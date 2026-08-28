@@ -7,6 +7,14 @@ export type TtsProvider =
 export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated" | "librivox" | "archive_audio";
 
+/**
+ * How sure the app actually is about a CEFR label:
+ * - `verified`: the source explicitly states a CEFR code (e.g. "Niveau A1").
+ * - `approximate`: inferred from genre/author, offered as a rough guide only.
+ * - `unverified`: no reliable signal at all — the level is unknown, not A1-by-default.
+ */
+export type CefrConfidence = "verified" | "approximate" | "unverified";
+
 export type LessonContext = {
   courseId: string;
   courseTitle: string;
@@ -404,6 +412,10 @@ export type CardVariantState = Partial<Record<Exclude<TrainVariant, "forward">, 
    author: string;
    language: string; // ISO 639-1 ('de', 'en', ...) or display name
    cefrLevel?: CefrLevel | null;
+   /** How sure `cefrLevel` actually is — see CefrConfidence. Absent only for legacy/unknown data. */
+   cefrConfidence?: CefrConfidence;
+   /** One line, in Russian, explaining where the level guess came from — shown next to the badge. */
+   cefrExplanation?: string;
    coverUrl?: string | null;
    coverColor?: string;
    description?: string;
@@ -413,11 +425,25 @@ export type CardVariantState = Partial<Record<Exclude<TrainVariant, "forward">, 
    sourceType: ContentSource;
    chapters?: AudiobookChapter[];
  };
- 
+
  export type AudiobookProgress = {
    audiobookId: string;
    chapterIndex: number;
    currentTimeSeconds: number;
    durationSeconds: number;
    updatedAt: string;
+   /**
+    * Display snapshot taken at save time, so the home screen's "Продолжить
+    * слушать" tile can render without a network refetch (and without an N+1
+    * request per card — see docs/coordination/tasks/claude-audiobooks-home-improvements.md).
+    */
+   title?: string;
+   author?: string;
+   coverUrl?: string | null;
+   coverColor?: string;
+   language?: string;
+   chapterTitle?: string;
+   totalChapters?: number;
+   cefrLevel?: CefrLevel | null;
+   cefrConfidence?: CefrConfidence;
  };
