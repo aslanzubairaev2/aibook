@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { sbGetCachedTts, sbSaveCachedTts } from "@/lib/db/supabase";
+import { sbGetCachedTtsServer as sbGetCachedTts, sbSaveCachedTtsServer as sbSaveCachedTts } from "@/lib/db/tts-cache-server";
 import {
   CARTESIA_API_VERSION,
   CARTESIA_DEFAULT_VOICE,
@@ -212,9 +212,12 @@ export async function POST(req: Request) {
     const geminiCacheKey = geminiModel === GEMINI_TTS_MODEL
       ? `${voiceName}:${SPEECH_STYLE_VERSION}`
       : `${geminiModel}:${voiceName}:${SPEECH_STYLE_VERSION}`;
+    const legacyGeminiCacheKey = geminiModel === GEMINI_TTS_MODEL
+      ? voiceName
+      : `${geminiModel}:${voiceName}`;
 
     // 1. Check database cache
-    const cachedAudio = fresh ? null : await sbGetCachedTts(text, lang, geminiCacheKey);
+    const cachedAudio = fresh ? null : await sbGetCachedTts(text, lang, geminiCacheKey, [legacyGeminiCacheKey]);
     if (cachedAudio) {
       return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider: "gemini", model: geminiModel });
     }
@@ -500,8 +503,9 @@ async function speakWithGeminiModel(
   const cacheKey = model === GEMINI_TTS_MODEL
     ? `${voiceName}:${SPEECH_STYLE_VERSION}`
     : `${model}:${voiceName}:${SPEECH_STYLE_VERSION}`;
+  const legacyCacheKey = model === GEMINI_TTS_MODEL ? voiceName : `${model}:${voiceName}`;
 
-  const cached = fresh ? null : await sbGetCachedTts(text, lang, cacheKey);
+  const cached = fresh ? null : await sbGetCachedTts(text, lang, cacheKey, [legacyCacheKey]);
   if (cached) return { audioBase64: cached, source: "db_cache" };
 
   const response = await geminiTtsRequest(apiKey, model, voiceName, text, lang);
@@ -896,8 +900,9 @@ async function speakWithOpenAi(
   // this key was recorded with, and the version marks which wording of it.
   const language = normalizeLanguageCode(lang);
   const cacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}:teacher:${SPEECH_STYLE_VERSION}`;
+  const legacyCacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}:teacher`;
 
-  const cached = fresh ? null : await sbGetCachedTts(text, language, cacheVoiceKey);
+  const cached = fresh ? null : await sbGetCachedTts(text, language, cacheVoiceKey, [legacyCacheVoiceKey]);
   if (cached) return { audioBase64: cached, source: "db_cache", format: "mp3" };
 
   const response = await fetch("https://api.openai.com/v1/audio/speech", {

@@ -303,11 +303,16 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [audioPage, setAudioPage] = useState(1);
   const [audioTotal, setAudioTotal] = useState(0);
   const [audioTotalPages, setAudioTotalPages] = useState(1);
+  // Set only under a level filter: how many of this page's results actually
+  // classify at that level, once the honest-label filter has run — audioTotal
+  // still describes the underlying keyword search and would overclaim if
+  // shown as "N books at this level" (see fetchAudiobooks).
+  const [audioMatchedOnPage, setAudioMatchedOnPage] = useState<number | null>(null);
   const [audiobooks, setAudiobooks] = useState<Audiobook[]>([]);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [selectedAudiobook, setSelectedAudiobook] = useState<Audiobook | null>(null);
-  const audioCacheRef = useRef<Map<string, { audiobooks: Audiobook[]; total: number; totalPages: number }>>(new Map());
+  const audioCacheRef = useRef<Map<string, { audiobooks: Audiobook[]; total: number; totalPages: number; matchedOnPage?: number }>>(new Map());
 
   // Shared books state
   const [klexikonBooks, setKlexikonBooks] = useState<SharedBook[]>([]);
@@ -562,6 +567,48 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     }
   }
 
+  // A word or example tapped inside the audiobook's "Обсудить с AI" chat —
+  // same save path as the dictionary above, just sourced from the book title
+  // rather than a batch name.
+  function addAudiobookWordCard(front: string, back: string, type: "word" | "phrase") {
+    if (!onAddCard || !front.trim() || !back.trim()) return;
+    if (cardFronts.has(front.trim().toLowerCase())) {
+      showToast("Такая карточка уже есть");
+      return;
+    }
+    const source = selectedAudiobook ? `Аудиокнига «${selectedAudiobook.title}»` : "Аудиокниги";
+    const srs = createDefaultSrsFields(null, source);
+    const card: Flashcard = {
+      id: `card-${Date.now()}`,
+      type,
+      source,
+      addedAt: new Date().toISOString(),
+      ...srs,
+      front,
+      back,
+    };
+    onAddCard(card);
+    showToast("✓ Карточка добавлена");
+    if (user) {
+      void sbInsertFlashcard({
+        user_id: user.id,
+        vocabulary_item_id: null,
+        front: card.front,
+        back: card.back,
+        source_book_title: source,
+        selection_type: type,
+        repetitions: srs.repetitions,
+        lapses: srs.lapses,
+        easiness_factor: srs.easeFactor,
+        interval_days: srs.intervalDays,
+        next_review_at: srs.dueAt,
+        last_reviewed_at: srs.lastReviewedAt,
+        source_book_id: null,
+        status: srs.status,
+      });
+    }
+  }
+
   async function deleteDictionaryEntry(id: string) {
     setDictionary((prev) => prev.filter((e) => e.id !== id));
     try {
@@ -766,6 +813,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       setAudiobooks(cached.audiobooks);
       setAudioTotal(cached.total);
       setAudioTotalPages(cached.totalPages);
+      setAudioMatchedOnPage(cached.matchedOnPage ?? null);
       setIsAudioLoading(false);
       return;
     }
@@ -785,10 +833,12 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
         setAudiobooks(res.audiobooks);
         setAudioTotal(res.total);
         setAudioTotalPages(res.totalPages);
+        setAudioMatchedOnPage(res.matchedOnPage ?? null);
         audioCacheRef.current.set(cacheKey, {
           audiobooks: res.audiobooks,
           total: res.total,
           totalPages: res.totalPages,
+          matchedOnPage: res.matchedOnPage,
         });
       })
       .catch((err: unknown) => {
@@ -1283,43 +1333,43 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       {/* ── Audiobooks (LibriVox / Internet Archive) ─────────────────────────── */}
       {activeTab === "audio" && (
         <>
-          <div className="discover-toolbar">
-            <div className="discover-search">
-              <Search size={18} aria-hidden />
-              <input
-                type="text"
-                placeholder="Поиск аудиокниги, автора..."
-                value={audioQuery}
-                onChange={(e) => setAudioQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    setAudioSubmittedQuery(audioQuery.trim());
-                    setAudioPage(1);
-                  }
-                  if (e.key === "Escape") {
-                    setAudioQuery("");
-                    setAudioSubmittedQuery("");
-                    setAudioPage(1);
-                  }
+          <div className="discover-search" style={{ marginBottom: 8 }}>
+            <Search size={18} aria-hidden />
+            <input
+              type="text"
+              placeholder="Поиск аудиокниги, автора..."
+              value={audioQuery}
+              onChange={(e) => setAudioQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setAudioSubmittedQuery(audioQuery.trim());
+                  setAudioPage(1);
+                }
+                if (e.key === "Escape") {
+                  setAudioQuery("");
+                  setAudioSubmittedQuery("");
+                  setAudioPage(1);
+                }
+              }}
+            />
+            {audioQuery && (
+              <button
+                type="button"
+                className="discover-clear"
+                onClick={() => {
+                  setAudioQuery("");
+                  setAudioSubmittedQuery("");
+                  setAudioPage(1);
                 }}
-              />
-              {audioQuery && (
-                <button
-                  type="button"
-                  className="discover-clear"
-                  onClick={() => {
-                    setAudioQuery("");
-                    setAudioSubmittedQuery("");
-                    setAudioPage(1);
-                  }}
-                  aria-label="Очистить"
-                >
-                  <X size={16} />
-                </button>
-              )}
-            </div>
+                aria-label="Очистить"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
 
-            <div className={`discover-language${audioLang !== "all" ? " filter-active" : ""}`}>
+          <div className="audio-filters-row">
+            <div className={`discover-language audio-lang-select${audioLang !== "all" ? " filter-active" : ""}`}>
               {audioLang !== "all" && <span className="filter-lamp" aria-hidden />}
               <select
                 value={audioLang}
@@ -1339,28 +1389,24 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
               </select>
               <ChevronDown size={15} aria-hidden />
             </div>
-          </div>
 
-          {/* CEFR Level filter pills */}
-          <div className="cefr-filter-bar" style={{ marginTop: 8, display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-            {(["all", "A1", "A2", "B1", "B2", "C1", "C2"] as const).map((lvl) => (
-              <button
-                key={lvl}
-                type="button"
-                className={`filter-pill ${audioCefr === lvl ? "active" : ""}`}
-                style={
-                  audioCefr === lvl && lvl !== "all"
-                    ? { borderColor: CEFR_COLORS[lvl], color: CEFR_COLORS[lvl] }
-                    : undefined
-                }
-                onClick={() => {
-                  setAudioCefr(lvl);
-                  setAudioPage(1);
-                }}
-              >
-                {lvl === "all" ? "Все уровни" : lvl}
-              </button>
-            ))}
+            {/* CEFR level filter — reuses the app's own filter-chip styling
+                instead of raw, unstyled native buttons. */}
+            <div className="filter-chips">
+              {(["all", "A1", "A2", "B1", "B2", "C1", "C2"] as const).map((lvl) => (
+                <button
+                  key={lvl}
+                  type="button"
+                  className={`filter-chip ${audioCefr === lvl ? "active" : ""}`}
+                  onClick={() => {
+                    setAudioCefr(lvl);
+                    setAudioPage(1);
+                  }}
+                >
+                  {lvl === "all" ? "Все уровни" : lvl}
+                </button>
+              ))}
+            </div>
           </div>
 
           {audioError && <div className="inline-error">{audioError}</div>}
@@ -1376,7 +1422,12 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             <span>
               {isAudioLoading
                 ? "Поиск..."
-                : `${audioTotal || audiobooks.length} аудиокниг`}
+                : audioCefr !== "all"
+                  // audioTotal counts the underlying keyword search, not
+                  // confirmed matches — showing it here would repeat the
+                  // exact "A1 label on a B1 book" bug this fix removes.
+                  ? `${audioMatchedOnPage ?? audiobooks.length} уровня ${audioCefr} на этой странице`
+                  : `${audioTotal || audiobooks.length} аудиокниг`}
             </span>
             <span>
               Страница {audioPage} из {audioTotalPages}
@@ -1389,7 +1440,11 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             <div className="empty-state">
               <Headphones size={40} />
               <strong>Аудиокниги не найдены</strong>
-              <p>Попробуйте выбрать другой язык или уровень</p>
+              <p>
+                {audioCefr !== "all"
+                  ? `На этой странице нет аудиокниг, точно классифицированных как ${audioCefr}. Internet Archive почти не содержит подтверждённых материалов этого уровня — попробуйте следующую страницу, другой язык или соседний уровень.`
+                  : "Попробуйте выбрать другой язык или уровень"}
+              </p>
             </div>
           ) : (
             <>
@@ -1430,8 +1485,8 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                     <span className="catalog-book-body">
                       <strong>{b.title}</strong>
                       <span>{b.author}</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px", flexWrap: "wrap" }}>
-                        {b.cefrLevel && b.cefrConfidence === "verified" ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                        {b.cefrLevel ? (
                           <span
                             className="cefr-badge"
                             title={b.cefrExplanation}
@@ -1442,36 +1497,23 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                               borderRadius: "3px",
                               fontSize: "10px",
                               fontWeight: "bold",
+                              opacity: b.cefrConfidence === "approximate" ? 0.85 : 1,
                             }}
                           >
-                            {b.cefrLevel}
+                            {b.cefrConfidence === "approximate" ? `≈ ${b.cefrLevel}` : b.cefrLevel}
                           </span>
-                        ) : b.cefrLevel && b.cefrConfidence === "approximate" ? (
+                        ) : (
                           <span
-                            className="cefr-badge approximate"
-                            title={b.cefrExplanation}
+                            className="cefr-badge"
+                            title={b.cefrExplanation ?? "Уровень CEFR не подтверждён"}
                             style={{
-                              background: "rgba(212, 168, 71, 0.15)",
-                              border: `1px solid ${CEFR_COLORS[b.cefrLevel] || "var(--accent)"}`,
-                              color: CEFR_COLORS[b.cefrLevel] || "var(--accent)",
+                              background: "var(--bg-hover)",
+                              color: "var(--text-muted)",
                               padding: "1px 5px",
                               borderRadius: "3px",
                               fontSize: "10px",
                               fontWeight: "bold",
                             }}
-                          >
-                            ≈ {b.cefrLevel}
-                          </span>
-                        ) : (
-                          <span
-                            style={{
-                              fontSize: "10px",
-                              color: "var(--text-muted)",
-                              background: "rgba(240, 230, 211, 0.08)",
-                              padding: "1px 4px",
-                              borderRadius: "3px",
-                            }}
-                            title="Неадаптированный оригинал, уровень не определён"
                           >
                             Оригинал
                           </span>
@@ -2047,10 +2089,9 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       {selectedAudiobook && (
         <AudiobookDetailModal
           audiobook={selectedAudiobook}
+          nativeLanguage={profile.nativeLanguage}
           onClose={() => setSelectedAudiobook(null)}
-          profile={profile}
-          cards={cards}
-          onAddCard={onAddCard}
+          onAddWordCard={addAudiobookWordCard}
         />
       )}
 

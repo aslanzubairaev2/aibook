@@ -11,36 +11,40 @@ import {
   SkipForward,
   Info,
   MessageSquare,
-  Send,
   Loader2,
   ListMusic,
   Clock,
   Volume2,
   VolumeX,
-  ScrollText,
 } from "lucide-react";
-import type { Audiobook, AudiobookChapter, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
+import type { Audiobook, AudiobookChapter, CefrConfidence, CefrLevel, DiscussMessage, AiAnalysis } from "@/lib/types";
 import {
   fetchAudiobookDetails,
   formatAudioDuration,
   getAudiobookProgress,
   saveAudiobookProgress,
 } from "@/lib/audio/audiobooks";
+import { isBenignPlaybackAbort, syncAudioSource } from "@/lib/audio/playback";
+import {
+  setMediaSessionActionHandlers,
+  setMediaSessionMetadata,
+  setMediaSessionPlaybackState,
+  setMediaSessionPositionState,
+} from "@/lib/audio/mediaSession";
 import { aiChat } from "@/lib/ai/chat";
-import { DictateButton, appendSpoken } from "./DictateButton";
-import { AudiobookReadAlongModal } from "./AudiobookReadAlongModal";
+import { analyzeSelection } from "@/lib/ai/analyze";
+import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
+import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
+import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
+import { WordModal } from "@/components/word-modal/WordModal";
 
 type Props = {
   audiobook: Audiobook;
+  /** The learner's own language — required by the shared "Обсудить с AI" chat and word lookups. */
+  nativeLanguage: string;
   onClose: () => void;
-  profile?: UserProfile;
-  cards?: Flashcard[];
-  onAddCard?: (card: Flashcard) => void;
-};
-
-type ChatMessage = {
-  role: "user" | "ai";
-  text: string;
+  /** Saving a word or example tapped inside the AI chat as a flashcard; omitted where the caller has nowhere to put it. */
+  onAddWordCard?: (front: string, back: string, type: "word" | "phrase") => void;
 };
 
 const LANG_NAMES: Record<string, string> = {
@@ -66,6 +70,18 @@ const LANG_NAMES: Record<string, string> = {
   russian: "русский",
 };
 
+// The app's AI routes speak ISO 639-1 codes; Internet Archive metadata carries
+// whatever the uploader typed (full English names, 3-letter codes, ...). This
+// collapses that mess down to the codes analyzeSelection/DiscussAiModal expect.
+const LANG_CODE: Record<string, string> = {
+  de: "de", ger: "de", deu: "de", german: "de",
+  en: "en", eng: "en", english: "en",
+  fr: "fr", fre: "fr", fra: "fr", french: "fr",
+  es: "es", spa: "es", spanish: "es",
+  it: "it", ita: "it", italian: "it",
+  ru: "ru", rus: "ru", russian: "ru",
+};
+
 const CEFR_COLORS: Record<string, string> = {
   A1: "#4caf50",
   A2: "#8bc34a",
@@ -74,6 +90,12 @@ const CEFR_COLORS: Record<string, string> = {
   C1: "#9c27b0",
   C2: "#673ab7",
 };
+
+/** "B1" when verified, "≈ B1" when it's only a genre/author guess. */
+function formatCefrBadge(level: CefrLevel | null, confidence: CefrConfidence | undefined): string | null {
+  if (!level) return null;
+  return confidence === "approximate" ? `≈ ${level}` : level;
+}
 
 const PLAYBACK_SPEEDS = [0.75, 1.0, 1.25, 1.5, 2.0];
 
@@ -103,7 +125,7 @@ function splitReview(value: string | null) {
     .slice(0, 4);
 }
 
-export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAddCard }: Props) {
+export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAddWordCard }: Props) {
   const [details, setDetails] = useState<Audiobook | null>(
     audiobook.chapters && audiobook.chapters.length > 0 ? audiobook : null
   );
@@ -115,120 +137,57 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [isMuted, setIsMuted] = useState(false);
   const [showChaptersList, setShowChaptersList] = useState(false);
-  const [isReadAlongOpen, setIsReadAlongOpen] = useState(false);
 
-  // AI Review & Chat
+  // Compact AI overview, shown right beside the title/metadata.
   const [review, setReview] = useState<string | null>(null);
   const [isLoadingReview, setIsLoadingReview] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [isSending, setIsSending] = useState(false);
+
+  // "Обсудить с AI" reuses the app's shared discussion modal instead of a
+  // bespoke chat, so it gets voice input, follow-up chips and tappable words
+  // for free — and stays consistent with the reader's own AI chat.
+  const [isDiscussOpen, setIsDiscussOpen] = useState(false);
+  const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
+
+  // A word tapped inside the AI chat opens the same word modal the rest of
+  // the app uses, instead of doing nothing.
+  const [wordModalSelection, setWordModalSelection] = useState("");
+  const [wordModalAnalysis, setWordModalAnalysis] = useState<AiAnalysis | null>(null);
+  const [isWordModalOpen, setIsWordModalOpen] = useState(false);
+  const [isWordModalLoading, setIsWordModalLoading] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const isMountedRef = useRef(true);
-  const playReqIdRef = useRef(0);
+  const syncedAudioUrlRef = useRef<string | null>(null);
+  // A restored "continue listening" position only ever reaches the `currentTime`
+  // React state (see the restore effect below) — the `<audio>` element itself
+  // starts at 0 regardless, since nothing had seeked it yet. Play() then played
+  // from that real, unseeked 0 while the seek bar kept showing the old
+  // position, until the next timeupdate snapped it back. This ref carries the
+  // restored position across to the first `loadedmetadata` of the freshly
+  // loaded source, which is the first point a seek is guaranteed to stick.
+  const pendingSeekSecondsRef = useRef<number | null>(null);
 
-  const chapters: AudiobookChapter[] = useMemo(() => details?.chapters || [], [details?.chapters]);
+  const chapters: AudiobookChapter[] = details?.chapters || [];
   const currentChapter: AudiobookChapter | undefined = chapters[currentChapterIndex];
 
   const author = audiobook.author || "Неизвестный автор";
   const langKey = audiobook.language.toLowerCase();
   const language = LANG_NAMES[langKey] || audiobook.language;
-
-  const cefrLevel: CefrLevel | null = details?.cefrLevel !== undefined ? details.cefrLevel : audiobook.cefrLevel ?? null;
-  const cefrConfidence = details?.cefrConfidence || audiobook.cefrConfidence || "unverified";
-  const cefrExplanation = details?.cefrExplanation || audiobook.cefrExplanation || "Оригинальный текст без адаптации";
-
+  const targetLanguage = LANG_CODE[langKey] || langKey || "de";
+  // No fallback level here on purpose: a book this classifier hasn't verified
+  // has no level to fall back to without repeating the false-A1/B1 bug this
+  // feature fixes (see lib/audio/audiobooks.ts).
+  const cefr: CefrLevel | null = details?.cefrLevel ?? audiobook.cefrLevel ?? null;
+  const cefrConfidence: CefrConfidence | undefined = details?.cefrConfidence ?? audiobook.cefrConfidence;
+  const cefrBadge = formatCefrBadge(cefr, cefrConfidence);
+  const cefrExplanation = details?.cefrExplanation ?? audiobook.cefrExplanation;
   const reviewLines = useMemo(() => splitReview(review), [review]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Lifecycle cleanup to prevent any race conditions or memory leaks
-  useEffect(() => {
-    isMountedRef.current = true;
-    const audio = audioRef.current;
-    return () => {
-      isMountedRef.current = false;
-      if (audio) {
-        try {
-          audio.pause();
-          audio.removeAttribute("src");
-          audio.load();
-        } catch {
-          // Ignore
-        }
-      }
-    };
-  }, [audiobook.id]);
-
-  // Safe Audio Playback & Cancellation
-  const safePlay = useCallback(async () => {
-    const audio = audioRef.current;
-    if (!audio || !isMountedRef.current) return;
-
-    const reqId = ++playReqIdRef.current;
-    try {
-      const playPromise = audio.play();
-      if (playPromise !== undefined) {
-        await playPromise;
-      }
-      if (isMountedRef.current && reqId === playReqIdRef.current) {
-        setIsPlaying(true);
-      }
-    } catch (err: unknown) {
-      // Catch and gracefully handle AbortError and NotAllowedError from rapid src changes or browser policy
-      if (
-        (err instanceof DOMException && (err.name === "AbortError" || err.name === "NotAllowedError")) ||
-        (err instanceof Error && (err.name === "AbortError" || err.name === "NotAllowedError"))
-      ) {
-        return;
-      }
-      console.error("Audio playback error:", err);
-      if (isMountedRef.current && reqId === playReqIdRef.current) {
-        setIsPlaying(false);
-      }
-    }
-  }, []);
-
-  const safePause = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    playReqIdRef.current++;
-    try {
-      audio.pause();
-    } catch {
-      // Ignore pause errors
-    }
-    if (isMountedRef.current) {
-      setIsPlaying(false);
-    }
-  }, []);
-
-  const selectChapter = useCallback(
-    (index: number, autoPlay = true) => {
-      setCurrentChapterIndex(index);
-      setCurrentTime(0);
-      const audio = audioRef.current;
-      const targetChapter = chapters[index];
-      if (!audio || !targetChapter) return;
-
-      playReqIdRef.current++;
-      try {
-        audio.pause();
-      } catch {
-        // Ignore
-      }
-
-      audio.src = targetChapter.audioUrl;
-      audio.playbackRate = playbackSpeed;
-      audio.currentTime = 0;
-      audio.load();
-
-      if (autoPlay) {
-        void safePlay();
-      } else {
-        setIsPlaying(false);
-      }
-    },
-    [chapters, playbackSpeed, safePlay]
+  // What the AI chat is told this book is, since there is no "selected text"
+  // to hand it the way a tapped word or sentence would.
+  const audiobookContext = useMemo(
+    () => [author, language, cefr ? `уровень ${cefr}` : null, audiobook.description].filter(Boolean).join(" · "),
+    [author, language, cefr, audiobook.description]
   );
 
   // 1. Fetch detailed metadata and chapters
@@ -239,33 +198,34 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
     async function load() {
       if (details) return;
       setIsLoadingChapters(true);
+      setLoadError(null);
       try {
         const full = await fetchAudiobookDetails(audiobook.id, controller.signal);
-        if (active && isMountedRef.current) {
+        if (active) {
           setDetails(full);
           // Restore saved progress if available
           const saved = getAudiobookProgress(audiobook.id);
-          const restoredIndex =
-            saved && saved.chapterIndex < (full.chapters?.length || 0) ? saved.chapterIndex : 0;
-          const restoredTime = saved ? saved.currentTimeSeconds : 0;
-
-          setCurrentChapterIndex(restoredIndex);
-          setCurrentTime(restoredTime);
-
-          const audio = audioRef.current;
-          if (audio && full.chapters?.[restoredIndex]) {
-            audio.src = full.chapters[restoredIndex].audioUrl;
-            if (restoredTime > 0) {
-              audio.currentTime = restoredTime;
-            }
+          if (saved && saved.chapterIndex < (full.chapters?.length || 0)) {
+            setCurrentChapterIndex(saved.chapterIndex);
+            setCurrentTime(saved.currentTimeSeconds);
+            // The seek bar can show this immediately, but the audio element
+            // itself hasn't loaded that chapter's source yet — actually
+            // seeking happens once it has, in onLoadedMetadata below.
+            if (saved.currentTimeSeconds > 0) pendingSeekSecondsRef.current = saved.currentTimeSeconds;
           }
         }
       } catch (err) {
         if (active) {
+          if (err instanceof DOMException && err.name === "AbortError") return;
           console.error("Failed to load audiobook chapters", err);
+          // A saved "continue listening" pointer can point at a book that was
+          // pulled from Internet Archive since — this is the one place that
+          // becomes visible, so it needs its own message instead of a
+          // silently disabled player.
+          setLoadError("Не удалось загрузить эту аудиокнигу. Возможно, она больше недоступна на Internet Archive.");
         }
       } finally {
-        if (active && isMountedRef.current) setIsLoadingChapters(false);
+        if (active) setIsLoadingChapters(false);
       }
     }
 
@@ -276,37 +236,35 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
     };
   }, [audiobook.id, details]);
 
-  // 2. Fetch AI Review
+  // 2. Fetch the compact AI overview
   useEffect(() => {
     let isActive = true;
 
     async function loadReview() {
       setIsLoadingReview(true);
       setReview(null);
-      setMessages([]);
+      setDiscussMessages([]);
       try {
-        const levelPrompt = cefrLevel ? `уровень ${cefrLevel}` : "оригинал без адаптации";
         const prompt = [
-          `Аудиокнига: "${audiobook.title}", автор: ${author}, язык: ${language} (${levelPrompt}).`,
+          `Аудиокнига: "${audiobook.title}", автор: ${author}, язык: ${language}.`,
           "Сделай очень короткую карточку для изучающего язык без спойлеров, без markdown и без спецсимволов.",
           "Строго 4 строки:",
           "О чем: одно короткое предложение.",
           "Жанр: 2-4 слова.",
-          "Язык: сложность речи, темп дикции и понятность.",
+          "Язык: примерный уровень A1-C2 и темп/сложность речи.",
           "Кому: кому подойдет для аудирования.",
         ].join("\n");
         const result = await aiChat(prompt);
-        if (isActive && isMountedRef.current) {
-          setReview(result || "О чем: аудиокнига из классической библиотеки.");
-        }
+        if (isActive) setReview(result || "О чем: аудиокнига из классической библиотеки.");
       } catch {
-        if (isActive && isMountedRef.current) {
+        if (isActive) {
+          const levelLine = cefr ? `Язык: примерно ${cefr}, понятная дикция.` : "Язык: уровень не подтверждён, оригинальный текст без адаптации.";
           setReview(
-            `О чем: классическое аудиопроизведение для тренировки понимания на слух.\nЖанр: литература в общественном достоянии.\nЯзык: неадаптированный оригинал, понятная дикция.\nКому: тем, кто развивает навык восприятия речи на ${language}.`
+            `О чем: классическое аудиопроизведение для тренировки понимания на слух.\nЖанр: литература в общественном достоянии.\n${levelLine}\nКому: тем, кто развивает навык восприятия речи на ${language}.`
           );
         }
       } finally {
-        if (isActive && isMountedRef.current) setIsLoadingReview(false);
+        if (isActive) setIsLoadingReview(false);
       }
     }
 
@@ -315,42 +273,77 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
     return () => {
       isActive = false;
     };
-  }, [audiobook.id, audiobook.title, author, language, cefrLevel]);
+  }, [audiobook.id, audiobook.title, author, language, cefr]);
+
+  // 3. Audio Element Event Handlers
+  //
+  // Every `play()` call goes through `safePlay`, tagged with an incrementing
+  // request id. A chapter/book change, or an explicit pause, bumps the id —
+  // so when an old `play()` promise settles (resolved or rejected) after
+  // being superseded, it's recognised as stale and ignored instead of
+  // fighting the newer state or logging a benign AbortError to the console.
+  // This is the same race the AbortError fix on gemini/audiobooks-quality
+  // addressed for its own player; this modal needed its own copy because the
+  // UX redesign rewrote the component around it.
+  const playRequestIdRef = useRef(0);
+
+  const safePlay = useCallback(() => {
+    if (!audioRef.current) return;
+    const requestId = ++playRequestIdRef.current;
+    audioRef.current
+      .play()
+      .then(() => {
+        if (playRequestIdRef.current === requestId) setIsPlaying(true);
+      })
+      .catch((err) => {
+        if (playRequestIdRef.current !== requestId) return; // superseded — expected
+        if (isBenignPlaybackAbort(err)) return;
+        console.error("Audio playback error:", err);
+        setIsPlaying(false);
+      });
+  }, []);
+
+  const pauseAudio = useCallback(() => {
+    playRequestIdRef.current += 1; // invalidate any play() still in flight
+    audioRef.current?.pause();
+    setIsPlaying(false);
+  }, []);
 
   const handlePlayPause = useCallback(() => {
     if (!audioRef.current || !currentChapter) return;
-    if (isPlaying) {
-      safePause();
-    } else {
-      void safePlay();
-    }
-  }, [isPlaying, currentChapter, safePause, safePlay]);
+    if (isPlaying) pauseAudio();
+    else safePlay();
+  }, [isPlaying, currentChapter, safePlay, pauseAudio]);
 
-  const handleSeek = (seconds: number) => {
+  const handleSeek = useCallback((seconds: number) => {
     if (!audioRef.current) return;
     audioRef.current.currentTime = seconds;
     setCurrentTime(seconds);
-  };
+  }, []);
 
-  const handleSkip = (deltaSeconds: number) => {
+  const handleSkip = useCallback((deltaSeconds: number) => {
     if (!audioRef.current) return;
     const newTime = Math.max(0, Math.min(duration || 99999, audioRef.current.currentTime + deltaSeconds));
     handleSeek(newTime);
-  };
+  }, [duration, handleSeek]);
 
   const handleNextChapter = useCallback(() => {
     if (currentChapterIndex < chapters.length - 1) {
-      selectChapter(currentChapterIndex + 1, isPlaying);
+      setCurrentChapterIndex((prev) => prev + 1);
+      setCurrentTime(0);
+      setIsPlaying(true);
     }
-  }, [currentChapterIndex, chapters.length, isPlaying, selectChapter]);
+  }, [currentChapterIndex, chapters.length]);
 
-  const handlePrevChapter = () => {
+  const handlePrevChapter = useCallback(() => {
     if (currentTime > 5 || currentChapterIndex === 0) {
       handleSeek(0);
     } else {
-      selectChapter(Math.max(0, currentChapterIndex - 1), isPlaying);
+      setCurrentChapterIndex((prev) => Math.max(0, prev - 1));
+      setCurrentTime(0);
+      setIsPlaying(true);
     }
-  };
+  }, [currentTime, currentChapterIndex, handleSeek]);
 
   const cyclePlaybackSpeed = () => {
     const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
@@ -361,14 +354,31 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
     }
   };
 
-  // Sync playback speed updates
+  // Sync audio source when chapter changes
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.playbackRate = playbackSpeed;
-    }
-  }, [playbackSpeed]);
+    if (!audioRef.current || !currentChapter) return;
+    const sourceChanged = syncAudioSource(
+      audioRef.current,
+      currentChapter.audioUrl,
+      playbackSpeed,
+      syncedAudioUrlRef.current
+    );
+    syncedAudioUrlRef.current = currentChapter.audioUrl;
+    if (sourceChanged && isPlaying) safePlay();
+  }, [currentChapterIndex, currentChapter, playbackSpeed, isPlaying, safePlay]);
 
-  // Periodic progress saving
+  // Invalidate any in-flight play() and stop the element on unmount (closing
+  // the modal), so a superseded promise never resolves into a component that
+  // is no longer there.
+  useEffect(() => {
+    return () => {
+      playRequestIdRef.current += 1;
+    };
+  }, []);
+
+  // Periodic progress saving — the same write also updates the home screen's
+  // "Продолжить слушать" pointer (see saveAudiobookProgress), so it carries a
+  // display snapshot the home screen can render without a network refetch.
   useEffect(() => {
     if (!audiobook.id || currentTime === 0) return;
     saveAudiobookProgress({
@@ -377,45 +387,86 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
       currentTimeSeconds: currentTime,
       durationSeconds: duration,
       updatedAt: new Date().toISOString(),
+      title: audiobook.title,
+      author: audiobook.author,
+      coverUrl: audiobook.coverUrl,
+      coverColor: audiobook.coverColor,
+      language: audiobook.language,
+      chapterTitle: currentChapter?.title,
+      totalChapters: chapters.length,
+      cefrLevel: cefr,
+      cefrConfidence,
     });
-  }, [audiobook.id, currentChapterIndex, currentTime, duration]);
+  }, [audiobook, currentChapterIndex, currentTime, duration, currentChapter, chapters.length, cefr, cefrConfidence]);
 
-  // 4. Send Message to AI
-  const handleSend = async (overrideText?: string) => {
-    const userText = (overrideText || input).trim();
-    if (!userText || isSending) return;
+  // Media Session: lets the lock screen, notification shade and hardware
+  // media keys control playback while the tab is hidden or the screen is
+  // locked. Every handler below calls straight into the controller functions
+  // already defined above — nothing here duplicates playback logic.
+  useEffect(() => {
+    return setMediaSessionActionHandlers({
+      play: safePlay,
+      pause: pauseAudio,
+      seekBackward: () => handleSkip(-15),
+      seekForward: () => handleSkip(15),
+      previousTrack: handlePrevChapter,
+      nextTrack: handleNextChapter,
+      seekTo: handleSeek,
+    });
+  }, [safePlay, pauseAudio, handleSkip, handlePrevChapter, handleNextChapter, handleSeek]);
 
-    setMessages((prev) => [...prev, { role: "user", text: userText }]);
-    if (!overrideText) setInput("");
-    setIsSending(true);
+  useEffect(() => {
+    setMediaSessionMetadata({
+      title: currentChapter?.title || audiobook.title,
+      artist: author,
+      album: audiobook.title,
+      artworkUrl: audiobook.coverUrl,
+    });
+  }, [currentChapter, audiobook.title, audiobook.coverUrl, author]);
 
+  useEffect(() => {
+    setMediaSessionPlaybackState(isPlaying ? "playing" : "paused");
+  }, [isPlaying]);
+
+  useEffect(() => {
+    setMediaSessionPositionState({
+      duration: duration || currentChapter?.durationSeconds || 0,
+      position: currentTime,
+      playbackRate: playbackSpeed,
+    });
+  }, [duration, currentTime, playbackSpeed, currentChapter]);
+
+  // A word tapped inside the AI chat (or the word modal's own examples) gets
+  // the same live lookup the reader and dictionary use, cached the same way.
+  const loadWordModalAnalysis = useCallback(async (word: string, contextSentence: string) => {
+    setWordModalSelection(word);
+    setIsWordModalOpen(true);
+    setIsWordModalLoading(true);
+    setWordModalAnalysis(null);
+
+    const cacheKey = makeAiCacheKey("word", word, targetLanguage, nativeLanguage);
     try {
-      const levelPrompt = cefrLevel ? `уровень: ${cefrLevel}` : "оригинал без адаптации";
-      const prompt = [
-        `Мы обсуждаем аудиокнигу "${audiobook.title}" автора ${author} (язык: ${language}, ${levelPrompt}).`,
-        "Отвечай кратко, понятно, по делу, без markdown и длинных списков.",
-        `Вопрос пользователя: ${userText}`,
-      ].join("\n");
-      const response = await aiChat(prompt);
-      if (isMountedRef.current) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "ai", text: cleanAiText(response || "Не получилось ответить.") },
-        ]);
+      let full = getLocalAiAnalysis(cacheKey);
+      if (!full?.word) {
+        full = await analyzeSelection({
+          mode: "word",
+          word,
+          text: word,
+          sentence: contextSentence || word,
+          sentenceBefore: "",
+          sentenceAfter: "",
+          nativeLanguage,
+          targetLanguage,
+        });
+        if (full?.word) saveLocalAiAnalysis(cacheKey, full);
       }
+      setWordModalAnalysis(full?.word ? full : null);
     } catch {
-      if (isMountedRef.current) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "ai", text: "Не получилось связаться с AI. Попробуйте ещё раз." },
-        ]);
-      }
+      setWordModalAnalysis(null);
     } finally {
-      if (isMountedRef.current) {
-        setIsSending(false);
-      }
+      setIsWordModalLoading(false);
     }
-  };
+  }, [nativeLanguage, targetLanguage]);
 
   return (
     <div className="book-modal-backdrop">
@@ -446,49 +497,36 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
             <div className="book-modal-title-block">
               <h1>{audiobook.title}</h1>
               <p>{author}</p>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
                 <span>{language}</span>
-                {cefrLevel && cefrConfidence === "verified" ? (
+                {cefrBadge ? (
                   <span
                     className="cefr-badge"
                     title={cefrExplanation}
                     style={{
-                      background: CEFR_COLORS[cefrLevel] || "#888",
+                      background: CEFR_COLORS[cefr as CefrLevel] || "#888",
                       color: "#fff",
                       padding: "2px 6px",
                       borderRadius: "4px",
                       fontSize: "11px",
                       fontWeight: "bold",
+                      opacity: cefrConfidence === "approximate" ? 0.85 : 1,
                     }}
                   >
-                    {cefrLevel}
+                    {cefrBadge}
                   </span>
-                ) : cefrLevel && cefrConfidence === "approximate" ? (
+                ) : (
                   <span
-                    className="cefr-badge approximate"
-                    title={cefrExplanation}
+                    className="cefr-badge"
+                    title={cefrExplanation ?? "Оригинальный текст без адаптации — уровень CEFR не подтверждён."}
                     style={{
-                      background: "rgba(212, 168, 71, 0.2)",
-                      border: `1px solid ${CEFR_COLORS[cefrLevel] || "var(--accent)"}`,
-                      color: CEFR_COLORS[cefrLevel] || "var(--accent)",
+                      background: "var(--bg-hover)",
+                      color: "var(--text-muted)",
                       padding: "2px 6px",
                       borderRadius: "4px",
                       fontSize: "11px",
                       fontWeight: "bold",
                     }}
-                  >
-                    ≈ {cefrLevel}
-                  </span>
-                ) : (
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      color: "var(--text-muted)",
-                      background: "rgba(240, 230, 211, 0.08)",
-                      padding: "2px 6px",
-                      borderRadius: "4px",
-                    }}
-                    title="Неадаптированный оригинал, уровень не определён"
                   >
                     Оригинал
                   </span>
@@ -507,32 +545,75 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
                   </span>
                 )}
               </div>
+              <button
+                type="button"
+                className="pill-btn discuss-audiobook-btn"
+                onClick={() => setIsDiscussOpen(true)}
+              >
+                <MessageSquare size={15} />
+                Обсудить с AI
+              </button>
             </div>
           </div>
 
-          {/* Embedded Audio Player */}
+          {/* Compact AI overview — right beside the title/metadata */}
+          <section className="ai-review-card ai-review-compact">
+            <div className="compact-section-title">
+              <Info size={15} />
+              <strong>AI-обзор</strong>
+            </div>
+            {isLoadingReview ? (
+              <div className="compact-loader">
+                <Loader2 size={14} className="spin" />
+                <span>Оцениваю уровень и содержание...</span>
+              </div>
+            ) : (
+              <dl className="review-list">
+                {reviewLines.map((line, index) => {
+                  const [label, ...rest] = line.split(":");
+                  const text = rest.join(":").trim() || line;
+                  const hasLabel = rest.length > 0 && label.length < 18;
+                  return (
+                    <div key={`${line}-${index}`}>
+                      {hasLabel && <dt>{label}</dt>}
+                      <dd>{hasLabel ? text : line}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            )}
+          </section>
+
+          {/* Embedded Audio Player — the only thing left at the bottom, along
+              with the chapters drawer it opens. */}
           <section className="audio-player-card">
+            {loadError && <div className="inline-error">{loadError}</div>}
             <audio
               ref={audioRef}
               preload="metadata"
               onTimeUpdate={() => {
-                if (audioRef.current && isMountedRef.current) {
+                if (audioRef.current) {
                   setCurrentTime(audioRef.current.currentTime);
                 }
               }}
               onLoadedMetadata={() => {
-                if (audioRef.current && isMountedRef.current) {
+                if (audioRef.current) {
                   setDuration(audioRef.current.duration || 0);
                   audioRef.current.playbackRate = playbackSpeed;
+                  // Actually seek the element to a restored "continue
+                  // listening" position — this is the first point a seek is
+                  // guaranteed to stick, and the only reason a resumed book
+                  // used to play from 0 despite the seek bar showing the
+                  // right spot (see pendingSeekSecondsRef above).
+                  if (pendingSeekSecondsRef.current !== null) {
+                    audioRef.current.currentTime = pendingSeekSecondsRef.current;
+                    pendingSeekSecondsRef.current = null;
+                  }
                 }
               }}
               onEnded={handleNextChapter}
-              onPause={() => {
-                if (isMountedRef.current) setIsPlaying(false);
-              }}
-              onPlay={() => {
-                if (isMountedRef.current) setIsPlaying(true);
-              }}
+              onPause={() => setIsPlaying(false)}
+              onPlay={() => setIsPlaying(true)}
             />
 
             <div className="audio-player-header">
@@ -663,34 +744,6 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
               </button>
             </div>
 
-            {/* Read-Along (Karaoke / Transcript Mode) Button */}
-            <button
-              type="button"
-              className="audio-read-along-btn"
-              onClick={() => setIsReadAlongOpen(true)}
-              disabled={isLoadingChapters || !currentChapter}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                width: "100%",
-                marginTop: "12px",
-                padding: "10px 16px",
-                background: "linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(168, 85, 247, 0.22))",
-                border: "1px solid rgba(129, 140, 248, 0.45)",
-                borderRadius: "12px",
-                color: "#e0e7ff",
-                fontWeight: "600",
-                fontSize: "13.5px",
-                cursor: "pointer",
-                transition: "all 0.2s ease",
-              }}
-            >
-              <ScrollText size={17} style={{ color: "#a5b4fc" }} />
-              <span>Читать текст синхронно (Текст / Караоке)</span>
-            </button>
-
             {/* Chapters list drawer */}
             {showChaptersList && chapters.length > 0 && (
               <div className="audio-chapters-drawer">
@@ -704,7 +757,9 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
                       type="button"
                       className={`audio-chapter-item ${idx === currentChapterIndex ? "active" : ""}`}
                       onClick={() => {
-                        selectChapter(idx, true);
+                        setCurrentChapterIndex(idx);
+                        setCurrentTime(0);
+                        setIsPlaying(true);
                       }}
                     >
                       <span className="audio-chapter-num">{idx + 1}.</span>
@@ -718,116 +773,48 @@ export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAdd
               </div>
             )}
           </section>
-
-          {/* AI Review Card */}
-          <section className="ai-review-card">
-            <div className="compact-section-title">
-              <Info size={17} />
-              <strong>AI-обзор аудиокниги</strong>
-            </div>
-            {isLoadingReview ? (
-              <div className="compact-loader">
-                <Loader2 size={15} className="spin" />
-                <span>Оцениваю содержание и речь...</span>
-              </div>
-            ) : (
-              <dl className="review-list">
-                {reviewLines.map((line, index) => {
-                  const [label, ...rest] = line.split(":");
-                  const text = rest.join(":").trim() || line;
-                  const hasLabel = rest.length > 0 && label.length < 18;
-                  return (
-                    <div key={`${line}-${index}`}>
-                      {hasLabel && <dt>{label}</dt>}
-                      <dd>{hasLabel ? text : line}</dd>
-                    </div>
-                  );
-                })}
-              </dl>
-            )}
-          </section>
-
-          {/* AI Chat Card */}
-          <section className="book-chat-card">
-            <div className="compact-section-title chat-title">
-              <MessageSquare size={17} />
-              <strong>Спросить AI об аудиокниге</strong>
-            </div>
-
-            <div className="book-chat-messages">
-              {messages.length === 0 && (
-                <div className="chat-empty">
-                  <span>
-                    Спросите AI: о чем сюжет, насколько быстрая речь, какие сложные слова встретятся
-                    или подходит ли книга для вашего уровня.
-                  </span>
-                </div>
-              )}
-              {messages.map((message, index) => (
-                <div key={index} className={`chat-bubble ${message.role}`}>
-                  {message.text}
-                </div>
-              ))}
-              {isSending && (
-                <div className="typing-row">
-                  <Loader2 size={12} className="spin" />
-                  AI печатает...
-                </div>
-              )}
-            </div>
-
-            <div className="book-chat-input">
-              <input
-                type="text"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void handleSend();
-                }}
-                placeholder="Спросить об аудиокниге..."
-              />
-              <DictateButton
-                lang="ru"
-                title="Голосовой ввод вопроса"
-                onText={(text: string) => {
-                  setInput((prev) => appendSpoken(prev, text));
-                }}
-              />
-              <button
-                onClick={() => void handleSend()}
-                disabled={!input.trim() || isSending}
-                type="button"
-                aria-label="Отправить"
-              >
-                <Send size={17} />
-              </button>
-            </div>
-          </section>
         </div>
       </div>
 
-      {/* Fullscreen Read-Along Modal */}
-      {isReadAlongOpen && (
-        <AudiobookReadAlongModal
-          audiobook={details || audiobook}
-          currentChapterIndex={currentChapterIndex}
-          isPlaying={isPlaying}
-          currentTime={currentTime}
-          duration={duration}
-          playbackSpeed={playbackSpeed}
-          onPlayPause={handlePlayPause}
-          onSeek={handleSeek}
-          onSpeedChange={(speed) => {
-            setPlaybackSpeed(speed);
-            if (audioRef.current) audioRef.current.playbackRate = speed;
-          }}
-          onChapterChange={(idx) => selectChapter(idx, isPlaying)}
-          onClose={() => setIsReadAlongOpen(false)}
-          profile={profile}
-          cards={cards}
-          onAddCard={onAddCard}
-        />
-      )}
+      <DiscussAiModal
+        isOpen={isDiscussOpen}
+        mode="audiobook"
+        selectedText={audiobook.title}
+        sentence={audiobookContext}
+        nativeLanguage={nativeLanguage}
+        targetLanguage={targetLanguage}
+        messages={discussMessages}
+        onMessagesChange={setDiscussMessages}
+        onClose={() => setIsDiscussOpen(false)}
+        onWordTap={(word, context) => void loadWordModalAnalysis(word, context)}
+        onAddExample={onAddWordCard ? (text, translation) => onAddWordCard(text, translation, "phrase") : undefined}
+      />
+
+      <WordModal
+        analysis={wordModalAnalysis}
+        isOpen={isWordModalOpen}
+        isLoading={isWordModalLoading}
+        lang={targetLanguage}
+        nativeLang={nativeLanguage}
+        selectedWord={wordModalSelection}
+        onClose={() => {
+          setIsWordModalOpen(false);
+          setWordModalAnalysis(null);
+          setWordModalSelection("");
+        }}
+        onAddCard={() => {
+          if (!onAddWordCard) return;
+          const front = wordModalSelection;
+          const back = wordModalAnalysis?.word?.translation ?? "";
+          if (front && back) onAddWordCard(front, back, "word");
+        }}
+        onAddLemma={(lemma) => {
+          if (!onAddWordCard) return;
+          onAddWordCard(lemma, wordModalAnalysis?.word?.translation ?? "", "word");
+        }}
+        onWordTap={(word, context) => void loadWordModalAnalysis(word, context)}
+        onAddExample={onAddWordCard ? (text, translation) => onAddWordCard(text, translation, "phrase") : undefined}
+      />
     </div>
   );
 }

@@ -10,7 +10,7 @@
 import { GoogleGenAI, Type, type GenerateContentResponse } from "@google/genai";
 import { NextResponse } from "next/server";
 import { AI_CONFIG } from "@/lib/config";
-import type { DiscussMessage, DiscussWordProfile } from "@/lib/types";
+import type { AiMode, DiscussMessage, DiscussWordProfile } from "@/lib/types";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { parseModelJson } from "@/lib/ai/jsonResponse";
 import { buildDiscussSystemPrompt, parseDiscussReply } from "@/lib/ai/buildDiscussPrompt";
@@ -82,7 +82,7 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json() as {
-    mode: "word" | "phrase" | "sentence" | "homework";
+    mode: AiMode;
     selectedText: string;
     sentence: string;
     sentenceBefore?: string;

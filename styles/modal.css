@@ -2058,7 +2058,7 @@
 }
 
 .audio-btn-control:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: rgba(240, 230, 211, 0.07);
   border-color: var(--border-strong);
 }
 
@@ -2142,11 +2142,11 @@
 }
 
 .audio-chapter-item:hover {
-  background: var(--bg-hover);
+  background: rgba(240, 230, 211, 0.07);
 }
 
 .audio-chapter-item.active {
-  background: var(--accent-soft);
+  background: rgba(212, 168, 71, 0.15);
   border-color: var(--accent);
   color: var(--accent);
   font-weight: 700;
