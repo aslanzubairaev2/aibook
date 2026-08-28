@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { LIVE_TRANSLATE_MODEL } from "@/lib/ai/liveModels";
+import { LIVE_TRANSLATE_REALTIME_INPUT } from "@/lib/ai/liveTranslateConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,7 @@ export async function GET(req: Request) {
             inputAudioTranscription: {},
             outputAudioTranscription: {},
             translationConfig: { targetLanguageCode: "ru", echoTargetLanguage: true },
+            realtimeInputConfig: LIVE_TRANSLATE_REALTIME_INPUT,
           },
         },
       },

@@ -89,6 +89,21 @@ ol, ul { list-style: none; }
   padding: 0 0 88px;
 }
 
+/* Full-viewport sections (see IMMERSIVE in AppShell): no tab bar, so no 88px
+   reserved for it, and a hard height instead of a minimum — the leftover
+   padding used to make the document 88px taller than the screen, which handed
+   every such screen a stray scroll and pushed its header out of view. */
+.app-shell--immersive {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-main--immersive {
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+}
+
 .screen { max-width: 640px; margin: 0 auto; padding: 20px 16px 0; }
 
 /* ─── Bottom Navigation ──────────────────────────────────────────────────── */
@@ -335,34 +350,49 @@ textarea,
 .live-translate-home-card .action-card-arrow { color: #79d5d0; }
 .live-translate-home-icon { display: grid; place-items: center; width: 50px; height: 50px; border-radius: var(--radius-md); color: #8ce4dd; background: rgba(79, 190, 184, .17); }
 
-.live-translate-screen { min-height: 100svh; display: flex; flex-direction: column; padding: 18px max(18px, calc((100vw - 760px) / 2)); color: #f5f2ea; background: radial-gradient(circle at 50% 42%, rgba(32, 102, 104, .28), transparent 37%), #101a1c; }
-.live-translate-header { display: flex; align-items: center; justify-content: space-between; }
-.live-translate-brand { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 800; letter-spacing: .04em; }
-.live-translate-badge { padding: 5px 8px; border: 1px solid rgba(140, 228, 221, .45); border-radius: 99px; color: #8ce4dd; font-size: 11px; font-weight: 800; }
-.live-translate-main { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-.live-translate-orbit { display: grid; place-items: center; width: 170px; height: 170px; margin-bottom: 22px; border: 1px solid rgba(140, 228, 221, .22); border-radius: 50%; box-shadow: 0 0 0 18px rgba(140, 228, 221, .025), 0 0 60px rgba(52, 183, 176, .12); }
-.live-translate-orbit.active { animation: live-translate-pulse 2.4s ease-in-out infinite; }
-.live-translate-orbit-core { display: grid; place-items: center; width: 100px; height: 100px; border-radius: 50%; color: #8ce4dd; background: linear-gradient(145deg, #285d5e, #173536); box-shadow: inset 0 1px 0 rgba(255,255,255,.12); }
-.live-translate-kicker { margin: 0 0 8px; color: #79d5d0; font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
-.live-translate-main h1 { margin: 0; font-size: clamp(28px, 6vw, 42px); letter-spacing: -.03em; }
-.live-translate-status { min-height: 24px; margin: 10px 0 28px; color: rgba(245, 242, 234, .64); }
-.live-translate-start { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-width: 230px; padding: 16px 24px; border: 0; border-radius: 99px; color: #102022; background: #8ce4dd; font-size: 15px; font-weight: 850; box-shadow: 0 10px 30px rgba(91, 209, 201, .2); }
-.live-translate-start.is-running { color: #fff; background: #a95757; box-shadow: none; }
-.live-translate-start:focus-visible, .live-translate-text-toggle:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
-.live-translate-hint { display: inline-flex; align-items: center; gap: 6px; margin: 18px 0 0; color: rgba(245, 242, 234, .5); font-size: 12px; }
-.live-translate-error { max-width: 380px; margin-top: 18px; padding: 10px 14px; border-radius: 12px; color: #ffd9d9; background: rgba(169, 87, 87, .22); font-size: 13px; }
-.live-translate-footer { padding-top: 14px; text-align: center; }
-.live-translate-text-toggle { padding: 9px 14px; border: 1px solid rgba(140, 228, 221, .28); border-radius: 99px; color: #8ce4dd; background: transparent; font-size: 13px; font-weight: 750; }
-.live-translate-footer small { display: block; margin-top: 12px; color: rgba(245, 242, 234, .4); font-size: 11px; }
-.live-translate-usage { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 10px auto 0; color: rgba(245, 242, 234, .58); font-size: 11px; }
-.live-translate-usage span:first-child { color: #79d5d0; font-weight: 800; }
-.live-translate-usage strong { color: #f5f2ea; font-weight: 800; }
-.live-translate-usage em { flex-basis: 100%; color: rgba(255, 217, 217, .65); font-style: normal; }
-.live-translate-usage-note { max-width: 520px; margin-top: 6px !important; color: rgba(245, 242, 234, .32) !important; }
-.live-translate-transcript { max-width: 600px; margin: 16px auto 0; padding: 14px 16px; border: 1px solid rgba(140, 228, 221, .2); border-radius: 14px; text-align: left; background: rgba(255,255,255,.045); }
-.live-translate-transcript span { color: #79d5d0; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
-.live-translate-transcript p { margin: 8px 0 0; color: rgba(245, 242, 234, .86); line-height: 1.55; }
-@keyframes live-translate-pulse { 50% { transform: scale(1.04); box-shadow: 0 0 0 30px rgba(140, 228, 221, .035), 0 0 80px rgba(52, 183, 176, .24); } }
+/* The live screen owns the viewport: fixed height, no page scroll, no tab bar
+   (see .app-shell--immersive). Everything that could grow — the transcript —
+   scrolls inside its own box instead of stretching the layout. */
+.live-translate-screen { position: relative; height: 100%; display: flex; flex-direction: column; overflow: hidden; padding: max(14px, env(safe-area-inset-top)) max(18px, calc((100vw - 620px) / 2)) max(16px, env(safe-area-inset-bottom)); color: #f5f2ea; background: radial-gradient(circle at 50% 38%, rgba(32, 102, 104, .3), transparent 42%), #101a1c; }
+.live-translate-header { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.live-translate-back { display: grid; place-items: center; width: 40px; height: 40px; margin-left: -8px; border: 0; border-radius: 50%; color: rgba(245, 242, 234, .72); background: transparent; transition: color var(--transition-fast), background var(--transition-fast); }
+.live-translate-back:hover { color: #f5f2ea; background: rgba(255, 255, 255, .06); }
+.live-translate-brand { display: inline-flex; align-items: center; gap: 8px; color: rgba(245, 242, 234, .8); font-size: 13px; font-weight: 750; letter-spacing: .02em; }
+.live-translate-badge { padding: 4px 9px; border: 1px solid rgba(140, 228, 221, .35); border-radius: 99px; color: #8ce4dd; font-size: 11px; font-weight: 800; }
+
+.live-translate-stage { display: flex; flex: 1; min-height: 0; flex-direction: column; align-items: center; justify-content: center; gap: 20px; text-align: center; }
+
+/* One control: tap to start, tap to stop. Idle it is a transparent outline;
+   live it fills, glows and breathes. */
+.live-translate-orb { display: grid; place-items: center; width: 132px; height: 132px; border: 1px solid rgba(140, 228, 221, .38); border-radius: 50%; color: #8ce4dd; background: transparent; transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast); }
+.live-translate-orb:hover { border-color: rgba(140, 228, 221, .62); background: rgba(140, 228, 221, .06); }
+.live-translate-orb.is-live { border-color: transparent; color: #0d1c1e; background: linear-gradient(150deg, #a6ede6, #55c3bc); box-shadow: 0 0 0 12px rgba(140, 228, 221, .08), 0 0 64px rgba(85, 195, 188, .45); animation: live-translate-pulse 2.4s ease-in-out infinite; }
+.live-translate-orb:focus-visible, .live-translate-chip:focus-visible, .live-translate-back:focus-visible, .live-translate-overlay-close:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+.live-translate-status { min-height: 20px; margin: 0; color: rgba(245, 242, 234, .58); font-size: 14px; }
+.live-translate-error { max-width: 340px; margin: 0; padding: 9px 14px; border-radius: 12px; color: #ffd9d9; background: rgba(169, 87, 87, .22); font-size: 13px; }
+
+.live-translate-hint { display: flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; margin: 0 0 12px; color: rgba(245, 242, 234, .38); font-size: 11px; text-align: center; }
+.live-translate-bar { display: flex; align-items: center; justify-content: center; gap: 10px; flex-shrink: 0; }
+.live-translate-chip { padding: 9px 16px; border: 1px solid rgba(140, 228, 221, .28); border-radius: 99px; color: #8ce4dd; background: transparent; font-size: 13px; font-weight: 750; }
+.live-translate-chip.is-on { color: #0d1c1e; background: #8ce4dd; border-color: transparent; }
+.live-translate-cost { color: rgba(245, 242, 234, .42); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* Floating over the screen rather than in the flow: the transcript can never
+   reflow the controls under it, and it is capped so old lines scroll off the
+   top instead of the panel growing without limit. */
+.live-translate-overlay { position: absolute; inset: auto max(18px, calc((100vw - 620px) / 2)) calc(max(16px, env(safe-area-inset-bottom)) + 96px); z-index: 5; display: flex; flex-direction: column; max-height: min(34vh, 280px); padding: 12px 14px; border: 1px solid rgba(140, 228, 221, .2); border-radius: 16px; background: rgba(16, 30, 32, .93); backdrop-filter: blur(18px); box-shadow: 0 18px 44px rgba(0, 0, 0, .45); }
+.live-translate-overlay-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; color: #79d5d0; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.live-translate-overlay-close { display: grid; place-items: center; width: 26px; height: 26px; margin-right: -4px; border: 0; border-radius: 50%; color: rgba(245, 242, 234, .6); background: transparent; }
+.live-translate-overlay-close:hover { color: #f5f2ea; background: rgba(255, 255, 255, .07); }
+.live-translate-overlay-log { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18px); mask-image: linear-gradient(to bottom, transparent, #000 18px); }
+.live-translate-overlay-log p { margin: 8px 0 0; color: rgba(245, 242, 234, .88); font-size: 14px; line-height: 1.55; }
+.live-translate-overlay small { flex-shrink: 0; margin-top: 10px; color: rgba(245, 242, 234, .32); font-size: 10px; }
+
+@keyframes live-translate-pulse { 50% { box-shadow: 0 0 0 22px rgba(140, 228, 221, .05), 0 0 84px rgba(85, 195, 188, .55); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .live-translate-orb.is-live { animation: none; }
+}
 
 /* ─── Stats Grid ─────────────────────────────────────────────────────────── */
 .stats-grid {
