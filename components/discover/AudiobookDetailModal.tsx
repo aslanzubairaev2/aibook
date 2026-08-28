@@ -333,10 +333,15 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
 
   // A loop is chapter-relative (segment times come from that chapter's
   // transcript) — carrying it into a different chapter would repeat the
-  // wrong window of audio.
-  useEffect(() => {
+  // wrong window of audio. Reset during render (React's documented pattern
+  // for clearing state when a prop changes) rather than in an effect, so
+  // it lands in the same render as the chapter switch instead of a tick
+  // later.
+  const [loopResetChapterIndex, setLoopResetChapterIndex] = useState(currentChapterIndex);
+  if (currentChapterIndex !== loopResetChapterIndex) {
+    setLoopResetChapterIndex(currentChapterIndex);
     setLoopSegment(null);
-  }, [currentChapterIndex]);
+  }
 
   const handleToggleLoopSegment = useCallback((segment: { start: number; end: number } | null) => {
     setLoopSegment(segment);
@@ -902,7 +907,13 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
             setCurrentChapterIndex(idx);
             setCurrentTime(0);
           }}
-          onClose={() => setIsReadAlongOpen(false)}
+          onClose={() => {
+            setIsReadAlongOpen(false);
+            // The regular player has no repeat indicator or stop control —
+            // leaving a loop running after close would trap playback in that
+            // ~30s window with no visible way out except reopening read-along.
+            setLoopSegment(null);
+          }}
           onAddWordCard={onAddWordCard}
           loopSegment={loopSegment}
           onToggleLoopSegment={handleToggleLoopSegment}
