@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, ChevronRight, Library, Flame, Phone } from "lucide-react";
+import { BookOpen, ChevronRight, Library, Flame, Phone, Languages } from "lucide-react";
 import { BookDetailModal } from "@/components/discover/BookDetailModal";
 import type { Book, Flashcard, UserProfile } from "@/lib/types";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -24,6 +24,7 @@ type Props = {
   onOpenBooks: () => void;
   onOpenDiscover: () => void;
   onOpenLiveChat: () => void;
+  onOpenLiveTranslate: () => void;
 };
 
 type GutendexBook = {
@@ -109,6 +110,7 @@ export function HomeDashboard({
   onOpenBooks,
   onOpenDiscover,
   onOpenLiveChat,
+  onOpenLiveTranslate,
 }: Props) {
   const { user } = useAuth();
   const [recommendations, setRecommendations] = useState<GutendexBook[]>([]);
@@ -232,6 +234,12 @@ export function HomeDashboard({
           </span>
         </div>
       )}
+
+      <button className="live-translate-home-card" onClick={onOpenLiveTranslate} type="button">
+        <span className="live-translate-home-icon"><Languages size={23} /></span>
+        <span><span className="action-card-label">Для реального разговора</span><strong className="action-card-title">Live перевод</strong><span className="action-card-sub">Слушайте русский перевод почти без задержки</span></span>
+        <ChevronRight size={20} className="action-card-arrow" />
+      </button>
 
       {book ? (
         <div className="book-hero-card glass-card">
