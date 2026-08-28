@@ -17,14 +17,20 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import type { Audiobook, AudiobookChapter, CefrLevel, DiscussMessage, AiAnalysis } from "@/lib/types";
+import type { Audiobook, AudiobookChapter, CefrConfidence, CefrLevel, DiscussMessage, AiAnalysis } from "@/lib/types";
 import {
   fetchAudiobookDetails,
   formatAudioDuration,
   getAudiobookProgress,
   saveAudiobookProgress,
 } from "@/lib/audio/audiobooks";
-import { syncAudioSource } from "@/lib/audio/playback";
+import { isBenignPlaybackAbort, syncAudioSource } from "@/lib/audio/playback";
+import {
+  setMediaSessionActionHandlers,
+  setMediaSessionMetadata,
+  setMediaSessionPlaybackState,
+  setMediaSessionPositionState,
+} from "@/lib/audio/mediaSession";
 import { aiChat } from "@/lib/ai/chat";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
@@ -84,6 +90,12 @@ const CEFR_COLORS: Record<string, string> = {
   C1: "#9c27b0",
   C2: "#673ab7",
 };
+
+/** "B1" when verified, "≈ B1" when it's only a genre/author guess. */
+function formatCefrBadge(level: CefrLevel | null, confidence: CefrConfidence | undefined): string | null {
+  if (!level) return null;
+  return confidence === "approximate" ? `≈ ${level}` : level;
+}
 
 const PLAYBACK_SPEEDS = [0.75, 1.0, 1.25, 1.5, 2.0];
 
@@ -153,13 +165,20 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
   const langKey = audiobook.language.toLowerCase();
   const language = LANG_NAMES[langKey] || audiobook.language;
   const targetLanguage = LANG_CODE[langKey] || langKey || "de";
-  const cefr: CefrLevel = details?.cefrLevel || audiobook.cefrLevel || "B1";
+  // No fallback level here on purpose: a book this classifier hasn't verified
+  // has no level to fall back to without repeating the false-A1/B1 bug this
+  // feature fixes (see lib/audio/audiobooks.ts).
+  const cefr: CefrLevel | null = details?.cefrLevel ?? audiobook.cefrLevel ?? null;
+  const cefrConfidence: CefrConfidence | undefined = details?.cefrConfidence ?? audiobook.cefrConfidence;
+  const cefrBadge = formatCefrBadge(cefr, cefrConfidence);
+  const cefrExplanation = details?.cefrExplanation ?? audiobook.cefrExplanation;
   const reviewLines = useMemo(() => splitReview(review), [review]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // What the AI chat is told this book is, since there is no "selected text"
   // to hand it the way a tapped word or sentence would.
   const audiobookContext = useMemo(
-    () => [author, language, `уровень ${cefr}`, audiobook.description].filter(Boolean).join(" · "),
+    () => [author, language, cefr ? `уровень ${cefr}` : null, audiobook.description].filter(Boolean).join(" · "),
     [author, language, cefr, audiobook.description]
   );
 
@@ -171,6 +190,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
     async function load() {
       if (details) return;
       setIsLoadingChapters(true);
+      setLoadError(null);
       try {
         const full = await fetchAudiobookDetails(audiobook.id, controller.signal);
         if (active) {
@@ -184,7 +204,13 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
         }
       } catch (err) {
         if (active) {
+          if (err instanceof DOMException && err.name === "AbortError") return;
           console.error("Failed to load audiobook chapters", err);
+          // A saved "continue listening" pointer can point at a book that was
+          // pulled from Internet Archive since — this is the one place that
+          // becomes visible, so it needs its own message instead of a
+          // silently disabled player.
+          setLoadError("Не удалось загрузить эту аудиокнигу. Возможно, она больше недоступна на Internet Archive.");
         }
       } finally {
         if (active) setIsLoadingChapters(false);
@@ -220,8 +246,9 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
         if (isActive) setReview(result || "О чем: аудиокнига из классической библиотеки.");
       } catch {
         if (isActive) {
+          const levelLine = cefr ? `Язык: примерно ${cefr}, понятная дикция.` : "Язык: уровень не подтверждён, оригинальный текст без адаптации.";
           setReview(
-            `О чем: классическое аудиопроизведение для тренировки понимания на слух.\nЖанр: литература в общественном достоянии.\nЯзык: примерно ${cefr}, понятная дикция.\nКому: тем, кто развивает навык восприятия речи на ${language}.`
+            `О чем: классическое аудиопроизведение для тренировки понимания на слух.\nЖанр: литература в общественном достоянии.\n${levelLine}\nКому: тем, кто развивает навык восприятия речи на ${language}.`
           );
         }
       } finally {
@@ -237,30 +264,56 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
   }, [audiobook.id, audiobook.title, author, language, cefr]);
 
   // 3. Audio Element Event Handlers
+  //
+  // Every `play()` call goes through `safePlay`, tagged with an incrementing
+  // request id. A chapter/book change, or an explicit pause, bumps the id —
+  // so when an old `play()` promise settles (resolved or rejected) after
+  // being superseded, it's recognised as stale and ignored instead of
+  // fighting the newer state or logging a benign AbortError to the console.
+  // This is the same race the AbortError fix on gemini/audiobooks-quality
+  // addressed for its own player; this modal needed its own copy because the
+  // UX redesign rewrote the component around it.
+  const playRequestIdRef = useRef(0);
+
+  const safePlay = useCallback(() => {
+    if (!audioRef.current) return;
+    const requestId = ++playRequestIdRef.current;
+    audioRef.current
+      .play()
+      .then(() => {
+        if (playRequestIdRef.current === requestId) setIsPlaying(true);
+      })
+      .catch((err) => {
+        if (playRequestIdRef.current !== requestId) return; // superseded — expected
+        if (isBenignPlaybackAbort(err)) return;
+        console.error("Audio playback error:", err);
+        setIsPlaying(false);
+      });
+  }, []);
+
+  const pauseAudio = useCallback(() => {
+    playRequestIdRef.current += 1; // invalidate any play() still in flight
+    audioRef.current?.pause();
+    setIsPlaying(false);
+  }, []);
+
   const handlePlayPause = useCallback(() => {
     if (!audioRef.current || !currentChapter) return;
-    if (isPlaying) {
-      audioRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      audioRef.current
-        .play()
-        .then(() => setIsPlaying(true))
-        .catch((e) => console.error("Audio playback error:", e));
-    }
-  }, [isPlaying, currentChapter]);
+    if (isPlaying) pauseAudio();
+    else safePlay();
+  }, [isPlaying, currentChapter, safePlay, pauseAudio]);
 
-  const handleSeek = (seconds: number) => {
+  const handleSeek = useCallback((seconds: number) => {
     if (!audioRef.current) return;
     audioRef.current.currentTime = seconds;
     setCurrentTime(seconds);
-  };
+  }, []);
 
-  const handleSkip = (deltaSeconds: number) => {
+  const handleSkip = useCallback((deltaSeconds: number) => {
     if (!audioRef.current) return;
     const newTime = Math.max(0, Math.min(duration || 99999, audioRef.current.currentTime + deltaSeconds));
     handleSeek(newTime);
-  };
+  }, [duration, handleSeek]);
 
   const handleNextChapter = useCallback(() => {
     if (currentChapterIndex < chapters.length - 1) {
@@ -270,7 +323,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
     }
   }, [currentChapterIndex, chapters.length]);
 
-  const handlePrevChapter = () => {
+  const handlePrevChapter = useCallback(() => {
     if (currentTime > 5 || currentChapterIndex === 0) {
       handleSeek(0);
     } else {
@@ -278,7 +331,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
       setCurrentTime(0);
       setIsPlaying(true);
     }
-  };
+  }, [currentTime, currentChapterIndex, handleSeek]);
 
   const cyclePlaybackSpeed = () => {
     const currentIndex = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
@@ -299,12 +352,21 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
       syncedAudioUrlRef.current
     );
     syncedAudioUrlRef.current = currentChapter.audioUrl;
-    if (sourceChanged && isPlaying) {
-      audioRef.current.play().catch(() => setIsPlaying(false));
-    }
-  }, [currentChapterIndex, currentChapter, playbackSpeed, isPlaying]);
+    if (sourceChanged && isPlaying) safePlay();
+  }, [currentChapterIndex, currentChapter, playbackSpeed, isPlaying, safePlay]);
 
-  // Periodic progress saving
+  // Invalidate any in-flight play() and stop the element on unmount (closing
+  // the modal), so a superseded promise never resolves into a component that
+  // is no longer there.
+  useEffect(() => {
+    return () => {
+      playRequestIdRef.current += 1;
+    };
+  }, []);
+
+  // Periodic progress saving — the same write also updates the home screen's
+  // "Продолжить слушать" pointer (see saveAudiobookProgress), so it carries a
+  // display snapshot the home screen can render without a network refetch.
   useEffect(() => {
     if (!audiobook.id || currentTime === 0) return;
     saveAudiobookProgress({
@@ -313,8 +375,54 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
       currentTimeSeconds: currentTime,
       durationSeconds: duration,
       updatedAt: new Date().toISOString(),
+      title: audiobook.title,
+      author: audiobook.author,
+      coverUrl: audiobook.coverUrl,
+      coverColor: audiobook.coverColor,
+      language: audiobook.language,
+      chapterTitle: currentChapter?.title,
+      totalChapters: chapters.length,
+      cefrLevel: cefr,
+      cefrConfidence,
     });
-  }, [audiobook.id, currentChapterIndex, currentTime, duration]);
+  }, [audiobook, currentChapterIndex, currentTime, duration, currentChapter, chapters.length, cefr, cefrConfidence]);
+
+  // Media Session: lets the lock screen, notification shade and hardware
+  // media keys control playback while the tab is hidden or the screen is
+  // locked. Every handler below calls straight into the controller functions
+  // already defined above — nothing here duplicates playback logic.
+  useEffect(() => {
+    return setMediaSessionActionHandlers({
+      play: safePlay,
+      pause: pauseAudio,
+      seekBackward: () => handleSkip(-15),
+      seekForward: () => handleSkip(15),
+      previousTrack: handlePrevChapter,
+      nextTrack: handleNextChapter,
+      seekTo: handleSeek,
+    });
+  }, [safePlay, pauseAudio, handleSkip, handlePrevChapter, handleNextChapter, handleSeek]);
+
+  useEffect(() => {
+    setMediaSessionMetadata({
+      title: currentChapter?.title || audiobook.title,
+      artist: author,
+      album: audiobook.title,
+      artworkUrl: audiobook.coverUrl,
+    });
+  }, [currentChapter, audiobook.title, audiobook.coverUrl, author]);
+
+  useEffect(() => {
+    setMediaSessionPlaybackState(isPlaying ? "playing" : "paused");
+  }, [isPlaying]);
+
+  useEffect(() => {
+    setMediaSessionPositionState({
+      duration: duration || currentChapter?.durationSeconds || 0,
+      position: currentTime,
+      playbackRate: playbackSpeed,
+    });
+  }, [duration, currentTime, playbackSpeed, currentChapter]);
 
   // A word tapped inside the AI chat (or the word modal's own examples) gets
   // the same live lookup the reader and dictionary use, cached the same way.
@@ -379,19 +487,36 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
               <p>{author}</p>
               <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
                 <span>{language}</span>
-                {cefr && (
+                {cefrBadge ? (
                   <span
                     className="cefr-badge"
+                    title={cefrExplanation}
                     style={{
-                      background: CEFR_COLORS[cefr] || "#888",
+                      background: CEFR_COLORS[cefr as CefrLevel] || "#888",
                       color: "#fff",
+                      padding: "2px 6px",
+                      borderRadius: "4px",
+                      fontSize: "11px",
+                      fontWeight: "bold",
+                      opacity: cefrConfidence === "approximate" ? 0.85 : 1,
+                    }}
+                  >
+                    {cefrBadge}
+                  </span>
+                ) : (
+                  <span
+                    className="cefr-badge"
+                    title={cefrExplanation ?? "Оригинальный текст без адаптации — уровень CEFR не подтверждён."}
+                    style={{
+                      background: "var(--bg-hover)",
+                      color: "var(--text-muted)",
                       padding: "2px 6px",
                       borderRadius: "4px",
                       fontSize: "11px",
                       fontWeight: "bold",
                     }}
                   >
-                    {cefr}
+                    Оригинал
                   </span>
                 )}
                 {audiobook.totalDurationFormatted && (
@@ -450,6 +575,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
           {/* Embedded Audio Player — the only thing left at the bottom, along
               with the chapters drawer it opens. */}
           <section className="audio-player-card">
+            {loadError && <div className="inline-error">{loadError}</div>}
             <audio
               ref={audioRef}
               preload="metadata"
