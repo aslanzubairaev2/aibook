@@ -3,10 +3,10 @@
 - Агент: Codex
 - Ветка: `main`
 - Release-ветка: `release/audiobooks-pause`
-- Main commit: `b6c7c58ae97897dee60183759796bc1ba6d5d0e3`
+- Main release commit: `a42bcabd6e479dfd253b43439bcdcfa1191f45ef`
 - Production deployment: https://aibook-liart.vercel.app
-- Deployment URL: https://aibook-cmtnw0i5u-azamats-projects-799bf3a6.vercel.app
-- Deployment ID: `dpl_36oMp7pDEw7F9cM4jLQjNYMsAuU9`
+- Deployment URL: https://aibook-583h9c81o-azamats-projects-799bf3a6.vercel.app
+- Final deployment ID: `dpl_2Avxrpo1b8cAjdEdWLTM4qirXMQ3`
 - Статус deployment: `READY`
 
 ## Вошло в release
