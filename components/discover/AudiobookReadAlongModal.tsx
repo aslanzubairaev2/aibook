@@ -619,13 +619,21 @@ export function AudiobookReadAlongModal({
                       !isWordSelected
                     );
 
+                    // Blurred-ahead text is still in the DOM (CSS just blurs
+                    // it) — `pointer-events: none` on the parent stops mouse
+                    // clicks, but not keyboard focus or Enter. Without this,
+                    // tabbing lets a keyboard user land on and activate a
+                    // word the audio hasn't reached yet, defeating the point
+                    // of hiding it.
                     return (
                       <span
                         key={tokIdx}
                         role="button"
-                        tabIndex={0}
-                        onClick={() => handleWordTap(token, segment, segIdx, wordStart)}
+                        tabIndex={isBlurredAhead ? -1 : 0}
+                        aria-hidden={isBlurredAhead || undefined}
+                        onClick={() => { if (!isBlurredAhead) handleWordTap(token, segment, segIdx, wordStart); }}
                         onKeyDown={(e) => {
+                          if (isBlurredAhead) return;
                           if (e.key === "Enter") handleWordTap(token, segment, segIdx, wordStart);
                         }}
                         className={`read-along-word ${isWordSelected ? "selected" : ""} ${isPhraseContext ? "phrase-context" : ""} ${isKaraokeCurrent ? "karaoke-current" : ""} ${isKaraokeSpoken ? "karaoke-spoken" : ""}`}
