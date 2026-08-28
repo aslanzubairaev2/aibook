@@ -10,6 +10,13 @@ const INNERTUBE_USER_AGENT = `com.google.android.youtube/${INNERTUBE_CLIENT_VERS
 const INNERTUBE_PLAYER_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
 const TIMEDTEXT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36,gzip(gfe)";
+const WATCH_PAGE_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+
+type CaptionTrack = {
+  baseUrl?: string;
+  languageCode?: string;
+};
 
 function decodeHtml(html: string): string {
   return html
@@ -80,6 +87,72 @@ function parseTranscriptXml(xml: string): SubtitleCue[] {
   return normalizeSubtitleCues(cues);
 }
 
+function extractJsonObject(source: string, marker: string): unknown | null {
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex < 0) return null;
+  const objectStart = source.indexOf("{", markerIndex + marker.length);
+  if (objectStart < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = objectStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(source.slice(objectStart, index + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function getCaptionTracks(data: unknown): CaptionTrack[] {
+  const tracks = (data as { captions?: { playerCaptionsTracklistRenderer?: { captionTracks?: CaptionTrack[] } } })
+    ?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  return Array.isArray(tracks) ? tracks : [];
+}
+
+function selectCaptionTrack(tracks: CaptionTrack[], preferredLang: string): CaptionTrack | null {
+  return tracks.find((track) => track.languageCode?.toLowerCase().startsWith(preferredLang.toLowerCase()))
+    || tracks[0]
+    || null;
+}
+
+async function downloadTranscript(track: CaptionTrack): Promise<SubtitleCue[]> {
+  if (!track.baseUrl) return [];
+  const response = await fetch(track.baseUrl, {
+    headers: { "User-Agent": TIMEDTEXT_USER_AGENT },
+  });
+  if (!response.ok) return [];
+  return parseTranscriptXml(await response.text());
+}
+
+async function getWatchPageCaptionTracks(videoId: string, preferredLang: string): Promise<CaptionTrack[]> {
+  const response = await fetch(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&hl=${encodeURIComponent(preferredLang)}`, {
+    headers: {
+      "User-Agent": WATCH_PAGE_USER_AGENT,
+      "Accept-Language": `${preferredLang},en;q=0.8`,
+    },
+  });
+  if (!response.ok) return [];
+  const playerResponse = extractJsonObject(await response.text(), "ytInitialPlayerResponse = ");
+  return getCaptionTracks(playerResponse);
+}
+
 // In-memory cache for transcripts
 const transcriptCache = new Map<string, SubtitleCue[]>();
 
@@ -111,30 +184,17 @@ export async function fetchYouTubeTranscript(
     });
 
     if (!res.ok) return [];
-    const data = await res.json();
-    const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    const data = res.ok ? await res.json() : null;
+    const primaryTrack = selectCaptionTrack(getCaptionTracks(data), preferredLang);
+    let cues = primaryTrack ? await downloadTranscript(primaryTrack) : [];
 
-    if (!Array.isArray(tracks) || tracks.length === 0) {
-      return [];
+    // Serverless IP ranges are occasionally rejected by the Android Innertube
+    // endpoint even though the public watch page still exposes caption tracks.
+    // Falling back to that page keeps the transcript available on Vercel too.
+    if (cues.length === 0) {
+      const fallbackTrack = selectCaptionTrack(await getWatchPageCaptionTracks(videoId, preferredLang), preferredLang);
+      cues = fallbackTrack ? await downloadTranscript(fallbackTrack) : [];
     }
-
-    // Find best matching track (matching language or default first)
-    const track =
-      tracks.find((t: { languageCode: string }) =>
-        t.languageCode?.toLowerCase().startsWith(preferredLang.toLowerCase())
-      ) || tracks[0];
-
-    if (!track?.baseUrl) return [];
-
-    const cRes = await fetch(track.baseUrl, {
-      headers: {
-        "User-Agent": TIMEDTEXT_USER_AGENT,
-      },
-    });
-
-    if (!cRes.ok) return [];
-    const xml = await cRes.text();
-    const cues = parseTranscriptXml(xml);
 
     if (cues.length > 0) {
       transcriptCache.set(cacheKey, cues);

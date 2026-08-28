@@ -34,6 +34,7 @@ export function VideoPlayerModal({
 }: Props) {
   const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [isLoadingCues, setIsLoadingCues] = useState(true);
+  const [subtitleStatus, setSubtitleStatus] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const [showLiveTranslation, setShowLiveTranslation] = useState(false);
@@ -63,6 +64,7 @@ export function VideoPlayerModal({
   useEffect(() => {
     let isMounted = true;
     setIsLoadingCues(true);
+    setSubtitleStatus(null);
 
     fetch(`/api/videos/transcript?v=${video.youtubeId}&lang=${video.language}`)
       .then((res) => (res.ok ? res.json() : { cues: [] }))
@@ -71,6 +73,7 @@ export function VideoPlayerModal({
           const c = data.cues || [];
           setCues(c);
           cuesRef.current = c;
+          setSubtitleStatus(c.length > 0 ? null : "Синхронный текст для этого видео сейчас недоступен. Выберите другое видео с текстом.");
           setShowLiveTranslation(false);
           setRevealedTranslations(new Set());
           setTranslations({});
@@ -81,6 +84,8 @@ export function VideoPlayerModal({
       .catch(() => {
         if (isMounted) {
           setCues([]);
+          cuesRef.current = [];
+          setSubtitleStatus("Не удалось загрузить синхронный текст. Попробуйте открыть видео ещё раз.");
           setIsLoadingCues(false);
         }
       });
@@ -490,7 +495,12 @@ export function VideoPlayerModal({
                 <span>{showLiveTranslation ? "Скрыть перевод" : "Перевод"}</span>
               </button>
             </div>
-          ) : null}
+          ) : (
+            <div className="video-subtitle-bar unavailable" role="status">
+              <Subtitles size={14} />
+              <span>{subtitleStatus || "Синхронный текст для этого видео недоступен."}</span>
+            </div>
+          )}
 
           {translationError && <div className="video-translation-error" role="status">{translationError}</div>}
 
