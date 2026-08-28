@@ -45,6 +45,7 @@ export function VideoPlayerModal({
 
   const playerRef = useRef<any>(null);
   const activeCueScrollRef = useRef<HTMLDivElement>(null);
+  const activeCueItemRef = useRef<HTMLDivElement>(null);
 
   const nativeLanguage = profile.nativeLanguage || "ru";
   const targetLanguage = video.language || profile.targetLanguage || "de";
@@ -148,10 +149,22 @@ export function VideoPlayerModal({
   }, [onClose, isWordModalOpen]);
 
   // ── 3. Find Active Subtitle Cue ────────────────────────────────────────────
-  const activeCue = useMemo(() => {
-    if (cues.length === 0) return null;
-    return cues.find((c) => currentTime >= c.start && currentTime <= c.end + 0.3) || null;
+  const activeCueIndex = useMemo(() => {
+    if (cues.length === 0) return -1;
+    return cues.findIndex((c) => currentTime >= c.start && currentTime <= c.end + 0.3);
   }, [cues, currentTime]);
+
+  const activeCue = activeCueIndex >= 0 ? cues[activeCueIndex] : null;
+
+  // ── 3b. Auto-scroll transcript to keep active cue centered ────────────────
+  useEffect(() => {
+    if (showFullTranscript && activeCueItemRef.current) {
+      activeCueItemRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  }, [activeCueIndex, showFullTranscript]);
 
   // ── 4. Word Tap → Pause & Word Analysis ───────────────────────────────────
   const handleWordTap = useCallback(
@@ -357,12 +370,12 @@ export function VideoPlayerModal({
           {showFullTranscript && cues.length > 0 && (
             <div className="video-full-transcript-panel" ref={activeCueScrollRef}>
               <div className="video-transcript-list">
-                {cues.map((cue, idx) => {
-                  const isActive =
-                    currentTime >= cue.start && currentTime <= cue.end + 0.3;
+              {cues.map((cue, idx) => {
+                  const isActive = idx === activeCueIndex;
                   return (
                     <div
                       key={idx}
+                      ref={isActive ? activeCueItemRef : undefined}
                       className={`video-transcript-item ${isActive ? "active" : ""}`}
                       onClick={() => handleSeekToCue(cue.start)}
                     >
