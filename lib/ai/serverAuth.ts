@@ -48,11 +48,16 @@ export async function getApiKeyForRequest(req: Request): Promise<string> {
     return process.env.GEMINI_API_KEY;
   }
 
+  // In development mode, allow server GEMINI_API_KEY if present
+  if (process.env.NODE_ENV === "development" && process.env.GEMINI_API_KEY) {
+    return process.env.GEMINI_API_KEY;
+  }
+
   // If not in allowlist, use the client-supplied Gemini key
   if (clientKey) {
     return clientKey;
   }
 
   // Otherwise, deny access
-  throw new Error("Access Denied: AI is only available to owners or users who have set their own Gemini API key in Settings.");
+  throw new Error("Для распознавания речи требуется Gemini API ключ. Укажите его в Настройках или в поле ввода ниже.");
 }
