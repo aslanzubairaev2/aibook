@@ -108,6 +108,16 @@ export function AudiobookReadAlongModal({
   // then compare against print), or manually via the hide button on whatever
   // sentence is currently playing, loop or not.
   const [hiddenSegmentKeys, setHiddenSegmentKeys] = useState<Set<string>>(new Set());
+  // Segment ids are per-chapter (the transcribe route hands out "seg-1",
+  // "seg-2", ... fresh for every chapter, see app/api/audiobooks/transcribe),
+  // not globally unique — without this, hiding chapter 1's seg-1 would also
+  // hide chapter 2's seg-1 the moment you switch. Reset during render rather
+  // than in an effect — see the matching comment in AudiobookDetailModal.
+  const [hiddenKeysResetChapterIndex, setHiddenKeysResetChapterIndex] = useState(currentChapterIndex);
+  if (currentChapterIndex !== hiddenKeysResetChapterIndex) {
+    setHiddenKeysResetChapterIndex(currentChapterIndex);
+    setHiddenSegmentKeys(new Set());
+  }
   // Spoiler guard: sentences the audio hasn't reached yet are blurred, so eyes
   // can't race ahead of ears. One button at the top drops it entirely, back
   // to plain always-visible text.
@@ -500,7 +510,10 @@ export function AudiobookReadAlongModal({
               // it's one listening unit, not N independent sentences.
               const loopGroupKey = loopSegment ? `loop-${loopSegment.start}` : null;
               const hideKey = isLooping && loopGroupKey ? loopGroupKey : segmentKey;
-              const isTextHidden = hiddenSegmentKeys.has(hideKey);
+              // "Показать весь текст" promises exactly that — it must override
+              // any loop/manual hide, not just stop future blur, or the button
+              // does nothing for whatever's already hidden.
+              const isTextHidden = spoilerMode && hiddenSegmentKeys.has(hideKey);
               // A sentence the audio hasn't reached yet — blurred under spoiler
               // mode so the eyes can't read ahead of what's actually playing.
               const isBlurredAhead = spoilerMode && !isLooping && segIdx > activeSegmentIndex;
