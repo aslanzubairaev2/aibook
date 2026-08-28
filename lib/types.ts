@@ -5,7 +5,7 @@ export type TtsProvider =
   | "local" | "gemini" | "deepgram" | "speechify" | "inworld" | "openai" | "cartesia" | "elevenlabs";
 
 export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
-export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated";
+export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated" | "librivox" | "archive_audio";
 
 export type LessonContext = {
   courseId: string;
@@ -387,3 +387,41 @@ export type CardSkillState = Partial<Record<ProductiveSkill, SkillProgress>>;
 // schedule here, stored locally and keyed by card id — same pattern as
 // CardSkillState above.
 export type CardVariantState = Partial<Record<Exclude<TrainVariant, "forward">, SkillProgress>>;
+ 
+ // ─── Audiobooks ─────────────────────────────────────────────────────────────
+ export type AudiobookChapter = {
+   id: string | number;
+   chapterIndex: number;
+   title: string;
+   durationSeconds?: number;
+   durationFormatted?: string; // e.g. "04:12"
+   audioUrl: string; // direct MP3 streaming URL
+ };
+ 
+ export type CefrConfidence = "verified" | "approximate" | "unverified";
+
+ export type Audiobook = {
+   id: string; // Identifier e.g. "sammlung_deutscher_gedichte_018_1506_librivox"
+   title: string;
+   author: string;
+   language: string; // ISO 639-1 ('de', 'en', ...) or display name
+   cefrLevel?: CefrLevel | null;
+   cefrConfidence?: CefrConfidence;
+   cefrExplanation?: string;
+   coverUrl?: string | null;
+   coverColor?: string;
+   description?: string;
+   totalDurationSeconds?: number;
+   totalDurationFormatted?: string;
+   downloads?: number;
+   sourceType: ContentSource;
+   chapters?: AudiobookChapter[];
+ };
+ 
+ export type AudiobookProgress = {
+   audiobookId: string;
+   chapterIndex: number;
+   currentTimeSeconds: number;
+   durationSeconds: number;
+   updatedAt: string;
+ };
