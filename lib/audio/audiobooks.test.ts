@@ -83,7 +83,7 @@ test("pausing keeps currentTime because the active source is not reloaded", () =
     currentTime: 37.5,
     playbackRate: 1,
     loadCalls: 0,
-    load() {
+    load(this: { loadCalls: number; currentTime: number }) {
       this.loadCalls += 1;
       this.currentTime = 0;
     },
@@ -102,7 +102,7 @@ test("changing chapter reloads the source and starts from its beginning", () => 
     currentTime: 37.5,
     playbackRate: 1,
     loadCalls: 0,
-    load() {
+    load(this: { loadCalls: number; currentTime: number }) {
       this.loadCalls += 1;
       this.currentTime = 0;
     },
