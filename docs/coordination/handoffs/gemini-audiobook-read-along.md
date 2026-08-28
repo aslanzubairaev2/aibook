@@ -2,61 +2,48 @@
 
 - **Агент**: Gemini
 - **Ветка**: `gemini/audiobook-read-along`
-- **Commit**: `1306ad8`
-- **Базовый коммит**: `f5f66c0` (`gemini/audiobooks-quality`)
+- **Базовый коммит**: `54f1b07` (`origin/main`)
 - **Статус**: ready-for-review
 
 ---
 
-## 1. Сделано
+## 1. Сделано и исправлено
 
-### Часть 1. Архитектура данных и серверная транскрибация
-1. **Типы данных (`lib/types.ts`)**:
-   - `AudiobookWordTimestamp`: слово и таймкоды `start`/`end` в секундах.
-   - `AudiobookSegment`: предложение/фрагмент текста с таймкодами и опциональным массивом слов.
-   - `AudiobookTranscript`: структура полного транскрипта главы.
-2. **Серверный роут (`app/api/audiobooks/transcribe/route.ts`)**:
-   - Проверяет кэш в Supabase (`audiobook_transcripts`).
-   - Если нет в кэше — загружает аудиопоток главы из Internet Archive CDN и обращается к **`gemini-3.5-transcribe`** (с fallback на `gemini-2.0-flash` / `gemini-1.5-flash`) с конфигурацией `word_timestamp: true`.
-   - Нормализует таймкоды и границы предложений.
-   - Сохраняет результат в базу и возвращает клиенту.
-3. **Утилиты и кэширование (`lib/audio/transcribe.ts`)**:
-   - Поиск активного сегмента (`findActiveSegmentIndex`) с устойчивостью к микропаузам между фразами.
-   - Поиск активного слова (`findActiveWordIndex`).
-   - Клиентское кэширование в `localStorage` для мгновенного повторного открытия (0 мс задержки).
+### 1. Интеграция с актуальной версией `main` и чистая Vanilla CSS верстка
+1. **Устранение регрессии с версткой**:
+   - Полностью убраны Tailwind-классы, которые не компилировались и ломали поток документа.
+   - Созданы нативные стили модального оверлея в [`styles/modal.css`](file:///d:/DEV/AIBOOK/styles/modal.css) (`.read-along-backdrop`, `.read-along-modal`, `.read-along-header`, `.read-along-player-bar`, `.read-along-content`, `.read-along-segment`, `.read-along-word`, `.read-along-state-box`).
+   - Использованы переменные дизайн-системы AIBook (`var(--bg-primary)`, `var(--bg-secondary)`, `var(--accent)`, `var(--text-primary)`, `var(--text-muted)`, `var(--border)`).
+2. **Синхронизация с актуальным `AudiobookDetailModal.tsx`**:
+   - Использован актуальный стек `main` (`isBenignPlaybackAbort`, `syncAudioSource`, MediaSession).
+   - Кнопка **«Читать текст синхронно (Текст / Караоке)»** стилизована в едином стиле плеера.
 
----
+### 2. Серверная транскрибация и улучшенная обработка ключей
+1. **[`app/api/audiobooks/transcribe/route.ts`](file:///d:/DEV/AIBOOK/app/api/audiobooks/transcribe/route.ts)**:
+   - Проверка Supabase DB кэша выполняется в первую очередь: если глава уже транскрибирована, она отдаётся мгновенно без необходимости наличия API ключа.
+   - Если требуется онлайн-транскрибация новой главы, а ключ Gemini не указан, клиенту возвращается понятное сообщение на русском языке с подсказкой перейти в Настройки.
+   - Интегрирована модель **`gemini-3.5-transcribe`** (с fallback на `gemini-2.0-flash` / `gemini-1.5-flash`) с `word_timestamp: true`.
 
-### Часть 2. Полноэкранный кинематографичный UI и интерактив
-1. **Компонент оверлея (`components/discover/AudiobookReadAlongModal.tsx`)**:
-   - Тёмная тема (`#0b0f19`) с фокусом на типографике.
-   - Встроенный верхний плеер: Play/Pause, перемотка на 10 сек, переключение глав, скорость (0.75x–1.5x), таймлайн со скраббером, переключатель автоскролла.
-   - Караоке-подсветка активного предложения в реальном времени по `currentTime` аудио.
-   - Плавный автоскролл за диктором.
-2. **Полный интерактивный разбор слов и предложений**:
-   - Каждое слово в тексте разбивается через `splitIntoTokens` / `normalizeToken` и доступно для тапа.
-   - При тапе: аудио мягко ставится на паузу, снизу открывается [**`AiPanel`**](file:///d:/DEV/AIBOOK/components/ai-panel/AiPanel.tsx) со вкладками *«Слово»*, *«Фраза»*, *«Предложение»*.
-   - Доступны кнопки **«+ Карточка»** (сохранение в SRS с контекстной цитатой), **«Разбор слова»** ([`WordModal`](file:///d:/DEV/AIBOOK/components/word-modal/WordModal.tsx)) и **«Обсудить с AI»** ([`DiscussAiModal`](file:///d:/DEV/AIBOOK/components/discuss-ai/DiscussAiModal.tsx)).
-3. **Интеграция в плеер (`components/discover/AudiobookDetailModal.tsx`)**:
-   - Добавлена кнопка «Читать текст синхронно (Текст / Караоке)».
-   - Передача состояния воспроизведения и синхронизация между окнами.
+### 3. Интерактивный AI-разбор в режиме караоке
+1. **[`components/discover/AudiobookReadAlongModal.tsx`](file:///d:/DEV/AIBOOK/components/discover/AudiobookReadAlongModal.tsx)**:
+   - Кинематографичный тёмный оверлей поверх всего экрана.
+   - Немецкая типографика с выделением активного звучащего предложения и автоскроллом.
+   - Клик по любому слову ставит аудио на мягкую паузу и поднимает [**`AiPanel`**](file:///d:/DEV/AIBOOK/components/ai-panel/AiPanel.tsx) с переводом, вкладками *«Слово»*, *«Фраза»*, *«Предложение»*, кнопкой *«+ Карточка»*, *«Обсудить»* ([`DiscussAiModal`](file:///d:/DEV/AIBOOK/components/discuss-ai/DiscussAiModal.tsx)) и *«Подробнее»* ([`WordModal`](file:///d:/DEV/AIBOOK/components/word-modal/WordModal.tsx)).
 
 ---
 
-## 2. Результаты тестов и проверок
+## 2. Результаты проверок
 
-- **Unit-тесты транскрипта и аудиокниг**:
-  `node --experimental-strip-types --import ./scripts/register-test-loader.mjs --test lib/audio/transcribe.test.ts lib/audio/audiobooks.test.ts`
-  **13/13 passed** (0 failures).
+- **Unit-тесты**: 33/33 passed (`lib/audio/transcribe.test.ts`, `lib/audio/audiobooks.test.ts`).
+- **Визуальная проверка в браузере**: проведена через DevTools MCP, подтверждена корректность центрирования, стилей, таймкодов и работы всплывающей `AiPanel`.
 
 ---
 
 ## 3. Изменённые и созданные файлы
+- [`styles/modal.css`](file:///d:/DEV/AIBOOK/styles/modal.css)
+- [`components/discover/AudiobookReadAlongModal.tsx`](file:///d:/DEV/AIBOOK/components/discover/AudiobookReadAlongModal.tsx)
+- [`components/discover/AudiobookDetailModal.tsx`](file:///d:/DEV/AIBOOK/components/discover/AudiobookDetailModal.tsx)
+- [`app/api/audiobooks/transcribe/route.ts`](file:///d:/DEV/AIBOOK/app/api/audiobooks/transcribe/route.ts)
 - [`lib/types.ts`](file:///d:/DEV/AIBOOK/lib/types.ts)
 - [`lib/audio/transcribe.ts`](file:///d:/DEV/AIBOOK/lib/audio/transcribe.ts)
 - [`lib/audio/transcribe.test.ts`](file:///d:/DEV/AIBOOK/lib/audio/transcribe.test.ts)
-- [`app/api/audiobooks/transcribe/route.ts`](file:///d:/DEV/AIBOOK/app/api/audiobooks/transcribe/route.ts)
-- [`components/discover/AudiobookReadAlongModal.tsx`](file:///d:/DEV/AIBOOK/components/discover/AudiobookReadAlongModal.tsx)
-- [`components/discover/AudiobookDetailModal.tsx`](file:///d:/DEV/AIBOOK/components/discover/AudiobookDetailModal.tsx)
-- [`components/discover/DiscoverView.tsx`](file:///d:/DEV/AIBOOK/components/discover/DiscoverView.tsx)
-- [`docs/coordination/handoffs/gemini-audiobook-read-along.md`](file:///d:/DEV/AIBOOK/docs/coordination/handoffs/gemini-audiobook-read-along.md)

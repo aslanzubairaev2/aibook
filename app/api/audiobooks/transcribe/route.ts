@@ -28,14 +28,6 @@ function parseJsonArrayOrObject(text: string) {
 }
 
 export async function POST(req: Request) {
-  let apiKey: string;
-  try {
-    apiKey = await getApiKeyForRequest(req);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Access Denied";
-    return NextResponse.json({ error: msg }, { status: 403 });
-  }
-
   const body = (await req.json()) as {
     audiobookId?: string;
     chapterIndex?: number;
@@ -50,14 +42,14 @@ export async function POST(req: Request) {
   const language = (body.language ?? "de").trim().toLowerCase();
 
   if (!audiobookId) {
-    return NextResponse.json({ error: "Missing audiobookId" }, { status: 400 });
+    return NextResponse.json({ error: "Не указан идентификатор аудиокниги." }, { status: 400 });
   }
 
   if (!audioUrl) {
-    return NextResponse.json({ error: "Missing audioUrl" }, { status: 400 });
+    return NextResponse.json({ error: "Не указан URL аудиофайла главы." }, { status: 400 });
   }
 
-  // 1. Check Supabase DB cache if available
+  // 1. Check Supabase DB cache first (no API key required if already transcribed!)
   if (supabaseAdmin) {
     try {
       const { data: cachedRow } = await supabaseAdmin
@@ -83,7 +75,21 @@ export async function POST(req: Request) {
     }
   }
 
-  // 2. Fetch audio data from archive.org CDN
+  // 2. Validate Gemini API Key for on-demand transcription
+  let apiKey: string;
+  try {
+    apiKey = await getApiKeyForRequest(req);
+  } catch {
+    return NextResponse.json(
+      {
+        error:
+          "Для распознавания речи требуется Gemini API ключ. Пожалуйста, укажите ваш ключ в Настройках (значок шестерёнки в меню слева).",
+      },
+      { status: 403 }
+    );
+  }
+
+  // 3. Fetch audio data from archive.org CDN
   let audioBuffer: ArrayBuffer;
   try {
     const audioRes = await fetch(audioUrl, {
@@ -96,14 +102,14 @@ export async function POST(req: Request) {
     }
     audioBuffer = await audioRes.arrayBuffer();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Failed to fetch audio";
-    return NextResponse.json({ error: `Audio download failed: ${msg}` }, { status: 502 });
+    const msg = err instanceof Error ? err.message : "Ошибка загрузки аудио";
+    return NextResponse.json({ error: `Не удалось загрузить аудиофайл: ${msg}` }, { status: 502 });
   }
 
   const base64Audio = Buffer.from(audioBuffer).toString("base64");
   const mimeType = audioUrl.endsWith(".ogg") ? "audio/ogg" : "audio/mp3";
 
-  // 3. System instructions & prompt for Gemini
+  // 4. System instructions & prompt for Gemini 3.5 Transcribe
   const prompt = `You are a high-precision audiobook transcriber for language learners.
 Transcribe the spoken audio verbatim in the original spoken language (${language}).
 Preserve proper capitalization (especially German nouns), punctuation, and sentence boundaries.
@@ -182,7 +188,7 @@ Timestamps must be numbers in seconds. Every sentence must have accurate start a
     );
   }
 
-  // 4. Save to Supabase DB cache in the background
+  // 5. Save to Supabase DB cache in the background
   if (supabaseAdmin) {
     try {
       await supabaseAdmin.from("audiobook_transcripts").upsert(
