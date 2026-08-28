@@ -46,6 +46,8 @@ export function VideoPlayerModal({
   const playerRef = useRef<any>(null);
   const activeCueScrollRef = useRef<HTMLDivElement>(null);
   const activeCueItemRef = useRef<HTMLDivElement>(null);
+  const cuesRef = useRef<SubtitleCue[]>([]);
+  const lastCueIdxRef = useRef(-1);
 
   const nativeLanguage = profile.nativeLanguage || "ru";
   const targetLanguage = video.language || profile.targetLanguage || "de";
@@ -59,7 +61,9 @@ export function VideoPlayerModal({
       .then((res) => (res.ok ? res.json() : { cues: [] }))
       .then((data) => {
         if (isMounted) {
-          setCues(data.cues || []);
+          const c = data.cues || [];
+          setCues(c);
+          cuesRef.current = c;
           setIsLoadingCues(false);
         }
       })
@@ -77,7 +81,8 @@ export function VideoPlayerModal({
 
   // ── 2. Initialize YouTube IFrame Player API ────────────────────────────────
   useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let rafId: number | null = null;
+    let lastCueIdx = -1;
 
     const createPlayer = () => {
       if (!window.YT || !window.YT.Player) return;
@@ -115,20 +120,29 @@ export function VideoPlayerModal({
       window.onYouTubeIframeAPIReady = createPlayer;
     }
 
-    // High-frequency polling for smooth subtitle highlighting (every 150ms)
-    intervalId = setInterval(() => {
+    // requestAnimationFrame loop for near-zero latency subtitle sync
+    const tick = () => {
       if (playerRef.current && typeof playerRef.current.getCurrentTime === "function") {
         try {
           const t = playerRef.current.getCurrentTime();
           if (typeof t === "number" && !isNaN(t)) {
-            setCurrentTime(t);
+            // Find which cue is active at this time
+            const cs = cuesRef.current;
+            const idx = cs.findIndex((c) => t >= c.start && t <= c.end + 0.3);
+            // Only trigger re-render when the active cue changes
+            if (idx !== lastCueIdxRef.current) {
+              lastCueIdxRef.current = idx;
+              setCurrentTime(t);
+            }
           }
         } catch {}
       }
-    }, 150);
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
 
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      if (rafId !== null) cancelAnimationFrame(rafId);
       if (playerRef.current && typeof playerRef.current.destroy === "function") {
         try {
           playerRef.current.destroy();
