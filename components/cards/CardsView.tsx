@@ -69,6 +69,7 @@ type Props = {
   onAddCard: (card: Flashcard) => void;
   onUpdateCard: (card: Flashcard) => void;
   onDeleteCard: (id: string) => void;
+  onFindVideos?: (word: string, lang?: string) => void;
 };
 
 function normalizeFront(text: string): string {
@@ -488,7 +489,7 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
   );
 });
 
-export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, onAddCard, onUpdateCard, onDeleteCard }: Props) {
+export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, onAddCard, onUpdateCard, onDeleteCard, onFindVideos }: Props) {
   const { user } = useAuth();
   const [profile, setProfile] = useState(getLocalProfile);
   const targetLanguage = profile.targetLanguage;
@@ -1786,6 +1787,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         onAddLemma={(lemma) => void addCard(lemma, wordModal.analysis?.word?.translation ?? "", "word")}
         onWordTap={(word) => void openWordModalFor(word)}
         onAddExample={(text, translation) => void addCard(text, translation, "phrase")}
+        onFindVideos={onFindVideos ? (word) => onFindVideos(word, targetLanguage) : undefined}
       />
 
       {/* «Как это сказать» — a word tapped on a native-language prompt */}
