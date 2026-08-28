@@ -157,6 +157,14 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const syncedAudioUrlRef = useRef<string | null>(null);
+  // A restored "continue listening" position only ever reaches the `currentTime`
+  // React state (see the restore effect below) — the `<audio>` element itself
+  // starts at 0 regardless, since nothing had seeked it yet. Play() then played
+  // from that real, unseeked 0 while the seek bar kept showing the old
+  // position, until the next timeupdate snapped it back. This ref carries the
+  // restored position across to the first `loadedmetadata` of the freshly
+  // loaded source, which is the first point a seek is guaranteed to stick.
+  const pendingSeekSecondsRef = useRef<number | null>(null);
 
   const chapters: AudiobookChapter[] = details?.chapters || [];
   const currentChapter: AudiobookChapter | undefined = chapters[currentChapterIndex];
@@ -200,6 +208,10 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
           if (saved && saved.chapterIndex < (full.chapters?.length || 0)) {
             setCurrentChapterIndex(saved.chapterIndex);
             setCurrentTime(saved.currentTimeSeconds);
+            // The seek bar can show this immediately, but the audio element
+            // itself hasn't loaded that chapter's source yet — actually
+            // seeking happens once it has, in onLoadedMetadata below.
+            if (saved.currentTimeSeconds > 0) pendingSeekSecondsRef.current = saved.currentTimeSeconds;
           }
         }
       } catch (err) {
@@ -588,6 +600,15 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
                 if (audioRef.current) {
                   setDuration(audioRef.current.duration || 0);
                   audioRef.current.playbackRate = playbackSpeed;
+                  // Actually seek the element to a restored "continue
+                  // listening" position — this is the first point a seek is
+                  // guaranteed to stick, and the only reason a resumed book
+                  // used to play from 0 despite the seek bar showing the
+                  // right spot (see pendingSeekSecondsRef above).
+                  if (pendingSeekSecondsRef.current !== null) {
+                    audioRef.current.currentTime = pendingSeekSecondsRef.current;
+                    pendingSeekSecondsRef.current = null;
+                  }
                 }
               }}
               onEnded={handleNextChapter}
