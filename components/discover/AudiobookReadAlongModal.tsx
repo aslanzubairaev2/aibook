@@ -12,6 +12,9 @@ import {
   Loader2,
   AlertCircle,
   Volume2,
+  Repeat,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import type {
   Audiobook,
@@ -71,6 +74,10 @@ type Props = {
   onChapterChange: (index: number) => void;
   onClose: () => void;
   onAddWordCard?: (front: string, back: string, type: "word" | "phrase") => void;
+  /** The sentence currently looping (start/end in seconds), or null when nothing repeats. */
+  loopSegment?: { start: number; end: number } | null;
+  /** Toggles the repeat-until-you-understand-it loop for one sentence; pass null to stop. */
+  onToggleLoopSegment?: (segment: { start: number; end: number } | null) => void;
 };
 
 export function AudiobookReadAlongModal({
@@ -87,12 +94,24 @@ export function AudiobookReadAlongModal({
   onChapterChange,
   onClose,
   onAddWordCard,
+  loopSegment = null,
+  onToggleLoopSegment,
 }: Props) {
   const [transcript, setTranscript] = useState<AudiobookTranscript | null>(null);
   const [isLoadingTranscript, setIsLoadingTranscript] = useState(true);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [customKey, setCustomKey] = useState("");
+  // Segments the learner has chosen not to see the text of — populated two
+  // ways: automatically the moment a loop starts (the Zamyatkin "matrix"
+  // method: listen blind until the words separate out on their own, only
+  // then compare against print), or manually via the hide button on whatever
+  // sentence is currently playing, loop or not.
+  const [hiddenSegmentKeys, setHiddenSegmentKeys] = useState<Set<string>>(new Set());
+  // Spoiler guard: sentences the audio hasn't reached yet are blurred, so eyes
+  // can't race ahead of ears. One button at the top drops it entirely, back
+  // to plain always-visible text.
+  const [spoilerMode, setSpoilerMode] = useState(true);
 
   const handleSaveCustomKey = () => {
     const trimmed = customKey.trim();
@@ -184,6 +203,23 @@ export function AudiobookReadAlongModal({
   const activeSegmentIndex = useMemo(() => {
     return findActiveSegmentIndex(segments, currentTime);
   }, [segments, currentTime]);
+
+  // The transcript splits on sentence punctuation, which gives wildly uneven
+  // chunks — a two-word title line one moment, a 70-second Kafka sentence the
+  // next. Neither loops well: the "matrix" method (listen to one short
+  // fragment on repeat until the words separate out) wants ~20-40s blocks,
+  // not a single sentence of arbitrary length. So a repeat always covers at
+  // least this many seconds, pulling in as many following sentences as it
+  // takes — never splitting a sentence in half to hit the target exactly.
+  const TARGET_LOOP_SECONDS = 30;
+  const computeLoopRange = (startIdx: number): { start: number; end: number } => {
+    const startSeg = segments[startIdx];
+    let endIdx = startIdx;
+    while (endIdx < segments.length - 1 && segments[endIdx].end - startSeg.start < TARGET_LOOP_SECONDS) {
+      endIdx++;
+    }
+    return { start: startSeg.start, end: segments[endIdx].end };
+  };
 
   // Auto-scroll to active segment
   useEffect(() => {
@@ -318,6 +354,14 @@ export function AudiobookReadAlongModal({
             <span>{currentChapter?.title || `Глава ${currentChapterIndex + 1}`}</span>
           </div>
           <div className="read-along-header-actions">
+            <button
+              type="button"
+              className={`read-along-autoscroll-btn ${!spoilerMode ? "active" : ""}`}
+              onClick={() => setSpoilerMode((prev) => !prev)}
+              title={spoilerMode ? "Открыть весь текст сразу" : "Снова скрывать текст, который ещё не прозвучал"}
+            >
+              {spoilerMode ? "Показать весь текст" : "Скрыть текст заранее"}
+            </button>
             <button type="button" className={`read-along-autoscroll-btn ${autoScroll ? "active" : ""}`} onClick={() => setAutoScroll((prev) => !prev)}>
               {autoScroll ? "Автоскролл вкл" : "Автоскролл выкл"}
             </button>
@@ -442,11 +486,92 @@ export function AudiobookReadAlongModal({
               const isActive = segIdx === activeSegmentIndex;
               const tokens = splitIntoTokens(segment.text);
               let validWordCounter = 0;
+              // A loop now spans a time RANGE (possibly several sentences, see
+              // computeLoopRange above), not one sentence's exact start/end —
+              // membership is by containment, not equality.
+              const LOOP_EPS = 0.05;
+              const isLooping =
+                !!loopSegment &&
+                segment.start >= loopSegment.start - LOOP_EPS &&
+                segment.start < loopSegment.end - LOOP_EPS;
+              const segmentKey = segment.id || String(segIdx);
+              // Every sentence inside one looping range shares a single hide
+              // key, so revealing any one of them reveals the whole block —
+              // it's one listening unit, not N independent sentences.
+              const loopGroupKey = loopSegment ? `loop-${loopSegment.start}` : null;
+              const hideKey = isLooping && loopGroupKey ? loopGroupKey : segmentKey;
+              const isTextHidden = hiddenSegmentKeys.has(hideKey);
+              // A sentence the audio hasn't reached yet — blurred under spoiler
+              // mode so the eyes can't read ahead of what's actually playing.
+              const isBlurredAhead = spoilerMode && !isLooping && segIdx > activeSegmentIndex;
 
               return (
-                <div key={segment.id || segIdx} ref={isActive ? activeSegmentRef : null} className={`read-along-segment ${isActive ? "active" : ""}`}>
+                <div
+                  key={segment.id || segIdx}
+                  ref={isActive ? activeSegmentRef : null}
+                  className={`read-along-segment ${isActive ? "active" : ""} ${isLooping ? "looping" : ""} ${isBlurredAhead ? "blurred" : ""}`}
+                >
                   <button type="button" className="read-along-time-chip" onClick={() => onSeek(segment.start)}><Volume2 size={12} />{formatAudioDuration(segment.start)}</button>
-                  {tokens.map((token, tokIdx) => {
+                  {onToggleLoopSegment && (
+                    <button
+                      type="button"
+                      className={`read-along-loop-btn ${isLooping ? "active" : ""}`}
+                      onClick={() => {
+                        if (isLooping) {
+                          onToggleLoopSegment(null);
+                        } else {
+                          const range = computeLoopRange(segIdx);
+                          onToggleLoopSegment(range);
+                          // every fresh loop starts blind
+                          setHiddenSegmentKeys((prev) => new Set(prev).add(`loop-${range.start}`));
+                        }
+                      }}
+                      title={isLooping ? "Остановить повтор" : "Повторять вслепую ~30 сек, пока не начнёшь различать слова"}
+                      aria-pressed={isLooping}
+                    >
+                      <Repeat size={12} />
+                    </button>
+                  )}
+                  {isActive && !isLooping && (
+                    <button
+                      type="button"
+                      className={`read-along-loop-btn ${isTextHidden ? "active" : ""}`}
+                      onClick={() =>
+                        setHiddenSegmentKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(segmentKey)) next.delete(segmentKey);
+                          else next.add(segmentKey);
+                          return next;
+                        })
+                      }
+                      title={isTextHidden ? "Показать текст" : "Скрыть текст этого предложения"}
+                      aria-pressed={isTextHidden}
+                    >
+                      {isTextHidden ? <Eye size={12} /> : <EyeOff size={12} />}
+                    </button>
+                  )}
+                  {isTextHidden ? (
+                    <span className="read-along-loop-hidden">
+                      <span className="read-along-loop-hidden-hint">
+                        {isLooping ? "Слушайте — текст скрыт, пока не начнёте различать слова" : "Текст скрыт"}
+                      </span>
+                      <button
+                        type="button"
+                        className="read-along-reveal-btn"
+                        onClick={() =>
+                          setHiddenSegmentKeys((prev) => {
+                            const next = new Set(prev);
+                            next.delete(hideKey);
+                            return next;
+                          })
+                        }
+                      >
+                        Показать текст
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="read-along-segment-text">
+                      {tokens.map((token, tokIdx) => {
                     const norm = normalizeToken(token);
                     if (!norm) return <span key={tokIdx}>{token}</span>;
                     const currentWordIdx = validWordCounter++;
@@ -508,7 +633,9 @@ export function AudiobookReadAlongModal({
                         {token}
                       </span>
                     );
-                  })}
+                      })}
+                    </span>
+                  )}
                 </div>
               );
             })}
