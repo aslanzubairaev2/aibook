@@ -1,6 +1,7 @@
 "use client";
 
-import { Play, Clock, BookOpen } from "lucide-react";
+import { useState } from "react";
+import { Play, Clock } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 
 type Props = {
@@ -9,9 +10,13 @@ type Props = {
 };
 
 export function VideoCard({ video, onSelect }: Props) {
-  const thumb =
+  const [imgError, setImgError] = useState(false);
+
+  const thumbUrl =
     video.thumbnailUrl ||
-    `https://i.ytimg.com/vi/${video.youtubeId}/hqdefault.jpg`;
+    (imgError
+      ? `https://i.ytimg.com/vi/${video.youtubeId}/hqdefault.jpg`
+      : `https://i.ytimg.com/vi/${video.youtubeId}/mqdefault.jpg`);
 
   return (
     <article
@@ -29,20 +34,21 @@ export function VideoCard({ video, onSelect }: Props) {
     >
       <div className="video-thumb-wrap">
         <img
-          src={thumb}
+          src={thumbUrl}
           alt={video.title}
           className="video-thumb"
           loading="lazy"
+          onError={() => setImgError(true)}
         />
         <div className="video-thumb-overlay">
           <div className="video-play-icon">
-            <Play size={22} fill="currentColor" />
+            <Play size={16} fill="currentColor" />
           </div>
         </div>
 
         {video.duration && (
           <span className="video-badge duration-badge">
-            <Clock size={11} />
+            <Clock size={10} />
             <span>{video.duration}</span>
           </span>
         )}
@@ -54,19 +60,9 @@ export function VideoCard({ video, onSelect }: Props) {
 
       <div className="video-card-body">
         <div className="video-card-channel">{video.channel}</div>
-        <h3 className="video-card-title">{video.title}</h3>
-        {video.titleRu && (
-          <p className="video-card-subtitle">{video.titleRu}</p>
-        )}
-
-        {video.keyVocabulary && video.keyVocabulary.length > 0 && (
-          <div className="video-card-meta">
-            <span className="video-vocab-chip">
-              <BookOpen size={12} />
-              <span>{video.keyVocabulary.length} слов к уроку</span>
-            </span>
-          </div>
-        )}
+        <h3 className="video-card-title" title={video.title}>
+          {video.title}
+        </h3>
       </div>
     </article>
   );

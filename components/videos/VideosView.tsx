@@ -1,20 +1,11 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
-import { Search, X, Loader2, Sparkles, Filter } from "lucide-react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { Search, X, SlidersHorizontal, ChevronDown, Loader2 } from "lucide-react";
+import type { VideoItem, VideoCefrLevel, VideoCategory } from "@/lib/videos/types";
+import { VIDEO_CATEGORIES, getVideosByLanguage, filterVideos } from "@/lib/videos/data";
 import { VideoCard } from "./VideoCard";
 import { VideoPlayerModal } from "./VideoPlayerModal";
-import {
-  ALL_VIDEOS,
-  VIDEO_CATEGORIES,
-  filterVideos,
-  getVideosByLanguage,
-} from "@/lib/videos/data";
-import type {
-  VideoItem,
-  VideoCategory,
-  VideoCefrLevel,
-} from "@/lib/videos/types";
 import type { Flashcard, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -22,290 +13,322 @@ type Props = {
   profile: UserProfile;
   initialQuery?: string | null;
   initialLanguage?: string | null;
-  onAddCard: (card: Flashcard) => void;
+  onAddCard?: (card: Flashcard) => void;
 };
 
-const QUICK_TAGS = [
-  { label: "Nicos Weg", query: "nicos weg" },
-  { label: "Easy German", query: "easy german" },
-  { label: "Животные", query: "tiere" },
-  { label: "Цвета", query: "farben" },
-  { label: "Дом и мебель", query: "wohnen" },
-  { label: "Профессии", query: "berufe" },
-  { label: "Грамматика", query: "grammatik" },
-  { label: "Сказки", query: "märchen" },
-];
-
-const CEFR_LEVELS: { id: VideoCefrLevel; label: string }[] = [
-  { id: "all", label: "Все уровни" },
-  { id: "A1", label: "A1 (Начальный)" },
-  { id: "A2", label: "A2 (Базовый)" },
-  { id: "B1", label: "B1 (Средний)" },
-  { id: "B2", label: "B2 (Продвинутый)" },
-];
-
 export function VideosView({
-  cards,
   profile,
   initialQuery,
   initialLanguage,
-  onAddCard,
 }: Props) {
-  const [language, setLanguage] = useState<"de" | "en" | "all">(
-    (initialLanguage as "de" | "en" | "all") || (profile.targetLanguage === "en" ? "en" : "de")
-  );
-  const [category, setCategory] = useState<VideoCategory>("all");
-  const [cefrLevel, setCefrLevel] = useState<VideoCefrLevel>("all");
-  const [searchQuery, setSearchQuery] = useState(initialQuery || "");
-  const [submittedQuery, setSubmittedQuery] = useState(initialQuery || "");
-  const [videos, setVideos] = useState<VideoItem[]>([]);
-  const [selectedVideo, setSelectedVideo] = useState<VideoItem | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const defaultLang = initialLanguage === "en" || profile.targetLanguage === "en" ? "en" : "de";
 
-  // Search execution
-  const executeSearch = useCallback(
-    async (queryText: string, currentLang: "de" | "en" | "all", cat: VideoCategory, lvl: VideoCefrLevel) => {
-      setIsLoading(true);
-      try {
-        const params = new URLSearchParams();
-        if (queryText.trim()) params.set("q", queryText.trim());
-        if (currentLang !== "all") params.set("lang", currentLang);
-        if (lvl !== "all") params.set("level", lvl);
-        if (cat !== "all") params.set("category", cat);
+  const [selectedLang, setSelectedLang] = useState<"de" | "en" | "all">(defaultLang);
+  const [selectedCefr, setSelectedCefr] = useState<VideoCefrLevel>("all");
+  const [selectedCategory, setSelectedCategory] = useState<VideoCategory>("all");
+  const [searchQuery, setSearchQuery] = useState(initialQuery ?? "");
+  const [submittedSearch, setSubmittedSearch] = useState(initialQuery ?? "");
+  const [activeVideo, setActiveVideo] = useState<VideoItem | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
-        const res = await fetch(`/api/videos/search?${params.toString()}`);
-        if (res.ok) {
-          const data = await res.json() as { videos?: VideoItem[] };
-          if (Array.isArray(data.videos) && data.videos.length > 0) {
-            setVideos(data.videos);
-            setIsLoading(false);
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn("API video search error, falling back to local dataset:", err);
-      }
+  // YouTube live search results
+  const [liveResults, setLiveResults] = useState<VideoItem[]>([]);
+  const [isSearchingLive, setIsSearchingLive] = useState(false);
 
-      // Local fallback
-      const base = getVideosByLanguage(currentLang);
-      const filtered = filterVideos(base, {
-        language: currentLang,
-        category: cat,
-        cefrLevel: lvl,
-        searchQuery: queryText,
-      });
-      setVideos(filtered);
-      setIsLoading(false);
-    },
-    []
-  );
-
-  // React to filter changes
-  useEffect(() => {
-    void executeSearch(submittedQuery, language, category, cefrLevel);
-  }, [submittedQuery, language, category, cefrLevel, executeSearch]);
-
-  // Handle incoming initial props
   useEffect(() => {
     if (initialQuery) {
       setSearchQuery(initialQuery);
-      setSubmittedQuery(initialQuery);
+      setSubmittedSearch(initialQuery);
     }
+  }, [initialQuery]);
+
+  useEffect(() => {
     if (initialLanguage) {
-      setLanguage(initialLanguage as "de" | "en" | "all");
+      setSelectedLang(initialLanguage === "en" ? "en" : "de");
     }
-  }, [initialQuery, initialLanguage]);
+  }, [initialLanguage]);
 
-  function handleSearchSubmit(e?: React.FormEvent) {
-    if (e) e.preventDefault();
-    setSubmittedQuery(searchQuery.trim());
-  }
+  // Live YouTube search
+  const performLiveSearch = useCallback(async (query: string, lang: "de" | "en" | "all") => {
+    if (!query || query.trim().length < 2) {
+      setLiveResults([]);
+      return;
+    }
 
-  function handleClearSearch() {
+    setIsSearchingLive(true);
+    try {
+      const res = await fetch(
+        `/api/videos/search?q=${encodeURIComponent(query.trim())}&lang=${lang}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setLiveResults(data.videos || []);
+      } else {
+        setLiveResults([]);
+      }
+    } catch (err) {
+      console.error("Live video search failed:", err);
+      setLiveResults([]);
+    } finally {
+      setIsSearchingLive(false);
+    }
+  }, []);
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmittedSearch(searchQuery);
+    if (searchQuery.trim().length >= 2) {
+      void performLiveSearch(searchQuery, selectedLang);
+    } else {
+      setLiveResults([]);
+    }
+  };
+
+  const handleClearSearch = () => {
     setSearchQuery("");
-    setSubmittedQuery("");
-  }
+    setSubmittedSearch("");
+    setLiveResults([]);
+  };
 
-  function handleTagClick(tagQuery: string) {
-    setSearchQuery(tagQuery);
-    setSubmittedQuery(tagQuery);
-  }
+  // Local curated filtered videos
+  const curatedVideos = useMemo(() => {
+    const base = getVideosByLanguage(selectedLang);
+    return filterVideos(base, {
+      language: selectedLang,
+      cefrLevel: selectedCefr,
+      category: selectedCategory,
+      searchQuery: submittedSearch,
+    });
+  }, [selectedLang, selectedCefr, selectedCategory, submittedSearch]);
 
-  const relatedVideos = useMemo(() => {
-    if (!selectedVideo) return [];
-    return videos.filter((v) => v.id !== selectedVideo.id);
-  }, [selectedVideo, videos]);
+  // Combined video list
+  const displayVideos = useMemo(() => {
+    if (submittedSearch.trim().length >= 2 && liveResults.length > 0) {
+      const seenIds = new Set<string>();
+      const combined: VideoItem[] = [];
+
+      for (const v of curatedVideos) {
+        seenIds.add(v.youtubeId);
+        combined.push(v);
+      }
+
+      for (const v of liveResults) {
+        if (!seenIds.has(v.youtubeId)) {
+          seenIds.add(v.youtubeId);
+          combined.push(v);
+        }
+      }
+
+      return combined;
+    }
+    return curatedVideos;
+  }, [curatedVideos, liveResults, submittedSearch]);
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (selectedLang !== defaultLang) count++;
+    if (selectedCefr !== "all") count++;
+    if (selectedCategory !== "all") count++;
+    return count;
+  }, [selectedLang, defaultLang, selectedCefr, selectedCategory]);
+
+  const resetFilters = () => {
+    setSelectedLang(defaultLang);
+    setSelectedCefr("all");
+    setSelectedCategory("all");
+    setSearchQuery("");
+    setSubmittedSearch("");
+    setLiveResults([]);
+  };
 
   return (
     <div className="videos-tab-container">
-      {/* ── Search & Filter Toolbar ───────────────────────────────────────── */}
-      <div className="videos-toolbar">
-        {/* Search Bar */}
-        <form className="videos-search-form" onSubmit={handleSearchSubmit}>
-          <div className="videos-search-input-wrap">
-            <Search size={16} className="videos-search-icon" aria-hidden />
-            <input
-              type="text"
-              placeholder="Поиск по теме, слову или базе YouTube..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="videos-search-input"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                className="videos-clear-btn"
-                onClick={handleClearSearch}
-                aria-label="Очистить"
-              >
-                <X size={15} />
-              </button>
-            )}
-          </div>
-          <button type="submit" className="pill-btn videos-submit-btn">
-            Найти
-          </button>
-        </form>
-
-        {/* Quick Tag Pills */}
-        <div className="videos-quick-tags" role="toolbar" aria-label="Быстрый поиск">
-          {QUICK_TAGS.map((tag) => (
-            <button
-              key={tag.label}
-              type="button"
-              className={`videos-tag-pill ${submittedQuery.toLowerCase() === tag.query.toLowerCase() ? "active" : ""}`}
-              onClick={() => handleTagClick(tag.query)}
-            >
-              {tag.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Controls Bar: Language + CEFR Level */}
-        <div className="videos-controls-row">
-          <div className="videos-segmented-group" role="group" aria-label="Выбор языка">
+      {/* Search Bar + Filter Accordion Button */}
+      <form className="videos-search-row" onSubmit={handleSearchSubmit}>
+        <div className="videos-search-input-wrap">
+          <Search size={15} className="videos-search-icon" aria-hidden />
+          <input
+            type="search"
+            className="videos-search-input"
+            placeholder="Поиск видео по теме или слову..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
             <button
               type="button"
-              className={`videos-segment-btn ${language === "de" ? "active" : ""}`}
-              onClick={() => setLanguage("de")}
+              className="videos-clear-btn"
+              onClick={handleClearSearch}
+              aria-label="Очистить поиск"
             >
-              Немецкий
+              <X size={14} />
             </button>
-            <button
-              type="button"
-              className={`videos-segment-btn ${language === "en" ? "active" : ""}`}
-              onClick={() => setLanguage("en")}
-            >
-              Английский
-            </button>
-            <button
-              type="button"
-              className={`videos-segment-btn ${language === "all" ? "active" : ""}`}
-              onClick={() => setLanguage("all")}
-            >
-              Все языки
-            </button>
-          </div>
-
-          <div className="videos-levels-group" role="group" aria-label="Уровень сложности">
-            {CEFR_LEVELS.map((lvl) => (
-              <button
-                key={lvl.id}
-                type="button"
-                className={`videos-level-pill ${cefrLevel === lvl.id ? "active" : ""}`}
-                onClick={() => setCefrLevel(lvl.id)}
-              >
-                {lvl.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Category Filter Pills */}
-        <div className="videos-categories-bar" role="tablist" aria-label="Категории видео">
-          {VIDEO_CATEGORIES.map((cat) => (
-            <button
-              key={cat.id}
-              type="button"
-              className={`videos-cat-tab ${category === cat.id ? "active" : ""}`}
-              onClick={() => setCategory(cat.id)}
-            >
-              {cat.title}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Status / Count Bar ────────────────────────────────────────────── */}
-      <div className="videos-meta-row">
-        <div className="videos-count-info">
-          {isLoading ? (
-            <span className="videos-loading-text">
-              <Loader2 size={13} className="spin" />
-              <span>Поиск видеоматериалов...</span>
-            </span>
-          ) : (
-            <span>Найдено видео: <strong>{videos.length}</strong></span>
           )}
         </div>
-        {submittedQuery && (
-          <button
-            type="button"
-            className="videos-reset-query-btn"
-            onClick={handleClearSearch}
-          >
-            Сбросить поиск «{submittedQuery}»
+
+        <button
+          type="button"
+          className={`all-filter-toggle ${filtersOpen || activeFilterCount > 0 ? "active" : ""}`}
+          onClick={() => setFiltersOpen((v) => !v)}
+          aria-expanded={filtersOpen}
+        >
+          <SlidersHorizontal size={14} />
+          <span>Фильтры</span>
+          {activeFilterCount > 0 && (
+            <span className="all-filter-count">{activeFilterCount}</span>
+          )}
+          <ChevronDown
+            size={13}
+            style={{
+              transform: filtersOpen ? "rotate(180deg)" : "none",
+              transition: "transform 0.2s",
+            }}
+          />
+        </button>
+
+        <button type="submit" className="videos-search-submit-btn">
+          Найти
+        </button>
+      </form>
+
+      {/* Collapsible Filter Panel */}
+      {filtersOpen && (
+        <div className="all-filter-panel">
+          {/* Language Group */}
+          <div className="filter-group">
+            <div className="filter-group-label">Язык</div>
+            <div className="filter-chips">
+              <button
+                type="button"
+                className={`filter-chip ${selectedLang === "de" ? "active" : ""}`}
+                onClick={() => setSelectedLang("de")}
+              >
+                Немецкий
+              </button>
+              <button
+                type="button"
+                className={`filter-chip ${selectedLang === "en" ? "active" : ""}`}
+                onClick={() => setSelectedLang("en")}
+              >
+                Английский
+              </button>
+              <button
+                type="button"
+                className={`filter-chip ${selectedLang === "all" ? "active" : ""}`}
+                onClick={() => setSelectedLang("all")}
+              >
+                Все языки
+              </button>
+            </div>
+          </div>
+
+          {/* CEFR Level Group */}
+          <div className="filter-group">
+            <div className="filter-group-label">Уровень сложности</div>
+            <div className="filter-chips">
+              <button
+                type="button"
+                className={`filter-chip ${selectedCefr === "all" ? "active" : ""}`}
+                onClick={() => setSelectedCefr("all")}
+              >
+                Все уровни
+              </button>
+              {(["A1", "A2", "B1", "B2"] as const).map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  className={`filter-chip ${selectedCefr === level ? "active" : ""}`}
+                  onClick={() => setSelectedCefr(level)}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Category Group */}
+          <div className="filter-group">
+            <div className="filter-group-label">Категория</div>
+            <div className="filter-chips">
+              {VIDEO_CATEGORIES.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  className={`filter-chip ${selectedCategory === cat.id ? "active" : ""}`}
+                  onClick={() => setSelectedCategory(cat.id)}
+                >
+                  {cat.title}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Quick Topics */}
+          <div className="filter-group">
+            <div className="filter-group-label">Быстрые темы</div>
+            <div className="filter-chips">
+              {["Nicos Weg", "Easy German", "Животные", "Цвета", "Дом", "Профессии", "Грамматика", "Сказки"].map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className={`filter-chip ${submittedSearch.toLowerCase() === tag.toLowerCase() ? "active" : ""}`}
+                  onClick={() => {
+                    setSearchQuery(tag);
+                    setSubmittedSearch(tag);
+                    void performLiveSearch(tag, selectedLang);
+                  }}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Meta row: count and reset */}
+      <div className="videos-count-row">
+        <span className="videos-count-text">
+          {isSearchingLive ? (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Loader2 size={13} className="spin" /> Поиск в базе YouTube...
+            </span>
+          ) : (
+            `Найдено видео: ${displayVideos.length}`
+          )}
+        </span>
+
+        {(activeFilterCount > 0 || submittedSearch) && (
+          <button type="button" className="videos-reset-filters-btn" onClick={resetFilters}>
+            Сбросить фильтры
           </button>
         )}
       </div>
 
-      {/* ── Video Grid ────────────────────────────────────────────────────── */}
-      {isLoading && videos.length === 0 ? (
-        <div className="videos-loading-state">
-          <Loader2 size={28} className="spin" />
-          <p>Загрузка видео...</p>
-        </div>
-      ) : videos.length > 0 ? (
+      {/* Video Grid */}
+      {displayVideos.length > 0 ? (
         <div className="videos-grid">
-          {videos.map((video) => (
+          {displayVideos.map((video) => (
             <VideoCard
-              key={video.id}
+              key={video.id || video.youtubeId}
               video={video}
-              onSelect={setSelectedVideo}
+              onSelect={setActiveVideo}
             />
           ))}
         </div>
       ) : (
-        <div className="videos-empty-state">
-          <p className="videos-empty-title">Видео не найдены</p>
-          <p className="videos-empty-desc">
-            Попробуйте изменить поисковый запрос или выбрать другие фильтры.
+        <div className="seed-card" style={{ padding: "32px 16px", textAlign: "center" }}>
+          <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
+            {isSearchingLive ? "Загрузка видео..." : "Видео не найдены по выбранным фильтрам."}
           </p>
-          <button
-            type="button"
-            className="pill-btn"
-            onClick={() => {
-              setSearchQuery("");
-              setSubmittedQuery("");
-              setCategory("all");
-              setCefrLevel("all");
-            }}
-          >
-            Показать все видео
-          </button>
         </div>
       )}
 
-      {/* ── Player Modal ──────────────────────────────────────────────────── */}
-      {selectedVideo && (
+      {/* Player Modal */}
+      {activeVideo && (
         <VideoPlayerModal
-          video={selectedVideo}
-          cards={cards}
-          profile={profile}
-          relatedVideos={relatedVideos}
-          onClose={() => setSelectedVideo(null)}
-          onSelectVideo={setSelectedVideo}
-          onAddCard={onAddCard}
+          video={activeVideo}
+          onClose={() => setActiveVideo(null)}
         />
       )}
     </div>
