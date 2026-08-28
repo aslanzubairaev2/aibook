@@ -157,11 +157,14 @@ export type FetchTranscriptParams = {
 export async function fetchAudiobookTranscript(
   params: FetchTranscriptParams
 ): Promise<AudiobookTranscript> {
-  const { audiobookId, chapterIndex, audioUrl, language, duration } = params;
-
-  // 1. Check local cache (from previous real AI transcriptions)
+  // 1. Check local cache (only accept if it has word-level timestamps)
   const cached = getLocalTranscript(audiobookId, chapterIndex);
-  if (cached && cached.segments && cached.segments.length > 0) {
+  if (
+    cached &&
+    cached.segments &&
+    cached.segments.length > 0 &&
+    cached.segments.some((s) => s.words && s.words.length > 0)
+  ) {
     return cached;
   }
 

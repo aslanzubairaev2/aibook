@@ -414,10 +414,6 @@ export function AudiobookReadAlongModal({
             {segments.map((segment, segIdx) => {
               const isActive = segIdx === activeSegmentIndex;
               const tokens = splitIntoTokens(segment.text);
-              const validTokens = tokens.filter((t) => Boolean(normalizeToken(t)));
-              const numWords = Math.max(1, validTokens.length);
-              const segDuration = Math.max(0.1, segment.end - segment.start);
-              const wordSlice = segDuration / numWords;
               let validWordCounter = 0;
 
               return (
@@ -428,19 +424,19 @@ export function AudiobookReadAlongModal({
                     if (!norm) return <span key={tokIdx}>{token}</span>;
                     const currentWordIdx = validWordCounter++;
 
-                    // Use real AI word timestamp if provided by Gemini, else interpolated
+                    // Direct AI word timestamp from Gemini model
                     const matchingWord = segment.words?.[currentWordIdx] || segment.words?.find(
-                      (w) => w.word.toLowerCase() === norm.toLowerCase()
+                      (w) => normalizeToken(w.word) === norm
                     );
 
-                    const wordStart = matchingWord ? matchingWord.start : (segment.start + currentWordIdx * wordSlice);
-                    const wordEnd = matchingWord ? matchingWord.end : (wordStart + wordSlice);
+                    const wordStart = matchingWord ? matchingWord.start : segment.start;
+                    const wordEnd = matchingWord ? matchingWord.end : segment.end;
 
                     let isKaraokeCurrent = false;
                     let isKaraokeSpoken = false;
-                    if (isActive) {
-                      isKaraokeCurrent = currentTime >= wordStart && currentTime < wordEnd;
-                      isKaraokeSpoken = currentTime >= wordEnd;
+                    if (isActive && matchingWord) {
+                      isKaraokeCurrent = currentTime >= matchingWord.start && currentTime < matchingWord.end;
+                      isKaraokeSpoken = currentTime >= matchingWord.end;
                     }
                     const isWordSelected = selection?.token === token && isActive;
                     const isPhraseContext = Boolean(
