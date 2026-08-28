@@ -187,14 +187,22 @@ export function AudiobookReadAlongModal({
     onSpeedChange(nextSpeed);
   };
 
-  // Handle word tap: tokenizes, extracts context and triggers AI analysis
+  // Handle word tap: tokenizes, extracts context, seeks audio to word, and triggers AI analysis
   const handleWordTap = async (
     token: string,
     segment: AudiobookSegment,
-    segIdx: number
+    segIdx: number,
+    wordTimestamp?: number
   ) => {
     const norm = normalizeToken(token);
     if (!norm) return;
+
+    // Immediately seek audio to exact word timestamp
+    if (typeof wordTimestamp === "number") {
+      onSeek(wordTimestamp);
+    } else {
+      onSeek(segment.start);
+    }
 
     // Soft-pause audio while inspecting word
     if (isPlaying) {
@@ -213,47 +221,25 @@ export function AudiobookReadAlongModal({
         : [0, sentence.length];
     const phraseText = sentence.slice(pStart, pEnd).trim() || sentence;
 
-    const newSelection = {
-      token,
-      phraseText,
-      sentence,
-      sentenceBefore,
-      sentenceAfter,
-    };
-
-    setSelection(newSelection);
+    setSelection({ token, phraseText, sentence, sentenceBefore, sentenceAfter });
     setActiveTab("word");
+    setDiscussMessages([]);
 
-    // Check cache
     const cacheKey = makeAiCacheKey("word", norm, lang, nativeLang);
-
     const localCached = getLocalAiAnalysis(cacheKey);
     if (localCached) {
       setAnalysis(localCached);
       return;
     }
-
     const sbCached = await sbGetCachedAnalysis(cacheKey);
     if (sbCached) {
       setAnalysis(sbCached);
       saveLocalAiAnalysis(cacheKey, sbCached);
       return;
     }
-
-    // Call API
     setIsLoadingAnalysis(true);
-    setAnalysis(null);
-
     try {
-      const res = await analyzeSelection({
-        mode: "word",
-        word: norm,
-        sentence,
-        sentenceBefore,
-        sentenceAfter,
-        nativeLanguage: nativeLang,
-        targetLanguage: lang,
-      });
+      const res = await analyzeSelection({ mode: "word", word: norm, sentence, sentenceBefore, sentenceAfter, nativeLanguage: nativeLang, targetLanguage: lang });
       setAnalysis(res);
       saveLocalAiAnalysis(cacheKey, res);
       void sbSaveCachedAnalysis(cacheKey, res);
@@ -264,241 +250,134 @@ export function AudiobookReadAlongModal({
     }
   };
 
-  // Flashcard creation
+  const handleTabChange = async (tab: Tab) => {
+    setActiveTab(tab);
+    if (!selection) return;
+    const targetText = tab === "phrase" ? selection.phraseText : tab === "sentence" ? selection.sentence : normalizeToken(selection.token);
+    if (!targetText) return;
+    const cacheKey = makeAiCacheKey(tab === "sentence" ? "sentence" : tab === "phrase" ? "phrase" : "word", targetText, lang, nativeLang);
+    const localCached = getLocalAiAnalysis(cacheKey);
+    if (localCached) {
+      setAnalysis((prev) => ({ ...prev, ...localCached }));
+      return;
+    }
+    const sbCached = await sbGetCachedAnalysis(cacheKey);
+    if (sbCached) {
+      setAnalysis((prev) => ({ ...prev, ...sbCached }));
+      saveLocalAiAnalysis(cacheKey, sbCached);
+      return;
+    }
+    setIsLoadingAnalysis(true);
+    try {
+      const res = await analyzeSelection({
+        mode: tab === "sentence" ? "sentence" : tab === "phrase" ? "phrase" : "word",
+        word: targetText,
+        text: targetText,
+        sentence: selection.sentence,
+        sentenceBefore: selection.sentenceBefore,
+        sentenceAfter: selection.sentenceAfter,
+        nativeLanguage: nativeLang,
+        targetLanguage: lang,
+      });
+      setAnalysis((prev) => ({ ...prev, ...res }));
+      saveLocalAiAnalysis(cacheKey, res);
+      void sbSaveCachedAnalysis(cacheKey, res);
+    } catch (err) {
+      console.error("Tab analysis error:", err);
+    } finally {
+      setIsLoadingAnalysis(false);
+    }
+  };
+
   const handleAddCard = async (type: Flashcard["type"]) => {
     if (!selection || !onAddWordCard) return;
-    const frontText =
-      type === "word"
-        ? analysis?.word?.lemma || selection.token
-        : type === "phrase"
-        ? analysis?.phrase?.text || selection.phraseText
-        : analysis?.sentence?.text || selection.sentence;
-
-    const backText =
-      type === "word"
-        ? analysis?.word?.translation || ""
-        : type === "phrase"
-        ? analysis?.phrase?.translation || ""
-        : analysis?.sentence?.translation || "";
-
+    const frontText = type === "word" ? analysis?.word?.lemma || selection.token : type === "phrase" ? analysis?.phrase?.text || selection.phraseText : analysis?.sentence?.text || selection.sentence;
+    const backText = type === "word" ? analysis?.word?.translation || "" : type === "phrase" ? analysis?.phrase?.translation || "" : analysis?.sentence?.translation || "";
     onAddWordCard(frontText, backText, type === "sentence" ? "phrase" : type);
   };
 
   return (
-    <div className="read-along-backdrop" onClick={(e) => {
-      if (e.target === e.currentTarget) onClose();
-    }}>
+    <div className="read-along-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="read-along-modal">
-        {/* Top Header */}
         <div className="read-along-header">
           <div className="read-along-title-block">
             <strong>{audiobook.title}</strong>
             <span>{currentChapter?.title || `Глава ${currentChapterIndex + 1}`}</span>
           </div>
-
           <div className="read-along-header-actions">
-            <button
-              type="button"
-              className={`read-along-autoscroll-btn ${autoScroll ? "active" : ""}`}
-              onClick={() => setAutoScroll((prev) => !prev)}
-            >
+            <button type="button" className={`read-along-autoscroll-btn ${autoScroll ? "active" : ""}`} onClick={() => setAutoScroll((prev) => !prev)}>
               {autoScroll ? "Автоскролл вкл" : "Автоскролл выкл"}
             </button>
-
-            <button
-              type="button"
-              onClick={onClose}
-              className="icon-btn modal-close"
-              aria-label="Закрыть"
-            >
-              <X size={20} />
-            </button>
+            <button type="button" onClick={onClose} className="icon-btn modal-close" aria-label="Закрыть"><X size={20} /></button>
           </div>
         </div>
 
-        {/* Audio Scrubber & Controls Bar */}
         <div className="read-along-player-bar">
           <div className="read-along-scrubber-row">
             <span className="read-along-time-label">{formatAudioDuration(currentTime)}</span>
-            <input
-              type="range"
-              min={0}
-              max={duration || currentChapter?.durationSeconds || 100}
-              value={currentTime}
-              onChange={(e) => onSeek(parseFloat(e.target.value))}
-              className="audio-seek-slider"
-            />
-            <span className="read-along-time-label">
-              {formatAudioDuration(duration || currentChapter?.durationSeconds || 0)}
-            </span>
+            <input type="range" min={0} max={currentChapter?.durationSeconds || duration || 100} value={currentTime} onChange={(e) => onSeek(Number(e.target.value))} aria-label="Перемотка аудио" />
+            <span className="read-along-time-label">{formatAudioDuration(currentChapter?.durationSeconds || duration)}</span>
           </div>
 
           <div className="read-along-controls-row">
-            <button
-              type="button"
-              className="audio-speed-btn"
-              onClick={cyclePlaybackSpeed}
-              title="Скорость воспроизведения"
-            >
-              {playbackSpeed}x
-            </button>
-
-            <div className="audio-main-controls">
-              <button
-                type="button"
-                className="audio-btn-control"
-                onClick={() => onChapterChange(Math.max(0, currentChapterIndex - 1))}
-                disabled={currentChapterIndex === 0 && currentTime <= 5}
-                title="Предыдущая глава"
-              >
-                <SkipBack size={18} />
-              </button>
-
-              <button
-                type="button"
-                className="audio-btn-control"
-                onClick={() => onSeek(Math.max(0, currentTime - 15))}
-                title="Назад на 15 сек"
-              >
-                <RotateCcw size={18} />
-              </button>
-
-              <button
-                type="button"
-                className="audio-btn-play"
-                onClick={onPlayPause}
-                aria-label={isPlaying ? "Пауза" : "Воспроизведение"}
-              >
-                {isPlaying ? <Pause size={24} /> : <Play size={24} style={{ marginLeft: "2px" }} />}
-              </button>
-
-              <button
-                type="button"
-                className="audio-btn-control"
-                onClick={() => onSeek(Math.min(duration || 0, currentTime + 15))}
-                title="Вперед на 15 сек"
-              >
-                <RotateCw size={18} />
-              </button>
-
-              <button
-                type="button"
-                className="audio-btn-control"
-                onClick={() => onChapterChange(currentChapterIndex + 1)}
-                disabled={currentChapterIndex >= chapters.length - 1}
-                title="Следующая глава"
-              >
-                <SkipForward size={18} />
-              </button>
-            </div>
-
-            <div style={{ width: "36px" }} />
+            <button type="button" className="read-along-speed-btn" onClick={() => { const speeds = [1, 1.25, 1.5, 1.75, 2, 0.75]; const nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.length; onSpeedChange(speeds[nextIdx]); }} title="Скорость воспроизведения">{playbackSpeed}x</button>
+            <button type="button" className="read-along-btn" onClick={() => onSeek(Math.max(0, currentTime - 15))} title="Назад на 15 секунд"><RotateCcw size={18} /></button>
+            <button type="button" className="read-along-play-btn" onClick={onPlayPause} title={isPlaying ? "Пауза" : "Воспроизведение"}>{isPlaying ? <Pause size={24} /> : <Play size={24} />}</button>
+            <button type="button" className="read-along-btn" onClick={() => onSeek(currentTime + 15)} title="Вперёд на 15 секунд"><RotateCw size={18} /></button>
+            {currentChapterIndex < chapters.length - 1 && <button type="button" className="read-along-btn" onClick={() => onChapterChange(currentChapterIndex + 1)} title="Следующая глава"><SkipForward size={18} /></button>}
           </div>
         </div>
 
-        {/* Main Content Area */}
         {isLoadingTranscript ? (
           <div className="read-along-state-box">
-            <Loader2 size={36} className="spin" style={{ color: "var(--accent)" }} />
-            <strong>Синхронизируем текст через Gemini 3.5 Transcribe...</strong>
-            <p>
-              Распознаем оригинальную речь диктора и сопоставляем временные метки предложений.
-              Транскрипт сохраняется в кэш для мгновенного доступа в будущем.
-            </p>
+            <Loader2 className="animate-spin" size={32} style={{ color: "var(--accent)" }} />
+            <strong>Синхронизируем текст через Gemini...</strong>
           </div>
         ) : transcriptError ? (
           <div className="read-along-state-box">
-            <AlertCircle size={36} style={{ color: "#e57373" }} />
-            <strong>Не удалось загрузить текст главы</strong>
+            <strong>Ошибка загрузки текста</strong>
             <p>{transcriptError}</p>
-
-            <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px", width: "min(100%, 380px)" }}>
-              <input
-                type="password"
-                placeholder="Вставьте Gemini API ключ (AIzaSy...)"
-                value={customKey}
-                onChange={(e) => setCustomKey(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "9px 12px",
-                  borderRadius: "8px",
-                  border: "1px solid var(--border)",
-                  background: "rgba(240, 230, 211, 0.05)",
-                  color: "var(--text-primary)",
-                  fontSize: "13px",
-                  fontFamily: "monospace",
-                  textAlign: "center",
-                }}
-              />
-              <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-                {customKey.trim() && (
-                  <button
-                    type="button"
-                    className="read-along-retry-btn"
-                    style={{ flex: 1 }}
-                    onClick={handleSaveCustomKey}
-                  >
-                    Сохранить и распознать
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="read-along-retry-btn"
-                  style={{
-                    flex: customKey.trim() ? undefined : 1,
-                    background: customKey.trim() ? "transparent" : "var(--accent)",
-                    border: customKey.trim() ? "1px solid var(--border)" : "none",
-                    color: customKey.trim() ? "var(--text-primary)" : "#12100b",
-                  }}
-                  onClick={() => void loadTranscript()}
-                >
-                  Попробовать снова
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : segments.length === 0 ? (
-          <div className="read-along-state-box">
-            <p>Текст для данной главы отсутствует или пока не распознан.</p>
+            <input type="password" placeholder="Вставьте Gemini API ключ" value={customKey} onChange={(e) => setCustomKey(e.target.value)} />
+            <button onClick={() => void loadTranscript()}>Попробовать снова</button>
           </div>
         ) : (
           <div className="read-along-content" ref={containerRef}>
             {segments.map((segment, segIdx) => {
               const isActive = segIdx === activeSegmentIndex;
               const tokens = splitIntoTokens(segment.text);
+              const validTokens = tokens.filter((t) => Boolean(normalizeToken(t)));
+              const numWords = Math.max(1, validTokens.length);
+              const segDuration = Math.max(0.1, segment.end - segment.start);
+              const wordSlice = segDuration / numWords;
+              let validWordCounter = 0;
 
               return (
-                <div
-                  key={segment.id || segIdx}
-                  ref={isActive ? activeSegmentRef : null}
-                  className={`read-along-segment ${isActive ? "active" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="read-along-time-chip"
-                    onClick={() => onSeek(segment.start)}
-                    title="Перейти к этой фразе"
-                  >
-                    <Volume2 size={12} />
-                    <span>{formatAudioDuration(segment.start)}</span>
-                  </button>
-
+                <div key={segment.id || segIdx} ref={isActive ? activeSegmentRef : null} className={`read-along-segment ${isActive ? "active" : ""}`}>
+                  <button type="button" className="read-along-time-chip" onClick={() => onSeek(segment.start)}><Volume2 size={12} />{formatAudioDuration(segment.start)}</button>
                   {tokens.map((token, tokIdx) => {
                     const norm = normalizeToken(token);
                     if (!norm) return <span key={tokIdx}>{token}</span>;
+                    const currentWordIdx = validWordCounter++;
+                    const wordStart = segment.start + currentWordIdx * wordSlice;
+                    const wordEnd = wordStart + wordSlice;
 
+                    let isKaraokeCurrent = false;
+                    let isKaraokeSpoken = false;
+                    if (isActive) {
+                      isKaraokeCurrent = currentTime >= wordStart && currentTime < wordEnd;
+                      isKaraokeSpoken = currentTime >= wordEnd;
+                    }
                     const isWordSelected = selection?.token === token && isActive;
-
                     return (
                       <span
                         key={tokIdx}
                         role="button"
                         tabIndex={0}
-                        onClick={() => handleWordTap(token, segment, segIdx)}
+                        onClick={() => handleWordTap(token, segment, segIdx, wordStart)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter") handleWordTap(token, segment, segIdx);
+                          if (e.key === "Enter") handleWordTap(token, segment, segIdx, wordStart);
                         }}
-                        className={`read-along-word ${isWordSelected ? "selected" : ""}`}
+                        className={`read-along-word ${isWordSelected ? "selected" : ""} ${isKaraokeCurrent ? "karaoke-current" : ""} ${isKaraokeSpoken ? "karaoke-spoken" : ""}`}
                       >
                         {token}
                       </span>
@@ -510,7 +389,21 @@ export function AudiobookReadAlongModal({
           </div>
         )}
 
-        {/* Interactive AI Panel (Bottom Sheet) */}
+        {/* Bottom Cost & Token Transparency Badge */}
+        {transcript?.usage ? (
+          <div className="read-along-cost-badge">
+            <span>
+              {transcript.modelUsed || "Gemini Flash"} • Токены: {transcript.usage.totalTokens.toLocaleString()} (вход: {transcript.usage.promptTokens.toLocaleString()}, выход: {transcript.usage.outputTokens.toLocaleString()}) • Стоимость: ~${transcript.usage.costUsd.toFixed(4)}
+            </span>
+          </div>
+        ) : transcript ? (
+          <div className="read-along-cost-badge">
+            <span>
+              {transcript.modelUsed || "Gemini Flash"} • {transcript.segments.length} предложений распознано
+            </span>
+          </div>
+        ) : null}
+
         {selection && (
           <AiPanel
             selection={selection}
@@ -523,16 +416,11 @@ export function AudiobookReadAlongModal({
             onOpenWordModal={() => setIsWordModalOpen(true)}
             onDiscuss={() => setIsDiscussOpen(true)}
             onAddCard={handleAddCard}
-            onWordTap={(word) => {
-              const seg = segments[activeSegmentIndex] || segments[0];
-              if (seg) void handleWordTap(word, seg, activeSegmentIndex);
-            }}
-            onTabChange={setActiveTab}
+            onWordTap={(word) => { const seg = segments[activeSegmentIndex] || segments[0]; if (seg) void handleWordTap(word, seg, activeSegmentIndex); }}
+            onTabChange={handleTabChange}
             onTtsProviderChange={() => {}}
           />
         )}
-
-        {/* Word Detailed Modal */}
         {selection && (
           <WordModal
             analysis={analysis}

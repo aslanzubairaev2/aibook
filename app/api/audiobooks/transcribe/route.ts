@@ -40,23 +40,36 @@ async function downloadAudioToTempFile(
 
   // If archive.org URL, derive direct storage cluster URL as high-reliability fallback
   if (audioUrl.includes("archive.org")) {
-    try {
-      const metaRes = await fetch(`https://archive.org/metadata/${audiobookId}`, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-      });
-      if (metaRes.ok) {
-        const meta = await metaRes.json();
-        if (meta?.server && meta?.dir) {
-          const urlParts = audioUrl.split("/");
-          const fileName = urlParts[urlParts.length - 1];
-          const directUrl = `https://${meta.server}${meta.dir}/${fileName}`;
-          if (!candidateUrls.includes(directUrl)) {
-            candidateUrls.push(directUrl);
+    const urlMatch = audioUrl.match(/\/download\/([^/]+)\//);
+    const identifierCandidates = [audiobookId];
+    if (urlMatch?.[1] && !identifierCandidates.includes(urlMatch[1])) {
+      identifierCandidates.push(urlMatch[1]);
+    }
+
+    for (const id of identifierCandidates) {
+      try {
+        const metaRes = await fetch(`https://archive.org/metadata/${encodeURIComponent(id)}`, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+        });
+        if (metaRes.ok) {
+          const meta = await metaRes.json();
+          if (meta?.server && meta?.dir) {
+            const urlParts = audioUrl.split("/");
+            const targetFileName = urlParts[urlParts.length - 1];
+            // Match exact file or fallback
+            const files = Array.isArray(meta.files) ? meta.files : [];
+            const matchedFile = files.find((f: { name?: string }) => f?.name === targetFileName) ||
+                                files.find((f: { name?: string }) => f?.name?.endsWith(".mp3"));
+            const finalName = matchedFile?.name || targetFileName;
+            const directUrl = `https://${meta.server}${meta.dir}/${finalName}`;
+            if (!candidateUrls.includes(directUrl)) {
+              candidateUrls.unshift(directUrl); // prioritize direct storage server
+            }
           }
         }
+      } catch {
+        // continue
       }
-    } catch {
-      // fallback to candidate URLs
     }
   }
 
@@ -110,7 +123,7 @@ export async function POST(req: Request) {
     try {
       const { data: cachedRow } = await supabaseAdmin
         .from("audiobook_transcripts")
-        .select("segments, raw_text, model_used, created_at")
+        .select("segments, raw_text, model_used, usage, created_at")
         .eq("audiobook_id", audiobookId)
         .eq("chapter_index", chapterIndex)
         .maybeSingle();
@@ -123,6 +136,7 @@ export async function POST(req: Request) {
           segments: normalizeSegments(cachedRow.segments),
           rawText: cachedRow.raw_text,
           modelUsed: cachedRow.model_used,
+          usage: cachedRow.usage || undefined,
           createdAt: cachedRow.created_at,
         } satisfies AudiobookTranscript);
       }
@@ -211,6 +225,22 @@ Timestamps must be numbers in seconds. Every sentence must have accurate start a
 
         if (segments.length > 0) {
           usedModel = modelName;
+          const usageMeta = response.usageMetadata;
+          let usage: AudiobookTranscript["usage"] = undefined;
+          if (usageMeta) {
+            const promptTokens = Number(usageMeta.promptTokenCount || 0);
+            const outputTokens = Number(usageMeta.candidatesTokenCount || 0);
+            const totalTokens = Number(usageMeta.totalTokenCount || (promptTokens + outputTokens));
+            // Audio input rate: ~$2.00 / 1M tokens ($0.000002/tok), Output rate: $1.50 / 1M tokens ($0.0000015/tok)
+            const costUsd = (promptTokens * 0.000002) + (outputTokens * 0.0000015);
+            usage = {
+              promptTokens,
+              outputTokens,
+              totalTokens,
+              costUsd,
+            };
+          }
+
           transcriptResult = {
             audiobookId,
             chapterIndex,
@@ -218,6 +248,7 @@ Timestamps must be numbers in seconds. Every sentence must have accurate start a
             segments,
             rawText: text,
             modelUsed: usedModel,
+            usage,
             createdAt: new Date().toISOString(),
           };
           break;
@@ -262,6 +293,7 @@ Timestamps must be numbers in seconds. Every sentence must have accurate start a
           segments: transcriptResult.segments,
           raw_text: transcriptResult.rawText,
           model_used: transcriptResult.modelUsed,
+          usage: transcriptResult.usage || null,
           updated_at: new Date().toISOString(),
         },
         { onConflict: "audiobook_id,chapter_index" }

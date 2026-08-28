@@ -2386,6 +2386,39 @@
   margin: 0;
 }
 
+.read-along-word.karaoke-current {
+  color: #ffd15c !important;
+  text-shadow: 0 0 10px rgba(251, 191, 36, 0.7);
+  font-weight: 700;
+  transform: scale(1.05);
+  background: rgba(251, 191, 36, 0.15);
+}
+
+.read-along-word.karaoke-spoken {
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+.read-along-segment:not(.active) .read-along-word {
+  opacity: 0.85;
+}
+
+.read-along-cost-badge {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 6px 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.65;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  letter-spacing: 0.02em;
+  user-select: none;
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+
 .read-along-retry-btn {
   margin-top: 8px;
   padding: 8px 18px;
