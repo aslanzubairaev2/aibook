@@ -5,11 +5,13 @@ import type { CSSProperties, ReactNode } from "react";
 import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
-  Sparkles, CheckCircle2, PlayCircle, Clock, Circle,
+  Sparkles, CheckCircle2, PlayCircle, Clock, Circle, Headphones,
   Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, BookA, ClipboardList,
 } from "lucide-react";
-import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
+import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile, Audiobook } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
+import { AudiobookDetailModal } from "./AudiobookDetailModal";
+import { fetchAudiobooks, AUDIOBOOK_LANGUAGES, type AudiobookLanguageKey } from "@/lib/audio/audiobooks";
 import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders, sbInsertFlashcard } from "@/lib/db/supabase";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
@@ -104,13 +106,14 @@ type SharedBook = {
   created_at: string;
 };
 
-type TabKey = "classic" | "klexikon" | "cefr" | "lessons" | "dictionary";
+type TabKey = "classic" | "audio" | "klexikon" | "cefr" | "lessons" | "dictionary";
 
 // Each tab is one source. The name carries it; the source and its licence show
 // up per item (the "Оригинал · CC BY-SA" link, the "≈" on estimated levels)
 // rather than in a banner above the list.
 const TAB_LABELS: Record<TabKey, string> = {
   classic: "Классика",
+  audio: "Аудио",
   klexikon: "Клексикон",
   cefr: "CEFR тексты",
   lessons: "Мои уроки",
@@ -221,6 +224,8 @@ type DiscoverPrefs = {
   collapsedLevels?: string[];
   lessonLevel?: CefrLevel;
   lessonLength?: "short" | "medium" | "long";
+  audioLang?: string;
+  audioCefr?: string;
 };
 
 function readPrefs(): DiscoverPrefs {
@@ -289,6 +294,25 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [isLoading, setIsLoading] = useState(false);
   const [selectedBook, setSelectedBook] = useState<GutendexBook | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Audiobooks States
+  const [audioLang, setAudioLang] = useState<AudiobookLanguageKey | string>(prefs.audioLang ?? "de");
+  const [audioCefr, setAudioCefr] = useState<CefrLevel | "all">((prefs.audioCefr as CefrLevel | "all") ?? "all");
+  const [audioQuery, setAudioQuery] = useState("");
+  const [audioSubmittedQuery, setAudioSubmittedQuery] = useState("");
+  const [audioPage, setAudioPage] = useState(1);
+  const [audioTotal, setAudioTotal] = useState(0);
+  const [audioTotalPages, setAudioTotalPages] = useState(1);
+  // Set only under a level filter: how many of this page's results actually
+  // classify at that level, once the honest-label filter has run — audioTotal
+  // still describes the underlying keyword search and would overclaim if
+  // shown as "N books at this level" (see fetchAudiobooks).
+  const [audioMatchedOnPage, setAudioMatchedOnPage] = useState<number | null>(null);
+  const [audiobooks, setAudiobooks] = useState<Audiobook[]>([]);
+  const [isAudioLoading, setIsAudioLoading] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [selectedAudiobook, setSelectedAudiobook] = useState<Audiobook | null>(null);
+  const audioCacheRef = useRef<Map<string, { audiobooks: Audiobook[]; total: number; totalPages: number; matchedOnPage?: number }>>(new Map());
 
   // Shared books state
   const [klexikonBooks, setKlexikonBooks] = useState<SharedBook[]>([]);
@@ -543,6 +567,48 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
     }
   }
 
+  // A word or example tapped inside the audiobook's "Обсудить с AI" chat —
+  // same save path as the dictionary above, just sourced from the book title
+  // rather than a batch name.
+  function addAudiobookWordCard(front: string, back: string, type: "word" | "phrase") {
+    if (!onAddCard || !front.trim() || !back.trim()) return;
+    if (cardFronts.has(front.trim().toLowerCase())) {
+      showToast("Такая карточка уже есть");
+      return;
+    }
+    const source = selectedAudiobook ? `Аудиокнига «${selectedAudiobook.title}»` : "Аудиокниги";
+    const srs = createDefaultSrsFields(null, source);
+    const card: Flashcard = {
+      id: `card-${Date.now()}`,
+      type,
+      source,
+      addedAt: new Date().toISOString(),
+      ...srs,
+      front,
+      back,
+    };
+    onAddCard(card);
+    showToast("✓ Карточка добавлена");
+    if (user) {
+      void sbInsertFlashcard({
+        user_id: user.id,
+        vocabulary_item_id: null,
+        front: card.front,
+        back: card.back,
+        source_book_title: source,
+        selection_type: type,
+        repetitions: srs.repetitions,
+        lapses: srs.lapses,
+        easiness_factor: srs.easeFactor,
+        interval_days: srs.intervalDays,
+        next_review_at: srs.dueAt,
+        last_reviewed_at: srs.lastReviewedAt,
+        source_book_id: null,
+        status: srs.status,
+      });
+    }
+  }
+
   async function deleteDictionaryEntry(id: string) {
     setDictionary((prev) => prev.filter((e) => e.id !== id));
     try {
@@ -720,10 +786,71 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter,
       klexLevelFilter, klexStatusFilter, collapsedLevels: Array.from(collapsedLevels),
       lessonLevel: composer.level, lessonLength: composer.length, klexikonOffset,
-      onlyComfortable,
+      onlyComfortable, audioLang, audioCefr,
     };
     try { localStorage.setItem(PREFS_KEY, JSON.stringify(data)); } catch { /* ignore */ }
-  }, [activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, klexLevelFilter, klexStatusFilter, collapsedLevels, composer.level, composer.length, klexikonOffset, onlyComfortable]);
+  }, [activeTab, language, cefrLangFilter, cefrLevelFilter, cefrStatusFilter, klexLevelFilter, klexStatusFilter, collapsedLevels, composer.level, composer.length, klexikonOffset, onlyComfortable, audioLang, audioCefr]);
+
+  // ── Audiobooks auto-search ───────────────────────────────────────────────────
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const nextQuery = audioQuery.trim();
+      if (nextQuery !== audioSubmittedQuery) {
+        setAudioSubmittedQuery(nextQuery);
+        setAudioPage(1);
+      }
+    }, 450);
+    return () => window.clearTimeout(timeout);
+  }, [audioQuery, audioSubmittedQuery]);
+
+  useEffect(() => {
+    if (activeTab !== "audio") return;
+    const controller = new AbortController();
+    const cacheKey = `${audioLang}:${audioCefr}:${audioSubmittedQuery}:${audioPage}`;
+
+    const cached = audioCacheRef.current.get(cacheKey);
+    if (cached) {
+      setAudiobooks(cached.audiobooks);
+      setAudioTotal(cached.total);
+      setAudioTotalPages(cached.totalPages);
+      setAudioMatchedOnPage(cached.matchedOnPage ?? null);
+      setIsAudioLoading(false);
+      return;
+    }
+
+    setIsAudioLoading(true);
+    setAudioError(null);
+
+    fetchAudiobooks({
+      language: audioLang,
+      cefrLevel: audioCefr,
+      search: audioSubmittedQuery,
+      page: audioPage,
+      pageSize: PAGE_SIZE,
+      signal: controller.signal,
+    })
+      .then((res) => {
+        setAudiobooks(res.audiobooks);
+        setAudioTotal(res.total);
+        setAudioTotalPages(res.totalPages);
+        setAudioMatchedOnPage(res.matchedOnPage ?? null);
+        audioCacheRef.current.set(cacheKey, {
+          audiobooks: res.audiobooks,
+          total: res.total,
+          totalPages: res.totalPages,
+          matchedOnPage: res.matchedOnPage,
+        });
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === "AbortError") return;
+        setAudioError("Не удалось загрузить каталог аудиокниг. Проверьте соединение.");
+      })
+      .finally(() => {
+        setIsAudioLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [activeTab, audioLang, audioCefr, audioSubmittedQuery, audioPage]);
 
   // ── Gutenberg auto-search ────────────────────────────────────────────────────
   useEffect(() => {
@@ -1116,7 +1243,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
 
       {/* One tab per source — the source note below spells out which is which */}
       <div className="discover-tabs">
-        {(["classic", "klexikon", "cefr", "lessons", "dictionary"] as const).map((tab) => (
+        {(["classic", "audio", "klexikon", "cefr", "lessons", "dictionary"] as const).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -1125,6 +1252,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             onClick={() => setActiveTab(tab)}
           >
             {tab === "classic" && <BookOpen size={15} />}
+            {tab === "audio" && <Headphones size={15} />}
             {tab === "klexikon" && <GraduationCap size={15} />}
             {tab === "cefr" && <BookMarked size={15} />}
             {tab === "lessons" && <Wand2 size={15} />}
@@ -1195,6 +1323,233 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 <span>{page} / {totalPages}</span>
                 <button type="button" className="mini-btn" disabled={page >= totalPages || isLoading} onClick={() => setPage((v) => v + 1)}>
                   Вперёд<ChevronRight size={15} />
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* ── Audiobooks (LibriVox / Internet Archive) ─────────────────────────── */}
+      {activeTab === "audio" && (
+        <>
+          <div className="discover-search" style={{ marginBottom: 8 }}>
+            <Search size={18} aria-hidden />
+            <input
+              type="text"
+              placeholder="Поиск аудиокниги, автора..."
+              value={audioQuery}
+              onChange={(e) => setAudioQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setAudioSubmittedQuery(audioQuery.trim());
+                  setAudioPage(1);
+                }
+                if (e.key === "Escape") {
+                  setAudioQuery("");
+                  setAudioSubmittedQuery("");
+                  setAudioPage(1);
+                }
+              }}
+            />
+            {audioQuery && (
+              <button
+                type="button"
+                className="discover-clear"
+                onClick={() => {
+                  setAudioQuery("");
+                  setAudioSubmittedQuery("");
+                  setAudioPage(1);
+                }}
+                aria-label="Очистить"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
+          <div className="audio-filters-row">
+            <div className={`discover-language audio-lang-select${audioLang !== "all" ? " filter-active" : ""}`}>
+              {audioLang !== "all" && <span className="filter-lamp" aria-hidden />}
+              <select
+                value={audioLang}
+                onChange={(e) => {
+                  setAudioLang(e.target.value);
+                  setAudioPage(1);
+                }}
+                aria-label="Язык аудио"
+              >
+                {(Object.entries(AUDIOBOOK_LANGUAGES) as [AudiobookLanguageKey, typeof AUDIOBOOK_LANGUAGES[AudiobookLanguageKey]][]).map(
+                  ([key, val]) => (
+                    <option key={key} value={key}>
+                      {val.flag} {val.label}
+                    </option>
+                  )
+                )}
+              </select>
+              <ChevronDown size={15} aria-hidden />
+            </div>
+
+            {/* CEFR level filter — reuses the app's own filter-chip styling
+                instead of raw, unstyled native buttons. */}
+            <div className="filter-chips">
+              {(["all", "A1", "A2", "B1", "B2", "C1", "C2"] as const).map((lvl) => (
+                <button
+                  key={lvl}
+                  type="button"
+                  className={`filter-chip ${audioCefr === lvl ? "active" : ""}`}
+                  onClick={() => {
+                    setAudioCefr(lvl);
+                    setAudioPage(1);
+                  }}
+                >
+                  {lvl === "all" ? "Все уровни" : lvl}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {audioError && <div className="inline-error">{audioError}</div>}
+
+          {isAudioLoading && (
+            <div className="catalog-loading-inline">
+              <span className="loading-dot" />
+              <span>Загружаю каталог аудиокниг...</span>
+            </div>
+          )}
+
+          <div className="discover-meta">
+            <span>
+              {isAudioLoading
+                ? "Поиск..."
+                : audioCefr !== "all"
+                  // audioTotal counts the underlying keyword search, not
+                  // confirmed matches — showing it here would repeat the
+                  // exact "A1 label on a B1 book" bug this fix removes.
+                  ? `${audioMatchedOnPage ?? audiobooks.length} уровня ${audioCefr} на этой странице`
+                  : `${audioTotal || audiobooks.length} аудиокниг`}
+            </span>
+            <span>
+              Страница {audioPage} из {audioTotalPages}
+            </span>
+          </div>
+
+          {isAudioLoading && audiobooks.length === 0 ? (
+            <CatalogSkeleton />
+          ) : audiobooks.length === 0 ? (
+            <div className="empty-state">
+              <Headphones size={40} />
+              <strong>Аудиокниги не найдены</strong>
+              <p>
+                {audioCefr !== "all"
+                  ? `На этой странице нет аудиокниг, точно классифицированных как ${audioCefr}. Internet Archive почти не содержит подтверждённых материалов этого уровня — попробуйте следующую страницу, другой язык или соседний уровень.`
+                  : "Попробуйте выбрать другой язык или уровень"}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className={`discover-grid${isAudioLoading ? " is-refreshing" : ""}`}>
+                {audiobooks.map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    className="catalog-book"
+                    onClick={() => setSelectedAudiobook(b)}
+                  >
+                    <span
+                      className="catalog-cover"
+                      style={
+                        b.coverUrl
+                          ? { backgroundImage: `url(${b.coverUrl})` }
+                          : { background: pickColor(b.title) }
+                      }
+                    >
+                      <span
+                        style={{
+                          position: "absolute",
+                          bottom: 4,
+                          right: 4,
+                          background: "rgba(0,0,0,0.75)",
+                          borderRadius: "4px",
+                          padding: "2px 4px",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "2px",
+                          color: "#fff",
+                          fontSize: "10px",
+                        }}
+                      >
+                        <Headphones size={11} />
+                      </span>
+                    </span>
+                    <span className="catalog-book-body">
+                      <strong>{b.title}</strong>
+                      <span>{b.author}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+                        {b.cefrLevel ? (
+                          <span
+                            className="cefr-badge"
+                            title={b.cefrExplanation}
+                            style={{
+                              background: CEFR_COLORS[b.cefrLevel] || "#888",
+                              color: "#fff",
+                              padding: "1px 5px",
+                              borderRadius: "3px",
+                              fontSize: "10px",
+                              fontWeight: "bold",
+                              opacity: b.cefrConfidence === "approximate" ? 0.85 : 1,
+                            }}
+                          >
+                            {b.cefrConfidence === "approximate" ? `≈ ${b.cefrLevel}` : b.cefrLevel}
+                          </span>
+                        ) : (
+                          <span
+                            className="cefr-badge"
+                            title={b.cefrExplanation ?? "Уровень CEFR не подтверждён"}
+                            style={{
+                              background: "var(--bg-hover)",
+                              color: "var(--text-muted)",
+                              padding: "1px 5px",
+                              borderRadius: "3px",
+                              fontSize: "10px",
+                              fontWeight: "bold",
+                            }}
+                          >
+                            Оригинал
+                          </span>
+                        )}
+                        {b.totalDurationFormatted && b.totalDurationFormatted !== "—" && (
+                          <span style={{ fontSize: "11px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "2px" }}>
+                            <Clock size={11} /> {b.totalDurationFormatted}
+                          </span>
+                        )}
+                      </div>
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="pager">
+                <button
+                  type="button"
+                  className="mini-btn"
+                  disabled={audioPage <= 1 || isAudioLoading}
+                  onClick={() => setAudioPage((v) => Math.max(1, v - 1))}
+                >
+                  <ChevronLeft size={15} />
+                  Назад
+                </button>
+                <span>
+                  {audioPage} / {audioTotalPages}
+                </span>
+                <button
+                  type="button"
+                  className="mini-btn"
+                  disabled={audioPage >= audioTotalPages || isAudioLoading}
+                  onClick={() => setAudioPage((v) => v + 1)}
+                >
+                  Вперёд
+                  <ChevronRight size={15} />
                 </button>
               </div>
             </>
@@ -1727,6 +2082,16 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
           }}
           onCreateText={() => void createMiniTextForWord(dictWord.entry)}
           isCreatingText={miniTextBusy}
+        />
+      )}
+
+      {/* Audiobook Details & Player Modal */}
+      {selectedAudiobook && (
+        <AudiobookDetailModal
+          audiobook={selectedAudiobook}
+          nativeLanguage={profile.nativeLanguage}
+          onClose={() => setSelectedAudiobook(null)}
+          onAddWordCard={addAudiobookWordCard}
         />
       )}
 

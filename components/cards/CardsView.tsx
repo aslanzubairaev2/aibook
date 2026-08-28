@@ -10,6 +10,7 @@ import {
   computeDeckStats,
   countTrainCandidates,
   deckInsight,
+  endOfTodayMs,
   listCardSources,
   type CardSource,
   describePackTraining,
@@ -162,12 +163,6 @@ function sourceNoun(n: number): string {
   if (mod10 === 1) return "источник";
   if (mod10 >= 2 && mod10 <= 4) return "источника";
   return "источников";
-}
-
-function endOfTodayMs(): number {
-  const d = new Date();
-  d.setHours(23, 59, 59, 999);
-  return d.getTime();
 }
 
 /** Offer only the voices that can actually speak the deck's language. */

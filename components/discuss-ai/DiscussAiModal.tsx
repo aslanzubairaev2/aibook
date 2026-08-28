@@ -49,6 +49,7 @@ const MODE_LABEL: Record<AiMode, string> = {
   phrase: "фраза",
   sentence: "предложение",
   homework: "упражнение",
+  audiobook: "аудиокнига",
 };
 
 // Shown only until the model's own follow-ups arrive with its first answer.
@@ -59,6 +60,7 @@ const BASE_QUICK_PROMPTS: Record<AiMode, string[]> = {
   phrase: ["Когда так говорят", "Сказать иначе", "Что ответить"],
   sentence: ["Скажи проще", "Разбери по частям", "Как ответить"],
   homework: ["Объясни ещё раз проще", "Похожий пример", "На что обратить внимание"],
+  audiobook: ["О чём книга без спойлеров", "Подходит ли мне уровень", "Насколько быстро говорят"],
 };
 
 /** Which grammar table each button kind opens. */

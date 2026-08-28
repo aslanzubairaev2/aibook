@@ -1,11 +1,19 @@
-export type AppSection = "home" | "discover" | "books" | "reader" | "homework" | "cards" | "verbs" | "settings" | "auth";
+export type AppSection = "home" | "discover" | "books" | "reader" | "homework" | "cards" | "verbs" | "settings" | "auth" | "live-translate";
 
 export type SelectionType = "word" | "phrase" | "sentence";
 export type TtsProvider =
   | "local" | "gemini" | "deepgram" | "speechify" | "inworld" | "openai" | "cartesia" | "elevenlabs";
 
 export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
-export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated";
+export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated" | "librivox" | "archive_audio";
+
+/**
+ * How sure the app actually is about a CEFR label:
+ * - `verified`: the source explicitly states a CEFR code (e.g. "Niveau A1").
+ * - `approximate`: inferred from genre/author, offered as a rough guide only.
+ * - `unverified`: no reliable signal at all — the level is unknown, not A1-by-default.
+ */
+export type CefrConfidence = "verified" | "approximate" | "unverified";
 
 export type LessonContext = {
   courseId: string;
@@ -246,8 +254,8 @@ export type AiAnalysis = {
   }[];
 };
 
-/** "homework" is a fourth AI-discussion mode alongside the three selection types — not a selection kind, so kept separate from SelectionType rather than widening it. */
-export type AiMode = SelectionType | "homework";
+/** "homework" and "audiobook" are AI-discussion modes alongside the three selection types — neither is a selection kind, so kept separate from SelectionType rather than widening it. */
+export type AiMode = SelectionType | "homework" | "audiobook";
 
 export type DiscussContentPart = {
   type: "text" | "learning";
@@ -387,3 +395,55 @@ export type CardSkillState = Partial<Record<ProductiveSkill, SkillProgress>>;
 // schedule here, stored locally and keyed by card id — same pattern as
 // CardSkillState above.
 export type CardVariantState = Partial<Record<Exclude<TrainVariant, "forward">, SkillProgress>>;
+ 
+ // ─── Audiobooks ─────────────────────────────────────────────────────────────
+ export type AudiobookChapter = {
+   id: string | number;
+   chapterIndex: number;
+   title: string;
+   durationSeconds?: number;
+   durationFormatted?: string; // e.g. "04:12"
+   audioUrl: string; // direct MP3 streaming URL
+ };
+ 
+ export type Audiobook = {
+   id: string; // Identifier e.g. "sammlung_deutscher_gedichte_018_1506_librivox"
+   title: string;
+   author: string;
+   language: string; // ISO 639-1 ('de', 'en', ...) or display name
+   cefrLevel?: CefrLevel | null;
+   /** How sure `cefrLevel` actually is — see CefrConfidence. Absent only for legacy/unknown data. */
+   cefrConfidence?: CefrConfidence;
+   /** One line, in Russian, explaining where the level guess came from — shown next to the badge. */
+   cefrExplanation?: string;
+   coverUrl?: string | null;
+   coverColor?: string;
+   description?: string;
+   totalDurationSeconds?: number;
+   totalDurationFormatted?: string;
+   downloads?: number;
+   sourceType: ContentSource;
+   chapters?: AudiobookChapter[];
+ };
+
+ export type AudiobookProgress = {
+   audiobookId: string;
+   chapterIndex: number;
+   currentTimeSeconds: number;
+   durationSeconds: number;
+   updatedAt: string;
+   /**
+    * Display snapshot taken at save time, so the home screen's "Продолжить
+    * слушать" tile can render without a network refetch (and without an N+1
+    * request per card — see docs/coordination/tasks/claude-audiobooks-home-improvements.md).
+    */
+   title?: string;
+   author?: string;
+   coverUrl?: string | null;
+   coverColor?: string;
+   language?: string;
+   chapterTitle?: string;
+   totalChapters?: number;
+   cefrLevel?: CefrLevel | null;
+   cefrConfidence?: CefrConfidence;
+ };
