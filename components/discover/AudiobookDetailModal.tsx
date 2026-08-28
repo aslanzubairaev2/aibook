@@ -16,6 +16,7 @@ import {
   Clock,
   Volume2,
   VolumeX,
+  ScrollText,
 } from "lucide-react";
 import type { Audiobook, AudiobookChapter, CefrConfidence, CefrLevel, DiscussMessage, AiAnalysis } from "@/lib/types";
 import {
@@ -37,6 +38,7 @@ import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { WordModal } from "@/components/word-modal/WordModal";
+import { AudiobookReadAlongModal } from "./AudiobookReadAlongModal";
 
 type Props = {
   audiobook: Audiobook;
@@ -137,6 +139,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [isMuted, setIsMuted] = useState(false);
   const [showChaptersList, setShowChaptersList] = useState(false);
+  const [isReadAlongOpen, setIsReadAlongOpen] = useState(false);
 
   // Compact AI overview, shown right beside the title/metadata.
   const [review, setReview] = useState<string | null>(null);
@@ -308,6 +311,20 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
     audioRef.current?.pause();
     setIsPlaying(false);
   }, []);
+
+  // High-frequency 60fps clock for zero-latency word karaoke tracking
+  useEffect(() => {
+    if (!isPlaying) return;
+    let animId: number;
+    const tick = () => {
+      if (audioRef.current && !audioRef.current.paused) {
+        setCurrentTime(audioRef.current.currentTime);
+      }
+      animId = requestAnimationFrame(tick);
+    };
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [isPlaying]);
 
   const handlePlayPause = useCallback(() => {
     if (!audioRef.current || !currentChapter) return;
@@ -744,6 +761,34 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
               </button>
             </div>
 
+            {/* Read-Along (Karaoke / Transcript Mode) Button */}
+            <button
+              type="button"
+              className="audio-read-along-btn"
+              onClick={() => setIsReadAlongOpen(true)}
+              disabled={isLoadingChapters || !currentChapter}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                width: "100%",
+                marginTop: "12px",
+                padding: "10px 16px",
+                background: "rgba(212, 168, 71, 0.12)",
+                border: "1px solid var(--accent)",
+                borderRadius: "var(--radius-md, 10px)",
+                color: "var(--accent)",
+                fontWeight: "700",
+                fontSize: "13.5px",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <ScrollText size={16} />
+              <span>Читать текст синхронно (Текст / Караоке)</span>
+            </button>
+
             {/* Chapters list drawer */}
             {showChaptersList && chapters.length > 0 && (
               <div className="audio-chapters-drawer">
@@ -815,6 +860,31 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
         onWordTap={(word, context) => void loadWordModalAnalysis(word, context)}
         onAddExample={onAddWordCard ? (text, translation) => onAddWordCard(text, translation, "phrase") : undefined}
       />
+
+      {/* Fullscreen Read-Along Karaoke Modal */}
+      {isReadAlongOpen && (
+        <AudiobookReadAlongModal
+          audiobook={details || audiobook}
+          currentChapterIndex={currentChapterIndex}
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          duration={duration}
+          playbackSpeed={playbackSpeed}
+          nativeLanguage={nativeLanguage}
+          onPlayPause={handlePlayPause}
+          onSeek={handleSeek}
+          onSpeedChange={(speed) => {
+            setPlaybackSpeed(speed);
+            if (audioRef.current) audioRef.current.playbackRate = speed;
+          }}
+          onChapterChange={(idx) => {
+            setCurrentChapterIndex(idx);
+            setCurrentTime(0);
+          }}
+          onClose={() => setIsReadAlongOpen(false)}
+          onAddWordCard={onAddWordCard}
+        />
+      )}
     </div>
   );
 }
