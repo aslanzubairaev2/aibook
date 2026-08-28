@@ -32,7 +32,7 @@ import {
   setMediaSessionPlaybackState,
   setMediaSessionPositionState,
 } from "@/lib/audio/mediaSession";
-import { aiChat } from "@/lib/ai/chat";
+import { fetchAudiobookOverview } from "@/lib/ai/audiobookOverview";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
@@ -248,16 +248,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
       setReview(null);
       setDiscussMessages([]);
       try {
-        const prompt = [
-          `Аудиокнига: "${audiobook.title}", автор: ${author}, язык: ${language}.`,
-          "Сделай очень короткую карточку для изучающего язык без спойлеров, без markdown и без спецсимволов.",
-          "Строго 4 строки:",
-          "О чем: одно короткое предложение.",
-          "Жанр: 2-4 слова.",
-          "Язык: примерный уровень A1-C2 и темп/сложность речи.",
-          "Кому: кому подойдет для аудирования.",
-        ].join("\n");
-        const result = await aiChat(prompt);
+        const { review: result } = await fetchAudiobookOverview(audiobook.id, audiobook.title, author, language);
         if (isActive) setReview(result || "О чем: аудиокнига из классической библиотеки.");
       } catch {
         if (isActive) {
