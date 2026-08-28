@@ -9,6 +9,7 @@ import {
   findVideosForWord,
   findVideosForBook,
 } from "./data/index.ts";
+import { fetchYouTubeTranscript } from "./youtubeTranscript.ts";
 
 test("videos dataset contains German and English videos", () => {
   assert.ok(ALL_VIDEOS.length > 0);
@@ -53,4 +54,14 @@ test("findVideosForWord finds relevant German video for target vocabulary", () =
 test("findVideosForBook finds relevant videos for book titles", () => {
   const travelVideos = findVideosForBook("Der größte Schatz", "de");
   assert.ok(travelVideos.length > 0);
+});
+
+test("fetchYouTubeTranscript parses timed subtitle cues for valid video", async () => {
+  const cues = await fetchYouTubeTranscript("dC6ZGLzdaTs", "de");
+  assert.ok(Array.isArray(cues));
+  if (cues.length > 0) {
+    assert.ok(cues[0].start >= 0);
+    assert.ok(cues[0].end > cues[0].start);
+    assert.ok(cues[0].text.length > 0);
+  }
 });

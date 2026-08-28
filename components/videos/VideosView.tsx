@@ -20,6 +20,7 @@ export function VideosView({
   profile,
   initialQuery,
   initialLanguage,
+  onAddCard,
 }: Props) {
   const defaultLang = initialLanguage === "en" || profile.targetLanguage === "en" ? "en" : "de";
 
@@ -328,7 +329,9 @@ export function VideosView({
       {activeVideo && (
         <VideoPlayerModal
           video={activeVideo}
+          profile={profile}
           onClose={() => setActiveVideo(null)}
+          onAddCard={onAddCard}
         />
       )}
     </div>
