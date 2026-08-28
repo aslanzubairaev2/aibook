@@ -246,8 +246,8 @@ export type AiAnalysis = {
   }[];
 };
 
-/** "homework" is a fourth AI-discussion mode alongside the three selection types — not a selection kind, so kept separate from SelectionType rather than widening it. */
-export type AiMode = SelectionType | "homework";
+/** "homework" and "audiobook" are AI-discussion modes alongside the three selection types — neither is a selection kind, so kept separate from SelectionType rather than widening it. */
+export type AiMode = SelectionType | "homework" | "audiobook";
 
 export type DiscussContentPart = {
   type: "text" | "learning";

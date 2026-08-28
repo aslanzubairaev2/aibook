@@ -223,6 +223,8 @@ textarea,
 }
 .pill-btn:hover { background: rgba(212, 168, 71, 0.16); }
 
+.discuss-audiobook-btn { margin-top: 10px; }
+
 .primary-btn {
   display: inline-flex;
   align-items: center;
@@ -1334,6 +1336,7 @@ textarea,
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   min-width: 0;
   height: 42px;
   padding: 0 10px;
@@ -1374,6 +1377,27 @@ textarea,
 .discover-language {
   position: relative;
   grid-column: 1 / -1;
+}
+
+/* Audiobooks tab: language + CEFR level sit on one wrapping row below the
+   full-width search field, instead of squeezed into the two-column grid the
+   other tabs use for a select plus a submit button. */
+.audio-filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.audio-filters-row .audio-lang-select {
+  grid-column: auto;
+  flex: 0 0 auto;
+  min-width: 190px;
+}
+
+.audio-filters-row .filter-chips {
+  flex: 1 1 220px;
 }
 
 .discover-language select {
@@ -1658,6 +1682,26 @@ textarea,
   border-radius: var(--radius-md);
   background: rgba(39, 35, 25, 0.66);
 }
+
+/* Audiobook modal: the same overview card, tightened so it reads as a caption
+   next to the title/metadata rather than a full section of its own. */
+.ai-review-compact {
+  padding: 10px 12px;
+  margin-top: 4px;
+}
+
+.ai-review-compact .compact-section-title {
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.ai-review-compact .compact-section-title strong {
+  font-size: 12.5px;
+}
+
+.ai-review-compact .review-list { gap: 4px; }
+.ai-review-compact .review-list dt { font-size: 11px; }
+.ai-review-compact .review-list dd { font-size: 12.5px; line-height: 1.35; }
 
 .compact-section-title {
   display: flex;

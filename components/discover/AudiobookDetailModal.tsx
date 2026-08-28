@@ -11,14 +11,13 @@ import {
   SkipForward,
   Info,
   MessageSquare,
-  Send,
   Loader2,
   ListMusic,
   Clock,
   Volume2,
   VolumeX,
 } from "lucide-react";
-import type { Audiobook, AudiobookChapter, CefrLevel } from "@/lib/types";
+import type { Audiobook, AudiobookChapter, CefrLevel, DiscussMessage, AiAnalysis } from "@/lib/types";
 import {
   fetchAudiobookDetails,
   formatAudioDuration,
@@ -26,16 +25,19 @@ import {
   saveAudiobookProgress,
 } from "@/lib/audio/audiobooks";
 import { aiChat } from "@/lib/ai/chat";
-import { DictateButton, appendSpoken } from "./DictateButton";
+import { analyzeSelection } from "@/lib/ai/analyze";
+import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
+import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
+import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
+import { WordModal } from "@/components/word-modal/WordModal";
 
 type Props = {
   audiobook: Audiobook;
+  /** The learner's own language — required by the shared "Обсудить с AI" chat and word lookups. */
+  nativeLanguage: string;
   onClose: () => void;
-};
-
-type ChatMessage = {
-  role: "user" | "ai";
-  text: string;
+  /** Saving a word or example tapped inside the AI chat as a flashcard; omitted where the caller has nowhere to put it. */
+  onAddWordCard?: (front: string, back: string, type: "word" | "phrase") => void;
 };
 
 const LANG_NAMES: Record<string, string> = {
@@ -59,6 +61,18 @@ const LANG_NAMES: Record<string, string> = {
   ru: "русский",
   rus: "русский",
   russian: "русский",
+};
+
+// The app's AI routes speak ISO 639-1 codes; Internet Archive metadata carries
+// whatever the uploader typed (full English names, 3-letter codes, ...). This
+// collapses that mess down to the codes analyzeSelection/DiscussAiModal expect.
+const LANG_CODE: Record<string, string> = {
+  de: "de", ger: "de", deu: "de", german: "de",
+  en: "en", eng: "en", english: "en",
+  fr: "fr", fre: "fr", fra: "fr", french: "fr",
+  es: "es", spa: "es", spanish: "es",
+  it: "it", ita: "it", italian: "it",
+  ru: "ru", rus: "ru", russian: "ru",
 };
 
 const CEFR_COLORS: Record<string, string> = {
@@ -98,7 +112,7 @@ function splitReview(value: string | null) {
     .slice(0, 4);
 }
 
-export function AudiobookDetailModal({ audiobook, onClose }: Props) {
+export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAddWordCard }: Props) {
   const [details, setDetails] = useState<Audiobook | null>(
     audiobook.chapters && audiobook.chapters.length > 0 ? audiobook : null
   );
@@ -111,12 +125,22 @@ export function AudiobookDetailModal({ audiobook, onClose }: Props) {
   const [isMuted, setIsMuted] = useState(false);
   const [showChaptersList, setShowChaptersList] = useState(false);
 
-  // AI Review & Chat
+  // Compact AI overview, shown right beside the title/metadata.
   const [review, setReview] = useState<string | null>(null);
   const [isLoadingReview, setIsLoadingReview] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [isSending, setIsSending] = useState(false);
+
+  // "Обсудить с AI" reuses the app's shared discussion modal instead of a
+  // bespoke chat, so it gets voice input, follow-up chips and tappable words
+  // for free — and stays consistent with the reader's own AI chat.
+  const [isDiscussOpen, setIsDiscussOpen] = useState(false);
+  const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
+
+  // A word tapped inside the AI chat opens the same word modal the rest of
+  // the app uses, instead of doing nothing.
+  const [wordModalSelection, setWordModalSelection] = useState("");
+  const [wordModalAnalysis, setWordModalAnalysis] = useState<AiAnalysis | null>(null);
+  const [isWordModalOpen, setIsWordModalOpen] = useState(false);
+  const [isWordModalLoading, setIsWordModalLoading] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -126,8 +150,16 @@ export function AudiobookDetailModal({ audiobook, onClose }: Props) {
   const author = audiobook.author || "Неизвестный автор";
   const langKey = audiobook.language.toLowerCase();
   const language = LANG_NAMES[langKey] || audiobook.language;
+  const targetLanguage = LANG_CODE[langKey] || langKey || "de";
   const cefr: CefrLevel = details?.cefrLevel || audiobook.cefrLevel || "B1";
   const reviewLines = useMemo(() => splitReview(review), [review]);
+
+  // What the AI chat is told this book is, since there is no "selected text"
+  // to hand it the way a tapped word or sentence would.
+  const audiobookContext = useMemo(
+    () => [author, language, `уровень ${cefr}`, audiobook.description].filter(Boolean).join(" · "),
+    [author, language, cefr, audiobook.description]
+  );
 
   // 1. Fetch detailed metadata and chapters
   useEffect(() => {
@@ -164,14 +196,14 @@ export function AudiobookDetailModal({ audiobook, onClose }: Props) {
     };
   }, [audiobook.id, details]);
 
-  // 2. Fetch AI Review
+  // 2. Fetch the compact AI overview
   useEffect(() => {
     let isActive = true;
 
     async function loadReview() {
       setIsLoadingReview(true);
       setReview(null);
-      setMessages([]);
+      setDiscussMessages([]);
       try {
         const prompt = [
           `Аудиокнига: "${audiobook.title}", автор: ${author}, язык: ${language}.`,
@@ -277,35 +309,37 @@ export function AudiobookDetailModal({ audiobook, onClose }: Props) {
     });
   }, [audiobook.id, currentChapterIndex, currentTime, duration]);
 
-  // 4. Send Message to AI
-  const handleSend = async (overrideText?: string) => {
-    const userText = (overrideText || input).trim();
-    if (!userText || isSending) return;
+  // A word tapped inside the AI chat (or the word modal's own examples) gets
+  // the same live lookup the reader and dictionary use, cached the same way.
+  const loadWordModalAnalysis = useCallback(async (word: string, contextSentence: string) => {
+    setWordModalSelection(word);
+    setIsWordModalOpen(true);
+    setIsWordModalLoading(true);
+    setWordModalAnalysis(null);
 
-    setMessages((prev) => [...prev, { role: "user", text: userText }]);
-    if (!overrideText) setInput("");
-    setIsSending(true);
-
+    const cacheKey = makeAiCacheKey("word", word, targetLanguage, nativeLanguage);
     try {
-      const prompt = [
-        `Мы обсуждаем аудиокнигу "${audiobook.title}" автора ${author} (язык: ${language}, уровень: ${cefr}).`,
-        "Отвечай кратко, понятно, по делу, без markdown и длинных списков.",
-        `Вопрос пользователя: ${userText}`,
-      ].join("\n");
-      const response = await aiChat(prompt);
-      setMessages((prev) => [
-        ...prev,
-        { role: "ai", text: cleanAiText(response || "Не получилось ответить.") },
-      ]);
+      let full = getLocalAiAnalysis(cacheKey);
+      if (!full?.word) {
+        full = await analyzeSelection({
+          mode: "word",
+          word,
+          text: word,
+          sentence: contextSentence || word,
+          sentenceBefore: "",
+          sentenceAfter: "",
+          nativeLanguage,
+          targetLanguage,
+        });
+        if (full?.word) saveLocalAiAnalysis(cacheKey, full);
+      }
+      setWordModalAnalysis(full?.word ? full : null);
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "ai", text: "Не получилось связаться с AI. Попробуйте ещё раз." },
-      ]);
+      setWordModalAnalysis(null);
     } finally {
-      setIsSending(false);
+      setIsWordModalLoading(false);
     }
-  };
+  }, [nativeLanguage, targetLanguage]);
 
   return (
     <div className="book-modal-backdrop">
@@ -367,10 +401,47 @@ export function AudiobookDetailModal({ audiobook, onClose }: Props) {
                   </span>
                 )}
               </div>
+              <button
+                type="button"
+                className="pill-btn discuss-audiobook-btn"
+                onClick={() => setIsDiscussOpen(true)}
+              >
+                <MessageSquare size={15} />
+                Обсудить с AI
+              </button>
             </div>
           </div>
 
-          {/* Embedded Audio Player */}
+          {/* Compact AI overview — right beside the title/metadata */}
+          <section className="ai-review-card ai-review-compact">
+            <div className="compact-section-title">
+              <Info size={15} />
+              <strong>AI-обзор</strong>
+            </div>
+            {isLoadingReview ? (
+              <div className="compact-loader">
+                <Loader2 size={14} className="spin" />
+                <span>Оцениваю уровень и содержание...</span>
+              </div>
+            ) : (
+              <dl className="review-list">
+                {reviewLines.map((line, index) => {
+                  const [label, ...rest] = line.split(":");
+                  const text = rest.join(":").trim() || line;
+                  const hasLabel = rest.length > 0 && label.length < 18;
+                  return (
+                    <div key={`${line}-${index}`}>
+                      {hasLabel && <dt>{label}</dt>}
+                      <dd>{hasLabel ? text : line}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            )}
+          </section>
+
+          {/* Embedded Audio Player — the only thing left at the bottom, along
+              with the chapters drawer it opens. */}
           <section className="audio-player-card">
             <audio
               ref={audioRef}
@@ -548,93 +619,48 @@ export function AudiobookDetailModal({ audiobook, onClose }: Props) {
               </div>
             )}
           </section>
-
-          {/* AI Review Card */}
-          <section className="ai-review-card">
-            <div className="compact-section-title">
-              <Info size={17} />
-              <strong>AI-обзор аудиокниги</strong>
-            </div>
-            {isLoadingReview ? (
-              <div className="compact-loader">
-                <Loader2 size={15} className="spin" />
-                <span>Оцениваю уровень и содержание...</span>
-              </div>
-            ) : (
-              <dl className="review-list">
-                {reviewLines.map((line, index) => {
-                  const [label, ...rest] = line.split(":");
-                  const text = rest.join(":").trim() || line;
-                  const hasLabel = rest.length > 0 && label.length < 18;
-                  return (
-                    <div key={`${line}-${index}`}>
-                      {hasLabel && <dt>{label}</dt>}
-                      <dd>{hasLabel ? text : line}</dd>
-                    </div>
-                  );
-                })}
-              </dl>
-            )}
-          </section>
-
-          {/* AI Chat Card */}
-          <section className="book-chat-card">
-            <div className="compact-section-title chat-title">
-              <MessageSquare size={17} />
-              <strong>Спросить AI об аудиокниге</strong>
-            </div>
-
-            <div className="book-chat-messages">
-              {messages.length === 0 && (
-                <div className="chat-empty">
-                  <span>
-                    Спросите AI: о чем сюжет, насколько быстрая речь, какие сложные слова встретятся
-                    или подходит ли книга для уровня {cefr}.
-                  </span>
-                </div>
-              )}
-              {messages.map((message, index) => (
-                <div key={index} className={`chat-bubble ${message.role}`}>
-                  {message.text}
-                </div>
-              ))}
-              {isSending && (
-                <div className="typing-row">
-                  <Loader2 size={12} className="spin" />
-                  AI печатает...
-                </div>
-              )}
-            </div>
-
-            <div className="book-chat-input">
-              <input
-                type="text"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void handleSend();
-                }}
-                placeholder="Спросить об аудиокниге..."
-              />
-              <DictateButton
-                lang="ru"
-                title="Голосовой ввод вопроса"
-                onText={(text: string) => {
-                  setInput((prev) => appendSpoken(prev, text));
-                }}
-              />
-              <button
-                onClick={() => void handleSend()}
-                disabled={!input.trim() || isSending}
-                type="button"
-                aria-label="Отправить"
-              >
-                <Send size={17} />
-              </button>
-            </div>
-          </section>
         </div>
       </div>
+
+      <DiscussAiModal
+        isOpen={isDiscussOpen}
+        mode="audiobook"
+        selectedText={audiobook.title}
+        sentence={audiobookContext}
+        nativeLanguage={nativeLanguage}
+        targetLanguage={targetLanguage}
+        messages={discussMessages}
+        onMessagesChange={setDiscussMessages}
+        onClose={() => setIsDiscussOpen(false)}
+        onWordTap={(word, context) => void loadWordModalAnalysis(word, context)}
+        onAddExample={onAddWordCard ? (text, translation) => onAddWordCard(text, translation, "phrase") : undefined}
+      />
+
+      <WordModal
+        analysis={wordModalAnalysis}
+        isOpen={isWordModalOpen}
+        isLoading={isWordModalLoading}
+        lang={targetLanguage}
+        nativeLang={nativeLanguage}
+        selectedWord={wordModalSelection}
+        onClose={() => {
+          setIsWordModalOpen(false);
+          setWordModalAnalysis(null);
+          setWordModalSelection("");
+        }}
+        onAddCard={() => {
+          if (!onAddWordCard) return;
+          const front = wordModalSelection;
+          const back = wordModalAnalysis?.word?.translation ?? "";
+          if (front && back) onAddWordCard(front, back, "word");
+        }}
+        onAddLemma={(lemma) => {
+          if (!onAddWordCard) return;
+          onAddWordCard(lemma, wordModalAnalysis?.word?.translation ?? "", "word");
+        }}
+        onWordTap={(word, context) => void loadWordModalAnalysis(word, context)}
+        onAddExample={onAddWordCard ? (text, translation) => onAddWordCard(text, translation, "phrase") : undefined}
+      />
     </div>
   );
 }

@@ -28,7 +28,7 @@ import type {
 } from "@/lib/types";
 
 export type DiscussPromptInput = {
-  mode: "word" | "phrase" | "sentence" | "homework";
+  mode: "word" | "phrase" | "sentence" | "homework" | "audiobook";
   selectedText: string;
   sentence: string;
   sentenceBefore?: string;
@@ -115,6 +115,7 @@ ${WORD_PHRASES}`,
   phrase: `They tapped a phrase. Say what it means as a whole and when a person would actually say it (situation, tone, who says it to whom). Show two or three variations of it they could use themselves, and one natural reply to it. Only take it apart word by word if a part is surprising.`,
   sentence: `They tapped a whole sentence. Give a natural translation first, then show the pattern it is built on as something reusable: the same frame with two or three different fillings, so they can say their own version of it. Point out only what would actually trip them up.`,
   homework: `They opened help on one exercise from their own paper homework, which they must complete themselves — you are a tutor talking them through the rule, not a solver. Explain in plain words what the exercise is asking for and which grammatical pattern it is testing, then demonstrate the pattern with ONE worked example built from words that do NOT appear anywhere in the exercise below. Do not go item by item through their exercise. If they ask a follow-up, answer it the same way: explain the rule further, never by completing one of their blanks.`,
+  audiobook: `This is a chat about a whole audiobook, not a single word or sentence. Talk about the book itself: what it is about without spoiling the ending, what the narration is actually like (pace, accent, how hard the vocabulary is), and whether it suits their level. If they ask about a specific word or line, explain it briefly, but do not turn this into a vocabulary drill — it stays a conversation about the book and whether it is worth listening to.`,
 };
 
 // ─── The prompt ──────────────────────────────────────────────────────────────
@@ -133,12 +134,16 @@ export function buildDiscussSystemPrompt(input: DiscussPromptInput): string {
   const context =
     mode === "homework" && homework
       ? `Exercise instruction: "${homework.instruction}"\nItems, exactly as printed (blanks are blanks — "..." or similar — never filled in): ${homework.items.map((t, i) => `\n  ${i + 1}. "${t}"`).join("")}`
+      : mode === "audiobook"
+      ? `Audiobook title: "${input.selectedText}"\nDetails (author, language, level, description): "${input.sentence}"`
       : mode === "sentence"
       ? `Previous sentence: "${input.sentenceBefore || ""}"\nSelected sentence: "${input.selectedText}"\nNext sentence: "${input.sentenceAfter || ""}"`
       : `Selected ${mode}: "${input.selectedText}"\nIt appeared in: "${input.sentence}"`;
 
   const wantLine = mode === "homework"
     ? `This is their own paper homework, which their teacher will grade — they must complete every blank themselves. The question behind opening help is "what is this exercise actually asking me to do, and how does the rule work?", never "what's the answer".`
+    : mode === "audiobook"
+    ? `They are deciding whether to listen to this audiobook, or are already listening to it, and want to know what it is about (no spoilers), whether it fits their level, and what to expect from the narration — not vocabulary drilling.`
     : `They want to be able to SAY things, not to pass a grammar exam. They tapped this while reading or revising, and the question behind the tap is always "what does this mean, and how would I use it myself?".`;
 
   return `You are a warm, practical language tutor talking to an adult learner inside a mobile app. They speak ${nativeLanguage} and are learning ${targetLanguage}.
