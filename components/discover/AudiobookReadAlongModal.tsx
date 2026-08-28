@@ -118,37 +118,53 @@ export function AudiobookReadAlongModal({
   const lang = audiobook.language || "de";
   const nativeLang = nativeLanguage || "ru";
 
-  // Load Transcript for current chapter
-  const loadTranscript = useCallback(async () => {
-    if (!currentChapter || !currentChapter.audioUrl) {
-      setTranscriptError("Аудиофайл главы не найден");
-      setIsLoadingTranscript(false);
-      return;
-    }
-
-    setIsLoadingTranscript(true);
-    setTranscriptError(null);
-
-    try {
-      const data = await fetchAudiobookTranscript({
-        audiobookId: audiobook.id,
-        chapterIndex: currentChapterIndex,
-        audioUrl: currentChapter.audioUrl,
-        language: lang,
-        duration: currentChapter.durationSeconds,
-      });
-      setTranscript(data);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Не удалось загрузить текст главы";
-      setTranscriptError(msg);
-    } finally {
-      setIsLoadingTranscript(false);
-    }
-  }, [audiobook.id, currentChapterIndex, currentChapter, lang]);
-
+  // Load Transcript for current chapter safely (handles modal close/unmount)
   useEffect(() => {
-    void loadTranscript();
-  }, [loadTranscript]);
+    let isMounted = true;
+
+    const run = async () => {
+      if (!currentChapter || !currentChapter.audioUrl) {
+        if (isMounted) {
+          setTranscriptError("Аудиофайл главы не найден");
+          setIsLoadingTranscript(false);
+        }
+        return;
+      }
+
+      if (isMounted) {
+        setIsLoadingTranscript(true);
+        setTranscriptError(null);
+      }
+
+      try {
+        const data = await fetchAudiobookTranscript({
+          audiobookId: audiobook.id,
+          chapterIndex: currentChapterIndex,
+          audioUrl: currentChapter.audioUrl,
+          language: lang,
+          duration: currentChapter.durationSeconds,
+        });
+        if (isMounted) {
+          setTranscript(data);
+        }
+      } catch (err) {
+        if (isMounted) {
+          const msg = err instanceof Error ? err.message : "Не удалось загрузить текст главы";
+          setTranscriptError(msg);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingTranscript(false);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [audiobook.id, currentChapterIndex, currentChapter, lang]);
 
   // Compute active segment based on audio currentTime
   const segments = useMemo(() => transcript?.segments || [], [transcript?.segments]);
