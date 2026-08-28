@@ -672,6 +672,20 @@ function streaksFromDays(days: Set<string>, today: Date): { streak: number; best
  * a "due today" number that ignores two thirds of the queue is the reason the
  * old banner never matched the trainer's own progress line.
  */
+
+/**
+ * Local end-of-day, as an epoch ms boundary — the single definition of "today"
+ * that `computeDeckStats` and every due-card list are measured against, so a
+ * home-screen badge and the trainer's own queue can never disagree about what
+ * counts as due. Recompute this on a timer (see CardsView/HomeDashboard) so a
+ * screen left open across midnight doesn't keep showing yesterday's boundary.
+ */
+export function endOfTodayMs(now: Date = new Date()): number {
+  const d = new Date(now);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+
 export function computeDeckStats(
   cards: Flashcard[],
   variantProgress: VariantProgressMap,

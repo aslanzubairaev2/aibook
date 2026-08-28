@@ -1405,7 +1405,10 @@ textarea,
   height: 38px;
   padding: 0 36px 0 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  /* Pill-shaped to match the filter chips it sits beside (.filter-chip uses
+     20px on a similar height) — 8px read as "square" next to a fully rounded
+     row of level pills. */
+  border-radius: 19px;
   background: rgba(39, 35, 25, 0.74);
   color: var(--text-primary);
   font: inherit;

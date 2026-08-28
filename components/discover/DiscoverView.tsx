@@ -303,11 +303,16 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
   const [audioPage, setAudioPage] = useState(1);
   const [audioTotal, setAudioTotal] = useState(0);
   const [audioTotalPages, setAudioTotalPages] = useState(1);
+  // Set only under a level filter: how many of this page's results actually
+  // classify at that level, once the honest-label filter has run — audioTotal
+  // still describes the underlying keyword search and would overclaim if
+  // shown as "N books at this level" (see fetchAudiobooks).
+  const [audioMatchedOnPage, setAudioMatchedOnPage] = useState<number | null>(null);
   const [audiobooks, setAudiobooks] = useState<Audiobook[]>([]);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [selectedAudiobook, setSelectedAudiobook] = useState<Audiobook | null>(null);
-  const audioCacheRef = useRef<Map<string, { audiobooks: Audiobook[]; total: number; totalPages: number }>>(new Map());
+  const audioCacheRef = useRef<Map<string, { audiobooks: Audiobook[]; total: number; totalPages: number; matchedOnPage?: number }>>(new Map());
 
   // Shared books state
   const [klexikonBooks, setKlexikonBooks] = useState<SharedBook[]>([]);
@@ -808,6 +813,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
       setAudiobooks(cached.audiobooks);
       setAudioTotal(cached.total);
       setAudioTotalPages(cached.totalPages);
+      setAudioMatchedOnPage(cached.matchedOnPage ?? null);
       setIsAudioLoading(false);
       return;
     }
@@ -827,10 +833,12 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
         setAudiobooks(res.audiobooks);
         setAudioTotal(res.total);
         setAudioTotalPages(res.totalPages);
+        setAudioMatchedOnPage(res.matchedOnPage ?? null);
         audioCacheRef.current.set(cacheKey, {
           audiobooks: res.audiobooks,
           total: res.total,
           totalPages: res.totalPages,
+          matchedOnPage: res.matchedOnPage,
         });
       })
       .catch((err: unknown) => {
@@ -1414,7 +1422,12 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             <span>
               {isAudioLoading
                 ? "Поиск..."
-                : `${audioTotal || audiobooks.length} аудиокниг`}
+                : audioCefr !== "all"
+                  // audioTotal counts the underlying keyword search, not
+                  // confirmed matches — showing it here would repeat the
+                  // exact "A1 label on a B1 book" bug this fix removes.
+                  ? `${audioMatchedOnPage ?? audiobooks.length} уровня ${audioCefr} на этой странице`
+                  : `${audioTotal || audiobooks.length} аудиокниг`}
             </span>
             <span>
               Страница {audioPage} из {audioTotalPages}
@@ -1427,7 +1440,11 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             <div className="empty-state">
               <Headphones size={40} />
               <strong>Аудиокниги не найдены</strong>
-              <p>Попробуйте выбрать другой язык или уровень</p>
+              <p>
+                {audioCefr !== "all"
+                  ? `На этой странице нет аудиокниг, точно классифицированных как ${audioCefr}. Internet Archive почти не содержит подтверждённых материалов этого уровня — попробуйте следующую страницу, другой язык или соседний уровень.`
+                  : "Попробуйте выбрать другой язык или уровень"}
+              </p>
             </div>
           ) : (
             <>
@@ -1469,9 +1486,10 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                       <strong>{b.title}</strong>
                       <span>{b.author}</span>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
-                        {b.cefrLevel && (
+                        {b.cefrLevel ? (
                           <span
                             className="cefr-badge"
+                            title={b.cefrExplanation}
                             style={{
                               background: CEFR_COLORS[b.cefrLevel] || "#888",
                               color: "#fff",
@@ -1479,9 +1497,25 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                               borderRadius: "3px",
                               fontSize: "10px",
                               fontWeight: "bold",
+                              opacity: b.cefrConfidence === "approximate" ? 0.85 : 1,
                             }}
                           >
-                            {b.cefrLevel}
+                            {b.cefrConfidence === "approximate" ? `≈ ${b.cefrLevel}` : b.cefrLevel}
+                          </span>
+                        ) : (
+                          <span
+                            className="cefr-badge"
+                            title={b.cefrExplanation ?? "Уровень CEFR не подтверждён"}
+                            style={{
+                              background: "var(--bg-hover)",
+                              color: "var(--text-muted)",
+                              padding: "1px 5px",
+                              borderRadius: "3px",
+                              fontSize: "10px",
+                              fontWeight: "bold",
+                            }}
+                          >
+                            Оригинал
                           </span>
                         )}
                         {b.totalDurationFormatted && b.totalDurationFormatted !== "—" && (
