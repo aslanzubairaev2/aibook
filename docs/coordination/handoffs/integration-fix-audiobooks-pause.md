@@ -5,7 +5,7 @@
 - База UX: `claude/audiobooks-ux-redesign-6ef7a9` (`5522e74`)
 - Интегрированный fix commit: `c3ca060` (cherry-pick исходного `6939dbb`)
 - Интегрированный handoff commit: `85911b4` (cherry-pick исходного `a29feca`)
-- Итоговый commit после этого handoff: `e7413ec`
+- Итоговый функциональный commit до handoff: `85911b4`; commit с этим handoff сообщается отдельно после фиксации файла.
 - Статус: ready-for-review
 
 ## Сделано
