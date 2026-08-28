@@ -6,6 +6,7 @@ import {
   estimateAudiobookCefr,
   AUDIOBOOK_LANGUAGES,
 } from "./audiobooks.ts";
+import { syncAudioSource } from "./playback.ts";
 
 test("formatAudioDuration formats seconds correctly", () => {
   assert.equal(formatAudioDuration(0), "—");
@@ -74,4 +75,44 @@ test("AUDIOBOOK_LANGUAGES contains correct search queries", () => {
   assert.ok(AUDIOBOOK_LANGUAGES.fr.iaQuery.includes("french"));
   assert.ok(AUDIOBOOK_LANGUAGES.ru.iaQuery.includes("russian"));
   assert.equal(AUDIOBOOK_LANGUAGES.all.iaQuery, "");
+});
+
+test("pausing keeps currentTime because the active source is not reloaded", () => {
+  const audio = {
+    src: "chapter-1.mp3",
+    currentTime: 37.5,
+    playbackRate: 1,
+    loadCalls: 0,
+    load() {
+      this.loadCalls += 1;
+      this.currentTime = 0;
+    },
+  } as unknown as HTMLAudioElement & { loadCalls: number };
+
+  const sourceChanged = syncAudioSource(audio, "chapter-1.mp3", 1, "chapter-1.mp3");
+
+  assert.equal(sourceChanged, false);
+  assert.equal(audio.loadCalls, 0);
+  assert.equal(audio.currentTime, 37.5);
+});
+
+test("changing chapter reloads the source and starts from its beginning", () => {
+  const audio = {
+    src: "chapter-1.mp3",
+    currentTime: 37.5,
+    playbackRate: 1,
+    loadCalls: 0,
+    load() {
+      this.loadCalls += 1;
+      this.currentTime = 0;
+    },
+  } as unknown as HTMLAudioElement & { loadCalls: number };
+
+  const sourceChanged = syncAudioSource(audio, "chapter-2.mp3", 1.25, "chapter-1.mp3");
+
+  assert.equal(sourceChanged, true);
+  assert.equal(audio.src, "chapter-2.mp3");
+  assert.equal(audio.playbackRate, 1.25);
+  assert.equal(audio.loadCalls, 1);
+  assert.equal(audio.currentTime, 0);
 });

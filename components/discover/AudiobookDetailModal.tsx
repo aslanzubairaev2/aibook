@@ -24,6 +24,7 @@ import {
   getAudiobookProgress,
   saveAudiobookProgress,
 } from "@/lib/audio/audiobooks";
+import { syncAudioSource } from "@/lib/audio/playback";
 import { aiChat } from "@/lib/ai/chat";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
@@ -143,6 +144,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
   const [isWordModalLoading, setIsWordModalLoading] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const syncedAudioUrlRef = useRef<string | null>(null);
 
   const chapters: AudiobookChapter[] = details?.chapters || [];
   const currentChapter: AudiobookChapter | undefined = chapters[currentChapterIndex];
@@ -290,9 +292,14 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
   // Sync audio source when chapter changes
   useEffect(() => {
     if (!audioRef.current || !currentChapter) return;
-    audioRef.current.src = currentChapter.audioUrl;
-    audioRef.current.playbackRate = playbackSpeed;
-    if (isPlaying) {
+    const sourceChanged = syncAudioSource(
+      audioRef.current,
+      currentChapter.audioUrl,
+      playbackSpeed,
+      syncedAudioUrlRef.current
+    );
+    syncedAudioUrlRef.current = currentChapter.audioUrl;
+    if (sourceChanged && isPlaying) {
       audioRef.current.play().catch(() => setIsPlaying(false));
     }
   }, [currentChapterIndex, currentChapter, playbackSpeed, isPlaying]);
