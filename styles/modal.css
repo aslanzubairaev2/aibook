@@ -1941,3 +1941,233 @@
   line-height: 1.45;
   color: var(--text-muted);
 }
+
+/* ─── Audiobook Player & Chapters ─────────────────────────────────────────── */
+.audio-player-card {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.audio-player-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audio-chapter-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.audio-chapter-label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+.audio-chapter-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audio-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-time-label {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 36px;
+}
+
+.audio-seek-slider {
+  flex: 1;
+  height: 6px;
+  border-radius: 99px;
+  background: rgba(240, 230, 211, 0.1);
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.audio-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.audio-main-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-btn-play {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #141210;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.audio-btn-play:hover:not(:disabled) {
+  transform: scale(1.05);
+  background: #e5b958;
+}
+
+.audio-btn-play:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.audio-btn-control {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.audio-btn-control:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.audio-btn-control:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.audio-speed-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.audio-speed-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.audio-btn-ghost {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.audio-btn-ghost:hover,
+.audio-btn-ghost.active {
+  color: var(--accent);
+}
+
+.audio-chapters-drawer {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.audio-chapters-drawer-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.audio-chapters-scroll {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.audio-chapter-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.audio-chapter-item:hover {
+  background: var(--bg-hover);
+}
+
+.audio-chapter-item.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.audio-chapter-num {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 20px;
+}
+
+.audio-chapter-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.audio-chapter-dur {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
