@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { sbGetCachedTts, sbSaveCachedTts } from "@/lib/db/supabase";
+import { sbGetCachedTtsServer as sbGetCachedTts, sbSaveCachedTtsServer as sbSaveCachedTts } from "@/lib/db/tts-cache-server";
 import {
   CARTESIA_API_VERSION,
   CARTESIA_DEFAULT_VOICE,
