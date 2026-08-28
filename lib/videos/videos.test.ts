@@ -9,7 +9,7 @@ import {
   findVideosForWord,
   findVideosForBook,
 } from "./data/index.ts";
-import { fetchYouTubeTranscript } from "./youtubeTranscript.ts";
+import { fetchYouTubeTranscript, normalizeSubtitleCues } from "./youtubeTranscript.ts";
 import { inferVideoCategory, inferVideoLevel } from "./youtubeSearch.ts";
 
 test("videos dataset contains German and English videos", () => {
@@ -65,6 +65,18 @@ test("fetchYouTubeTranscript parses timed subtitle cues for valid video", async 
     assert.ok(cues[0].end > cues[0].start);
     assert.ok(cues[0].text.length > 0);
   }
+});
+
+test("normalizes overlapping YouTube caption durations", () => {
+  const cues = normalizeSubtitleCues([
+    { start: 11.799, end: 15.599, duration: 3.8, text: "Es ist 9:30 Uhr." },
+    { start: 13.32, end: 18.56, duration: 5.24, text: "Oh, wir müssen bald zum Gate gehen." },
+    { start: 15.599, end: 19.24, duration: 3.641, text: "Ja, lass uns gehen." },
+  ]);
+
+  assert.equal(cues[0].end, 13.32);
+  assert.equal(cues[1].end, 15.599);
+  assert.equal(cues[2].end, 19.24);
 });
 
 test("live video metadata is classified from title and description", () => {

@@ -128,7 +128,7 @@ export function VideoPlayerModal({
           if (typeof t === "number" && !isNaN(t)) {
             // Find which cue is active at this time
             const cs = cuesRef.current;
-            const idx = cs.findIndex((c) => t >= c.start && t <= c.end + 0.3);
+            const idx = cs.findIndex((c) => t >= c.start && t < c.end);
             // Only trigger re-render when the active cue changes
             if (idx !== lastCueIdxRef.current) {
               lastCueIdxRef.current = idx;
@@ -165,7 +165,7 @@ export function VideoPlayerModal({
   // ── 3. Find Active Subtitle Cue ────────────────────────────────────────────
   const activeCueIndex = useMemo(() => {
     if (cues.length === 0) return -1;
-    return cues.findIndex((c) => currentTime >= c.start && currentTime <= c.end + 0.3);
+    return cues.findIndex((c) => currentTime >= c.start && currentTime < c.end);
   }, [cues, currentTime]);
 
   const activeCue = activeCueIndex >= 0 ? cues[activeCueIndex] : null;

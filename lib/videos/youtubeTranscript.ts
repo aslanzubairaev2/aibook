@@ -25,6 +25,19 @@ function decodeHtml(html: string): string {
     .trim();
 }
 
+export function normalizeSubtitleCues(cues: SubtitleCue[]): SubtitleCue[] {
+  return cues.map((cue, index) => {
+    const nextStart = cues[index + 1]?.start;
+    // YouTube often gives an auto-caption a long duration that overlaps the
+    // following phrase. Showing that earlier cue through the overlap makes the
+    // transcript visibly lag behind the player.
+    const end = nextStart === undefined
+      ? cue.end
+      : Math.max(cue.start + 0.05, Math.min(cue.end, nextStart));
+    return { ...cue, end, duration: end - cue.start };
+  });
+}
+
 function parseTranscriptXml(xml: string): SubtitleCue[] {
   const cues: SubtitleCue[] = [];
 
@@ -46,7 +59,7 @@ function parseTranscriptXml(xml: string): SubtitleCue[] {
     }
   }
 
-  if (cues.length > 0) return cues;
+  if (cues.length > 0) return normalizeSubtitleCues(cues);
 
   // Format 2: <text start="1.23" dur="4.56">...</text>
   const textRegex = /<text\s+start="([^"]+)"\s+dur="([^"]+)">([\s\S]*?)<\/text>/g;
@@ -64,7 +77,7 @@ function parseTranscriptXml(xml: string): SubtitleCue[] {
     }
   }
 
-  return cues;
+  return normalizeSubtitleCues(cues);
 }
 
 // In-memory cache for transcripts
