@@ -29,7 +29,13 @@ import {
 import { splitIntoTokens, normalizeToken, findPhraseOffsets } from "@/lib/selector/text";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
-import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
+import {
+  getLocalAiAnalysis,
+  saveLocalAiAnalysis,
+  getLocalGeminiKey,
+  saveLocalGeminiKey,
+  saveLocalAiProvider,
+} from "@/lib/db/local";
 import { sbGetCachedAnalysis, sbSaveCachedAnalysis } from "@/lib/db/supabase";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { WordModal } from "@/components/word-modal/WordModal";
@@ -75,6 +81,15 @@ export function AudiobookReadAlongModal({
   const [isLoadingTranscript, setIsLoadingTranscript] = useState(true);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [customKey, setCustomKey] = useState("");
+
+  const handleSaveCustomKey = () => {
+    const trimmed = customKey.trim();
+    if (!trimmed) return;
+    saveLocalGeminiKey(trimmed);
+    saveLocalAiProvider("custom");
+    void loadTranscript();
+  };
 
   // AI Selection & Analysis
   const [selection, setSelection] = useState<{
@@ -386,13 +401,51 @@ export function AudiobookReadAlongModal({
             <AlertCircle size={36} style={{ color: "#e57373" }} />
             <strong>Не удалось загрузить текст главы</strong>
             <p>{transcriptError}</p>
-            <button
-              type="button"
-              className="read-along-retry-btn"
-              onClick={() => void loadTranscript()}
-            >
-              Попробовать снова
-            </button>
+
+            <div style={{ marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px", width: "min(100%, 380px)" }}>
+              <input
+                type="password"
+                placeholder="Вставьте Gemini API ключ (AIzaSy...)"
+                value={customKey}
+                onChange={(e) => setCustomKey(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 12px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--border)",
+                  background: "rgba(240, 230, 211, 0.05)",
+                  color: "var(--text-primary)",
+                  fontSize: "13px",
+                  fontFamily: "monospace",
+                  textAlign: "center",
+                }}
+              />
+              <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
+                {customKey.trim() && (
+                  <button
+                    type="button"
+                    className="read-along-retry-btn"
+                    style={{ flex: 1 }}
+                    onClick={handleSaveCustomKey}
+                  >
+                    Сохранить и распознать
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="read-along-retry-btn"
+                  style={{
+                    flex: customKey.trim() ? undefined : 1,
+                    background: customKey.trim() ? "transparent" : "var(--accent)",
+                    border: customKey.trim() ? "1px solid var(--border)" : "none",
+                    color: customKey.trim() ? "var(--text-primary)" : "#12100b",
+                  }}
+                  onClick={() => void loadTranscript()}
+                >
+                  Попробовать снова
+                </button>
+              </div>
+            </div>
           </div>
         ) : segments.length === 0 ? (
           <div className="read-along-state-box">

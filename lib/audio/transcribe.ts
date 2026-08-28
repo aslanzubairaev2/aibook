@@ -165,7 +165,15 @@ export async function fetchAudiobookTranscript(
     return cached;
   }
 
-  // 2. Fetch from backend API
+  // 2. Check built-in curated library
+  const { getBuiltInTranscript } = await import("./builtInTranscripts.ts");
+  const builtIn = getBuiltInTranscript(audiobookId, chapterIndex);
+  if (builtIn && builtIn.segments && builtIn.segments.length > 0) {
+    saveLocalTranscript(builtIn);
+    return builtIn;
+  }
+
+  // 3. Fetch from backend API
   const { getAiHeaders } = await import("@/lib/ai/analyze");
   const headers = await getAiHeaders();
   const res = await fetch("/api/audiobooks/transcribe", {
