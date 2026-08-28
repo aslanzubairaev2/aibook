@@ -1,5 +1,7 @@
 export type VideoCefrLevel = "all" | "A1" | "A2" | "B1" | "B2" | "C1";
 
+export type VideoDurationFilter = "any" | "short" | "medium" | "long";
+
 export type VideoCategory =
   | "all"
   | "dialogues"
@@ -31,6 +33,10 @@ export type VideoItem = {
   description?: string;
   tags: string[];
   keyVocabulary?: VideoVocabularyItem[];
+  /** Live results are validated before we advertise transcript-based study. */
+  hasSubtitles?: boolean;
+  /** Curated records are a fallback; network records come from the current YouTube search. */
+  source?: "network" | "fallback";
 };
 
 export type VideoCategoryMeta = {
@@ -44,4 +50,14 @@ export type VideoFilters = {
   cefrLevel?: VideoCefrLevel;
   category?: VideoCategory;
   searchQuery?: string;
+  duration?: VideoDurationFilter;
+  captionsOnly?: boolean;
+};
+
+export type VideoSearchIntent = {
+  keywords: string;
+  cefrLevel: VideoCefrLevel;
+  category: VideoCategory;
+  duration: VideoDurationFilter;
+  captionsOnly: boolean;
 };

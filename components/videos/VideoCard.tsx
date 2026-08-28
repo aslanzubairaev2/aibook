@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Play, Clock } from "lucide-react";
+import { Play, Clock, Captions } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 
 type Props = {
@@ -55,6 +55,12 @@ export function VideoCard({ video, onSelect }: Props) {
 
         {video.cefrLevel && video.cefrLevel !== "all" && (
           <span className="video-badge level-badge">{video.cefrLevel}</span>
+        )}
+
+        {video.hasSubtitles && (
+          <span className="video-badge captions-badge" title="Синхронный текст доступен">
+            <Captions size={11} />
+          </span>
         )}
       </div>
 

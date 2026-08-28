@@ -10,6 +10,7 @@ import {
   findVideosForBook,
 } from "./data/index.ts";
 import { fetchYouTubeTranscript } from "./youtubeTranscript.ts";
+import { inferVideoCategory, inferVideoLevel } from "./youtubeSearch.ts";
 
 test("videos dataset contains German and English videos", () => {
   assert.ok(ALL_VIDEOS.length > 0);
@@ -64,4 +65,10 @@ test("fetchYouTubeTranscript parses timed subtitle cues for valid video", async 
     assert.ok(cues[0].end > cues[0].start);
     assert.ok(cues[0].text.length > 0);
   }
+});
+
+test("live video metadata is classified from title and description", () => {
+  assert.equal(inferVideoLevel("Deutsch A2 Grammatik für Anfänger"), "A2");
+  assert.equal(inferVideoCategory("German grammar: cases and articles"), "grammar");
+  assert.equal(inferVideoCategory("A short German story for learners"), "stories");
 });

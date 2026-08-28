@@ -241,16 +241,17 @@ export function VideoPlayerModal({
 
     const newCard: Flashcard = {
       id: `card-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      word: front,
-      translation: back,
-      context: activeCue?.text || video.title,
-      targetLanguage,
-      level: 1,
-      interval: 1,
+      type: "word",
+      front,
+      back,
+      source: activeCue?.text || video.title,
+      addedAt: new Date().toISOString(),
+      status: "new",
+      lapses: 0,
+      intervalDays: 0,
       easeFactor: 2.5,
       repetitions: 0,
-      nextReview: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
+      dueAt: new Date().toISOString(),
     };
 
     onAddCard(newCard);
@@ -432,8 +433,8 @@ export function VideoPlayerModal({
             analysis={wordModalAnalysis}
             isOpen={isWordModalOpen}
             isLoading={isWordModalLoading}
-            nativeLanguage={nativeLanguage}
-            targetLanguage={targetLanguage}
+            lang={targetLanguage}
+            nativeLang={nativeLanguage}
             selectedWord={wordModalSelection}
             onClose={() => {
               setIsWordModalOpen(false);

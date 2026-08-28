@@ -217,6 +217,14 @@
   font-weight: 800;
 }
 
+.captions-badge {
+  top: 5px;
+  left: 5px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+
 .video-card-body {
   padding: 8px 10px;
   display: flex;
@@ -404,6 +412,81 @@
   height: 100%;
   border: 0;
   display: block;
+}
+
+.videos-search-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.videos-filter-apply,
+.videos-load-more {
+  margin-top: 10px;
+}
+
+.videos-filter-apply {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill, 999px);
+  background: rgba(212, 168, 71, 0.14);
+  color: var(--accent);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.videos-search-note,
+.videos-search-warning,
+.videos-search-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm, 8px);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.videos-search-note {
+  color: var(--accent);
+  background: rgba(212, 168, 71, 0.1);
+  border: 1px solid rgba(212, 168, 71, 0.3);
+}
+
+.videos-search-warning {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+}
+
+.videos-search-error {
+  justify-content: space-between;
+  color: #ffd7d7;
+  background: rgba(186, 56, 56, 0.15);
+  border: 1px solid rgba(230, 92, 92, 0.55);
+}
+
+.videos-search-error button {
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.videos-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0 8px;
+}
+
+.videos-empty {
+  margin-top: 12px;
 }
 
 /* ── Synchronized Interactive Subtitles Bar ─────────────────────────────── */

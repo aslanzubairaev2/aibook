@@ -7,6 +7,14 @@ export { GERMAN_VIDEOS, ENGLISH_VIDEOS, VIDEO_CATEGORIES };
 
 export const ALL_VIDEOS: VideoItem[] = [...GERMAN_VIDEOS, ...ENGLISH_VIDEOS];
 
+function durationInMinutes(duration: string): number {
+  const parts = duration.split(":").map(Number);
+  if (parts.some((part) => Number.isNaN(part))) return 0;
+  if (parts.length === 3) return parts[0] * 60 + parts[1] + parts[2] / 60;
+  if (parts.length === 2) return parts[0] + parts[1] / 60;
+  return parts[0] ?? 0;
+}
+
 export function getVideosByLanguage(lang: "de" | "en" | "all" = "de"): VideoItem[] {
   if (lang === "all") return ALL_VIDEOS;
   if (lang === "en") return ENGLISH_VIDEOS;
@@ -28,6 +36,17 @@ export function filterVideos(videos: VideoItem[], filters: VideoFilters): VideoI
     if (filters.category && filters.category !== "all") {
       if (video.category !== filters.category) return false;
     }
+
+    if (filters.duration && filters.duration !== "any") {
+      const minutes = durationInMinutes(video.duration);
+      const matchesDuration =
+        (filters.duration === "short" && minutes <= 5) ||
+        (filters.duration === "medium" && minutes > 5 && minutes <= 15) ||
+        (filters.duration === "long" && minutes > 15);
+      if (!matchesDuration) return false;
+    }
+
+    if (filters.captionsOnly && !video.hasSubtitles) return false;
 
     if (filters.searchQuery && filters.searchQuery.trim().length > 0) {
       const q = filters.searchQuery.trim().toLowerCase();
