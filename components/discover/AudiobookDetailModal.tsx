@@ -17,8 +17,9 @@ import {
   Clock,
   Volume2,
   VolumeX,
+  ScrollText,
 } from "lucide-react";
-import type { Audiobook, AudiobookChapter, CefrLevel } from "@/lib/types";
+import type { Audiobook, AudiobookChapter, CefrLevel, Flashcard, UserProfile } from "@/lib/types";
 import {
   fetchAudiobookDetails,
   formatAudioDuration,
@@ -27,10 +28,14 @@ import {
 } from "@/lib/audio/audiobooks";
 import { aiChat } from "@/lib/ai/chat";
 import { DictateButton, appendSpoken } from "./DictateButton";
+import { AudiobookReadAlongModal } from "./AudiobookReadAlongModal";
 
 type Props = {
   audiobook: Audiobook;
   onClose: () => void;
+  profile?: UserProfile;
+  cards?: Flashcard[];
+  onAddCard?: (card: Flashcard) => void;
 };
 
 type ChatMessage = {
@@ -98,7 +103,7 @@ function splitReview(value: string | null) {
     .slice(0, 4);
 }
 
-export function AudiobookDetailModal({ audiobook, onClose }: Props) {
+export function AudiobookDetailModal({ audiobook, onClose, profile, cards, onAddCard }: Props) {
   const [details, setDetails] = useState<Audiobook | null>(
     audiobook.chapters && audiobook.chapters.length > 0 ? audiobook : null
   );
@@ -110,6 +115,7 @@ export function AudiobookDetailModal({ audiobook, onClose }: Props) {
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [isMuted, setIsMuted] = useState(false);
   const [showChaptersList, setShowChaptersList] = useState(false);
+  const [isReadAlongOpen, setIsReadAlongOpen] = useState(false);
 
   // AI Review & Chat
   const [review, setReview] = useState<string | null>(null);
@@ -657,6 +663,34 @@ export function AudiobookDetailModal({ audiobook, onClose }: Props) {
               </button>
             </div>
 
+            {/* Read-Along (Karaoke / Transcript Mode) Button */}
+            <button
+              type="button"
+              className="audio-read-along-btn"
+              onClick={() => setIsReadAlongOpen(true)}
+              disabled={isLoadingChapters || !currentChapter}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                width: "100%",
+                marginTop: "12px",
+                padding: "10px 16px",
+                background: "linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(168, 85, 247, 0.22))",
+                border: "1px solid rgba(129, 140, 248, 0.45)",
+                borderRadius: "12px",
+                color: "#e0e7ff",
+                fontWeight: "600",
+                fontSize: "13.5px",
+                cursor: "pointer",
+                transition: "all 0.2s ease",
+              }}
+            >
+              <ScrollText size={17} style={{ color: "#a5b4fc" }} />
+              <span>Читать текст синхронно (Текст / Караоке)</span>
+            </button>
+
             {/* Chapters list drawer */}
             {showChaptersList && chapters.length > 0 && (
               <div className="audio-chapters-drawer">
@@ -771,6 +805,29 @@ export function AudiobookDetailModal({ audiobook, onClose }: Props) {
           </section>
         </div>
       </div>
+
+      {/* Fullscreen Read-Along Modal */}
+      {isReadAlongOpen && (
+        <AudiobookReadAlongModal
+          audiobook={details || audiobook}
+          currentChapterIndex={currentChapterIndex}
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          duration={duration}
+          playbackSpeed={playbackSpeed}
+          onPlayPause={handlePlayPause}
+          onSeek={handleSeek}
+          onSpeedChange={(speed) => {
+            setPlaybackSpeed(speed);
+            if (audioRef.current) audioRef.current.playbackRate = speed;
+          }}
+          onChapterChange={(idx) => selectChapter(idx, isPlaying)}
+          onClose={() => setIsReadAlongOpen(false)}
+          profile={profile}
+          cards={cards}
+          onAddCard={onAddCard}
+        />
+      )}
     </div>
   );
 }

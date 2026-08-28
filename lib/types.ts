@@ -425,3 +425,28 @@ export type CardVariantState = Partial<Record<Exclude<TrainVariant, "forward">, 
    durationSeconds: number;
    updatedAt: string;
  };
+
+  // ─── Audiobook Transcripts & Read-Along ─────────────────────────────────────
+  export type AudiobookWordTimestamp = {
+    word: string;
+    start: number; // seconds
+    end: number;   // seconds
+  };
+
+  export type AudiobookSegment = {
+    id: string;
+    start: number; // seconds
+    end: number;   // seconds
+    text: string;
+    words?: AudiobookWordTimestamp[];
+  };
+
+  export type AudiobookTranscript = {
+    audiobookId: string;
+    chapterIndex: number;
+    language: string;
+    segments: AudiobookSegment[];
+    rawText?: string;
+    modelUsed?: string;
+    createdAt?: string;
+  };

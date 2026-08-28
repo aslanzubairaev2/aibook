@@ -2048,6 +2048,9 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
         <AudiobookDetailModal
           audiobook={selectedAudiobook}
           onClose={() => setSelectedAudiobook(null)}
+          profile={profile}
+          cards={cards}
+          onAddCard={onAddCard}
         />
       )}
 
