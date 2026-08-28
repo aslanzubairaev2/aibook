@@ -5,7 +5,8 @@
 - Release-ветка: `release/audiobooks-pause`
 - Main commit: `b6c7c58ae97897dee60183759796bc1ba6d5d0e3`
 - Production deployment: https://aibook-liart.vercel.app
-- Deployment ID: `dpl_35AvtGStNxvXHUmW9HjPxyncfDZ5`
+- Deployment URL: https://aibook-cmtnw0i5u-azamats-projects-799bf3a6.vercel.app
+- Deployment ID: `dpl_36oMp7pDEw7F9cM4jLQjNYMsAuU9`
 - Статус deployment: `READY`
 
 ## Вошло в release
