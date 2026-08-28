@@ -259,6 +259,20 @@
   padding: 16px;
 }
 
+/* Force WordModal on top of video overlay */
+.video-word-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  pointer-events: none;
+}
+.video-word-modal-layer > * {
+  pointer-events: auto;
+}
+.video-word-modal-layer .word-modal-backdrop {
+  z-index: 10001;
+}
+
 .video-modal-content {
   position: relative;
   background: var(--bg-card, #1c1915);

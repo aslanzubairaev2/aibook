@@ -400,34 +400,36 @@ export function VideoPlayerModal({
 
       {/* ── Interactive WordModal for Tap-To-Translate & Cards ─────────────── */}
       {isWordModalOpen && (
-        <WordModal
-          analysis={wordModalAnalysis}
-          isOpen={isWordModalOpen}
-          isLoading={isWordModalLoading}
-          nativeLanguage={nativeLanguage}
-          targetLanguage={targetLanguage}
-          selectedWord={wordModalSelection}
-          onClose={() => {
-            setIsWordModalOpen(false);
-            setWordModalAnalysis(null);
-            setWordModalSelection("");
-          }}
-          onAddCard={() => {
-            const front = wordModalSelection;
-            const back = wordModalAnalysis?.word?.translation ?? "";
-            handleAddCard(front, back);
-            setIsWordModalOpen(false);
-          }}
-          onAddLemma={(lemma) => {
-            const front = lemma;
-            const back = wordModalAnalysis?.word?.translation ?? "";
-            handleAddCard(front, back);
-            setIsWordModalOpen(false);
-          }}
-          onWordTap={(word) => {
-            void handleWordTap(word, activeCue?.text || "");
-          }}
-        />
+        <div className="video-word-modal-layer">
+          <WordModal
+            analysis={wordModalAnalysis}
+            isOpen={isWordModalOpen}
+            isLoading={isWordModalLoading}
+            nativeLanguage={nativeLanguage}
+            targetLanguage={targetLanguage}
+            selectedWord={wordModalSelection}
+            onClose={() => {
+              setIsWordModalOpen(false);
+              setWordModalAnalysis(null);
+              setWordModalSelection("");
+            }}
+            onAddCard={() => {
+              const front = wordModalSelection;
+              const back = wordModalAnalysis?.word?.translation ?? "";
+              handleAddCard(front, back);
+              setIsWordModalOpen(false);
+            }}
+            onAddLemma={(lemma) => {
+              const front = lemma;
+              const back = wordModalAnalysis?.word?.translation ?? "";
+              handleAddCard(front, back);
+              setIsWordModalOpen(false);
+            }}
+            onWordTap={(word) => {
+              void handleWordTap(word, activeCue?.text || "");
+            }}
+          />
+        </div>
       )}
     </>
   );
