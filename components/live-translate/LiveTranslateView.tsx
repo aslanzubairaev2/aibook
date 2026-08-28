@@ -1,14 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Languages, Mic, MicOff, Radio, Volume2 } from "lucide-react";
+import { ArrowLeft, Languages, Mic, MicOff, Volume2, X } from "lucide-react";
 import { getLocalGeminiKey } from "@/lib/db/local";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { LiveTranslateSession } from "@/lib/ai/liveTranslate";
 import { LIVE_TRANSLATE_LABELS, accumulateLiveUsage, appendTranscript, calculateLiveUsage, type LiveTranslateState, type LiveUsageMetadata, type LiveUsageTotals } from "@/lib/ai/liveTranslateState";
 import { LIVE_TRANSLATE_MODEL } from "@/lib/ai/liveModels";
+import { keepScreenAwake, type ScreenAwakeHandle } from "@/lib/audio/wakeLock";
 
 type Props = { onBack: () => void };
+
+/** Transcript deltas arrive several times a second; repainting on each one is
+ *  pointless work on the same thread that has to encode outgoing audio. */
+const TRANSCRIPT_FLUSH_MS = 200;
 
 export function LiveTranslateView({ onBack }: Props) {
   const [state, setState] = useState<LiveTranslateState>("ready");
@@ -18,14 +23,42 @@ export function LiveTranslateView({ onBack }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [usage, setUsage] = useState<LiveUsageTotals>(() => calculateLiveUsage());
   const sessionRef = useRef<LiveTranslateSession | null>(null);
+  const transcriptRef = useRef("");
+  const wakeRef = useRef<ScreenAwakeHandle | null>(null);
+  const logRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => () => { sessionRef.current?.close(); }, []);
+  function stopSession() {
+    sessionRef.current?.close();
+    sessionRef.current = null;
+    wakeRef.current?.release();
+    wakeRef.current = null;
+    setSourceText(transcriptRef.current);
+    setSessionActive(false);
+  }
+
+  useEffect(() => () => { sessionRef.current?.close(); wakeRef.current?.release(); }, []);
+
+  // Mirror the buffered transcript into state on a slow tick instead of on
+  // every delta — see TRANSCRIPT_FLUSH_MS.
+  useEffect(() => {
+    if (!sessionActive) return;
+    const timer = window.setInterval(() => {
+      setSourceText((current) => (current === transcriptRef.current ? current : transcriptRef.current));
+    }, TRANSCRIPT_FLUSH_MS);
+    return () => window.clearInterval(timer);
+  }, [sessionActive]);
+
+  // The newest line stays in view; everything older scrolls off the top.
+  useEffect(() => {
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [sourceText, showText]);
 
   async function toggleSession() {
-    if (sessionRef.current) {
-      sessionRef.current.close(); sessionRef.current = null; setSessionActive(false); setState("stopped"); return;
-    }
-    setError(null); setSourceText("");
+    if (sessionRef.current) { stopSession(); setState("stopped"); return; }
+    setError(null);
+    transcriptRef.current = "";
+    setSourceText("");
     setUsage(calculateLiveUsage());
     try {
       const headers = await sbAuthHeaders();
@@ -36,16 +69,18 @@ export function LiveTranslateView({ onBack }: Props) {
       if (!response.ok || !data.token) throw new Error(data.error || "Токен недоступен");
       const session = new LiveTranslateSession(data.token, {
         onState: setState,
-        onSourceText: (text) => setSourceText((current) => appendTranscript(current, text)),
+        onSourceText: (text) => { transcriptRef.current = appendTranscript(transcriptRef.current, text); },
         onUsage: (metadata: LiveUsageMetadata) => setUsage((current) => accumulateLiveUsage(current, metadata)),
-        onError: (kind, message) => { sessionRef.current?.close(); sessionRef.current = null; setSessionActive(false); setState(kind); setError(message); },
+        onError: (kind, message) => { stopSession(); setState(kind); setError(message); },
       });
       sessionRef.current = session;
       setSessionActive(true);
+      wakeRef.current = keepScreenAwake();
       await session.connect();
     } catch (err) {
-      setSessionActive(false);
-      setState("connection-error"); setError(err instanceof Error ? err.message : "Не удалось подключиться");
+      stopSession();
+      setState("connection-error");
+      setError(err instanceof Error ? err.message : "Не удалось подключиться");
     }
   }
 
@@ -54,36 +89,48 @@ export function LiveTranslateView({ onBack }: Props) {
   return (
     <section className="live-translate-screen" aria-label="Live перевод">
       <header className="live-translate-header">
-        <button type="button" className="icon-btn" onClick={() => { sessionRef.current?.close(); sessionRef.current = null; setSessionActive(false); onBack(); }} aria-label="Назад"><ArrowLeft size={20} /></button>
-        <span className="live-translate-brand"><Languages size={17} /> Live перевод</span>
+        <button type="button" className="live-translate-back" onClick={() => { stopSession(); onBack(); }} aria-label="Назад"><ArrowLeft size={20} /></button>
+        <span className="live-translate-brand"><Languages size={16} /> Live перевод</span>
         <span className="live-translate-badge">RU</span>
       </header>
 
-      <main className="live-translate-main">
-        <div className={`live-translate-orbit${running ? " active" : ""}`} aria-hidden="true"><div className="live-translate-orbit-core"><Radio size={34} /></div></div>
-        <p className="live-translate-kicker">Перевод разговора</p>
-        <h1>{running ? "Говорите свободно" : state === "stopped" ? "До встречи" : "Русский перевод"}</h1>
-        <p className="live-translate-status" role="status">{LIVE_TRANSLATE_LABELS[state]}</p>
-        <button type="button" className={`live-translate-start${running ? " is-running" : ""}`} onClick={() => void toggleSession()} aria-pressed={running}>
-          {running ? <MicOff size={22} /> : <Mic size={22} />}
-          <span>{running ? "Остановить перевод" : "Начать перевод"}</span>
+      <main className="live-translate-stage">
+        <button
+          type="button"
+          className={`live-translate-orb${running ? " is-live" : ""}`}
+          onClick={() => void toggleSession()}
+          aria-pressed={running}
+          aria-label={running ? "Остановить перевод" : "Начать перевод"}
+        >
+          {running ? <MicOff size={34} /> : <Mic size={34} />}
         </button>
-        <p className="live-translate-hint"><Volume2 size={14} /> Лучше использовать наушники, чтобы избежать эха</p>
+        <p className="live-translate-status" role="status">{LIVE_TRANSLATE_LABELS[state]}</p>
         {error && <div className="live-translate-error" role="alert">{error}</div>}
       </main>
 
-      <footer className="live-translate-footer">
-        <button type="button" className="live-translate-text-toggle" onClick={() => setShowText((value) => !value)} aria-expanded={showText}>
+      <p className="live-translate-hint"><Volume2 size={13} /> Лучше в наушниках — иначе микрофон услышит перевод</p>
+
+      <footer className="live-translate-bar">
+        <button type="button" className={`live-translate-chip${showText ? " is-on" : ""}`} onClick={() => setShowText((value) => !value)} aria-expanded={showText}>
           {showText ? "Скрыть текст" : "Показать текст"}
         </button>
-        {showText && <div className="live-translate-transcript"><span>Исходная речь</span><p>{sourceText || "Транскрипция появится здесь во время разговора…"}</p></div>}
-        <small>Язык собеседника определяется автоматически · перевод на русский<br />Модель: {LIVE_TRANSLATE_MODEL}</small>
-        <div className="live-translate-usage" title="Оценка по usageMetadata текущей сессии. Включённая транскрипция может добавить текстовые токены сверх аудио-стоимости.">
-          <span>Расход · оценка</span><span>вход {usage.inputTokens.toLocaleString("ru-RU")}</span><span>выход {usage.outputTokens.toLocaleString("ru-RU")}</span><span>всего {usage.totalTokens.toLocaleString("ru-RU")}</span><strong>${usage.estimatedUsd.toFixed(4)}</strong>
-          {usage.detailUnavailable && <em>детализация недоступна</em>}
-        </div>
-        <small className="live-translate-usage-note">Оценка по токенам, не счёт. Транскрипция может добавить текстовые токены.</small>
+        <span className="live-translate-cost" title="Оценка по usageMetadata текущей сессии, а не счёт. Транскрипция добавляет текстовые токены сверх аудио.">
+          ${usage.estimatedUsd.toFixed(4)}
+        </span>
       </footer>
+
+      {showText && (
+        <aside className="live-translate-overlay" aria-label="Расшифровка речи">
+          <div className="live-translate-overlay-head">
+            <span>Исходная речь</span>
+            <button type="button" className="live-translate-overlay-close" onClick={() => setShowText(false)} aria-label="Закрыть расшифровку"><X size={16} /></button>
+          </div>
+          <div className="live-translate-overlay-log" ref={logRef}>
+            <p>{sourceText || "Транскрипция появится здесь во время разговора…"}</p>
+          </div>
+          <small>Язык собеседника определяется автоматически · {LIVE_TRANSLATE_MODEL} · вход {usage.inputTokens.toLocaleString("ru-RU")} · выход {usage.outputTokens.toLocaleString("ru-RU")}</small>
+        </aside>
+      )}
     </section>
   );
 }
