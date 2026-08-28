@@ -437,6 +437,20 @@
   cursor: pointer;
 }
 
+/* Caption availability is a binary switch, not a long category label. Keep it
+   as a compact icon-and-word pill so it aligns with the duration filters. */
+.video-captions-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding-inline: 9px;
+}
+
+.video-captions-filter svg {
+  flex: 0 0 auto;
+}
+
 .videos-search-note,
 .videos-search-warning,
 .videos-search-error {

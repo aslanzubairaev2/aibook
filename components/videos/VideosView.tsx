@@ -187,7 +187,7 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
             <FilterChip active={selectedDuration === "short"} onClick={() => setSelectedDuration("short")}>До 5 мин</FilterChip>
             <FilterChip active={selectedDuration === "medium"} onClick={() => setSelectedDuration("medium")}>5–15 мин</FilterChip>
             <FilterChip active={selectedDuration === "long"} onClick={() => setSelectedDuration("long")}>От 15 мин</FilterChip>
-            <FilterChip active={captionsOnly} onClick={() => setCaptionsOnly((value) => !value)}><Captions size={13} /> Только с текстом</FilterChip>
+            <FilterChip className="video-captions-filter" active={captionsOnly} onClick={() => setCaptionsOnly((value) => !value)}><Captions size={13} aria-hidden /> <span>С текстом</span></FilterChip>
           </FilterGroup>
           <FilterGroup label="Быстрые темы">
             {QUICK_TOPICS.map((topic) => <FilterChip key={topic} active={submittedSearch.toLowerCase() === topic.toLowerCase()} onClick={() => chooseQuickTopic(topic)}>{topic}</FilterChip>)}
@@ -218,6 +218,6 @@ function FilterGroup({ label, children }: { label: string; children: React.React
   return <div className="filter-group"><div className="filter-group-label">{label}</div><div className="filter-chips">{children}</div></div>;
 }
 
-function FilterChip({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
-  return <button type="button" className={`filter-chip ${active ? "active" : ""}`} onClick={onClick}>{children}</button>;
+function FilterChip({ active, children, onClick, className = "" }: { active: boolean; children: React.ReactNode; onClick: () => void; className?: string }) {
+  return <button type="button" className={`filter-chip ${className} ${active ? "active" : ""}`} onClick={onClick}>{children}</button>;
 }
