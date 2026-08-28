@@ -31,6 +31,58 @@ function parseJsonArrayOrObject(text: string) {
   }
 }
 
+async function downloadAudioToTempFile(
+  audiobookId: string,
+  audioUrl: string,
+  targetPath: string
+): Promise<void> {
+  const candidateUrls = [audioUrl];
+
+  // If archive.org URL, derive direct storage cluster URL as high-reliability fallback
+  if (audioUrl.includes("archive.org")) {
+    try {
+      const metaRes = await fetch(`https://archive.org/metadata/${audiobookId}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      });
+      if (metaRes.ok) {
+        const meta = await metaRes.json();
+        if (meta?.server && meta?.dir) {
+          const urlParts = audioUrl.split("/");
+          const fileName = urlParts[urlParts.length - 1];
+          const directUrl = `https://${meta.server}${meta.dir}/${fileName}`;
+          if (!candidateUrls.includes(directUrl)) {
+            candidateUrls.push(directUrl);
+          }
+        }
+      }
+    } catch {
+      // fallback to candidate URLs
+    }
+  }
+
+  let lastError: Error | null = null;
+  for (const url of candidateUrls) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        redirect: "follow",
+      });
+      if (res.ok) {
+        const arrayBuffer = await res.arrayBuffer();
+        await fs.promises.writeFile(targetPath, Buffer.from(arrayBuffer));
+        return;
+      }
+      lastError = new Error(`HTTP ${res.status} ${res.statusText}`);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  throw lastError || new Error("Не удалось скачать аудиофайл с серверов хранения");
+}
+
 export async function POST(req: Request) {
   const body = (await req.json()) as {
     audiobookId?: string;
@@ -94,16 +146,7 @@ export async function POST(req: Request) {
   const mimeType = audioUrl.endsWith(".ogg") ? "audio/ogg" : "audio/mp3";
 
   try {
-    const audioRes = await fetch(audioUrl, {
-      headers: {
-        "User-Agent": "AIBook/1.0 (Educational Language Learning App)",
-      },
-    });
-    if (!audioRes.ok) {
-      throw new Error(`Failed to fetch audio stream: ${audioRes.statusText}`);
-    }
-    const arrayBuffer = await audioRes.arrayBuffer();
-    await fs.promises.writeFile(tempFilePath, Buffer.from(arrayBuffer));
+    await downloadAudioToTempFile(audiobookId, audioUrl, tempFilePath);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Ошибка загрузки аудио";
     try {
@@ -115,7 +158,7 @@ export async function POST(req: Request) {
   const ai = new GoogleGenAI({ apiKey });
   let uploadedFile: { name: string } | null = null;
   let transcriptResult: AudiobookTranscript | null = null;
-  let usedModel = "gemini-2.5-flash";
+  let usedModel = "gemini-flash-latest";
 
   try {
     // 4. Upload file to Google Gemini Files API (supports files up to 2GB)
@@ -125,9 +168,9 @@ export async function POST(req: Request) {
     });
     uploadedFile = uploadRes;
 
-    const prompt = `You are a professional audio transcriber for language learners.
+    const prompt = `You are a professional verbatim speech transcriber for language learners.
 Listen to the attached audio file and transcribe EVERY spoken word verbatim in the original spoken language (${language}).
-Do not summarize, do not translate, and do not skip any introductory speech, titles, or poems.
+Do not summarize, do not translate, and do not skip any introductory speech, disclaimer, titles, or poems.
 Split the spoken audio into clear sentence-level segments with precise start and end timestamps in seconds.
 Return ONLY valid JSON matching this schema:
 {
@@ -141,19 +184,23 @@ Return ONLY valid JSON matching this schema:
 }
 Timestamps must be numbers in seconds. Every sentence must have accurate start and end timestamps.`;
 
-    const modelsToTry = ["gemini-3.5-transcribe", "gemini-3.7-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+    const modelsToTry = ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3.5-transcribe", "gemini-3.7-flash"];
 
     for (const modelName of modelsToTry) {
       try {
         const response = await ai.models.generateContent({
           model: modelName,
           contents: [
-            uploadRes,
+            {
+              fileData: {
+                fileUri: uploadRes.uri,
+                mimeType: uploadRes.mimeType,
+              },
+            },
             prompt,
           ],
           config: {
             responseMimeType: "application/json",
-            temperature: 0.1,
           },
         });
 
@@ -176,11 +223,12 @@ Timestamps must be numbers in seconds. Every sentence must have accurate start a
           break;
         }
       } catch (genErr) {
-        console.warn(`Model ${modelName} transcription attempt failed:`, genErr);
+        console.error(`Model ${modelName} transcription attempt failed:`, genErr);
       }
     }
   } catch (apiErr) {
     const msg = apiErr instanceof Error ? apiErr.message : "Gemini API failure";
+    console.error("Top-level Gemini error:", apiErr);
     return NextResponse.json({ error: `Ошибка транскрибации Gemini: ${msg}` }, { status: 500 });
   } finally {
     // Cleanup temporary local file
