@@ -877,7 +877,10 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
             setPlaybackSpeed(speed);
             if (audioRef.current) audioRef.current.playbackRate = speed;
           }}
-          onChapterChange={(idx) => selectChapter(idx, isPlaying)}
+          onChapterChange={(idx) => {
+            setCurrentChapterIndex(idx);
+            setCurrentTime(0);
+          }}
           onClose={() => setIsReadAlongOpen(false)}
           onAddWordCard={onAddWordCard}
         />

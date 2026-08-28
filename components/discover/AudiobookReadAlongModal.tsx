@@ -46,6 +46,17 @@ type Tab = "word" | "phrase" | "sentence";
 
 const PLAYBACK_SPEEDS = [0.75, 1.0, 1.25, 1.5, 2.0];
 
+// Line widths per fake segment, so the skeleton reads as paragraphs of
+// varying length rather than a uniform grid.
+const SKELETON_LINE_WIDTHS: string[][] = [
+  ["92%", "78%"],
+  ["100%", "88%", "40%"],
+  ["70%"],
+  ["96%", "60%"],
+  ["84%", "92%", "55%"],
+  ["75%"],
+];
+
 type Props = {
   audiobook: Audiobook;
   currentChapterIndex: number;
@@ -119,52 +130,54 @@ export function AudiobookReadAlongModal({
   const nativeLang = nativeLanguage || "ru";
 
   // Load Transcript for current chapter safely (handles modal close/unmount)
+  const mountedRef = useRef(true);
   useEffect(() => {
-    let isMounted = true;
-
-    const run = async () => {
-      if (!currentChapter || !currentChapter.audioUrl) {
-        if (isMounted) {
-          setTranscriptError("Аудиофайл главы не найден");
-          setIsLoadingTranscript(false);
-        }
-        return;
-      }
-
-      if (isMounted) {
-        setIsLoadingTranscript(true);
-        setTranscriptError(null);
-      }
-
-      try {
-        const data = await fetchAudiobookTranscript({
-          audiobookId: audiobook.id,
-          chapterIndex: currentChapterIndex,
-          audioUrl: currentChapter.audioUrl,
-          language: lang,
-          duration: currentChapter.durationSeconds,
-        });
-        if (isMounted) {
-          setTranscript(data);
-        }
-      } catch (err) {
-        if (isMounted) {
-          const msg = err instanceof Error ? err.message : "Не удалось загрузить текст главы";
-          setTranscriptError(msg);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoadingTranscript(false);
-        }
-      }
-    };
-
-    void run();
-
+    mountedRef.current = true;
     return () => {
-      isMounted = false;
+      mountedRef.current = false;
     };
+  }, []);
+
+  const loadTranscript = useCallback(async () => {
+    if (!currentChapter || !currentChapter.audioUrl) {
+      if (mountedRef.current) {
+        setTranscriptError("Аудиофайл главы не найден");
+        setIsLoadingTranscript(false);
+      }
+      return;
+    }
+
+    if (mountedRef.current) {
+      setIsLoadingTranscript(true);
+      setTranscriptError(null);
+    }
+
+    try {
+      const data = await fetchAudiobookTranscript({
+        audiobookId: audiobook.id,
+        chapterIndex: currentChapterIndex,
+        audioUrl: currentChapter.audioUrl,
+        language: lang,
+        duration: currentChapter.durationSeconds,
+      });
+      if (mountedRef.current) {
+        setTranscript(data);
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        const msg = err instanceof Error ? err.message : "Не удалось загрузить текст главы";
+        setTranscriptError(msg);
+      }
+    } finally {
+      if (mountedRef.current) {
+        setIsLoadingTranscript(false);
+      }
+    }
   }, [audiobook.id, currentChapterIndex, currentChapter, lang]);
+
+  useEffect(() => {
+    void loadTranscript();
+  }, [loadTranscript]);
 
   // Compute active segment based on audio currentTime
   const segments = useMemo(() => transcript?.segments || [], [transcript?.segments]);
@@ -398,9 +411,23 @@ export function AudiobookReadAlongModal({
         </div>
 
         {isLoadingTranscript ? (
-          <div className="read-along-state-box">
-            <Loader2 className="animate-spin" size={32} style={{ color: "var(--accent)" }} />
-            <strong>Синхронизируем текст через Gemini...</strong>
+          <div className="read-along-content">
+            <div className="read-along-skeleton-status">
+              <Loader2 className="animate-spin" size={16} style={{ color: "var(--accent)" }} />
+              <span>Синхронизируем текст через Gemini — обычно это 30–90 секунд для главы...</span>
+            </div>
+            {SKELETON_LINE_WIDTHS.map((widths, segIdx) => (
+              <div key={segIdx} className="read-along-segment read-along-skeleton-segment">
+                <div className="skeleton-block read-along-skeleton-chip" />
+                {widths.map((width, lineIdx) => (
+                  <div
+                    key={lineIdx}
+                    className="skeleton-block read-along-skeleton-line"
+                    style={{ width, animationDelay: `${(segIdx * widths.length + lineIdx) * 0.06}s` }}
+                  />
+                ))}
+              </div>
+            ))}
           </div>
         ) : transcriptError ? (
           <div className="read-along-state-box">
@@ -424,10 +451,31 @@ export function AudiobookReadAlongModal({
                     if (!norm) return <span key={tokIdx}>{token}</span>;
                     const currentWordIdx = validWordCounter++;
 
-                    // Direct AI word timestamp from Gemini model
-                    const matchingWord = segment.words?.[currentWordIdx] || segment.words?.find(
-                      (w) => normalizeToken(w.word) === norm
-                    );
+                    // Direct AI word timestamp from Gemini model. Gemini's `words`
+                    // list doesn't always split 1:1 with the displayed tokens
+                    // (contractions, hyphens, punctuation), so trusting the raw
+                    // index alone lets one mismatch shift every timestamp for the
+                    // rest of the segment. Re-anchor on the nearest word whose text
+                    // actually matches before falling back to the raw position.
+                    const words = segment.words;
+                    let matchingWord = words?.[currentWordIdx];
+                    if (!matchingWord || normalizeToken(matchingWord.word) !== norm) {
+                      for (let radius = 1; radius <= 3 && words; radius++) {
+                        const ahead = words[currentWordIdx + radius];
+                        if (ahead && normalizeToken(ahead.word) === norm) {
+                          matchingWord = ahead;
+                          break;
+                        }
+                        const behind = words[currentWordIdx - radius];
+                        if (behind && normalizeToken(behind.word) === norm) {
+                          matchingWord = behind;
+                          break;
+                        }
+                      }
+                      if (!matchingWord || normalizeToken(matchingWord.word) !== norm) {
+                        matchingWord = words?.find((w) => normalizeToken(w.word) === norm) || words?.[currentWordIdx];
+                      }
+                    }
 
                     const wordStart = matchingWord ? matchingWord.start : segment.start;
                     const wordEnd = matchingWord ? matchingWord.end : segment.end;

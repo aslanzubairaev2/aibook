@@ -150,6 +150,12 @@ export type FetchTranscriptParams = {
   duration?: number;
 };
 
+// Gemini transcription is a paid, ~minute-long call. Two callers racing for
+// the same chapter (React effect double-invoke in dev, a double-click, the
+// chapter list and the read-along view mounting at once) must not turn into
+// two paid requests — they share this one in-flight promise instead.
+const inFlightRequests = new Map<string, Promise<AudiobookTranscript>>();
+
 /**
  * Fetches or transcribes an audiobook chapter.
  * Checks local cache first, then calls the backend `/api/audiobooks/transcribe`.
@@ -157,6 +163,8 @@ export type FetchTranscriptParams = {
 export async function fetchAudiobookTranscript(
   params: FetchTranscriptParams
 ): Promise<AudiobookTranscript> {
+  const { audiobookId, chapterIndex, audioUrl, language, duration } = params;
+
   // 1. Check local cache (only accept if it has word-level timestamps)
   const cached = getLocalTranscript(audiobookId, chapterIndex);
   if (
@@ -168,38 +176,53 @@ export async function fetchAudiobookTranscript(
     return cached;
   }
 
-  // 2. Fetch real Gemini AI transcription from backend API
-  const { getAiHeaders } = await import("@/lib/ai/analyze");
-  const headers = await getAiHeaders();
-  const res = await fetch("/api/audiobooks/transcribe", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      audiobookId,
-      chapterIndex,
-      audioUrl,
-      language,
-      duration,
-    }),
-  });
+  const requestKey = getLocalTranscriptKey(audiobookId, chapterIndex);
+  const inFlight = inFlightRequests.get(requestKey);
+  if (inFlight) return inFlight;
 
-  if (!res.ok) {
-    let errMsg = `Transcription request failed (${res.status})`;
-    try {
-      const errJson = await res.json();
-      if (errJson.error) errMsg = errJson.error;
-    } catch {
-      // fallback
+  const requestPromise = (async () => {
+    // 2. Fetch real Gemini AI transcription from backend API
+    const { getAiHeaders } = await import("@/lib/ai/analyze");
+    const headers = await getAiHeaders();
+    const res = await fetch("/api/audiobooks/transcribe", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        audiobookId,
+        chapterIndex,
+        audioUrl,
+        language,
+        duration,
+      }),
+    });
+
+    if (!res.ok) {
+      let errMsg = `Transcription request failed (${res.status})`;
+      try {
+        const errJson = await res.json();
+        if (errJson.error) errMsg = errJson.error;
+      } catch {
+        // fallback
+      }
+      throw new Error(errMsg);
     }
-    throw new Error(errMsg);
-  }
 
-  const data = (await res.json()) as AudiobookTranscript;
-  if (!data || !Array.isArray(data.segments)) {
-    throw new Error("Invalid transcript response format from server");
-  }
+    const data = (await res.json()) as AudiobookTranscript;
+    if (!data || !Array.isArray(data.segments)) {
+      throw new Error("Invalid transcript response format from server");
+    }
 
-  // 3. Save to local cache
-  saveLocalTranscript(data);
-  return data;
+    // 3. Save to local cache
+    saveLocalTranscript(data);
+    return data;
+  })();
+
+  inFlightRequests.set(requestKey, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    // Only a rejected/completed request leaves the map — a fresh retry after
+    // a failure must be able to start a new request, not replay the old one.
+    inFlightRequests.delete(requestKey);
+  }
 }
