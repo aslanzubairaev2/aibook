@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, buildTrainQueue, cardSourceKey, matchesSourceQuery, comparePacks, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, listCardSources, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import { ALL_TRAIN_VARIANTS, buildTrainQueue, cardSourceKey, matchesSourceQuery, comparePacks, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, endOfTodayMs, getVariantProgress, isVariantDue, listCardSources, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
 import type { CardVariantState, Flashcard, SkillProgress, TrainVariant } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
@@ -590,4 +590,80 @@ test("statistics keep every source separate, dictionary batches included", () =>
   assert.equal(batch?.cards, 2);
   assert.equal(batch?.due, 2);
   assert.equal(batch?.learned, 0);
+});
+
+// ─── "Cards due today" — the home screen badge must match the real list ────
+//
+// The home screen shows a single dueCardsCount number without building the
+// actual queue the way CardsView does. These tests pin down that the two can
+// never drift apart — same predicate, same today boundary, new and overdue
+// cards both counted, zero handled cleanly.
+
+test("computeDeckStats().dueCards always equals the count of cards a real due-list would show", () => {
+  // Every direction is pinned explicitly (including a future reverse/audio
+  // for the two "due" cards) so a card's due-ness here comes only from the
+  // direction actually being asserted, not from an untouched direction
+  // defaulting to "new" (and therefore always due) behind the scenes.
+  const FUTURE = "2026-08-20T09:00:00.000Z";
+  const cards = [
+    scheduled({ id: "new-card" }), // never touched — new in every direction
+    scheduled({ id: "due-today", status: "review", repetitions: 2, dueAt: "2026-08-14T20:00:00.000Z" }),
+    scheduled({ id: "overdue", status: "review", repetitions: 2, dueAt: "2026-08-10T09:00:00.000Z" }),
+    scheduled({ id: "not-due-at-all", status: "review", repetitions: 2, dueAt: FUTURE }),
+  ];
+  const progress: Record<string, CardVariantState> = {
+    "due-today": { reverse: variant(FUTURE), audio: variant(FUTURE) },
+    "overdue": { reverse: variant(FUTURE), audio: variant(FUTURE) },
+    "not-due-at-all": { reverse: variant(FUTURE), audio: variant(FUTURE) },
+  };
+  const todayEndTime = endOfTodayMs(NOW);
+
+  const stats = computeDeckStats(cards, progress, NOW);
+  const actualDueList = cards.filter((card) =>
+    ALL_TRAIN_VARIANTS.some((v) => isVariantDue(getVariantProgress(card, v, progress), todayEndTime)),
+  );
+
+  assert.equal(stats.dueCards, actualDueList.length);
+  assert.equal(stats.dueCards, 3, "new, due-today and overdue count; the fully-future card does not");
+  assert.deepEqual(
+    new Set(actualDueList.map((c) => c.id)),
+    new Set(["new-card", "due-today", "overdue"]),
+  );
+});
+
+test("a card due at the very end of local today counts; one due a second into tomorrow does not", () => {
+  // Boundary derived from endOfTodayMs itself (not a hardcoded ISO string),
+  // so this holds regardless of the machine's local timezone.
+  const todayEndTime = endOfTodayMs(NOW);
+  const justInTime = scheduled({ id: "just-in-time", status: "review", repetitions: 1, dueAt: new Date(todayEndTime).toISOString() });
+  const justAfter = scheduled({ id: "just-after", status: "review", repetitions: 1, dueAt: new Date(todayEndTime + 1000).toISOString() });
+  // Reverse/audio pinned safely into next year so only the forward direction
+  // above decides whether each card is due — an untouched direction defaults
+  // to "new" (always due), which would otherwise mask the boundary check.
+  const FAR_FUTURE = variant("2027-01-01T00:00:00.000Z");
+  const progress: Record<string, CardVariantState> = {
+    "just-in-time": { reverse: FAR_FUTURE, audio: FAR_FUTURE },
+    "just-after": { reverse: FAR_FUTURE, audio: FAR_FUTURE },
+  };
+
+  const stats = computeDeckStats([justInTime, justAfter], progress, NOW);
+
+  assert.equal(stats.dueCards, 1);
+  assert.equal(stats.byStatus.review, 2, "both cards exist in the deck");
+});
+
+test("zero due cards is reported as zero, not a stale or negative count", () => {
+  const FUTURE = variant("2026-09-01T00:00:00.000Z");
+  const cards = [scheduled({ id: "future", status: "review", repetitions: 3, dueAt: "2026-09-01T00:00:00.000Z" })];
+  // All three directions pinned into the future — a genuinely empty queue,
+  // not one direction quietly defaulting to "new" (and so counting as due).
+  const stats = computeDeckStats(cards, { future: { reverse: FUTURE, audio: FUTURE } }, NOW);
+  assert.equal(stats.dueCards, 0);
+  assert.equal(stats.dueReps, 0);
+});
+
+test("endOfTodayMs moves to the next boundary once the day turns over", () => {
+  const day1 = endOfTodayMs(new Date("2026-08-14T10:00:00.000Z"));
+  const day2 = endOfTodayMs(new Date("2026-08-15T00:30:00.000Z"));
+  assert.ok(day2 > day1, "a later day's end-of-day boundary must be later");
 });
