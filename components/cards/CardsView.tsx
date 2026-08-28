@@ -32,6 +32,7 @@ import {
   type VariantProgressMap,
 } from "@/lib/cards";
 import { isTypingTarget, trainerHotkey } from "@/lib/srs/trainerHotkeys";
+import { normalizePos } from "@/lib/verbForms";
 import { TrainerKeysModal } from "@/components/cards/TrainerKeysModal";
 import { SourcePickerModal } from "@/components/cards/SourcePickerModal";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
@@ -515,6 +516,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const [filterType, setFilterType] = useState<FilterType>(initialFilters.filterType);
   const [filterBook, setFilterBook] = useState<string>(initialFilters.filterBook);
   const [filterLevel, setFilterLevel] = useState<string>(initialFilters.filterLevel);
+  const [filterPos, setFilterPos] = useState<string>(initialFilters.filterPos);
   const [sortOrder, setSortOrder] = useState<SortOrder>(initialFilters.sortOrder);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [showTrainFilterPanel, setShowTrainFilterPanel] = useState(false);
@@ -546,6 +548,9 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // the same question as trainBook above: one names what to train, this names
   // what to train around.
   const [trainExcluded, setTrainExcluded] = useState<string[]>(initialFilters.trainExcluded);
+  // Narrows a training session to one part of speech — «продолжить изучение»
+  // from a Словарь pack filtered to существительное lands here too.
+  const [trainPos, setTrainPos] = useState<string>(initialFilters.trainPos);
   const [trainVariants, setTrainVariants] = useState<TrainVariant[]>(initialFilters.trainVariants);
   const [trainMode, setTrainMode] = useState<"recognize" | "active">(initialFilters.trainMode);
   // Zen: the trainer with everything around it taken away — no header, no
@@ -777,6 +782,66 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     showToast("✓ Карточка добавлена");
   }
 
+  // --- Word tap → WordModal ---
+  // The dictionary knows each word's part of speech and level; cards do not
+  // carry them. Fetched once when the module opens, matched by the card's
+  // front, so a card made from a photographed page shows «сущ. · A1» without a
+  // schema change. Cards from the reader fall back to the heuristic below.
+  const [wordFacts, setWordFacts] = useState<Map<string, WordFacts>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/dictionary", { headers: await sbAuthHeaders() });
+        if (!res.ok) return;
+        const data = await res.json() as { entries?: { headword: string; lemma: string; part_of_speech: string; cefr: string }[] };
+        if (cancelled) return;
+        const map = new Map<string, WordFacts>();
+        for (const e of data.entries ?? []) {
+          const fact = { pos: e.part_of_speech ?? "", cefr: e.cefr ?? "" };
+          map.set(normalizeFront(e.headword), fact);
+          map.set(normalizeFront(e.lemma), fact);
+        }
+        setWordFacts(map);
+      } catch {
+        // Chips simply fall back to the heuristic.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // Part of speech for a card, normalized the same way the Словарь screen's
+  // own filter is — so a card carried over with «продолжить изучение» while
+  // narrowed to существительное matches exactly what that filter meant.
+  // Cards with no dictionary match (added from the reader, say) fall back to
+  // the same spelling heuristic the row chip already uses.
+  const posOf = useCallback((card: Flashcard): string => {
+    const fact = wordFacts.get(normalizeFront(card.front));
+    if (fact?.pos) return normalizePos(fact.pos);
+    if (card.type !== "word") return "";
+    const text = card.front.trim();
+    if (/^(der|die|das)\s+\S/i.test(text)) return "существительное";
+    if (/^[a-zäöüß]+(en|ern|eln)$/i.test(text)) return "глагол";
+    return "";
+  }, [wordFacts]);
+
+  const posOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const card of cards) {
+      const norm = posOf(card);
+      if (!norm || seen.has(norm)) continue;
+      const raw = wordFacts.get(normalizeFront(card.front))?.pos?.trim();
+      seen.set(norm, raw || norm);
+    }
+    return Array.from(seen.entries()); // [normalized, label]
+  }, [cards, wordFacts, posOf]);
+
+  /** Narrows a card list to one part of speech — "all" leaves it untouched. */
+  const filterByPos = useCallback(
+    (list: Flashcard[], pos: string) => (pos === "all" ? list : list.filter((c) => posOf(c) === pos)),
+    [posOf],
+  );
+
   // --- Training (cards filtered by status and type) ---
   // "hard" draws from ALL cards (not just due today) so problem cards can be
   // drilled any time; the rest filter today's due queue by SRS status.
@@ -792,13 +857,14 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       sourceId: string | null = trainSourceId,
       ignoreSchedule = false,
       excluded: string[] = trainExcluded,
+      pos: string = trainPos,
     ): TrainQueueItem[] =>
       // Shuffled so multi-variant sessions interleave instead of running all of
       // one variant before the next.
       shuffleTrainQueue(
-        buildTrainQueue(cards, { status, type: filter, variants, book, sourceId, excluded, ignoreSchedule }, variantProgress, todayEndTime),
+        buildTrainQueue(filterByPos(cards, pos), { status, type: filter, variants, book, sourceId, excluded, ignoreSchedule }, variantProgress, todayEndTime),
       ),
-    [cards, variantProgress, todayEndTime, trainBook, trainSourceId, trainExcluded],
+    [cards, variantProgress, todayEndTime, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos],
   );
 
   // Live counts for the filter chips, computed in a single pass. Each chip used
@@ -806,19 +872,19 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // filter panel — or changing anything at all — take tens of seconds.
   const trainCounts = useMemo(
     () => countTrainCandidates(
-      cards,
+      filterByPos(cards, trainPos),
       { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded },
       variantProgress,
       todayEndTime,
     ),
-    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, variantProgress, todayEndTime],
+    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
   );
 
   // The productive trainer keeps its own schedule but must obey the same
   // narrowing: "train this batch" means this batch in either mode.
   const trainCards = useMemo(
-    () => filterCardsByTrainingSource(cards, trainBook, trainSourceId, trainExcluded),
-    [cards, trainBook, trainSourceId, trainExcluded],
+    () => filterCardsByTrainingSource(filterByPos(cards, trainPos), trainBook, trainSourceId, trainExcluded),
+    [cards, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos],
   );
 
   // Every source the deck draws from, with its size — the list the exclusion
@@ -830,12 +896,12 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // offer is a number rather than a promise.
   const drillCandidates = useMemo(
     () => countTrainCandidates(
-      cards,
+      filterByPos(cards, trainPos),
       { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, ignoreSchedule: true },
       variantProgress,
       todayEndTime,
     ).byType.all,
-    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, variantProgress, todayEndTime],
+    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
   );
 
   function startTrainingSession(
@@ -846,8 +912,9 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     sourceId: string | null = trainSourceId,
     ignoreSchedule = false,
     excluded: string[] = trainExcluded,
+    pos: string = trainPos,
   ) {
-    setTrainQueue(makeTrainQueue(status, filter, variants, book, sourceId, ignoreSchedule, excluded));
+    setTrainQueue(makeTrainQueue(status, filter, variants, book, sourceId, ignoreSchedule, excluded, pos));
     setDrilling(ignoreSchedule);
     setCurrentTrainIndex(0);
     setReviewedIds([]);
@@ -873,6 +940,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     setFilterType(restored.filterType);
     setFilterBook(restored.filterBook);
     setFilterLevel(restored.filterLevel);
+    setFilterPos(restored.filterPos);
     setTrainFilter(restored.trainFilter);
     setTrainStatus(restored.trainStatus);
     setTrainBook(restored.trainBook);
@@ -880,6 +948,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     setTrainExcluded(restored.trainExcluded);
     setTrainVariants(restored.trainVariants);
     setTrainMode(restored.trainMode);
+    setTrainPos(restored.trainPos);
     startTrainingSession(
       restored.trainStatus,
       restored.trainFilter,
@@ -888,6 +957,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       restored.trainSourceId,
       false,
       restored.trainExcluded,
+      restored.trainPos,
     );
   }
 
@@ -1082,34 +1152,6 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     }
   }
 
-  // --- Word tap → WordModal ---
-  // The dictionary knows each word's part of speech and level; cards do not
-  // carry them. Fetched once when the module opens, matched by the card's
-  // front, so a card made from a photographed page shows «сущ. · A1» without a
-  // schema change. Cards from the reader fall back to the heuristic below.
-  const [wordFacts, setWordFacts] = useState<Map<string, WordFacts>>(new Map());
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/dictionary", { headers: await sbAuthHeaders() });
-        if (!res.ok) return;
-        const data = await res.json() as { entries?: { headword: string; lemma: string; part_of_speech: string; cefr: string }[] };
-        if (cancelled) return;
-        const map = new Map<string, WordFacts>();
-        for (const e of data.entries ?? []) {
-          const fact = { pos: e.part_of_speech ?? "", cefr: e.cefr ?? "" };
-          map.set(normalizeFront(e.headword), fact);
-          map.set(normalizeFront(e.lemma), fact);
-        }
-        setWordFacts(map);
-      } catch {
-        // Chips simply fall back to the heuristic.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [user]);
-
   // Which card's story is being written, so its button can spin.
   const [miniStory, setMiniStory] = useState<string | null>(null);
 
@@ -1259,7 +1301,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     () => ["A1", "A2", "B1", "B2", "C1", "C2"].filter((l) => cards.some((c) => c.cefr === l)),
     [cards],
   );
-  const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all", filterLevel !== "all"].filter(Boolean).length;
+  const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all", filterLevel !== "all", filterPos !== "all"].filter(Boolean).length;
   const variantsAreDefault = trainVariants.length === 1 && trainVariants[0] === "forward";
   // With one source picked there is nothing for the exclusions to remove — the
   // chips stay visible (so the learner can see what they set) but say so.
@@ -1269,7 +1311,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     () => cardSources.find((source) => (trainSourceId ? source.key === trainSourceId : source.title === trainBook)) ?? null,
     [cardSources, trainSourceId, trainBook],
   );
-  const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", trainBook !== "all", trainExcluded.length > 0, !variantsAreDefault].filter(Boolean).length;
+  const activeTrainFilterCount = [trainFilter !== "all", trainStatus !== "all", trainBook !== "all", trainPos !== "all", trainExcluded.length > 0, !variantsAreDefault].filter(Boolean).length;
 
   const filteredAllCards = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
@@ -1279,6 +1321,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         if (filterType !== "all" && c.type !== filterType) return false;
         if (filterBook !== "all" && (c.sourceBookTitle || c.source || "") !== filterBook) return false;
         if (filterLevel !== "all" && (c.cefr ?? "") !== filterLevel) return false;
+        if (filterPos !== "all" && posOf(c) !== filterPos) return false;
         if (query) return c.front.toLowerCase().includes(query) || c.back.toLowerCase().includes(query) || (c.sourceBookTitle || c.source || "").toLowerCase().includes(query);
         return true;
       })
@@ -1287,7 +1330,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         if (sortOrder === "ease") return a.easeFactor - b.easeFactor;
         return Date.parse(b.addedAt) - Date.parse(a.addedAt);
       });
-  }, [cards, filterStatus, filterType, filterBook, filterLevel, searchQuery, sortOrder]);
+  }, [cards, filterStatus, filterType, filterBook, filterLevel, filterPos, posOf, searchQuery, sortOrder]);
 
   // Both long lists page in as they are scrolled: rendering 500-plus rows at
   // once cost more than everything else on the screen put together.
@@ -2054,6 +2097,31 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                 </div>
               </div>
 
+              {posOptions.length > 1 && (
+                <div className="filter-group">
+                  <div className="filter-group-label">Часть речи</div>
+                  <div className="filter-chips">
+                    <button
+                      className={`filter-chip ${trainPos === "all" ? "active" : ""}`}
+                      onClick={() => { setTrainPos("all"); persistCardFilters({ trainPos: "all" }); startTrainingSession(trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, drilling, trainExcluded, "all"); }}
+                      type="button"
+                    >
+                      Все
+                    </button>
+                    {posOptions.map(([norm, label]) => (
+                      <button
+                        key={norm}
+                        className={`filter-chip ${trainPos === norm ? "active" : ""}`}
+                        onClick={() => { setTrainPos(norm); persistCardFilters({ trainPos: norm }); startTrainingSession(trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, drilling, trainExcluded, norm); }}
+                        type="button"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="filter-group">
                 <div className="filter-group-label">Статус</div>
                 <div className="filter-chips">
@@ -2104,7 +2172,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               {activeTrainFilterCount > 0 && (
                 <button
                   className="filter-reset-btn"
-                  onClick={() => { leaveBatchForOwnChoice(); setTrainFilter("all"); setTrainStatus("all"); setTrainBook("all"); setTrainSourceId(null); setTrainExcluded([]); setTrainVariants(DEFAULT_TRAIN_VARIANTS); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainBook: "all", trainSourceId: null, trainExcluded: [], trainVariants: DEFAULT_TRAIN_VARIANTS }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS, "all", null, false, []); }}
+                  onClick={() => { leaveBatchForOwnChoice(); setTrainFilter("all"); setTrainStatus("all"); setTrainBook("all"); setTrainSourceId(null); setTrainExcluded([]); setTrainVariants(DEFAULT_TRAIN_VARIANTS); setTrainPos("all"); persistCardFilters({ trainFilter: "all", trainStatus: "all", trainBook: "all", trainSourceId: null, trainExcluded: [], trainVariants: DEFAULT_TRAIN_VARIANTS, trainPos: "all" }); startTrainingSession("all", "all", DEFAULT_TRAIN_VARIANTS, "all", null, false, [], "all"); }}
                   type="button"
                 >
                   Сбросить фильтры
@@ -2564,6 +2632,20 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                 </div>
               )}
 
+              {posOptions.length > 1 && (
+                <div className="filter-group">
+                  <div className="filter-group-label">Часть речи</div>
+                  <div className="filter-chips">
+                    <button className={`filter-chip ${filterPos === "all" ? "active" : ""}`} onClick={() => { setFilterPos("all"); persistCardFilters({ filterPos: "all" }); setVisibleCount(50); }} type="button">Все</button>
+                    {posOptions.map(([norm, label]) => (
+                      <button key={norm} className={`filter-chip ${filterPos === norm ? "active" : ""}`} onClick={() => { setFilterPos(norm); persistCardFilters({ filterPos: norm }); setVisibleCount(50); }} type="button">
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {allBooks.length > 1 && (
                 <div className="filter-group">
                   <div className="filter-group-label">Книга</div>
@@ -2584,7 +2666,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               </div>
 
               {activeFilterCount > 0 && (
-                <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); setFilterLevel("all"); persistCardFilters({ filterStatus: "all", filterType: "all", filterBook: "all", filterLevel: "all" }); setVisibleCount(50); }} type="button">
+                <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); setFilterLevel("all"); setFilterPos("all"); persistCardFilters({ filterStatus: "all", filterType: "all", filterBook: "all", filterLevel: "all", filterPos: "all" }); setVisibleCount(50); }} type="button">
                   Сбросить фильтры
                 </button>
               )}

@@ -8,7 +8,9 @@ import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore"
 import { getCardVariantProgressMap, getLocalPackSort, saveLocalPackSort } from "@/lib/db/local";
 import { comparePacks, describePackTraining, getCardsVariantProgress, PACK_SORT_LABELS, type TrainBatch } from "@/lib/cards";
 import { FORM_LABEL, isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
+import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/search/multiTerm";
 import { SpeakButton } from "@/components/ui/SpeakButton";
+import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
 import type { AiAnalysis, CefrLevel, Flashcard, PackSort, PosTag } from "@/lib/types";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -63,6 +65,8 @@ type Props = {
   error: string | null;
   /** Target language, for pronouncing the words in the rows. */
   language: string;
+  /** Native language, so the search mic can also listen for translations. */
+  nativeLanguage: string;
   onPhotograph: () => void;
   onOpenEntry: (entry: DictionaryEntry) => void;
   onDeleteEntry: (id: string) => void;
@@ -106,7 +110,7 @@ type Props = {
  * to show disappears rather than sitting there empty.
  */
 export function DictionaryPanel({
-  entries, batches, cards, isLoading, error, language,
+  entries, batches, cards, isLoading, error, language, nativeLanguage,
   onPhotograph, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch, onCreateFromPack,
   onRegisterPack, onDeleteCards,
 }: Props) {
@@ -140,15 +144,17 @@ export function DictionaryPanel({
   useEffect(() => {
     const handler = (e: PointerEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest(".dict-search-float, .dict-search-toggle")) {
+      // A word opened from the results (or any other tap outside the search
+      // box) must not throw the search away — only an empty box is allowed to
+      // close on its own; anything typed stays until the learner clears it.
+      if (!target.closest(".dict-search-float, .dict-search-toggle") && !query.trim()) {
         setSearchOpen(false);
-        setQuery("");
       }
       if (!target.closest(".all-filter-panel, .dict-filter-toggle")) setFiltersOpen(false);
     };
     document.addEventListener("pointerdown", handler);
     return () => document.removeEventListener("pointerdown", handler);
-  }, []);
+  }, [query]);
 
   const posOptions = useMemo(() => {
     const seen = new Map<string, string>();
@@ -167,6 +173,11 @@ export function DictionaryPanel({
   const activeFilterCount = (level !== "all" ? 1 : 0) + (pos !== "all" ? 1 : 0) + (pos === "глагол" && verbType !== "all" ? 1 : 0);
   const isNarrowed = activeFilterCount > 0 || query.trim().length > 0;
 
+  // Comma-separated terms match independently (OR), so "regn, sala, boul" finds
+  // every entry starting with any one of those fragments — useful the moment a
+  // couple of letters are typed, without waiting to finish any one word.
+  const searchTerms = useMemo(() => parseSearchTerms(query), [query]);
+
   const matches = (e: DictionaryEntry): boolean => {
     if (level !== "all" && e.cefr !== level) return false;
     if (pos !== "all" && normalizePos(e.part_of_speech) !== pos) return false;
@@ -175,21 +186,11 @@ export function DictionaryPanel({
       if (verbType === "regular" && irr) return false;
       if (verbType === "irregular" && !irr) return false;
     }
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      e.headword.toLowerCase().includes(q) ||
-      e.lemma.toLowerCase().includes(q) ||
-      e.translation.toLowerCase().includes(q)
-    );
+    return matchesSearchTerms([e.headword, e.lemma, e.translation], searchTerms);
   };
 
   /** A card matches a text search on either side; the word filters are about dictionary entries, not cards. */
-  const cardMatches = (card: Flashcard): boolean => {
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return card.front.toLowerCase().includes(q) || card.back.toLowerCase().includes(q);
-  };
+  const cardMatches = (card: Flashcard): boolean => matchesSearchTerms([card.front, card.back], searchTerms);
 
   /**
    * Packs that hold cards and no dictionary words at all — a set of phrases or
@@ -371,8 +372,13 @@ export function DictionaryPanel({
             aria-label={searchOpen ? "Закрыть поиск" : "Поиск по словарю"}
             onClick={(e) => {
               e.stopPropagation();
+              // A typed search cannot be thrown away by the toggle either —
+              // the first tap while there is text just clears it, the next
+              // one (now empty) actually closes the box.
+              if (searchOpen && query.trim()) { setQuery(""); return; }
+              if (searchOpen) { setSearchOpen(false); return; }
               setQuery("");
-              setSearchOpen(!searchOpen);
+              setSearchOpen(true);
             }}
           >
             {searchOpen ? <X size={18} /> : <Search size={18} />}
@@ -386,13 +392,17 @@ export function DictionaryPanel({
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Слово или перевод — по всем пачкам"
+                placeholder="Слово или перевод, через запятую — по всем пачкам"
                 aria-label="Поиск по словарю"
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="off"
                 spellCheck={false}
                 enterKeyHint="search"
+              />
+              <SearchVoiceButton
+                languages={[nativeLanguage, language]}
+                onResult={(text) => setQuery((prev) => appendSearchTerm(prev, text))}
               />
               {query.length > 0 && (
                 <button
@@ -556,6 +566,11 @@ export function DictionaryPanel({
                         id: group.batch?.id ?? "",
                         title,
                         training: group.batch?.training ?? null,
+                        // Carries the active «часть речи» narrowing into the
+                        // trainer, so «продолжить изучение» while filtered to
+                        // существительное trains exactly those words — not the
+                        // whole pack the filter was just hiding most of.
+                        pos: pos !== "all" ? pos : undefined,
                       })
                     }
                   >
