@@ -2341,10 +2341,15 @@
 
 .read-along-word {
   display: inline;
-  padding: 1px 3px;
-  margin: 0 1px;
+  padding: 1px 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
   border-radius: 3px;
   cursor: pointer;
+  font-weight: inherit !important;
+  line-height: inherit !important;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
   transition: none !important;
 }
 
@@ -2353,12 +2358,14 @@
   color: var(--text-primary);
 }
 
-/* 100% Flat Solid Highlight strictly matching reader .word-highlight */
+/* 100% Flat Solid Highlight strictly matching reader with zero layout shift */
 .read-along-word.karaoke-current,
 .read-along-word.selected {
   background: var(--hl-word, #d4a847) !important;
   color: var(--hl-word-text, #141210) !important;
-  font-weight: 700;
+  font-weight: inherit !important;
+  padding: 1px 0 !important;
+  margin: 0 !important;
   border-radius: 3px;
   text-shadow: none !important;
   box-shadow: none !important;
@@ -2369,6 +2376,9 @@
 .read-along-word.phrase-context {
   background: var(--hl-phrase, rgba(212, 168, 71, 0.4)) !important;
   border-radius: 3px;
+  font-weight: inherit !important;
+  padding: 1px 0 !important;
+  margin: 0 !important;
   text-shadow: none !important;
   box-shadow: none !important;
   transition: none !important;
