@@ -182,23 +182,35 @@ export async function POST(req: Request) {
     });
     uploadedFile = uploadRes;
 
-    const prompt = `You are a professional verbatim speech transcriber for language learners.
+    const prompt = `You are an expert audio speech transcriber.
 Listen to the attached audio file and transcribe EVERY spoken word verbatim in the original spoken language (${language}).
 Do not summarize, do not translate, and do not skip any introductory speech, disclaimer, titles, or poems.
-Split the spoken audio into clear sentence-level segments with precise start and end timestamps in seconds.
+Split the spoken audio into clear sentence-level segments AND provide exact word-level timestamps in seconds for every single word spoken.
 Return ONLY valid JSON matching this schema:
 {
   "segments": [
     {
       "start": 0.0,
       "end": 4.8,
-      "text": "Verbatim transcribed sentence here."
+      "text": "Verbatim transcribed sentence here.",
+      "words": [
+        {
+          "word": "Verbatim",
+          "start": 0.0,
+          "end": 0.8
+        },
+        {
+          "word": "transcribed",
+          "start": 0.8,
+          "end": 1.7
+        }
+      ]
     }
   ]
 }
-Timestamps must be numbers in seconds. Every sentence must have accurate start and end timestamps.`;
+All timestamps must be floating-point numbers in seconds. Every single word in every segment must have its real start and end timestamps.`;
 
-    const modelsToTry = ["gemini-flash-latest", "gemini-3.5-flash", "gemini-3.5-transcribe", "gemini-3.7-flash"];
+    const modelsToTry = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.7-flash"];
 
     for (const modelName of modelsToTry) {
       try {

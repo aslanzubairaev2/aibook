@@ -312,19 +312,88 @@ export function AudiobookReadAlongModal({
           </div>
         </div>
 
-        <div className="read-along-player-bar">
-          <div className="read-along-scrubber-row">
-            <span className="read-along-time-label">{formatAudioDuration(currentTime)}</span>
-            <input type="range" min={0} max={currentChapter?.durationSeconds || duration || 100} value={currentTime} onChange={(e) => onSeek(Number(e.target.value))} aria-label="Перемотка аудио" />
-            <span className="read-along-time-label">{formatAudioDuration(currentChapter?.durationSeconds || duration)}</span>
+        {/* Audio Scrubber & Controls Bar */}
+        <div className="audio-player-bar">
+          <div className="audio-progress-row">
+            <span className="audio-time-label">{formatAudioDuration(currentTime)}</span>
+            <input
+              type="range"
+              min={0}
+              max={currentChapter?.durationSeconds || duration || 100}
+              value={currentTime}
+              onChange={(e) => onSeek(Number(e.target.value))}
+              className="audio-seek-slider"
+              aria-label="Перемотка аудио"
+            />
+            <span className="audio-time-label">
+              {formatAudioDuration(currentChapter?.durationSeconds || duration)}
+            </span>
           </div>
 
-          <div className="read-along-controls-row">
-            <button type="button" className="read-along-speed-btn" onClick={() => { const speeds = [1, 1.25, 1.5, 1.75, 2, 0.75]; const nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.length; onSpeedChange(speeds[nextIdx]); }} title="Скорость воспроизведения">{playbackSpeed}x</button>
-            <button type="button" className="read-along-btn" onClick={() => onSeek(Math.max(0, currentTime - 15))} title="Назад на 15 секунд"><RotateCcw size={18} /></button>
-            <button type="button" className="read-along-play-btn" onClick={onPlayPause} title={isPlaying ? "Пауза" : "Воспроизведение"}>{isPlaying ? <Pause size={24} /> : <Play size={24} />}</button>
-            <button type="button" className="read-along-btn" onClick={() => onSeek(currentTime + 15)} title="Вперёд на 15 секунд"><RotateCw size={18} /></button>
-            {currentChapterIndex < chapters.length - 1 && <button type="button" className="read-along-btn" onClick={() => onChapterChange(currentChapterIndex + 1)} title="Следующая глава"><SkipForward size={18} /></button>}
+          <div className="audio-controls-row">
+            <button
+              type="button"
+              className="audio-speed-btn"
+              onClick={() => {
+                const speeds = [1, 1.25, 1.5, 1.75, 2, 0.75];
+                const nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.length;
+                onSpeedChange(speeds[nextIdx]);
+              }}
+              title="Скорость воспроизведения"
+            >
+              {playbackSpeed}x
+            </button>
+
+            <div className="audio-main-controls">
+              <button
+                type="button"
+                className="audio-btn-control"
+                onClick={() => onChapterChange(Math.max(0, currentChapterIndex - 1))}
+                disabled={currentChapterIndex === 0 && currentTime <= 5}
+                title="Предыдущая глава"
+              >
+                <SkipBack size={18} />
+              </button>
+
+              <button
+                type="button"
+                className="audio-btn-control"
+                onClick={() => onSeek(Math.max(0, currentTime - 15))}
+                title="Назад на 15 сек"
+              >
+                <RotateCcw size={18} />
+              </button>
+
+              <button
+                type="button"
+                className="audio-btn-play"
+                onClick={onPlayPause}
+                aria-label={isPlaying ? "Пауза" : "Воспроизведение"}
+              >
+                {isPlaying ? <Pause size={24} /> : <Play size={24} style={{ marginLeft: "2px" }} />}
+              </button>
+
+              <button
+                type="button"
+                className="audio-btn-control"
+                onClick={() => onSeek(Math.min(duration || 10000, currentTime + 15))}
+                title="Вперед на 15 сек"
+              >
+                <RotateCw size={18} />
+              </button>
+
+              <button
+                type="button"
+                className="audio-btn-control"
+                onClick={() => onChapterChange(currentChapterIndex + 1)}
+                disabled={currentChapterIndex >= chapters.length - 1}
+                title="Следующая глава"
+              >
+                <SkipForward size={18} />
+              </button>
+            </div>
+
+            <div style={{ width: "36px" }} />
           </div>
         </div>
 
@@ -358,8 +427,14 @@ export function AudiobookReadAlongModal({
                     const norm = normalizeToken(token);
                     if (!norm) return <span key={tokIdx}>{token}</span>;
                     const currentWordIdx = validWordCounter++;
-                    const wordStart = segment.start + currentWordIdx * wordSlice;
-                    const wordEnd = wordStart + wordSlice;
+
+                    // Use real AI word timestamp if provided by Gemini, else interpolated
+                    const matchingWord = segment.words?.[currentWordIdx] || segment.words?.find(
+                      (w) => w.word.toLowerCase() === norm.toLowerCase()
+                    );
+
+                    const wordStart = matchingWord ? matchingWord.start : (segment.start + currentWordIdx * wordSlice);
+                    const wordEnd = matchingWord ? matchingWord.end : (wordStart + wordSlice);
 
                     let isKaraokeCurrent = false;
                     let isKaraokeSpoken = false;
