@@ -140,6 +140,10 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
   const [isMuted, setIsMuted] = useState(false);
   const [showChaptersList, setShowChaptersList] = useState(false);
   const [isReadAlongOpen, setIsReadAlongOpen] = useState(false);
+  // "Repeat this sentence until you start distinguishing the words" — an A-B
+  // loop over one read-along segment. Chapter-relative, so it must not
+  // survive a chapter change (see the reset effect below).
+  const [loopSegment, setLoopSegment] = useState<{ start: number; end: number } | null>(null);
 
   // Compact AI overview, shown right beside the title/metadata.
   const [review, setReview] = useState<string | null>(null);
@@ -303,19 +307,45 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
     setIsPlaying(false);
   }, []);
 
-  // High-frequency 60fps clock for zero-latency word karaoke tracking
+  // High-frequency 60fps clock for zero-latency word karaoke tracking. Also
+  // the loop-back point for "repeat this sentence": checked here rather than
+  // on the native `timeupdate` event because that event fires too coarsely
+  // (as little as ~4x/sec in some browsers) to catch the end of a short
+  // sentence before it plays into the next one.
   useEffect(() => {
     if (!isPlaying) return;
     let animId: number;
     const tick = () => {
       if (audioRef.current && !audioRef.current.paused) {
-        setCurrentTime(audioRef.current.currentTime);
+        const t = audioRef.current.currentTime;
+        if (loopSegment && t >= loopSegment.end) {
+          audioRef.current.currentTime = loopSegment.start;
+          setCurrentTime(loopSegment.start);
+        } else {
+          setCurrentTime(t);
+        }
       }
       animId = requestAnimationFrame(tick);
     };
     animId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animId);
-  }, [isPlaying]);
+  }, [isPlaying, loopSegment]);
+
+  // A loop is chapter-relative (segment times come from that chapter's
+  // transcript) — carrying it into a different chapter would repeat the
+  // wrong window of audio.
+  useEffect(() => {
+    setLoopSegment(null);
+  }, [currentChapterIndex]);
+
+  const handleToggleLoopSegment = useCallback((segment: { start: number; end: number } | null) => {
+    setLoopSegment(segment);
+    if (segment && audioRef.current) {
+      audioRef.current.currentTime = segment.start;
+      setCurrentTime(segment.start);
+      safePlay();
+    }
+  }, [safePlay]);
 
   const handlePlayPause = useCallback(() => {
     if (!audioRef.current || !currentChapter) return;
@@ -874,6 +904,8 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
           }}
           onClose={() => setIsReadAlongOpen(false)}
           onAddWordCard={onAddWordCard}
+          loopSegment={loopSegment}
+          onToggleLoopSegment={handleToggleLoopSegment}
         />
       )}
     </div>
