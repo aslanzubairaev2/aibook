@@ -8,6 +8,8 @@ import { SpeakButton } from "@/components/ui/SpeakButton";
 import { VerbsQuiz } from "@/components/verbs/VerbsQuiz";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
+import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/search/multiTerm";
+import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
 import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
@@ -126,14 +128,15 @@ export function VerbsView({ profile, onBack }: Props) {
   useEffect(() => {
     const handler = (e: PointerEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest(".dict-search-float, .dict-search-toggle")) {
+      // Opening a verb from the results must not throw the search away —
+      // only an empty box is allowed to close on its own.
+      if (!target.closest(".dict-search-float, .dict-search-toggle") && !query.trim()) {
         setSearchOpen(false);
-        setQuery("");
       }
     };
     document.addEventListener("pointerdown", handler);
     return () => document.removeEventListener("pointerdown", handler);
-  }, []);
+  }, [query]);
 
   // Every "глагол" entry in the dictionary, whether or not it has forms yet —
   // used to split into the real table below and the "Без форм" backlog.
@@ -158,14 +161,15 @@ export function VerbsView({ profile, onBack }: Props) {
   );
 
   const verbs = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    // Comma-separated terms match independently (OR) — "regn, sala" finds
+    // every verb starting with either fragment, from just a couple of letters.
+    const terms = parseSearchTerms(query);
     return allVerbs.filter((e) => {
       if (verbType !== "all") {
         const irregular = isIrregularGermanVerb(e.lemma, e.headword, e.forms);
         if (verbType === "irregular" ? !irregular : irregular) return false;
       }
-      if (q && !(e.headword.toLowerCase().includes(q) || e.lemma.toLowerCase().includes(q) || e.translation.toLowerCase().includes(q))) return false;
-      return true;
+      return matchesSearchTerms([e.headword, e.lemma, e.translation], terms);
     });
   }, [allVerbs, verbType, query]);
 
@@ -360,8 +364,12 @@ export function VerbsView({ profile, onBack }: Props) {
                 aria-label={searchOpen ? "Закрыть поиск" : "Поиск по глаголам"}
                 onClick={(e) => {
                   e.stopPropagation();
+                  // The first tap while there is text just clears it; the
+                  // next one (now empty) actually closes the search box.
+                  if (searchOpen && query.trim()) { setQuery(""); return; }
+                  if (searchOpen) { setSearchOpen(false); return; }
                   setQuery("");
-                  setSearchOpen(!searchOpen);
+                  setSearchOpen(true);
                 }}
               >
                 {searchOpen ? <X size={18} /> : <Search size={18} />}
@@ -375,13 +383,17 @@ export function VerbsView({ profile, onBack }: Props) {
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Инфинитив или перевод"
+                    placeholder="Инфинитив или перевод, через запятую"
                     aria-label="Поиск по глаголам"
                     autoComplete="off"
                     autoCorrect="off"
                     autoCapitalize="off"
                     spellCheck={false}
                     enterKeyHint="search"
+                  />
+                  <SearchVoiceButton
+                    languages={[profile.nativeLanguage, profile.targetLanguage]}
+                    onResult={(text) => setQuery((prev) => appendSearchTerm(prev, text))}
                   />
                   {query.length > 0 && (
                     <button type="button" className="dict-search-clear-btn" aria-label="Очистить поле поиска" onClick={() => setQuery("")}>
@@ -487,21 +499,28 @@ export function VerbsView({ profile, onBack }: Props) {
             <div className="verbs-groups">
               {groups.map((group) => {
                 const open = isNarrowed || openGroups.has(group.key);
+                const irregularCount = group.verbs.filter((v) => isIrregularGermanVerb(v.lemma, v.headword, v.forms)).length;
                 return (
-                  <section key={group.key} className="verb-batch">
-                    <button type="button" className="verb-batch-head" onClick={() => toggleGroup(group.key)}>
-                      <strong className="verb-batch-title">{group.title}</strong>
-                      <span className="dict-batch-meta">{group.verbs.length} {verbNoun(group.verbs.length)}</span>
+                  <section key={group.key} className="dict-batch">
+                    <button type="button" className="dict-batch-head" onClick={() => toggleGroup(group.key)}>
+                      <div className="dict-batch-title-wrap">
+                        <strong className="dict-batch-title">{group.title}</strong>
+                        <span className="dict-batch-meta">
+                          {group.verbs.length} {verbNoun(group.verbs.length)}
+                          {irregularCount > 0 && ` · ${irregularCount} неправильных`}
+                        </span>
+                      </div>
                       <ChevronDown size={17} className={`dict-batch-chevron${open ? " open" : ""}`} />
                     </button>
 
-                    {open && (
-                      <>
-                        <button type="button" className="dict-train-btn verb-batch-train-btn" onClick={() => setQuizVerbs(group.verbs)}>
-                          <Dumbbell size={14} /> Тренировать эту пачку
-                        </button>
+                    <div className="dict-batch-actions">
+                      <button type="button" className="dict-train-btn" onClick={() => setQuizVerbs(group.verbs)}>
+                        <Dumbbell size={14} /> Тренировать эту пачку
+                      </button>
+                    </div>
 
-                        <div className="verb-table-wrap">
+                    {open && (
+                      <div className="verb-table-wrap">
                           <table className="verb-table">
                             <thead>
                               <tr>
@@ -558,7 +577,6 @@ export function VerbsView({ profile, onBack }: Props) {
                             </tbody>
                           </table>
                         </div>
-                      </>
                     )}
                   </section>
                 );

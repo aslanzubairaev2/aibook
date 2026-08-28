@@ -1367,6 +1367,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
                 isLoading={dictLoading}
                 error={dictError}
                 language={profile.targetLanguage}
+                nativeLanguage={profile.nativeLanguage}
                 onPhotograph={() => { setPhotoMode("dictionary"); setPhotoOpen(true); }}
                 onOpenEntry={(entry) => void openDictWord(entry)}
                 onDeleteEntry={(id) => void deleteDictionaryEntry(id)}

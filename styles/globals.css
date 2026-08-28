@@ -1936,6 +1936,21 @@ textarea,
 }
 .dict-search-clear-btn:hover { background: rgba(212, 168, 71, 0.2); color: var(--accent); }
 
+/* Voice input inside a search bar — a smaller dictate button plus the
+   language chip it cycles through (Web Speech API takes one language per
+   session, so the chip is how the learner says which one is next). */
+.search-voice-wrap { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.dictate-btn-sm { width: 26px; height: 26px; border-radius: 50%; }
+.search-voice-lang {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 20px; padding: 0 5px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--bg-elevated); color: var(--text-muted);
+  font-size: 9.5px; font-weight: 800; letter-spacing: 0.02em; cursor: pointer;
+  transition: all 0.2s;
+}
+.search-voice-lang:hover { color: var(--accent); border-color: var(--accent); }
+.search-voice-lang:disabled { opacity: 0.5; cursor: default; }
+
 /* Batches */
 .dict-batches { display: flex; flex-direction: column; gap: 10px; padding-bottom: 90px; }
 .dict-batch {
@@ -2110,15 +2125,10 @@ textarea,
 .verbs-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
 .verbs-train-all-btn { flex: 1 1 auto; min-width: 0; padding: 0 16px; }
 
+/* Pack rows reuse .dict-batch/.dict-batch-head/… — the same shelf design as
+   the Словарь screen's word packs, right down to the persistent «тренировать»
+   pill under the header. */
 .verbs-groups { display: flex; flex-direction: column; gap: 10px; }
-.verb-batch { border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-card); overflow: hidden; }
-.verb-batch-head {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 13px 14px; text-align: left;
-  background: none; border: none; cursor: pointer; color: inherit;
-}
-.verb-batch-title { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 800; color: var(--text-primary); }
-.verb-batch-train-btn { width: calc(100% - 28px); margin: 0 14px 12px; }
 
 .verb-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-top: 1px solid var(--border); }
 .verb-table { width: 100%; min-width: 480px; border-collapse: collapse; }

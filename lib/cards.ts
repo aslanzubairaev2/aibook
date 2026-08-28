@@ -176,7 +176,17 @@ export const DEFAULT_TRAIN_VARIANTS: TrainVariant[] = ["forward"];
  * source (anything an assistant added with add_flashcards before packs could
  * hold them); those are matched by title instead.
  */
-export type TrainBatch = { id: string; title: string; training?: PackTraining | null };
+export type TrainBatch = {
+  id: string;
+  title: string;
+  training?: PackTraining | null;
+  /**
+   * The «часть речи» filter active on the Словарь screen when «тренировать»
+   * was pressed — normalized (see normalizePos), e.g. "существительное".
+   * Undefined/"all" trains the whole pack.
+   */
+  pos?: string;
+};
 
 const TRAIN_TYPES: NonNullable<PackTraining["type"]>[] = ["all", "word", "phrase", "sentence"];
 const TRAIN_STATUSES: NonNullable<PackTraining["status"]>[] =
@@ -295,6 +305,7 @@ export type ResolvedCardFilters = {
   filterType: TrainTypeFilter;
   filterBook: string;
   filterLevel: string;
+  filterPos: string;
   sortOrder: NonNullable<CardFilters["sortOrder"]>;
   trainFilter: TrainTypeFilter;
   trainStatus: TrainStatus;
@@ -303,6 +314,7 @@ export type ResolvedCardFilters = {
   trainExcluded: string[];
   trainVariants: TrainVariant[];
   trainMode: NonNullable<CardFilters["trainMode"]>;
+  trainPos: string;
   zenMode: boolean;
 };
 
@@ -339,6 +351,7 @@ export function resolveCardFilters(
       filterType: "all",
       filterBook: batch.title,
       filterLevel: "all",
+      filterPos: "all",
       sortOrder,
       trainFilter: training?.type ?? "all",
       trainStatus: training?.status ?? "all",
@@ -353,6 +366,10 @@ export function resolveCardFilters(
       trainExcluded: [],
       trainVariants: training?.variants?.length ? [...training.variants] : [...ALL_TRAIN_VARIANTS],
       trainMode: training?.mode ?? "recognize",
+      // The Словарь screen's own «часть речи» filter, carried over so
+      // «продолжить изучение» while narrowed to существительное trains
+      // exactly those words rather than the whole pack.
+      trainPos: batch.pos ?? "all",
       // Zen is how the learner likes to train, not part of what is being
       // trained, so a batch narrows the deck without changing the view.
       zenMode: saved?.zenMode ?? false,
@@ -364,6 +381,7 @@ export function resolveCardFilters(
     filterType: saved?.filterType ?? "all",
     filterBook: saved?.filterBook ?? "all",
     filterLevel: saved?.filterLevel ?? "all",
+    filterPos: saved?.filterPos ?? "all",
     sortOrder,
     trainFilter: saved?.trainFilter ?? "all",
     trainStatus: saved?.trainStatus ?? "all",
@@ -372,6 +390,7 @@ export function resolveCardFilters(
     trainExcluded: saved?.trainExcluded ?? [],
     trainVariants: saved?.trainVariants?.length ? saved.trainVariants : DEFAULT_TRAIN_VARIANTS,
     trainMode: saved?.trainMode ?? "recognize",
+    trainPos: saved?.trainPos ?? "all",
     zenMode: saved?.zenMode ?? false,
   };
 }

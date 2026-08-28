@@ -49,9 +49,13 @@ export type CardFilters = {
   filterBook?: string;
   /** CEFR level of the word on the card ("all" or A1…C2). */
   filterLevel?: string;
+  /** Part of speech of the word on the card — normalized, e.g. "глагол", or "all". */
+  filterPos?: string;
   sortOrder?: "added" | "due" | "ease";
   trainFilter?: "all" | "word" | "phrase" | "sentence";
   trainStatus?: "all" | "new" | "learning" | "review" | "relearning" | "hard";
+  /** Narrows a training session to one part of speech — "all" for every one. */
+  trainPos?: string;
   /** Narrow training to one source — a book title or a dictionary batch title. */
   trainBook?: string;
   /** Exact dictionary batch id; avoids mixing batches that share a title. */
