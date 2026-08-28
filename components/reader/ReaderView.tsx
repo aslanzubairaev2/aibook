@@ -59,6 +59,7 @@ type Props = {
   onReaderProgressSync?: (progress: ReaderProgressSnapshot) => void;
   onNavigateLesson?: (sharedBookId: string) => void;
   onOpenLiveChatForText?: (text: string) => void;
+  onFindVideos?: (query: string, lang?: string) => void;
 };
 
 type ActiveToken = {
@@ -154,6 +155,7 @@ export function ReaderView({
   onReaderProgressSync,
   onNavigateLesson,
   onOpenLiveChatForText,
+  onFindVideos,
 }: Props) {
   const { user } = useAuth();
   const [hasServerAiAccess, setHasServerAiAccess] = useState(false);
@@ -1516,6 +1518,7 @@ export function ReaderView({
         onAddLemma={(lemma) => void addFlashcard(lemma, wordModalAnalysis?.word?.translation ?? "", "word")}
         onWordTap={(word, context) => void handleWordTapInPanel(word, context)}
         onAddExample={(text, translation) => void addFlashcard(text, translation, "phrase")}
+        onFindVideos={onFindVideos ? (word) => onFindVideos(word, book.language) : undefined}
       />
 
       {toast && <div className="toast">{toast}</div>}

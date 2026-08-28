@@ -6,8 +6,9 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
   Sparkles, CheckCircle2, PlayCircle, Clock, Circle, Headphones,
-  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, BookA, ClipboardList,
+  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, BookA, ClipboardList, Tv,
 } from "lucide-react";
+import { VideosView } from "@/components/videos/VideosView";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile, Audiobook } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
 import { AudiobookDetailModal } from "./AudiobookDetailModal";
@@ -51,6 +52,10 @@ type Props = {
   onReloadCards?: () => void;
   /** Delete a whole group of cards at once — a pack that is nothing but its cards. */
   onDeleteCards?: (ids: string[]) => void;
+  onFindVideos?: (word: string, lang?: string) => void;
+  initialTab?: TabKey;
+  initialVideoQuery?: string | null;
+  initialVideoLang?: string | null;
 };
 
 type GutendexBook = {
@@ -106,7 +111,7 @@ type SharedBook = {
   created_at: string;
 };
 
-type TabKey = "classic" | "audio" | "klexikon" | "cefr" | "lessons" | "dictionary";
+type TabKey = "classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons" | "dictionary";
 
 // Each tab is one source. The name carries it; the source and its licence show
 // up per item (the "Оригинал · CC BY-SA" link, the "≈" on estimated levels)
@@ -116,6 +121,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   audio: "Аудио",
   klexikon: "Клексикон",
   cefr: "CEFR тексты",
+  videos: "Видео",
   lessons: "Мои уроки",
   dictionary: "Словарь",
 };
@@ -279,10 +285,36 @@ function mergeEntryWithAnalysis(entry: DictionaryEntry, base: AiAnalysis, full: 
   };
 }
 
-export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook, onOpenHomework, downloadTasks, onDownloadBook, onAddCard, onTrainWords, onReloadCards, onDeleteCards }: Props) {
+export function DiscoverView({
+  books,
+  cards,
+  profile,
+  onBooksChange,
+  onOpenBook,
+  onOpenHomework,
+  downloadTasks,
+  onDownloadBook,
+  onAddCard,
+  onTrainWords,
+  onReloadCards,
+  onDeleteCards,
+  onFindVideos,
+  initialTab,
+  initialVideoQuery,
+  initialVideoLang,
+}: Props) {
   const { user } = useAuth();
   const [prefs] = useState<DiscoverPrefs>(readPrefs);
-  const [activeTab, setActiveTab] = useState<TabKey>(prefs.activeTab ?? "classic");
+  const [activeTab, setActiveTab] = useState<TabKey>(() => {
+    if (initialTab) return initialTab;
+    return prefs.activeTab ?? "classic";
+  });
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Gutenberg States
   const [query, setQuery] = useState("");
@@ -1243,7 +1275,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
 
       {/* One tab per source — the source note below spells out which is which */}
       <div className="discover-tabs">
-        {(["classic", "audio", "klexikon", "cefr", "lessons", "dictionary"] as const).map((tab) => (
+        {(["classic", "audio", "klexikon", "cefr", "videos", "lessons", "dictionary"] as const).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -1255,6 +1287,7 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             {tab === "audio" && <Headphones size={15} />}
             {tab === "klexikon" && <GraduationCap size={15} />}
             {tab === "cefr" && <BookMarked size={15} />}
+            {tab === "videos" && <Tv size={15} />}
             {tab === "lessons" && <Wand2 size={15} />}
             {tab === "dictionary" && <BookA size={15} />}
             {TAB_LABELS[tab]}
@@ -1702,6 +1735,17 @@ export function DiscoverView({ books, cards, profile, onBooksChange, onOpenBook,
             </div>
           )}
         </>
+      )}
+
+      {/* ── Videos: Learning Hub ────────────────────────────────────────────── */}
+      {activeTab === "videos" && (
+        <VideosView
+          cards={cards}
+          profile={profile}
+          initialQuery={initialVideoQuery}
+          initialLanguage={initialVideoLang}
+          onAddCard={onAddCard || (() => {})}
+        />
       )}
 
       {/* ── Dictionary: the learner's own words ─────────────────────────────── */}

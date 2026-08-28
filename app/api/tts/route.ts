@@ -50,7 +50,8 @@ export async function POST(req: Request) {
   try {
     // Server-side TTS burns our Gemini/Deepgram API keys — require a logged-in user.
     const user = await getUserFromRequest(req);
-    if (!user) {
+    const allowDevAi = process.env.NODE_ENV !== "production" && process.env.AI_ALLOW_DEV_AI === "true";
+    if (!user && !allowDevAi) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

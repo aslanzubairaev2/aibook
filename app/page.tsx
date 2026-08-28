@@ -252,6 +252,9 @@ function AppInner() {
   const [activeBook, setActiveBook] = useState<Book | null>(null);
   const [activeHomework, setActiveHomework] = useState<{ book: HomeworkBook; exercises: HomeworkExercise[]; initialAnswers: HomeworkAnswers } | null>(null);
   const [readerOrigin, setReaderOrigin] = useState<AppSection>("home");
+  const [discoverInitialTab, setDiscoverInitialTab] = useState<"classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons" | "dictionary">("classic");
+  const [discoverVideoQuery, setDiscoverVideoQuery] = useState<string | null>(null);
+  const [discoverVideoLang, setDiscoverVideoLang] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
   const [isRemoteSyncReady, setIsRemoteSyncReady] = useState(false);
   const [readerProgressByBook, setReaderProgressByBook] = useState<Record<string, ReaderProgressSnapshot>>({});
@@ -990,6 +993,13 @@ function AppInner() {
     }
   }
 
+  const handleFindVideos = useCallback((query: string, lang?: string) => {
+    setDiscoverInitialTab("videos");
+    setDiscoverVideoQuery(query);
+    setDiscoverVideoLang(lang ?? profile.targetLanguage ?? "de");
+    setSection("discover");
+  }, [profile.targetLanguage]);
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   if (authLoading || !isHydrated) {
@@ -1067,6 +1077,10 @@ function AppInner() {
           onTrainWords={handleTrainWords}
           onReloadCards={handleReloadCards}
           onDeleteCards={handleDeleteCards}
+          onFindVideos={handleFindVideos}
+          initialTab={discoverInitialTab}
+          initialVideoQuery={discoverVideoQuery}
+          initialVideoLang={discoverVideoLang}
         />
       )}
 
@@ -1086,6 +1100,7 @@ function AppInner() {
             setLiveChatTextContext({ text });
             setIsLiveChatOpen(true);
           }}
+          onFindVideos={handleFindVideos}
         />
       ) : section === "reader" ? (
         <>{setSection("books")}</>
@@ -1114,6 +1129,7 @@ function AppInner() {
           onAddCard={handleAddCard}
           onUpdateCard={handleUpdateCard}
           onDeleteCard={handleDeleteCard}
+          onFindVideos={handleFindVideos}
         />
       )}
 
