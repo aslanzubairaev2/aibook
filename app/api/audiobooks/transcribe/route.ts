@@ -218,7 +218,7 @@ export async function POST(req: Request) {
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  let uploadedFile: { name: string } | null = null;
+  let uploadedFile: { name?: string } | null = null;
   let transcriptResult: AudiobookTranscript | null = null;
   const usedModel = "gemini-3.5-transcribe";
 
@@ -226,7 +226,7 @@ export async function POST(req: Request) {
     // 4. Upload file to Google Gemini Files API (supports files up to 2GB)
     const uploadRes = await ai.files.upload({
       file: tempFilePath,
-      mimeType,
+      config: { mimeType },
     });
     uploadedFile = uploadRes;
 

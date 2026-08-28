@@ -255,7 +255,7 @@ export function AudiobookReadAlongModal({
       const res = await analyzeSelection({ mode: "word", word: norm, sentence, sentenceBefore, sentenceAfter, nativeLanguage: nativeLang, targetLanguage: lang });
       setAnalysis(res);
       saveLocalAiAnalysis(cacheKey, res);
-      void sbSaveCachedAnalysis(cacheKey, res);
+      void sbSaveCachedAnalysis(cacheKey, "word", res);
     } catch (err) {
       console.error("Audiobook word AI analysis error:", err);
     } finally {
@@ -294,7 +294,7 @@ export function AudiobookReadAlongModal({
       });
       setAnalysis((prev) => ({ ...prev, ...res }));
       saveLocalAiAnalysis(cacheKey, res);
-      void sbSaveCachedAnalysis(cacheKey, res);
+      void sbSaveCachedAnalysis(cacheKey, tab === "sentence" ? "sentence" : tab === "phrase" ? "phrase" : "word", res);
     } catch (err) {
       console.error("Tab analysis error:", err);
     } finally {
@@ -537,7 +537,7 @@ export function AudiobookReadAlongModal({
             isLoading={isLoadingAnalysis}
             activeTab={activeTab}
             lang={lang}
-            ttsProvider="browser"
+            ttsProvider="local"
             onClose={() => setSelection(null)}
             onOpenWordModal={() => setIsWordModalOpen(true)}
             onDiscuss={() => setIsDiscussOpen(true)}

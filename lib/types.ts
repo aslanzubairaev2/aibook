@@ -6,8 +6,6 @@ export type TtsProvider =
 
 export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated" | "librivox" | "archive_audio";
-<<<<<<< HEAD
-=======
 
 /**
  * How sure the app actually is about a CEFR label:
@@ -16,7 +14,6 @@ export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexik
  * - `unverified`: no reliable signal at all — the level is unknown, not A1-by-default.
  */
 export type CefrConfidence = "verified" | "approximate" | "unverified";
->>>>>>> main
 
 export type LessonContext = {
   courseId: string;
@@ -408,8 +405,6 @@ export type CardVariantState = Partial<Record<Exclude<TrainVariant, "forward">, 
    durationFormatted?: string; // e.g. "04:12"
    audioUrl: string; // direct MP3 streaming URL
  };
- 
- export type CefrConfidence = "verified" | "approximate" | "unverified";
 
  export type Audiobook = {
    id: string; // Identifier e.g. "sammlung_deutscher_gedichte_018_1506_librivox"
