@@ -443,6 +443,13 @@ export function AudiobookReadAlongModal({
                       isKaraokeSpoken = currentTime >= wordEnd;
                     }
                     const isWordSelected = selection?.token === token && isActive;
+                    const isPhraseContext = Boolean(
+                      selection?.phraseText &&
+                      selection.phraseText.includes(token) &&
+                      isActive &&
+                      !isWordSelected
+                    );
+
                     return (
                       <span
                         key={tokIdx}
@@ -452,7 +459,7 @@ export function AudiobookReadAlongModal({
                         onKeyDown={(e) => {
                           if (e.key === "Enter") handleWordTap(token, segment, segIdx, wordStart);
                         }}
-                        className={`read-along-word ${isWordSelected ? "selected" : ""} ${isKaraokeCurrent ? "karaoke-current" : ""} ${isKaraokeSpoken ? "karaoke-spoken" : ""}`}
+                        className={`read-along-word ${isWordSelected ? "selected" : ""} ${isPhraseContext ? "phrase-context" : ""} ${isKaraokeCurrent ? "karaoke-current" : ""} ${isKaraokeSpoken ? "karaoke-spoken" : ""}`}
                       >
                         {token}
                       </span>

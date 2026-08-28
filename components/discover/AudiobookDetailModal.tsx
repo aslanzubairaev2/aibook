@@ -312,6 +312,20 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
     setIsPlaying(false);
   }, []);
 
+  // High-frequency 60fps clock for zero-latency word karaoke tracking
+  useEffect(() => {
+    if (!isPlaying) return;
+    let animId: number;
+    const tick = () => {
+      if (audioRef.current && !audioRef.current.paused) {
+        setCurrentTime(audioRef.current.currentTime);
+      }
+      animId = requestAnimationFrame(tick);
+    };
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [isPlaying]);
+
   const handlePlayPause = useCallback(() => {
     if (!audioRef.current || !currentChapter) return;
     if (isPlaying) pauseAudio();
