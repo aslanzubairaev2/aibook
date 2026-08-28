@@ -209,13 +209,7 @@ export function AudiobookReadAlongModal({
     setActiveTab("word");
 
     // Check cache
-    const cacheKey = makeAiCacheKey({
-      mode: "word",
-      word: norm,
-      sentence,
-      nativeLanguage: nativeLang,
-      targetLanguage: lang,
-    });
+    const cacheKey = makeAiCacheKey("word", norm, lang, nativeLang);
 
     const localCached = getLocalAiAnalysis(cacheKey);
     if (localCached) {
