@@ -76,16 +76,11 @@ const SAVING_TO_LIBRARY_MESSAGE = "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0
 const BOOK_IN_LIBRARY_MESSAGE = "\u041a\u043d\u0438\u0433\u0430 \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435";
 const DOWNLOAD_ERROR_MESSAGE = "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438";
 const DEFAULT_CHAPTER_TITLE = "\u0413\u043b\u0430\u0432\u0430 1";
-const APP_SECTIONS: AppSection[] = ["home", "discover", "dictionary", "practice", "books", "reader", "homework", "cards", "verbs", "nouns", "settings", "auth", "live-translate"];
 
 function pickColor(title: string) {
   let hash = 0;
   for (const ch of title) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffff;
   return COVER_COLORS[hash % COVER_COLORS.length];
-}
-
-function isAppSection(value: string | null | undefined): value is AppSection {
-  return Boolean(value && APP_SECTIONS.includes(value as AppSection));
 }
 
 function getLatestProgress(progress: DbReadingProgress[]): DbReadingProgress | null {
@@ -280,103 +275,47 @@ function AppInner() {
   }, [section, activeBook?.id, isHydrated, isRemoteSyncReady, user]);
 
   // ─── Data loading ─────────────────────────────────────────────────────────
-  function applySyncedLastView(
+  /**
+   * Восстанавливает книгу, на которой остановились, но НЕ уводит с главной.
+   *
+   * Раньше запуск приложения открывал последний экран — свой или пришедший с
+   * другого устройства, — и попасть на главную можно было только нажав на неё
+   * вручную. Теперь приложение всегда открывается на главной, а место в книге
+   * не теряется: оно превращается в строку «продолжить» на самой главной.
+   *
+   * Прогресс по-прежнему синхронизируется между устройствами; меняется только
+   * то, куда приложение приземляется при запуске.
+   */
+  function restoreLastBook(
     settings: DbUserSettings | null,
     progress: DbReadingProgress[],
     availableBooks: Book[],
     lessonProgress: Record<string, LessonProgressInfo> = {},
   ) {
-    // Last-write-wins between this device and the account, by timestamp.
-    //
-    // The account's row is not automatically the truth: every section change
-    // is saved locally at once but only reaches Supabase once this very load
-    // has finished (isRemoteSyncReady), so the server's copy is routinely
-    // BEHIND what this device did last. Letting it win unconditionally is
-    // what yanked the learner back to an old screen — usually "home" — after
-    // a reload, a tab switch, or the phone waking the page back up.
-    //
-    // A device with no local view (a fresh install, a new phone) has
-    // localTime = 0, so the account's view still restores there, which is the
-    // case cross-device sync actually exists for.
-    const localView = getLocalLastView();
-    const localTime = localView?.updatedAt ? Date.parse(localView.updatedAt) : 0;
-    const remoteTime = settings?.last_view_updated_at ? Date.parse(settings.last_view_updated_at) : 0;
-    if (localTime > 0 && localTime >= remoteTime) return;
-
     const latestProgress = getLatestProgress(progress);
     const latestLesson = getLatestLessonProgress(lessonProgress);
-    const remoteSection = isAppSection(settings?.last_section) ? settings.last_section : null;
-    const remoteBookId = settings?.last_book_id ?? latestProgress?.book_id ?? null;
+    const rememberedId = settings?.last_book_id ?? latestProgress?.book_id ?? null;
 
-    const openOwnBook = (book: Book) => {
-      setActiveBook(book);
-      setSection("reader");
-      saveLocalLastView("reader", book.id);
-    };
+    // Своя книга — она уже разобрана и лежит на полке.
+    const own = availableBooks.find((item) => item.id === rememberedId)
+      ?? availableBooks.find((item) => item.id === latestProgress?.book_id);
+    if (own) {
+      setActiveBook(own);
+      return;
+    }
 
-    const openLesson = (sharedBookId: string, lp: LessonProgressInfo) => {
-      void loadLessonBook(sharedBookId, lp.paragraph_index, lp.percentage).then((lessonBook) => {
-        if (lessonBook) {
-          setActiveBook(lessonBook);
-          setSection("reader");
-          saveLocalLastView("reader", lessonBook.id);
-        } else {
-          setSection("books");
-          saveLocalLastView("books", null);
-        }
+    // Общий урок (Klexikon / CEFR / сгенерированный) живёт не на полке, его
+    // приходится собирать заново — но только ради строки «продолжить», так что
+    // делается это фоном и ничего не блокирует.
+    const lessonId = rememberedId && lessonProgress[rememberedId]
+      ? rememberedId
+      : latestLesson?.sharedBookId ?? null;
+    const lesson = lessonId ? lessonProgress[lessonId] : null;
+    if (lessonId && lesson) {
+      void loadLessonBook(lessonId, lesson.paragraph_index, lesson.percentage).then((lessonBook) => {
+        if (lessonBook) setActiveBook(lessonBook);
       });
-    };
-
-    // Whatever was read most recently across own books and shared lessons.
-    const ownTime = latestProgress ? new Date(latestProgress.last_read_at).getTime() : -1;
-    const lessonTime = latestLesson?.info.last_read_at ? new Date(latestLesson.info.last_read_at).getTime() : -1;
-    const openMostRecentlyRead = (): boolean => {
-      if (lessonTime > ownTime && latestLesson) {
-        openLesson(latestLesson.sharedBookId, latestLesson.info);
-        return true;
-      }
-      const book = availableBooks.find((item) => item.id === latestProgress?.book_id);
-      if (book) {
-        openOwnBook(book);
-        return true;
-      }
-      return false;
-    };
-
-    if (remoteSection === "reader") {
-      // The exact book that was open on the other device: an own book…
-      const book = availableBooks.find((item) => item.id === remoteBookId);
-      if (book) {
-        openOwnBook(book);
-        return;
-      }
-
-      // …or a shared lesson (Klexikon / CEFR / generated), whose progress lives in
-      // user_lesson_progress. Rebuild it and resume. This must be checked
-      // before any "latest own book" fallback, otherwise reading a lesson
-      // last would reopen an older own book on the next device.
-      if (remoteBookId && lessonProgress[remoteBookId]) {
-        openLesson(remoteBookId, lessonProgress[remoteBookId]);
-        return;
-      }
-
-      // Stale last_book_id → resume whatever has the freshest progress.
-      if (openMostRecentlyRead()) return;
-
-      setSection("books");
-      saveLocalLastView("books", null);
-      return;
     }
-
-    if (remoteSection) {
-      const book = remoteBookId ? availableBooks.find((item) => item.id === remoteBookId) : null;
-      if (book) setActiveBook(book);
-      setSection(remoteSection);
-      saveLocalLastView(remoteSection, book?.id ?? null);
-      return;
-    }
-
-    openMostRecentlyRead();
   }
 
   const loadData = useCallback(async (userId: string) => {
@@ -385,13 +324,14 @@ function AppInner() {
     // Set dynamic namespace for the specific user before loading from cache
     setLocalNamespace(`user:${userId}`);
     
-    // The saved screen is restored before anything is awaited: it needs no
-    // books to be known, and waiting on IndexedDB first is what made a wake-up
-    // or a reload show "home" for a moment before snapping back.
+    // Приложение всегда открывается на главной.
+    //
+    // Раньше запуск возвращал на последний экран, и человек, закрывший
+    // приложение в тренажёре, снова оказывался в тренажёре, ни разу не увидев,
+    // что вообще стоит сделать сегодня. Место в книге при этом не теряется:
+    // ниже оно восстанавливается в `activeBook` и превращается в строку
+    // «продолжить» на главной.
     const lastView = getLocalLastView();
-    if (lastView?.section && lastView.section !== "reader" && isAppSection(lastView.section)) {
-      setSection(lastView.section);
-    }
 
     // Load from cache immediately for instant UI
     const localBooks = await getLocalBooks();
@@ -400,24 +340,9 @@ function AppInner() {
     setBooks(localBooks.filter((b) => !b.sharedBookId));
     setCards(getLocalCards());
     setProfile(getLocalProfile());
-    
-    if (lastView?.section === "reader" && lastView.bookId) {
-      const lastBook = localBooks.find((book) => book.id === lastView.bookId);
-      if (lastBook) {
-        setActiveBook(lastBook);
-        setSection("reader");
-      } else {
-        setActiveBook(null);
-        setSection("books");
-      }
-    } else if (lastView?.section && ["home", "discover", "books", "cards", "verbs", "settings"].includes(lastView.section)) {
-      const lastBook = lastView.bookId ? localBooks.find((b) => b.id === lastView.bookId) : null;
-      setActiveBook(lastBook ?? null);
-      setSection(lastView.section as AppSection);
-    } else {
-      setActiveBook(null);
-      setSection("home");
-    }
+
+    setActiveBook(lastView?.bookId ? localBooks.find((b) => b.id === lastView.bookId) ?? null : null);
+    setSection("home");
     setIsHydrated(true);
 
     // Then fetch fresh data from Supabase in background
@@ -492,9 +417,9 @@ function AppInner() {
       setBooks(shelfBooks);
       // Keep cached shared lessons so "continue reading" works instantly and offline.
       await saveLocalBooks([...shelfBooks, ...localBooks.filter((b) => b.sharedBookId)]);
-      applySyncedLastView(dbSettings, dbProgress, shelfBooks, lessonProgress);
+      restoreLastBook(dbSettings, dbProgress, shelfBooks, lessonProgress);
     } else {
-      applySyncedLastView(dbSettings, dbProgress, localBooks, lessonProgress);
+      restoreLastBook(dbSettings, dbProgress, localBooks, lessonProgress);
     }
 
     // Flashcards
@@ -543,7 +468,7 @@ function AppInner() {
 
     // Only (re)load when the *identity* actually changes. onAuthStateChange emits a
     // fresh `user` object on token refresh / tab focus with the same id; reloading
-    // then would re-run applySyncedLastView and snap the reader to the saved position.
+    // then would re-run restoreLastBook and snap the reader to the saved position.
     const identity = user ? `user:${user.id}` : "guest";
     if (loadedIdentityRef.current === identity) return;
     loadedIdentityRef.current = identity;
@@ -1040,21 +965,17 @@ function AppInner() {
       {section === "home" && (
         <HomeDashboard
           book={lastBook}
-          books={books}
           profile={profile}
           cards={cards}
-          onBooksChange={handleBooksChange}
-          onOpenBook={(book) => void handleOpenBook(book)}
-          openingBookId={openingBookId}
-          downloadTasks={downloadTasks}
-          onDownloadBook={(book) => void handleCatalogDownload(book)}
           onContinueReading={() => {
             if (lastBook) { setActiveBook(lastBook); setSection("reader"); }
             else setSection("books");
           }}
           onOpenCards={() => setSection("cards")}
+          onOpenVerbs={() => setSection("verbs")}
+          onOpenNouns={() => setSection("nouns")}
+          onOpenDictionary={() => setSection("dictionary")}
           onOpenBooks={() => setSection("books")}
-          onOpenDiscover={() => setSection("discover")}
           onOpenLiveChat={() => setIsLiveChatOpen(true)}
           onOpenLiveTranslate={() => setSection("live-translate")}
         />

@@ -1309,10 +1309,18 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
    * там, где ответ уже лежит на экране.
    */
   const holdWordOfCard = useCallback((card: Flashcard) => (word: string, anchor: DOMRect) => {
-    const isFrontWord = normalizeToken(word) === normalizeToken(card.front);
+    // Карточка «die Lösung» отвечает и за удержание на слове «Lösung»: артикль
+    // — часть записи, а не часть слова, и без этого перевод с оборота карточки
+    // пропадал ровно на тех словах, у которых он точно есть.
+    const bare = (text: string) => normalizeToken(text.replace(/^(der|die|das)\s+/i, ""));
+    const isFrontWord = bare(word) === bare(card.front);
+    // Артикль, записанный на самой карточке, — не догадка по окончанию, а то,
+    // что учащийся уже сохранил; он и должен побеждать.
+    const articleOnCard = isFrontWord ? /^(der|die|das)\s/i.exec(card.front.trim())?.[1] : undefined;
     openQuickWord(word, anchor, {
       translation: isFrontWord ? card.back.split("\n")[0] : undefined,
       partOfSpeech: isFrontWord ? wordFacts.get(normalizeFront(card.front))?.pos : undefined,
+      article: articleOnCard?.toLowerCase(),
       context: card.front,
     });
   }, [openQuickWord, wordFacts]);
