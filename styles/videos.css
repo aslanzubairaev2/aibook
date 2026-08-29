@@ -754,6 +754,45 @@
   line-height: 1.4;
 }
 
+.video-cue-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  opacity: 0.7;
+  vertical-align: middle;
+}
+
+.video-cue-action-btn,
+.video-cue-actions .speak-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: rgba(212, 168, 71, 0.09);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.video-cue-action-btn:hover,
+.video-cue-actions .speak-btn:hover {
+  border-color: rgba(212, 168, 71, 0.55);
+  background: rgba(212, 168, 71, 0.2);
+}
+
+.video-cue-action-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.video-transcript-item:hover .video-cue-actions,
+.video-transcript-item.active .video-cue-actions {
+  opacity: 1;
+}
+
 .transcript-line .video-cue-translation {
   justify-content: space-between;
   padding-right: 0;

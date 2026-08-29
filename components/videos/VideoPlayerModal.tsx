@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { X, ExternalLink, Subtitles, ListMusic, Loader2, Eye, EyeOff } from "lucide-react";
+import { X, ExternalLink, Subtitles, ListMusic, Loader2, Eye, EyeOff, MessageCircle, Plus } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 import type { SubtitleCue } from "@/lib/videos/youtubeTranscript";
-import type { UserProfile, Flashcard, AiAnalysis } from "@/lib/types";
+import type { UserProfile, Flashcard, AiAnalysis, DiscussMessage } from "@/lib/types";
 import { WordModal } from "@/components/word-modal/WordModal";
-import { analyzeSelection } from "@/lib/ai/analyze";
+import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
+import { SpeakButton } from "@/components/ui/SpeakButton";
+import { analyzeSelection, getAiHeaders } from "@/lib/ai/analyze";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 
@@ -49,6 +51,9 @@ export function VideoPlayerModal({
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
   const [isWordModalLoading, setIsWordModalLoading] = useState(false);
   const [cardAddedNotice, setCardAddedNotice] = useState<string | null>(null);
+  const [cueCardLoading, setCueCardLoading] = useState<number | null>(null);
+  const [discussCue, setDiscussCue] = useState<{ index: number; text: string } | null>(null);
+  const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
 
   const playerRef = useRef<any>(null);
   const activeCueScrollRef = useRef<HTMLDivElement>(null);
@@ -337,15 +342,15 @@ export function VideoPlayerModal({
   };
 
   // Add card handler
-  const handleAddCard = (front: string, back: string) => {
+  const handleAddCard = (front: string, back: string, type: Flashcard["type"] = "word", source = activeCue?.text || video.title) => {
     if (!onAddCard) return;
 
     const newCard: Flashcard = {
       id: `card-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      type: "word",
+      type,
       front,
       back,
-      source: activeCue?.text || video.title,
+      source,
       addedAt: new Date().toISOString(),
       status: "new",
       lapses: 0,
@@ -358,6 +363,38 @@ export function VideoPlayerModal({
     onAddCard(newCard);
     setCardAddedNotice(`«${front}» добавлено в карточки!`);
     setTimeout(() => setCardAddedNotice(null), 3000);
+  };
+
+  const handleAddCueCard = async (index: number) => {
+    const cue = cues[index];
+    if (!cue || cueCardLoading !== null) return;
+    setCueCardLoading(index);
+    let back = translations[index] || "";
+    try {
+      if (!back) {
+        const response = await fetch("/api/videos/translate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(await getAiHeaders()) },
+          body: JSON.stringify({ cues: [cue.text], sourceLanguage: targetLanguage, targetLanguage: nativeLanguage }),
+        });
+        const data = await response.json() as { translations?: string[] };
+        back = data.translations?.[0] || "";
+      }
+    } catch {
+      // A sentence card can still be saved when the optional translation call fails.
+    }
+    handleAddCard(cue.text, back, "sentence", cue.text);
+    setCueCardLoading(null);
+  };
+
+  const handleDiscussCue = (index: number) => {
+    const cue = cues[index];
+    if (!cue) return;
+    if (playerRef.current && typeof playerRef.current.pauseVideo === "function") {
+      try { playerRef.current.pauseVideo(); } catch {}
+    }
+    setDiscussCue({ index, text: cue.text });
+    setDiscussMessages([]);
   };
 
   // Format seconds to mm:ss
@@ -513,6 +550,28 @@ export function VideoPlayerModal({
                         {renderInteractiveSubtitleText(cue.text)}
                         {renderCueTranslation(idx)}
                       </span>
+                      <div className="video-cue-actions" aria-label="Действия с репликой">
+                        <SpeakButton text={cue.text} lang={targetLanguage} size={14} />
+                        <button
+                          type="button"
+                          className="video-cue-action-btn"
+                          onClick={(event) => { event.stopPropagation(); handleDiscussCue(idx); }}
+                          aria-label="Обсудить реплику с AI"
+                          title="Обсудить реплику с AI"
+                        >
+                          <MessageCircle size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="video-cue-action-btn"
+                          onClick={(event) => { event.stopPropagation(); void handleAddCueCard(idx); }}
+                          aria-label="Добавить реплику в карточки"
+                          title="Добавить реплику в карточки"
+                          disabled={cueCardLoading === idx}
+                        >
+                          {cueCardLoading === idx ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -573,6 +632,23 @@ export function VideoPlayerModal({
             }}
           />
         </div>
+      )}
+
+      {discussCue && (
+        <DiscussAiModal
+          isOpen
+          mode="sentence"
+          selectedText={discussCue.text}
+          sentence={discussCue.text}
+          sentenceBefore={cues[discussCue.index - 1]?.text || ""}
+          sentenceAfter={cues[discussCue.index + 1]?.text || ""}
+          nativeLanguage={nativeLanguage}
+          targetLanguage={targetLanguage}
+          messages={discussMessages}
+          onMessagesChange={setDiscussMessages}
+          onClose={() => setDiscussCue(null)}
+          onWordTap={(word, contextSentence) => void handleWordTap(word, contextSentence)}
+        />
       )}
     </>
   );
