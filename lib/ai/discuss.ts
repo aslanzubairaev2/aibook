@@ -1,6 +1,7 @@
 import type { AiMode, DiscussMessage, DiscussWordProfile } from "@/lib/types";
 import { supabase } from "@/lib/db/supabase";
 import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
+import { fetchWithTimeout } from "@/lib/net/freshFetch";
 
 export type DiscussRequest = {
   mode: AiMode;
@@ -42,11 +43,13 @@ async function getAiHeaders() {
 
 export async function discussWithAi(request: DiscussRequest): Promise<DiscussMessage> {
   const headers = await getAiHeaders();
-  const res = await fetch("/api/ai/discuss", {
+  // A reply that role-plays or reasons through a homework check can take a
+  // while to generate — bounded generously rather than left uncapped.
+  const res = await fetchWithTimeout("/api/ai/discuss", {
     method: "POST",
     headers,
     body: JSON.stringify(request),
-  });
+  }, 30_000);
 
   if (!res.ok) {
     let err = "";

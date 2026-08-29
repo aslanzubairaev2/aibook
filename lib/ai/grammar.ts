@@ -1,5 +1,6 @@
 import type { GrammarTable, PosTag } from "@/lib/types";
 import { getAiHeaders } from "@/lib/ai/analyze";
+import { fetchWithTimeout } from "@/lib/net/freshFetch";
 
 export interface FetchGrammarParams {
   word: string;
@@ -13,7 +14,7 @@ export interface FetchGrammarParams {
 
 export async function fetchGrammar(params: FetchGrammarParams): Promise<GrammarTable> {
   const headers = await getAiHeaders();
-  const res = await fetch("/api/ai/grammar", {
+  const res = await fetchWithTimeout("/api/ai/grammar", {
     method: "POST",
     headers,
     body: JSON.stringify(params),

@@ -86,6 +86,12 @@ function isValidVerbMatrix(matrix: unknown): boolean {
   );
 }
 
+// The full verb matrix is the slowest shape this route generates; bounding
+// the invocation means a stuck one gets killed and freed rather than sitting
+// on the platform indefinitely after the client has already given up on it
+// (see `fetchWithTimeout` in lib/net/freshFetch.ts).
+export const maxDuration = 30;
+
 export async function POST(req: Request) {
   let apiKey: string;
   try {

@@ -1,6 +1,7 @@
 import type { AiAnalysis, AiMode } from "@/lib/types";
 import { supabase } from "@/lib/db/supabase";
 import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
+import { fetchWithTimeout } from "@/lib/net/freshFetch";
 
 interface AnalyzeParams {
   mode: AiMode;
@@ -39,7 +40,7 @@ export async function getAiHeaders() {
 
 export async function analyzeSelection(params: AnalyzeParams): Promise<AiAnalysis> {
   const headers = await getAiHeaders();
-  const res = await fetch("/api/ai/analyze", {
+  const res = await fetchWithTimeout("/api/ai/analyze", {
     method: "POST",
     headers,
     body: JSON.stringify(params),
@@ -68,7 +69,7 @@ export async function analyzeSentence(params: AnalyzeParams): Promise<{
   };
 }> {
   const headers = await getAiHeaders();
-  const res = await fetch("/api/ai/analyze-sentence", {
+  const res = await fetchWithTimeout("/api/ai/analyze-sentence", {
     method: "POST",
     headers,
     body: JSON.stringify(params),

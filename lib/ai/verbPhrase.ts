@@ -1,9 +1,10 @@
 import { getAiHeaders } from "@/lib/ai/analyze";
 import type { VerbPhrasePromptParams } from "@/lib/ai/buildVerbPhrasePrompt";
+import { fetchWithTimeout } from "@/lib/net/freshFetch";
 
 export async function fetchVerbPhrase(params: VerbPhrasePromptParams): Promise<{ example: string; exampleTranslation: string }> {
   const headers = await getAiHeaders();
-  const res = await fetch("/api/ai/verb-phrase", {
+  const res = await fetchWithTimeout("/api/ai/verb-phrase", {
     method: "POST",
     headers,
     body: JSON.stringify(params),
