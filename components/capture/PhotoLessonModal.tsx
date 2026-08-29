@@ -49,6 +49,28 @@ function describeNetworkFailure(err: unknown, fallback: string): string {
   return message || fallback;
 }
 
+/**
+ * Reads a fetch response as JSON without leaking a raw `SyntaxError` when the
+ * body isn't JSON at all.
+ *
+ * A slow read — a dense word list, several dozen entries each needing forms
+ * and an example — can run the serverless function past its time limit. The
+ * platform then kills it and answers with its OWN html error page instead of
+ * ours, so `res.json()` throws on the leading "<" of "<!DOCTYPE …" and the
+ * raw parser error ends up on screen, meaningless to the person reading it.
+ */
+async function readJsonResponse<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    if (res.status === 502 || res.status === 504) {
+      throw new Error("Сервер не успел обработать снимок за отведённое время. Обрежьте кадр плотнее — так модель прочитает его быстрее — и попробуйте ещё раз.");
+    }
+    throw new Error(res.ok ? "Сервер прислал испорченный ответ. Попробуйте ещё раз." : `Сервер ответил неожиданно (${res.status}). Попробуйте ещё раз.`);
+  }
+}
+
 function languageName(code: string): string {
   return SUPPORTED_LANGUAGES.find((l) => l.code === code)?.nameNative ?? code.toUpperCase();
 }
@@ -178,9 +200,9 @@ export function PhotoLessonModal({
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ image: cropped, targetLanguage, nativeLanguage, note: note.trim() }),
       });
-      const data = await res.json() as {
+      const data = await readJsonResponse<{
         added?: number; updated?: number; total?: number; warning?: string; error?: string;
-      };
+      }>(res);
       if (!res.ok) throw new Error(data.error ?? `Ошибка распознавания (${res.status})`);
       onWordsAdded?.({
         added: data.added ?? 0,
@@ -208,7 +230,7 @@ export function PhotoLessonModal({
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ image: cropped, homeworkDate, targetLanguage, nativeLanguage, note: note.trim() }),
       });
-      const data = await res.json() as { id?: string; error?: string; warning?: string };
+      const data = await readJsonResponse<{ id?: string; error?: string; warning?: string }>(res);
       if (!res.ok || !data.id) throw new Error(data.error ?? `Ошибка распознавания (${res.status})`);
       onCreated(data.id, data.warning);
     } catch (err) {
@@ -243,7 +265,7 @@ export function PhotoLessonModal({
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
         body: JSON.stringify({ image: cropped }),
       });
-      const data = await res.json() as Extracted & { error?: string };
+      const data = await readJsonResponse<Extracted & { error?: string }>(res);
       if (!res.ok) throw new Error(data.error ?? `Ошибка распознавания (${res.status})`);
 
       setExtracted(data);
@@ -281,7 +303,7 @@ export function PhotoLessonModal({
           isStudyMaterial: source.isStudyMaterial === true,
         }),
       });
-      const data = await res.json() as { id?: string; error?: string; warning?: string };
+      const data = await readJsonResponse<{ id?: string; error?: string; warning?: string }>(res);
       if (!res.ok || !data.id) throw new Error(data.error ?? `Ошибка создания урока (${res.status})`);
       onCreated(data.id, data.warning);
     } catch (err) {

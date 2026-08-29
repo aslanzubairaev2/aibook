@@ -507,7 +507,7 @@ export function NounsView({ profile, onBack }: Props) {
                           className="dict-train-btn"
                           onClick={() => trainPack(group.key, group.nouns.filter((n) => !progress.words[n.id]?.ok))}
                         >
-                          Только незнакомые ({group.nouns.length - coverage.learned})
+                          Незнакомые ({group.nouns.length - coverage.learned})
                         </button>
                       )}
                       {coverage.learned + coverage.seen > 0 && (
@@ -540,11 +540,14 @@ export function NounsView({ profile, onBack }: Props) {
                               return (
                                 <tr
                                   key={entry.id}
-                                  className={`verb-row noun-row gender-row-${gender}${state?.ok ? " noun-row-learned" : ""}`}
+                                  className={`verb-row noun-row gender-row-${gender}${state?.ok ? " noun-row-learned" : ""}${hideArticles ? " noun-row-blind" : ""}`}
                                   onClick={() => setGrammarEntry(entry)}
                                 >
                                   <td className="verb-cell-infinitive">
                                     <span className="verb-form-row">
+                                      {/* Blurring just the article text is not a self-test when the
+                                          word and the row's own edge still shout its gender in colour —
+                                          .noun-row-blind mutes both until the row is hovered/focused. */}
                                       <span className="noun-headword">
                                         {article && (
                                           <span className={`noun-article gender-${gender}${hideArticles ? " noun-article-hidden" : ""}`}>

@@ -2116,12 +2116,19 @@ textarea,
 
 .dict-batch-actions {
   display: flex; align-items: center; gap: 8px;
+  /* Two pills plus a reset circle can outgrow a narrow phone; without this a
+     button that doesn't fit shrank until its OWN text wrapped mid-phrase and
+     spilled past the pill's rounded corners. Wrapping the row instead sends a
+     whole button down to its own line — see the nowrap paired with this
+     below. */
+  flex-wrap: wrap;
   padding: 10px 14px 12px;
 }
 /* Same shape as the buttons beside it — see .dict-batch-actions .icon-btn. */
 .dict-train-btn {
-  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  height: 36px; font-size: 13px; font-weight: 800;
+  flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 36px; padding: 0 14px; font-size: 13px; font-weight: 800;
+  white-space: nowrap;
   background: rgba(212, 168, 71, 0.13); color: var(--accent);
   border: 1px solid rgba(212, 168, 71, 0.4); border-radius: 999px;
   cursor: pointer; transition: all 0.2s;
@@ -2482,6 +2489,30 @@ textarea,
    on hover like every other covered cell on these screens. */
 .noun-article-hidden { filter: blur(6px); opacity: 0.5; transition: filter 0.15s, opacity 0.15s; }
 .noun-article-hidden:hover { filter: none; opacity: 1; }
+
+/* Blurring only the article text is not a self-test if the word's own colour
+   and the row's left edge still announce the gender — the whole point of
+   hiding it. .noun-row-blind mutes both to a neutral tone while the article
+   is hidden, and reveals everything together, same trigger as the article
+   itself, on hover/focus. */
+.noun-row-blind.gender-row-m,
+.noun-row-blind.gender-row-f,
+.noun-row-blind.gender-row-n,
+.noun-row-blind.gender-row-pl { border-left-color: var(--border); transition: border-color 0.15s; }
+.noun-row-blind .noun-headword .gender-m,
+.noun-row-blind .noun-headword .gender-f,
+.noun-row-blind .noun-headword .gender-n,
+.noun-row-blind .noun-headword .gender-pl { color: var(--text-primary); transition: color 0.15s; }
+
+.noun-row-blind.gender-row-m:hover, .noun-row-blind.gender-row-m:focus-within { border-left-color: #6ea8e0; }
+.noun-row-blind.gender-row-f:hover, .noun-row-blind.gender-row-f:focus-within { border-left-color: #e08aa8; }
+.noun-row-blind.gender-row-n:hover, .noun-row-blind.gender-row-n:focus-within { border-left-color: #7fc9a0; }
+.noun-row-blind.gender-row-pl:hover, .noun-row-blind.gender-row-pl:focus-within { border-left-color: #d0b45e; }
+
+.noun-row-blind:hover .noun-headword .gender-m, .noun-row-blind:focus-within .noun-headword .gender-m { color: #6ea8e0; }
+.noun-row-blind:hover .noun-headword .gender-f, .noun-row-blind:focus-within .noun-headword .gender-f { color: #e08aa8; }
+.noun-row-blind:hover .noun-headword .gender-n, .noun-row-blind:focus-within .noun-headword .gender-n { color: #7fc9a0; }
+.noun-row-blind:hover .noun-headword .gender-pl, .noun-row-blind:focus-within .noun-headword .gender-pl { color: #d0b45e; }
 
 /* Two toggles on the left, the camera on the right. */
 .verbs-fab-group { display: flex; gap: 10px; pointer-events: none; }

@@ -544,7 +544,7 @@ export function VerbsView({ profile, onBack }: Props) {
                           className="dict-train-btn"
                           onClick={() => trainPack(group.key, group.verbs.filter((v) => !progress.words[v.id]?.ok))}
                         >
-                          Только незнакомые ({group.verbs.length - coverage.learned})
+                          Незнакомые ({group.verbs.length - coverage.learned})
                         </button>
                       )}
                       {coverage.learned + coverage.seen > 0 && (
