@@ -1,22 +1,17 @@
 export const AI_CONFIG = {
   model: "gemini-3.1-flash-lite",
   /**
-   * "Обсудить с AI" — единственное место, которое рассуждает, а не извлекает
-   * поля, поэтому оно не идёт на lite-модели вместе со всем остальным.
-   *
-   * Но и топовая модель здесь не нужна: `gemini-3.7-flash` отвечала заметно
-   * медленнее и дороже, а разница в качестве разбора слова для учащегося не
-   * окупала ожидания. Обычный flash — компромисс: рассуждать умеет, отвечает
-   * быстро.
+   * "Обсудить с AI" — по явному решению владельца работает на той же
+   * lite-модели, что и всё остальное: скорость и стоимость важнее того
+   * прироста качества рассуждения, который даёт полноразмерный flash.
    *
    * Промпт при этом не менялся — см. `buildDiscussPrompt`.
    *
-   * Если ключ не дотягивается до этой модели, маршрут после первой 404
-   * переходит на `model`, а не роняет чат. Поэтому опустить обсуждение до
-   * самой быстрой модели можно одной переменной окружения:
-   * NEXT_PUBLIC_GEMINI_DISCUSS_MODEL=gemini-3.1-flash-lite
+   * Понизить/повысить без правки кода можно переменной окружения, например
+   * NEXT_PUBLIC_GEMINI_DISCUSS_MODEL=gemini-3.1-flash — маршрут при этом уже
+   * умеет падать обратно на `model`, если ключ не дотягивается до заданной.
    */
-  discussModel: process.env.NEXT_PUBLIC_GEMINI_DISCUSS_MODEL || "gemini-3.1-flash",
+  discussModel: process.env.NEXT_PUBLIC_GEMINI_DISCUSS_MODEL || "gemini-3.1-flash-lite",
   /** A discussion answer carries several examples and their translations. */
   discussMaxOutputTokens: 4096,
   maxOutputTokens: 1024,
