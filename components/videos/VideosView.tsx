@@ -8,6 +8,7 @@ import type { VideoCategory, VideoCefrLevel, VideoDurationFilter, VideoItem, Vid
 import type { Flashcard, UserProfile } from "@/lib/types";
 import { VideoCard } from "./VideoCard";
 import { VideoPlayerModal } from "./VideoPlayerModal";
+import { sbGetVideoLibrary, sbUpsertVideoLibrary } from "@/lib/db/supabase";
 
 type Props = {
   cards: Flashcard[];
@@ -15,6 +16,7 @@ type Props = {
   initialQuery?: string | null;
   initialLanguage?: string | null;
   onAddCard?: (card: Flashcard) => void;
+  userId?: string | null;
 };
 
 type SearchResponse = {
@@ -41,7 +43,7 @@ async function getVideoSearchHeaders(): Promise<HeadersInit> {
   }
 }
 
-export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }: Props) {
+export function VideosView({ profile, initialQuery, initialLanguage, onAddCard, userId }: Props) {
   const defaultLang = initialLanguage === "en" || profile.targetLanguage === "en" ? "en" : "de";
   const [selectedLang, setSelectedLang] = useState<"de" | "en" | "all">(defaultLang);
   const [selectedCefr, setSelectedCefr] = useState<VideoCefrLevel>("all");
@@ -64,6 +66,7 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
   const [favorites, setFavorites] = useState<VideoItem[]>([]);
   const [history, setHistory] = useState<VideoItem[]>([]);
   const [collection, setCollection] = useState<VideoCollection>("search");
+  const [progress, setProgress] = useState<Record<string, { percent: number; position: number; maxPosition: number }>>({});
   const requestId = useRef(0);
 
   useEffect(() => {
@@ -76,12 +79,44 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
     }
   }, []);
 
+  useEffect(() => {
+    if (!userId) return;
+    void sbGetVideoLibrary(userId).then((rows) => {
+      const nextProgress: Record<string, { percent: number; position: number; maxPosition: number }> = {};
+      const remoteFavorites: VideoItem[] = [];
+      const remoteHistory: VideoItem[] = [];
+      for (const row of rows) {
+        nextProgress[row.youtube_id] = { percent: Number(row.progress_percent) || 0, position: Number(row.last_position_seconds) || 0, maxPosition: Number(row.max_position_seconds) || 0 };
+        const video: VideoItem = {
+          id: `yt-${row.youtube_id}`,
+          youtubeId: row.youtube_id,
+          title: row.title,
+          channel: row.channel,
+          language: row.language as VideoItem["language"],
+          duration: row.duration,
+          thumbnailUrl: row.thumbnail_url ?? undefined,
+          description: row.description ?? undefined,
+          cefrLevel: row.cefr_level as VideoItem["cefrLevel"],
+          category: row.category as VideoItem["category"],
+          tags: [],
+          source: "network",
+        };
+        if (row.is_favorite) remoteFavorites.push(video);
+        remoteHistory.push(video);
+      }
+      setProgress(nextProgress);
+      setFavorites(remoteFavorites);
+      setHistory(remoteHistory);
+    });
+  }, [userId]);
+
   const toggleFavorite = (video: VideoItem) => {
     setFavorites((current) => {
       const next = current.some((item) => item.youtubeId === video.youtubeId)
         ? current.filter((item) => item.youtubeId !== video.youtubeId)
         : [video, ...current].slice(0, 100);
       localStorage.setItem(VIDEO_FAVORITES_KEY, JSON.stringify(next));
+      if (userId) void sbUpsertVideoLibrary({ user_id: userId, video, is_favorite: next.some((item) => item.youtubeId === video.youtubeId) });
       return next;
     });
   };
@@ -90,6 +125,7 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
     setHistory((current) => {
       const next = [video, ...current.filter((item) => item.youtubeId !== video.youtubeId)].slice(0, 100);
       localStorage.setItem(VIDEO_HISTORY_KEY, JSON.stringify(next));
+      if (userId) void sbUpsertVideoLibrary({ user_id: userId, video, is_favorite: favorites.some((item) => item.youtubeId === video.youtubeId), last_position_seconds: progress[video.youtubeId]?.position || 0, max_position_seconds: progress[video.youtubeId]?.maxPosition || 0, progress_percent: progress[video.youtubeId]?.percent || 0 });
       return next;
     });
     setActiveVideo(video);
@@ -280,13 +316,17 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
       {!isLoading && !error && (() => {
         const visibleVideos = collection === "favorites" ? favorites : collection === "history" ? history : videos;
         return visibleVideos.length > 0
-          ? <div className="videos-grid">{visibleVideos.map((video) => <VideoCard key={video.youtubeId} video={video} onSelect={selectVideo} isFavorite={favorites.some((item) => item.youtubeId === video.youtubeId)} onToggleFavorite={toggleFavorite} />)}</div>
+          ? <div className="videos-grid">{visibleVideos.map((video) => <VideoCard key={video.youtubeId} video={video} onSelect={selectVideo} progressPercent={progress[video.youtubeId]?.percent} isFavorite={favorites.some((item) => item.youtubeId === video.youtubeId)} onToggleFavorite={toggleFavorite} />)}</div>
           : <div className="seed-card videos-empty"><p>{collection === "favorites" ? "Здесь появятся видео, которые вы сохраните." : collection === "history" ? "История просмотров пока пуста." : "Ничего не найдено. Уберите один из фильтров или попробуйте другую формулировку."}</p></div>;
       })()}
 
       {nextPage !== null && !error && <div className="videos-load-more"><button type="button" className="videos-search-submit-btn" onClick={() => void loadVideos(nextPage, true)} disabled={isLoadingMore}>{isLoadingMore ? <><Loader2 size={14} className="spin" /> Ищем ещё…</> : "Показать ещё"}</button></div>}
 
-      {activeVideo && <VideoPlayerModal video={activeVideo} profile={profile} onClose={() => setActiveVideo(null)} onAddCard={onAddCard} />}
+      {activeVideo && <VideoPlayerModal video={activeVideo} profile={profile} onClose={() => setActiveVideo(null)} onAddCard={onAddCard} onProgress={(current, duration, cueIndex, cueText) => {
+        const percent = duration > 0 ? Math.min(100, (current / duration) * 100) : 0;
+        setProgress((previous) => ({ ...previous, [activeVideo.youtubeId]: { percent, position: current, maxPosition: Math.max(previous[activeVideo.youtubeId]?.maxPosition || 0, current) } }));
+        if (userId) void sbUpsertVideoLibrary({ user_id: userId, video: activeVideo, is_favorite: favorites.some((item) => item.youtubeId === activeVideo.youtubeId), last_position_seconds: current, max_position_seconds: Math.max(progress[activeVideo.youtubeId]?.maxPosition || 0, current), progress_percent: percent, last_cue_index: cueIndex, last_cue_text: cueText });
+      }} />}
     </div>
   );
 }

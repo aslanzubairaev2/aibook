@@ -320,6 +320,17 @@
   z-index: 10001;
 }
 
+.video-discuss-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10002;
+  pointer-events: auto;
+}
+
+.video-discuss-modal-layer .discuss-backdrop {
+  z-index: 10002;
+}
+
 .video-modal-content {
   position: relative;
   background: var(--bg-card, #1c1915);
@@ -757,6 +768,67 @@
   flex-direction: column;
 }
 
+@media (min-width: 900px) {
+  .video-full-transcript-panel {
+    max-height: 340px;
+  }
+
+  .video-transcript-item {
+    min-height: 42px;
+    padding-block: 9px;
+  }
+}
+
+.video-player-progress {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.video-player-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.video-modal-fullscreen-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.video-modal-fullscreen-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.video-modal-content:fullscreen {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg-card, #1c1915);
+}
+
+.video-modal-content:fullscreen .video-player-container {
+  max-height: 62vh;
+  aspect-ratio: 16 / 9;
+  margin-inline: auto;
+}
+
+.video-modal-content:fullscreen .video-full-transcript-panel {
+  max-height: 32vh;
+}
+
 .video-transcript-text {
   display: block;
   overflow-wrap: anywhere;
@@ -789,6 +861,7 @@
 }
 
 .video-cue-action-btn:hover,
+.video-cue-action-btn.active,
 .video-cue-actions .speak-btn:hover {
   border-color: rgba(212, 168, 71, 0.55);
   background: rgba(212, 168, 71, 0.2);
@@ -818,6 +891,22 @@
   background: rgba(18, 16, 14, 0.78);
   color: var(--text-primary);
   cursor: pointer;
+}
+
+.video-progress-track {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.video-progress-track span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
 }
 
 .video-favorite-btn:hover,

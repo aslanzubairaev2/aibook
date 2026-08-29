@@ -1519,6 +1519,7 @@ export function DiscoverView({
         <VideosView
           cards={cards}
           profile={profile}
+          userId={user?.id ?? null}
           initialQuery={initialVideoQuery}
           initialLanguage={initialVideoLang}
           onAddCard={onAddCard || (() => {})}

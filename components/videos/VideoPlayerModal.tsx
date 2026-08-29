@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { X, ExternalLink, Subtitles, ListMusic, Loader2, Eye, EyeOff, MessageCircle, Plus } from "lucide-react";
+import { X, Subtitles, ListMusic, Loader2, Eye, EyeOff, MessageCircle, Plus, Repeat2, Maximize2, Minimize2 } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 import type { SubtitleCue } from "@/lib/videos/youtubeTranscript";
 import type { UserProfile, Flashcard, AiAnalysis, DiscussMessage } from "@/lib/types";
@@ -25,6 +25,7 @@ type Props = {
   profile: UserProfile;
   onClose: () => void;
   onAddCard?: (card: Flashcard) => void;
+  onProgress?: (current: number, duration: number, cueIndex: number, cueText: string | null) => void;
 };
 
 const TRANSLATION_PREFETCH_CUES = 4;
@@ -34,6 +35,7 @@ export function VideoPlayerModal({
   profile,
   onClose,
   onAddCard,
+  onProgress,
 }: Props) {
   const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [isLoadingCues, setIsLoadingCues] = useState(true);
@@ -55,12 +57,27 @@ export function VideoPlayerModal({
   const [cueCardLoading, setCueCardLoading] = useState<number | null>(null);
   const [discussCue, setDiscussCue] = useState<{ index: number; text: string } | null>(null);
   const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
+  const [repeatCueIndex, setRepeatCueIndex] = useState<number | null>(null);
+  const [isVideoFullscreen, setIsVideoFullscreen] = useState(false);
+  const [watchedPercent, setWatchedPercent] = useState(0);
 
   const playerRef = useRef<any>(null);
+  const modalContentRef = useRef<HTMLDivElement>(null);
   const activeCueScrollRef = useRef<HTMLDivElement>(null);
   const activeCueItemRef = useRef<HTMLDivElement>(null);
   const cuesRef = useRef<SubtitleCue[]>([]);
   const lastCueIdxRef = useRef(-1);
+  const lastProgressReportRef = useRef(0);
+  const repeatCueIndexRef = useRef<number | null>(null);
+  const onProgressRef = useRef(onProgress);
+  repeatCueIndexRef.current = repeatCueIndex;
+  onProgressRef.current = onProgress;
+
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsVideoFullscreen(document.fullscreenElement === modalContentRef.current);
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
 
   const nativeLanguage = profile.nativeLanguage || "ru";
   const targetLanguage = video.language || profile.targetLanguage || "de";
@@ -147,10 +164,26 @@ export function VideoPlayerModal({
             // Find which cue is active at this time
             const cs = cuesRef.current;
             const idx = cs.findIndex((c) => t >= c.start && t < c.end);
+            const repeatedIndex = repeatCueIndexRef.current;
+            const repeatedCue = repeatedIndex === null ? null : cs[repeatedIndex];
+            if (repeatedCue && t >= repeatedCue.end) {
+              try {
+                playerRef.current.seekTo(repeatedCue.start, true);
+                playerRef.current.playVideo();
+              } catch {}
+              return;
+            }
             // Only trigger re-render when the active cue changes
             if (idx !== lastCueIdxRef.current) {
               lastCueIdxRef.current = idx;
               setCurrentTime(t);
+            }
+            if (onProgressRef.current && t - lastProgressReportRef.current >= 2) {
+              lastProgressReportRef.current = t;
+              const duration = typeof playerRef.current.getDuration === "function" ? playerRef.current.getDuration() : 0;
+              const safeDuration = typeof duration === "number" && Number.isFinite(duration) ? duration : 0;
+              if (safeDuration > 0) setWatchedPercent(Math.min(100, (t / safeDuration) * 100));
+              onProgressRef.current(t, safeDuration, idx, cs[idx]?.text || null);
             }
           }
         } catch {}
@@ -388,14 +421,26 @@ export function VideoPlayerModal({
     setCueCardLoading(null);
   };
 
-  const handleDiscussCue = (index: number) => {
+  const handleDiscussCue = (index: number, selectedText?: string) => {
     const cue = cues[index];
     if (!cue) return;
     if (playerRef.current && typeof playerRef.current.pauseVideo === "function") {
       try { playerRef.current.pauseVideo(); } catch {}
     }
-    setDiscussCue({ index, text: cue.text });
+    setDiscussCue({ index, text: selectedText?.trim() || cue.text });
     setDiscussMessages([]);
+  };
+
+  const handleCueTextSelection = (index: number) => {
+    const selection = window.getSelection();
+    const text = selection?.toString().trim() || "";
+    if (!selection || text.split(/\s+/).length < 2) return;
+    const anchor = selection.anchorNode;
+    const focus = selection.focusNode;
+    const container = document.querySelector(`[data-cue-text="${index}"]`);
+    if (!container || !anchor || !focus || !container.contains(anchor) || !container.contains(focus)) return;
+    selection.removeAllRanges();
+    handleDiscussCue(index, text);
   };
 
   useEffect(() => {
@@ -412,6 +457,16 @@ export function VideoPlayerModal({
       }
       const cueIndex = activeCueIndex;
       const cue = cueIndex >= 0 ? cues[cueIndex] : null;
+      if (event.code === "ArrowUp" || event.code === "ArrowDown") {
+        const nextIndex = event.code === "ArrowUp"
+          ? Math.max(0, cueIndex > 0 ? cueIndex - 1 : cues.findIndex((item) => item.start < currentTime))
+          : cueIndex >= 0 ? Math.min(cues.length - 1, cueIndex + 1) : cues.findIndex((item) => item.start > currentTime);
+        if (nextIndex >= 0 && cues[nextIndex]) {
+          event.preventDefault();
+          handleSeekToCue(cues[nextIndex].start);
+        }
+        return;
+      }
       if (!cue) return;
 
       if (event.code === "Numpad4") {
@@ -431,7 +486,7 @@ export function VideoPlayerModal({
 
     window.addEventListener("keydown", handleVideoShortcut);
     return () => window.removeEventListener("keydown", handleVideoShortcut);
-  }, [activeCueIndex, cues, discussCue, handleAddCueCard, handleDiscussCue, isWordModalOpen, targetLanguage]);
+  }, [activeCueIndex, cues, currentTime, discussCue, handleAddCueCard, handleDiscussCue, isWordModalOpen, targetLanguage]);
 
   // Format seconds to mm:ss
   const formatTime = (sec: number) => {
@@ -439,8 +494,6 @@ export function VideoPlayerModal({
     const s = Math.floor(sec % 60);
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
-
-  const youtubeWatchUrl = `https://www.youtube.com/watch?v=${video.youtubeId}`;
 
   // Helper to tokenize subtitle text into words
   const renderInteractiveSubtitleText = (text: string) => {
@@ -476,7 +529,7 @@ export function VideoPlayerModal({
         aria-modal="true"
         aria-labelledby="video-modal-title"
       >
-        <div className="video-modal-content" onClick={(e) => e.stopPropagation()}>
+        <div ref={modalContentRef} className="video-modal-content" onClick={(e) => e.stopPropagation()}>
           {/* Header */}
           <header className="video-modal-header">
             <div className="video-modal-title-wrap">
@@ -498,6 +551,18 @@ export function VideoPlayerModal({
             </div>
             <button
               type="button"
+              className="video-modal-fullscreen-btn"
+              onClick={() => {
+                if (document.fullscreenElement) void document.exitFullscreen();
+                else void modalContentRef.current?.requestFullscreen();
+              }}
+              aria-label={isVideoFullscreen ? "Свернуть видео" : "Развернуть видео вместе с репликами"}
+              title={isVideoFullscreen ? "Свернуть видео" : "Развернуть видео вместе с репликами"}
+            >
+              {isVideoFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+            </button>
+            <button
+              type="button"
               className="video-modal-close-btn"
               onClick={onClose}
               aria-label="Закрыть плеер"
@@ -517,6 +582,7 @@ export function VideoPlayerModal({
           <div className="video-player-container">
             <div id="yt-player-target" className="video-iframe" />
           </div>
+          <div className="video-player-progress" aria-label={`Просмотрено ${Math.round(watchedPercent)} процентов`}><span style={{ width: `${watchedPercent}%` }} /></div>
 
           {/* ── Synchronized Interactive Subtitle Bar ──────────────────────── */}
           {isLoadingCues ? (
@@ -583,13 +649,13 @@ export function VideoPlayerModal({
                     >
                       <span className="transcript-time">{formatTime(cue.start)}</span>
                       <div className="transcript-line">
-                        <span className="video-transcript-text">{renderInteractiveSubtitleText(cue.text)}</span>
+                        <span className="video-transcript-text" data-cue-text={idx} onMouseUp={() => handleCueTextSelection(idx)} onTouchEnd={() => handleCueTextSelection(idx)}>{renderInteractiveSubtitleText(cue.text)}</span>
                         {renderCueTranslation(idx, false, undefined, false)}
                       </div>
                       <div className="video-cue-actions" aria-label="Действия с репликой">
                         <button
                           type="button"
-                          className="video-cue-action-btn"
+                          className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
                           onClick={(event) => { event.stopPropagation(); toggleCueTranslation(idx); }}
                           aria-label={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
                           title={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
@@ -597,6 +663,24 @@ export function VideoPlayerModal({
                           {isTranslationVisible(idx) ? <EyeOff size={14} /> : <Eye size={14} />}
                         </button>
                         <SpeakButton text={cue.text} lang={targetLanguage} size={14} />
+                        <button
+                          type="button"
+                          className="video-cue-action-btn"
+                          onClick={(event) => { event.stopPropagation(); setRepeatCueIndex((current) => current === idx ? null : idx); }}
+                          aria-label={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
+                          title={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
+                        >
+                          <Repeat2 size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
+                          onClick={(event) => { event.stopPropagation(); setRepeatCueIndex((current) => current === idx ? null : idx); }}
+                          aria-label={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
+                          title={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
+                        >
+                          <Repeat2 size={14} />
+                        </button>
                         <button
                           type="button"
                           className="video-cue-action-btn"
@@ -624,24 +708,6 @@ export function VideoPlayerModal({
             </div>
           )}
 
-          {/* Footer Action Links */}
-          <div className="video-modal-footer">
-            <div className="video-modal-footer-row">
-              <a
-                href={youtubeWatchUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="video-open-yt-btn"
-              >
-                <ExternalLink size={13} />
-                <span>Открыть на YouTube</span>
-              </a>
-
-              {video.description && (
-                <span className="video-modal-short-desc">{video.description}</span>
-              )}
-            </div>
-          </div>
         </div>
       </div>
 
@@ -680,6 +746,7 @@ export function VideoPlayerModal({
       )}
 
       {discussCue && (
+        <div className="video-discuss-modal-layer">
         <DiscussAiModal
           isOpen
           mode="sentence"
@@ -694,6 +761,7 @@ export function VideoPlayerModal({
           onClose={() => setDiscussCue(null)}
           onWordTap={(word, contextSentence) => void handleWordTap(word, contextSentence)}
         />
+        </div>
       )}
     </>
   );

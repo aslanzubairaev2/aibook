@@ -9,9 +9,10 @@ type Props = {
   onSelect: (video: VideoItem) => void;
   isFavorite?: boolean;
   onToggleFavorite?: (video: VideoItem) => void;
+  progressPercent?: number;
 };
 
-export function VideoCard({ video, onSelect, isFavorite = false, onToggleFavorite }: Props) {
+export function VideoCard({ video, onSelect, isFavorite = false, onToggleFavorite, progressPercent = 0 }: Props) {
   const [imgError, setImgError] = useState(false);
 
   const thumbUrl =
@@ -75,6 +76,7 @@ export function VideoCard({ video, onSelect, isFavorite = false, onToggleFavorit
             <Heart size={14} fill={isFavorite ? "currentColor" : "none"} />
           </button>
         )}
+        {progressPercent > 0 && <div className="video-progress-track" aria-label={`Просмотрено ${Math.round(progressPercent)} процентов`}><span style={{ width: `${Math.min(100, progressPercent)}%` }} /></div>}
       </div>
 
       <div className="video-card-body">
