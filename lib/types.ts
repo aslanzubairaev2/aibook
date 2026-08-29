@@ -4,8 +4,15 @@ export type SelectionType = "word" | "phrase" | "sentence";
 export type TtsProvider =
   | "local" | "gemini" | "deepgram" | "speechify" | "inworld" | "openai" | "cartesia" | "elevenlabs";
 
-/** Which engine powers the Live Translate screen — see components/live-translate. */
-export type LiveTranslateProvider = "gemini" | "openai";
+/**
+ * Which engine powers the Live Translate screen — see components/live-translate.
+ * - "gemini": Gemini's live-translate-preview.
+ * - "openai": gpt-realtime-translate, OpenAI's dedicated translation session.
+ * - "openai-realtime": gpt-realtime-2.1, the general duplex model steered by
+ *   a system prompt into acting as a translator — the fallback tried when
+ *   the dedicated translate model's quality disappoints.
+ */
+export type LiveTranslateProvider = "gemini" | "openai" | "openai-realtime";
 
 export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated" | "librivox" | "archive_audio";

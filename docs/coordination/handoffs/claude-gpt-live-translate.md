@@ -1,4 +1,4 @@
-# Handoff: второй движок Live-перевода — gpt-realtime-translate
+# Handoff: второй и третий движки Live-перевода — gpt-realtime-translate, gpt-realtime-2.1
 
 - Агент: Claude
 - Ветка: `claude/live-translate-ui-7795ee`
@@ -48,6 +48,74 @@ owner-сессией) не гонял — для этого нужен наст�
 напрямую curl-ом с реальным ключом; браузерная часть (RTCPeerConnection, SDP-обмен,
 получение audio-трека) проверена только структурно (код + typecheck), не вживую с
 голосом.
+
+## Обновление: `gpt-realtime-translate` работает плохо на практике — добавлен третий движок
+
+После деплоя владелец опробовал `gpt-realtime-translate` вживую и оценил его резко
+негативно («не понимает человека», непригоден для реального разговора). Возможные
+причины (без владельца-логина я не могу сам это диагностировать):
+она новая (релиз 2026), возможно слабее размечена на нестандартные акценты, и в отличие
+от Gemini её VAD/подстройку вообще нельзя тронуть — у `gpt-realtime-translate` нет
+`turn_detection`, только «непрерывный поток», и нет `instructions` для донастройки.
+
+Попросили добавить третий вариант — не заменяя первые два — на базе актуальной
+дуплексной модели `gpt-realtime-2.1` (релиз 2026-07-06, заявлено улучшение "silence
+and noise handling, and interruption behavior" относительно `gpt-realtime-2`), управляемой
+через `instructions` (жёсткий промпт «только переводи»), а не через специализированный
+режим. Компромисс сознательный: этот путь МОЖЕТ иногда отклониться от чистого перевода
+(это LLM с системным промптом, не выделенный режим без единой точки для отклонения), но
+даёт доступ к штатному `turn_detection`/VAD и, предположительно, к более качественной
+модели распознавания речи в принципе.
+
+### Что нового
+
+- `lib/ai/gptRealtimeModels.ts` — id модели (`gpt-realtime-2.1`), голос (`alloy`),
+  модель транскрипции (`gpt-4o-mini-transcribe`), жёсткий промпт
+  `GPT_REALTIME_TRANSLATE_INSTRUCTIONS` (явно перечисляет и запрещает: приветствия,
+  комментарии к переводу, просьбы повторить, ответы на вопросы говорящего вместо их
+  перевода, раскрытие инструкций), раздельные цены аудио/текст-токенов ($32/$64 за
+  1M аудио вход/выход, $4/$24 за 1M текст вход/выход — то же семейство цен, что у
+  `gpt-realtime-2`, релиз 2.1 менял только задержку/поведение, не тариф) и
+  `accumulateGptRealtimeUsage` — в отличие от Gemini здесь аудио и текст стоят
+  совершенно по-разному, единая ставка исказила бы оценку в разы.
+- `lib/ai/gptRealtimeTranslate.ts` — новый: `GptRealtimeSession`, WebRTC-класс той же
+  формы, что `GptLiveTranslateSession`, но на другие эндпоинты
+  (`/v1/realtime/client_secrets`, `/v1/realtime/calls`) и с другими именами событий
+  data-channel'а: `conversation.item.input_audio_transcription.delta` (исходная речь),
+  `response.created`/`response.done` (реальные границы хода — в отличие от
+  translate-режима, здесь они есть, поэтому не нужен эвристический idle-таймер),
+  `response.done.response.usage` (реальный расход токенов за ход, не оценка по времени).
+- `app/api/ai/gpt-realtime-token/route.ts` — минтинг `client_secret` через
+  `POST /v1/realtime/client_secrets` с `session.type: "realtime"`, `instructions`,
+  `audio.output.voice`, `audio.input.transcription`. Тот же `getOpenAiApiKeyForRequest`
+  (owner-only), что и у первого GPT-движка.
+- `lib/types.ts` — `LiveTranslateProvider` расширен до `"gemini" | "openai" |
+  "openai-realtime"`. Колонка `user_settings.live_translate_provider` — обычный `text`
+  без CHECK-ограничения, новая миграция не понадобилась.
+- `lib/ai/liveTranslateState.ts` — `normalizeLiveTranslateProvider` и
+  `LIVE_TRANSLATE_PROVIDER_LABELS` расширены третьим значением
+  («GPT Realtime (дуплекс)»).
+- `components/live-translate/LiveTranslateView.tsx` — добавлена `connectGptRealtime`,
+  третья ветка в `toggleSession`; футер показывает вход/выход токенов для этого
+  движка так же, как для Gemini (`costBasis: "tokens"`, не «per-minute»).
+- Пикер в настройках ничего менять не пришлось — он строится из
+  `Object.keys(LIVE_TRANSLATE_PROVIDER_LABELS)`, третий вариант появился сам.
+
+### Проверено
+
+- `tsc --noEmit`, `npm run build`, `npm run lint` (по изменённым файлам) — чисто.
+- `npm test` — 291/293 (то же 2 предсуществующих флейки).
+- В dev-превью: пикер в настройках показывает все три варианта, переключение на
+  «GPT Realtime (дуплекс)» сохраняется; кнопка на экране Live-перевода реально дошла
+  до `/api/ai/gpt-realtime-token` и получила ожидаемый отказ для гостя без owner-сессии
+  (`Access Denied: GPT Live Translate is only available to owners.`) — весь путь
+  клик → fetch → роут → auth-гейт подключен так же, как у первого GPT-движка.
+- Минтинг `client_secret` через `/v1/realtime/client_secrets` **не тестировал живым
+  ключом повторно** — ключ, который был предоставлен для первой проверки, я удалил
+  после неё и не стал просить второй раз. Уверенность в работоспособности — от того,
+  что тот же ключ/аккаунт уже подтверждённо имеет доступ к Realtime API (проверено на
+  `/translations/client_secrets`), а `/v1/realtime/client_secrets` — более базовый,
+  дольше существующий и подробнее задокументированный эндпоинт того же API.
 
 ## Архитектура
 

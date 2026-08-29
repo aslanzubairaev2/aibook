@@ -4,12 +4,14 @@ export type LiveTranslateState = "ready" | "connecting" | "listening" | "transla
 
 /** A stored value that predates the column, or that never got set, falls back to Gemini. */
 export function normalizeLiveTranslateProvider(value: unknown): LiveTranslateProvider {
-  return value === "openai" ? "openai" : "gemini";
+  if (value === "openai" || value === "openai-realtime") return value;
+  return "gemini";
 }
 
 export const LIVE_TRANSLATE_PROVIDER_LABELS: Record<LiveTranslateProvider, string> = {
   gemini: "Gemini Live",
   openai: "GPT Live",
+  "openai-realtime": "GPT Realtime (дуплекс)",
 };
 
 export type LiveUsageMetadata = {
@@ -29,7 +31,8 @@ export type LiveUsageTotals = {
   /**
    * How estimatedUsd was derived. gpt-realtime-translate bills a flat rate per
    * connected minute, not per token — there is no token breakdown to show, so
-   * the footer reads differently for it than for Gemini's token estimate.
+   * the footer reads differently for it than for Gemini's or gpt-realtime-2.1's
+   * token estimate.
    */
   costBasis?: "tokens" | "per-minute";
 };

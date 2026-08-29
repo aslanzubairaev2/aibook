@@ -6,9 +6,11 @@ import { getLocalGeminiKey } from "@/lib/db/local";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { LiveTranslateSession } from "@/lib/ai/liveTranslate";
 import { GptLiveTranslateSession } from "@/lib/ai/gptLiveTranslate";
+import { GptRealtimeSession } from "@/lib/ai/gptRealtimeTranslate";
 import { LIVE_TRANSLATE_LABELS, accumulateLiveUsage, appendTranscript, calculateLiveUsage, type LiveTranslateState, type LiveUsageMetadata, type LiveUsageTotals } from "@/lib/ai/liveTranslateState";
 import { LIVE_TRANSLATE_MODEL } from "@/lib/ai/liveModels";
 import { GPT_TRANSLATE_MODEL, GPT_TRANSLATE_USD_PER_MINUTE } from "@/lib/ai/gptTranslateModels";
+import { GPT_REALTIME_MODEL } from "@/lib/ai/gptRealtimeModels";
 import { keepScreenAwake, type ScreenAwakeHandle } from "@/lib/audio/wakeLock";
 import type { UserProfile } from "@/lib/types";
 
@@ -95,6 +97,22 @@ export function LiveTranslateView({ onBack, profile }: Props) {
     await session.connect();
   }
 
+  async function connectGptRealtime(headers: Record<string, string>) {
+    const response = await fetch("/api/ai/gpt-realtime-token", { headers });
+    const data = await response.json() as { token?: string; error?: string };
+    if (!response.ok || !data.token) throw new Error(data.error || "Токен недоступен");
+    const session = new GptRealtimeSession(data.token, {
+      onState: setState,
+      onSourceText: (text) => { transcriptRef.current = appendTranscript(transcriptRef.current, text); },
+      onUsage: (totals) => setUsage(totals),
+      onError: (kind, message) => { stopSession(); setState(kind); setError(message); },
+    });
+    sessionRef.current = session;
+    setSessionActive(true);
+    wakeRef.current = keepScreenAwake();
+    await session.connect();
+  }
+
   async function toggleSession() {
     if (sessionRef.current) { stopSession(); setState("stopped"); return; }
     setError(null);
@@ -104,6 +122,7 @@ export function LiveTranslateView({ onBack, profile }: Props) {
     try {
       const headers = await sbAuthHeaders();
       if (provider === "openai") await connectGpt(headers);
+      else if (provider === "openai-realtime") await connectGptRealtime(headers);
       else await connectGemini(headers);
     } catch (err) {
       stopSession();
@@ -113,7 +132,7 @@ export function LiveTranslateView({ onBack, profile }: Props) {
   }
 
   const running = sessionActive && !["ready", "stopped", "mic-error", "connection-error"].includes(state);
-  const modelLabel = provider === "openai" ? GPT_TRANSLATE_MODEL : LIVE_TRANSLATE_MODEL;
+  const modelLabel = provider === "openai" ? GPT_TRANSLATE_MODEL : provider === "openai-realtime" ? GPT_REALTIME_MODEL : LIVE_TRANSLATE_MODEL;
   // Driven by the selected engine, not usage.costBasis: before the first
   // session callback arrives, usage is still Gemini-shaped even when GPT is
   // the active provider, which would otherwise flash "вход 0 · выход 0".
