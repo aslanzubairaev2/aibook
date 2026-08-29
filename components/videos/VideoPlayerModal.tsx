@@ -8,6 +8,7 @@ import type { UserProfile, Flashcard, AiAnalysis, DiscussMessage } from "@/lib/t
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { SpeakButton } from "@/components/ui/SpeakButton";
+import { speak } from "@/lib/tts";
 import { analyzeSelection, getAiHeaders } from "@/lib/ai/analyze";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
@@ -397,6 +398,34 @@ export function VideoPlayerModal({
     setDiscussMessages([]);
   };
 
+  useEffect(() => {
+    const handleVideoShortcut = (event: KeyboardEvent) => {
+      if (event.repeat || isWordModalOpen || discussCue) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
+      const cueIndex = activeCueIndex;
+      const cue = cueIndex >= 0 ? cues[cueIndex] : null;
+      if (!cue) return;
+
+      if (event.code === "Numpad4") {
+        event.preventDefault();
+        toggleCueTranslation(cueIndex);
+      } else if (event.code === "Numpad5") {
+        event.preventDefault();
+        void speak(cue.text, targetLanguage);
+      } else if (event.code === "Numpad6") {
+        event.preventDefault();
+        handleDiscussCue(cueIndex);
+      } else if (event.code === "NumpadAdd" || event.key === "+") {
+        event.preventDefault();
+        void handleAddCueCard(cueIndex);
+      }
+    };
+
+    window.addEventListener("keydown", handleVideoShortcut);
+    return () => window.removeEventListener("keydown", handleVideoShortcut);
+  }, [activeCueIndex, cues, discussCue, handleAddCueCard, handleDiscussCue, isWordModalOpen, targetLanguage]);
+
   // Format seconds to mm:ss
   const formatTime = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -546,11 +575,20 @@ export function VideoPlayerModal({
                       onClick={() => handleSeekToCue(cue.start)}
                     >
                       <span className="transcript-time">{formatTime(cue.start)}</span>
-                      <span className="transcript-line">
+                      <div className="transcript-line">
                         {renderInteractiveSubtitleText(cue.text)}
-                        {renderCueTranslation(idx)}
-                      </span>
+                        {renderCueTranslation(idx, false, undefined, false)}
+                      </div>
                       <div className="video-cue-actions" aria-label="Действия с репликой">
+                        <button
+                          type="button"
+                          className="video-cue-action-btn"
+                          onClick={(event) => { event.stopPropagation(); toggleCueTranslation(idx); }}
+                          aria-label={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
+                          title={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
+                        >
+                          {isTranslationVisible(idx) ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
                         <SpeakButton text={cue.text} lang={targetLanguage} size={14} />
                         <button
                           type="button"
