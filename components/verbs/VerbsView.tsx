@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, ListChecks, Loader2, Repeat, Search, SlidersHorizontal, Wand2, X } from "lucide-react";
+import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, ListChecks, Loader2, Repeat, RotateCcw, Search, SlidersHorizontal, Wand2, X } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { GrammarModal } from "@/components/word-modal/GrammarModal";
 import { SpeakButton } from "@/components/ui/SpeakButton";
@@ -15,6 +15,9 @@ import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { getLocalConjugationTenses, getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, saveLocalConjugationTenses, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes } from "@/lib/db/local";
 import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_HINT, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
+import { usePackProgress } from "@/lib/srs/usePackProgress";
+import { formatTrainedAt, packCoverage } from "@/lib/srs/packProgress";
+import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
 
 type Props = {
@@ -84,6 +87,10 @@ export function VerbsView({ profile, onBack }: Props) {
 
   const [fillingIds, setFillingIds] = useState<Set<string>>(new Set());
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+
+  // How far each pack has been worked through — the same bookkeeping the noun
+  // trainer keeps, under its own module key.
+  const { progress, startSession, record, reset } = usePackProgress("verbs");
 
   const loadDictionary = useCallback(async () => {
     if (!userId) { setEntries([]); setBatches([]); setIsLoading(false); return; }
@@ -307,6 +314,12 @@ export function VerbsView({ profile, onBack }: Props) {
 
   const activeFilterCount = verbType !== "all" ? 1 : 0;
 
+  /** Starts a session on one pack — stamps it, then hands the words to the quiz. */
+  function trainPack(packKey: string, packVerbs: DictionaryEntry[]) {
+    startSession(packKey);
+    setQuizVerbs(packVerbs);
+  }
+
   if (quizVerbs) {
     return (
       <VerbsQuiz
@@ -316,6 +329,7 @@ export function VerbsView({ profile, onBack }: Props) {
         modes={quizModes}
         conjugationTenses={conjugationTenses}
         onExit={() => setQuizVerbs(null)}
+        onRecord={record}
       />
     );
   }
@@ -429,7 +443,7 @@ export function VerbsView({ profile, onBack }: Props) {
               </button>
             )}
             {verbs.length > 0 && (
-              <button type="button" className="dict-train-btn verbs-train-all-btn" onClick={() => setQuizVerbs(verbs)}>
+              <button type="button" className="dict-train-btn verbs-train-all-btn" onClick={() => trainPack("__all__", verbs)}>
                 <Dumbbell size={14} /> Тренировать всё
               </button>
             )}
@@ -500,6 +514,8 @@ export function VerbsView({ profile, onBack }: Props) {
               {groups.map((group) => {
                 const open = isNarrowed || openGroups.has(group.key);
                 const irregularCount = group.verbs.filter((v) => isIrregularGermanVerb(v.lemma, v.headword, v.forms)).length;
+                const coverage = packCoverage(progress, group.key, group.verbs.map((v) => v.id));
+                const trainedAt = formatTrainedAt(coverage.lastTrainedAt);
                 return (
                   <section key={group.key} className="dict-batch">
                     <button type="button" className="dict-batch-head" onClick={() => toggleGroup(group.key)}>
@@ -508,15 +524,40 @@ export function VerbsView({ profile, onBack }: Props) {
                         <span className="dict-batch-meta">
                           {group.verbs.length} {verbNoun(group.verbs.length)}
                           {irregularCount > 0 && ` · ${irregularCount} неправильных`}
+                          {trainedAt ? ` · тренировка ${trainedAt}` : " · ещё не тренировали"}
                         </span>
                       </div>
+                      <span className={`dict-batch-pct${coverage.percent >= 100 ? " done" : ""}`}>{coverage.percent}%</span>
                       <ChevronDown size={17} className={`dict-batch-chevron${open ? " open" : ""}`} />
                     </button>
 
+                    <PackBar coverage={coverage} />
+
                     <div className="dict-batch-actions">
-                      <button type="button" className="dict-train-btn" onClick={() => setQuizVerbs(group.verbs)}>
-                        <Dumbbell size={14} /> Тренировать эту пачку
+                      <button type="button" className="dict-train-btn" onClick={() => trainPack(group.key, group.verbs)}>
+                        <Dumbbell size={14} />
+                        {coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
                       </button>
+                      {coverage.percent < 100 && coverage.learned + coverage.seen > 0 && (
+                        <button
+                          type="button"
+                          className="dict-train-btn"
+                          onClick={() => trainPack(group.key, group.verbs.filter((v) => !progress.words[v.id]?.ok))}
+                        >
+                          Только незнакомые ({group.verbs.length - coverage.learned})
+                        </button>
+                      )}
+                      {coverage.learned + coverage.seen > 0 && (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          aria-label="Сбросить прогресс пачки"
+                          title="Сбросить прогресс этой пачки"
+                          onClick={() => reset(group.verbs.map((v) => v.id), group.key)}
+                        >
+                          <RotateCcw size={15} />
+                        </button>
+                      )}
                     </div>
 
                     {open && (

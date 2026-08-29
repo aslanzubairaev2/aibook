@@ -112,7 +112,10 @@ ol, ul { list-style: none; }
   inset: auto 12px 12px;
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  /* One column per NAV entry — the bar re-lays itself out when that list
+     changes instead of leaving a dead sixth slot behind. */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 2px;
   max-width: 620px;
   margin: 0 auto;
@@ -2419,3 +2422,195 @@ textarea,
 /* A book whose text is being fetched: dimmed, and saying so. */
 .book-card.opening { opacity: 0.6; pointer-events: none; }
 .book-opening-note { font-size: 11px; font-weight: 600; color: var(--accent); }
+
+/* ── Практика: the one door to every drill ────────────────────────────────
+   Карточки, Глаголы and Существительные are three drills over the same
+   dictionary, so they share a screen instead of three tab-bar slots. */
+.practice-view { padding-bottom: 120px; }
+.practice-list { display: flex; flex-direction: column; gap: 12px; }
+.action-card.nouns {
+  background: linear-gradient(135deg, rgba(110, 168, 224, 0.18) 0%, var(--bg-elevated) 60%);
+  border-color: rgba(110, 168, 224, 0.25);
+}
+.action-card.nouns .action-card-icon { background: rgba(110, 168, 224, 0.15); color: #8bbdea; }
+.action-card.nouns .action-card-label { color: #8bbdea; }
+.action-card.nouns .action-card-arrow { color: #8bbdea; }
+
+/* The dictionary is its own screen now, not the last tab of Каталог. */
+.dictionary-view { padding-bottom: 120px; }
+
+/* ── Pack coverage bar ────────────────────────────────────────────────────
+   Two tones over one track: the dim layer is everything the pack has been
+   asked at all, the solid one is what came back right. The gap between them
+   is exactly "знаю плохо" — the thing a single bar cannot show. */
+.pack-bar { position: relative; height: 4px; }
+.pack-bar > * { position: absolute; inset: 0 auto 0 0; }
+.pack-bar-seen { background: rgba(212, 168, 71, 0.28); border-radius: 2px; transition: width 0.4s; }
+.pack-bar-learned { z-index: 1; }
+
+/* ── Артикли и существительные ────────────────────────────────────────── */
+.nouns-view { padding-bottom: 150px; }
+.nouns-rules-btn { margin-left: auto; flex-shrink: 0; }
+
+/* Two columns, not three — the row is Singular/Plural, so it needs less
+   minimum width than the verb table's three principal parts. */
+.noun-table { min-width: 320px; }
+
+/* The left edge carries the gender, the same signal the word itself carries
+   in the Словарь rows — so a pack can be scanned for "which of these are
+   die" without reading a single article. */
+.noun-row { border-left-width: 3px; }
+.gender-row-m { border-left-color: #6ea8e0; }
+.gender-row-f { border-left-color: #e08aa8; }
+.gender-row-n { border-left-color: #7fc9a0; }
+.gender-row-pl { border-left-color: #d0b45e; }
+.gender-row-none { border-left-color: var(--border); }
+
+/* A word already answered correctly in a training session — a quiet tick, not
+   a second progress system. */
+.noun-row-learned .noun-headword::after {
+  content: "✓";
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--green);
+}
+
+.noun-headword { font-weight: 700; }
+.noun-article { font-weight: 800; }
+/* Hiding the articles is the harder self-test: the noun stays, its gender
+   goes. Blurred rather than removed so the row keeps its width, and revealed
+   on hover like every other covered cell on these screens. */
+.noun-article-hidden { filter: blur(6px); opacity: 0.5; transition: filter 0.15s, opacity 0.15s; }
+.noun-article-hidden:hover { filter: none; opacity: 1; }
+
+/* Two toggles on the left, the camera on the right. */
+.verbs-fab-group { display: flex; gap: 10px; pointer-events: none; }
+.verbs-fab-label { font-size: 14px; font-weight: 800; letter-spacing: -0.01em; }
+
+/* Gender filter chips wear their own colour, so picking «die» is a colour
+   choice rather than a word to read. */
+.filter-chip.gender-m:not(.active) { color: #6ea8e0; border-color: rgba(110, 168, 224, 0.4); }
+.filter-chip.gender-f:not(.active) { color: #e08aa8; border-color: rgba(224, 138, 168, 0.4); }
+.filter-chip.gender-n:not(.active) { color: #7fc9a0; border-color: rgba(127, 201, 160, 0.4); }
+.filter-chip.gender-pl:not(.active) { color: #d0b45e; border-color: rgba(208, 180, 94, 0.4); }
+
+/* ── Noun quiz ──────────────────────────────────────────────────────────── */
+/* One segment per question, ticked or crossed as the session moves — the
+   at-a-glance "сколько осталось" from inside the session. */
+.noun-quiz-dots {
+  display: flex; gap: 4px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.noun-quiz-dot {
+  flex: 1 1 14px; min-width: 14px; max-width: 42px; height: 14px;
+  display: grid; place-items: center;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  color: var(--text-dark);
+  transition: background 0.2s;
+}
+.noun-quiz-dot.ok { background: var(--green); }
+.noun-quiz-dot.miss { background: var(--red); }
+.noun-quiz-dot.current { box-shadow: inset 0 0 0 2px var(--accent); }
+.noun-quiz-dot-x { font-size: 11px; font-weight: 800; line-height: 1; }
+
+/* der / die / das — the whole decision space, as three tap targets. */
+.noun-quiz-choices { display: flex; flex-direction: column; gap: 8px; }
+.noun-quiz-choice {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 48px; padding: 0 16px;
+  font-size: 16px; font-weight: 700; text-align: left;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.noun-quiz-choice:not(:disabled):hover { border-color: var(--border-strong); background: rgba(212, 168, 71, 0.07); }
+.noun-quiz-choice:not(:disabled):active { transform: scale(0.995); }
+.noun-quiz-choice.picked { border-color: var(--accent); }
+.noun-quiz-choice.correct { border-color: var(--green); background: rgba(122, 171, 106, 0.16); color: var(--green); }
+.noun-quiz-choice.wrong { border-color: var(--red); background: rgba(196, 106, 106, 0.16); color: var(--red); }
+.noun-quiz-choice:disabled { opacity: 1; cursor: default; }
+
+/* The hint is opt-in and points at the rule; the debrief afterwards is the one
+   that names the article and its exceptions. */
+.noun-quiz-hint-toggle {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 2px; font-size: 13px; font-weight: 700;
+  color: var(--text-muted); background: none; border: 0;
+}
+.noun-quiz-hint-toggle:hover, .noun-quiz-hint-toggle.active { color: var(--accent); }
+.noun-quiz-hint {
+  font-size: 13.5px; line-height: 1.5; color: var(--text-muted);
+  padding: 10px 12px; border-left: 2px solid var(--accent);
+  background: rgba(212, 168, 71, 0.06); border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.noun-quiz-explain {
+  font-size: 13.5px; line-height: 1.5; color: var(--text-primary);
+  padding: 12px 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.noun-quiz-explain.ok { border-color: rgba(122, 171, 106, 0.45); background: rgba(122, 171, 106, 0.12); }
+.noun-quiz-explain.miss { border-color: rgba(196, 106, 106, 0.45); background: rgba(196, 106, 106, 0.1); }
+.noun-quiz-explain strong { font-weight: 800; }
+
+.noun-quiz-actions { display: flex; align-items: center; gap: 10px; }
+.noun-quiz-actions .primary-btn { flex: 1; }
+.noun-quiz-back {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  padding: 0 14px; height: 44px; white-space: nowrap;
+}
+
+/* ── Шпаргалка: род по окончанию ─────────────────────────────────────────
+   The map the drill is drilling. Same bottom-sheet shape as the grammar
+   modal, so it reads as one of the app's reference sheets. */
+.gender-rules-sheet {
+  width: min(100%, 580px);
+  max-height: 92svh;
+  overflow-y: auto;
+  padding: 0 18px 40px;
+  border-top: 1px solid var(--border-strong);
+  border-radius: 20px 20px 0 0;
+  background: var(--bg-secondary);
+  animation: modal-slide-up 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.gender-rules-head {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 -18px 4px; padding: 12px 18px;
+  background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+}
+.gender-rules-head h2 { font-size: 18px; font-weight: 800; color: var(--text-primary); }
+.gender-rules-head .icon-btn { margin-left: auto; }
+
+.gender-rules-weak {
+  margin: 14px 0 4px; padding: 12px 14px;
+  border: 1px solid rgba(212, 168, 71, 0.4); border-radius: var(--radius-md);
+  background: rgba(212, 168, 71, 0.07);
+}
+.gender-rules-weak strong { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--accent); }
+.gender-rules-weak-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 8px; }
+.gender-rules-weak p { font-size: 12px; color: var(--text-muted); }
+
+.gender-rules-group { margin-top: 20px; }
+.gender-rules-group h3 { font-size: 16px; font-weight: 800; }
+.gender-rules-blurb { font-size: 12.5px; color: var(--text-muted); margin: 2px 0 10px; }
+.gender-rules-list { display: flex; flex-direction: column; gap: 8px; list-style: none; }
+.gender-rules-item {
+  padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg-card);
+}
+.gender-rules-item-head { display: flex; align-items: center; gap: 8px; }
+.gender-rules-item code { font-size: 14px; font-weight: 800; font-family: inherit; }
+.gender-rules-confidence {
+  margin-left: auto; font-size: 10px; font-weight: 800;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 5px;
+  background: var(--bg-elevated); color: var(--text-muted);
+}
+.gender-rules-confidence.c-always { background: rgba(122, 171, 106, 0.16); color: var(--green); }
+.gender-rules-confidence.c-high { background: rgba(212, 168, 71, 0.16); color: var(--accent); }
+.gender-rules-family { display: block; font-size: 11.5px; color: var(--text-muted); margin-top: 3px; }
+.gender-rules-item p { font-size: 13px; line-height: 1.45; color: var(--text-primary); margin-top: 6px; }
+.gender-rules-footer { margin-top: 22px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }

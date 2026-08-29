@@ -1,6 +1,8 @@
 import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage, Flashcard, GrammarTable, PackSort, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, TrainVariant, UserProfile } from "@/lib/types";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { CONJUGATION_TENSE_ORDER, DEFAULT_CONJUGATION_TENSES, DEFAULT_QUIZ_MODES, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
+import { DEFAULT_NOUN_QUIZ_MODES, NOUN_QUIZ_MODE_ORDER, type NounQuizMode } from "@/lib/nounsQuizModes";
+import { emptyModuleProgress, type ModuleProgress, type PackModule } from "@/lib/srs/packProgress";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 
 const BOOKS_KEY = "aibook_books";
@@ -20,6 +22,13 @@ const VERBS_OPEN_GROUPS_KEY = "aibook_verbs_open_groups";
 const VERBS_HIDE_FORMS_KEY = "aibook_verbs_hide_forms";
 const VERBS_QUIZ_MODES_KEY = "aibook_verbs_quiz_modes";
 const VERBS_CONJUGATION_TENSES_KEY = "aibook_verbs_conjugation_tenses";
+const NOUNS_DICT_CACHE_KEY = "aibook_nouns_dict_cache";
+const NOUNS_OPEN_GROUPS_KEY = "aibook_nouns_open_groups";
+const NOUNS_HIDE_FORMS_KEY = "aibook_nouns_hide_forms";
+const NOUNS_HIDE_ARTICLES_KEY = "aibook_nouns_hide_articles";
+const NOUNS_QUIZ_MODES_KEY = "aibook_nouns_quiz_modes";
+const PACK_PROGRESS_KEY = "aibook_pack_progress";
+const GENDER_RULE_STATS_KEY = "aibook_gender_rule_stats";
 
 let activeNamespace = "guest";
 // The stored namespace is read once. Re-reading it inside getNsKey meant a
@@ -887,6 +896,170 @@ export function saveLocalLastView(section: string, bookId?: string | null): void
       bookId: bookId ?? null,
       updatedAt: new Date().toISOString(),
     }));
+  } catch {
+    // silently fail
+  }
+}
+
+// ─── Nouns module ────────────────────────────────────────────────────────────
+//
+// The Артикли и Существительные screen mirrors Глаголы exactly: the same
+// cached dictionary read so the table is on screen instantly, the same "which
+// packs are open", the same eye toggle, and its own set of drills.
+
+type NounsDictCache = { language: string; entries: DictionaryEntry[]; batches: DictionaryBatch[] };
+
+export function getLocalNounsDict(language: string): { entries: DictionaryEntry[]; batches: DictionaryBatch[] } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(getNsKey(NOUNS_DICT_CACHE_KEY));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as NounsDictCache;
+    if (parsed.language !== language) return null;
+    return { entries: parsed.entries ?? [], batches: parsed.batches ?? [] };
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalNounsDict(language: string, entries: DictionaryEntry[], batches: DictionaryBatch[]): void {
+  try {
+    const payload: NounsDictCache = { language, entries, batches };
+    localStorage.setItem(getNsKey(NOUNS_DICT_CACHE_KEY), JSON.stringify(payload));
+  } catch {
+    // silently fail
+  }
+}
+
+/** Whether the noun table is covering its «перевод» and «мн. ч.» columns for self-testing. */
+export function getLocalNounsHideForms(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(getNsKey(NOUNS_HIDE_FORMS_KEY)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveLocalNounsHideForms(hidden: boolean): void {
+  try {
+    localStorage.setItem(getNsKey(NOUNS_HIDE_FORMS_KEY), hidden ? "1" : "0");
+  } catch {
+    // silently fail
+  }
+}
+
+/** Whether the noun table is also covering the articles — the harder self-test. */
+export function getLocalNounsHideArticles(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(getNsKey(NOUNS_HIDE_ARTICLES_KEY)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveLocalNounsHideArticles(hidden: boolean): void {
+  try {
+    localStorage.setItem(getNsKey(NOUNS_HIDE_ARTICLES_KEY), hidden ? "1" : "0");
+  } catch {
+    // silently fail
+  }
+}
+
+export function getLocalNounsQuizModes(): Set<NounQuizMode> {
+  if (typeof window === "undefined") return new Set(DEFAULT_NOUN_QUIZ_MODES);
+  try {
+    const raw = localStorage.getItem(getNsKey(NOUNS_QUIZ_MODES_KEY));
+    if (!raw) return new Set(DEFAULT_NOUN_QUIZ_MODES);
+    const arr = JSON.parse(raw) as string[];
+    const valid = Array.isArray(arr)
+      ? arr.filter((m): m is NounQuizMode => NOUN_QUIZ_MODE_ORDER.includes(m as NounQuizMode))
+      : [];
+    return new Set(valid.length ? valid : DEFAULT_NOUN_QUIZ_MODES);
+  } catch {
+    return new Set(DEFAULT_NOUN_QUIZ_MODES);
+  }
+}
+
+export function saveLocalNounsQuizModes(modes: Set<NounQuizMode>): void {
+  try {
+    localStorage.setItem(getNsKey(NOUNS_QUIZ_MODES_KEY), JSON.stringify([...modes]));
+  } catch {
+    // silently fail
+  }
+}
+
+export function getLocalNounsOpenGroups(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(getNsKey(NOUNS_OPEN_GROUPS_KEY));
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveLocalNounsOpenGroups(keys: Set<string>): void {
+  try {
+    localStorage.setItem(getNsKey(NOUNS_OPEN_GROUPS_KEY), JSON.stringify([...keys]));
+  } catch {
+    // silently fail
+  }
+}
+
+// ─── Pack training coverage (Глаголы / Существительные) ──────────────────────
+//
+// Local only, like the productive-recall skill progress above: the remote
+// tables have no column for it, and this is a per-device sense of "прошёл ли я
+// эту пачку", not a schedule that has to be shared between devices.
+
+export function getLocalPackProgress(module: PackModule): ModuleProgress {
+  if (typeof window === "undefined") return emptyModuleProgress();
+  try {
+    const raw = localStorage.getItem(getNsKey(`${PACK_PROGRESS_KEY}_${module}`));
+    if (!raw) return emptyModuleProgress();
+    const parsed = JSON.parse(raw) as Partial<ModuleProgress>;
+    return { words: parsed.words ?? {}, packs: parsed.packs ?? {} };
+  } catch {
+    return emptyModuleProgress();
+  }
+}
+
+export function saveLocalPackProgress(module: PackModule, progress: ModuleProgress): void {
+  try {
+    localStorage.setItem(getNsKey(`${PACK_PROGRESS_KEY}_${module}`), JSON.stringify(progress));
+  } catch {
+    // silently fail
+  }
+}
+
+// ─── Gender-rule statistics ──────────────────────────────────────────────────
+//
+// Which noun ENDINGS the learner keeps getting wrong, counted per rule id
+// rather than per word. Knowing that -ent and -ment are being confused with
+// each other is actionable in a way that "you missed Dokument" is not — it
+// points at one line of the cheat sheet to re-read.
+
+export type GenderRuleStat = { right: number; wrong: number };
+
+export function getLocalGenderRuleStats(): Record<string, GenderRuleStat> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(getNsKey(GENDER_RULE_STATS_KEY));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, GenderRuleStat>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveLocalGenderRuleStats(stats: Record<string, GenderRuleStat>): void {
+  try {
+    localStorage.setItem(getNsKey(GENDER_RULE_STATS_KEY), JSON.stringify(stats));
   } catch {
     // silently fail
   }

@@ -12,6 +12,9 @@ import { DiscoverView } from "@/components/discover/DiscoverView";
 import { ReaderView } from "@/components/reader/ReaderView";
 import { CardsView } from "@/components/cards/CardsView";
 import { VerbsView } from "@/components/verbs/VerbsView";
+import { NounsView } from "@/components/nouns/NounsView";
+import { PracticeView } from "@/components/practice/PracticeView";
+import { DictionaryView } from "@/components/dictionary/DictionaryView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { AuthScreen } from "@/components/auth/AuthScreen";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
@@ -73,7 +76,7 @@ const SAVING_TO_LIBRARY_MESSAGE = "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0
 const BOOK_IN_LIBRARY_MESSAGE = "\u041a\u043d\u0438\u0433\u0430 \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435";
 const DOWNLOAD_ERROR_MESSAGE = "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438";
 const DEFAULT_CHAPTER_TITLE = "\u0413\u043b\u0430\u0432\u0430 1";
-const APP_SECTIONS: AppSection[] = ["home", "discover", "books", "reader", "homework", "cards", "verbs", "settings", "auth", "live-translate"];
+const APP_SECTIONS: AppSection[] = ["home", "discover", "dictionary", "practice", "books", "reader", "homework", "cards", "verbs", "nouns", "settings", "auth", "live-translate"];
 
 function pickColor(title: string) {
   let hash = 0;
@@ -230,6 +233,9 @@ async function loadLessonBook(sharedBookId: string, paragraphIndex: number, perc
 function AppInner() {
   const { user, isLoading: authLoading } = useAuth();
   const [section, setSection] = useState<AppSection>("home");
+  // A pack handed over from Словарь to be written up as a text or a lesson.
+  // The composer lives in Каталог, so the pack travels with the navigation.
+  const [discoverPack, setDiscoverPack] = useState<{ title: string; brief: string; words: string[] } | null>(null);
   // Set when arriving from "train this batch" so the card module opens on the
   // right tab with the batch filter already applied.
   const [cardsInitialTab, setCardsInitialTab] = useState<"all" | "train" | null>(null);
@@ -253,7 +259,7 @@ function AppInner() {
   const [activeBook, setActiveBook] = useState<Book | null>(null);
   const [activeHomework, setActiveHomework] = useState<{ book: HomeworkBook; exercises: HomeworkExercise[]; initialAnswers: HomeworkAnswers } | null>(null);
   const [readerOrigin, setReaderOrigin] = useState<AppSection>("home");
-  const [discoverInitialTab, setDiscoverInitialTab] = useState<"classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons" | "dictionary">("classic");
+  const [discoverInitialTab, setDiscoverInitialTab] = useState<"classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons">("classic");
   const [discoverVideoQuery, setDiscoverVideoQuery] = useState<string | null>(null);
   const [discoverVideoLang, setDiscoverVideoLang] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -1080,13 +1086,13 @@ function AppInner() {
           downloadTasks={downloadTasks}
           onDownloadBook={(book) => void handleCatalogDownload(book)}
           onAddCard={handleAddCard}
-          onTrainWords={handleTrainWords}
           onReloadCards={handleReloadCards}
-          onDeleteCards={handleDeleteCards}
           onFindVideos={handleFindVideos}
           initialTab={discoverInitialTab}
           initialVideoQuery={discoverVideoQuery}
           initialVideoLang={discoverVideoLang}
+          initialPack={discoverPack}
+          onPackConsumed={() => setDiscoverPack(null)}
         />
       )}
 
@@ -1131,7 +1137,7 @@ function AppInner() {
           initialTab={cardsInitialTab}
           trainBatch={trainBatch}
           onExitBatch={() => setTrainBatch(null)}
-          onBack={() => { setCardsInitialTab(null); setTrainBatch(null); setSection("home"); }}
+          onBack={() => { setCardsInitialTab(null); setTrainBatch(null); setSection("practice"); }}
           onAddCard={handleAddCard}
           onUpdateCard={handleUpdateCard}
           onDeleteCard={handleDeleteCard}
@@ -1139,10 +1145,39 @@ function AppInner() {
         />
       )}
 
+      {section === "dictionary" && (
+        <DictionaryView
+          cards={cards}
+          profile={profile}
+          onAddCard={handleAddCard}
+          onTrainWords={handleTrainWords}
+          onReloadCards={handleReloadCards}
+          onDeleteCards={handleDeleteCards}
+          onCreateFromPack={(pack) => { setDiscoverPack(pack); setSection("discover"); }}
+        />
+      )}
+
+      {section === "practice" && (
+        <PracticeView
+          cards={cards}
+          profile={profile}
+          onOpenCards={() => setSection("cards")}
+          onOpenVerbs={() => setSection("verbs")}
+          onOpenNouns={() => setSection("nouns")}
+        />
+      )}
+
       {section === "verbs" && (
         <VerbsView
           profile={profile}
-          onBack={() => setSection("home")}
+          onBack={() => setSection("practice")}
+        />
+      )}
+
+      {section === "nouns" && (
+        <NounsView
+          profile={profile}
+          onBack={() => setSection("practice")}
         />
       )}
 

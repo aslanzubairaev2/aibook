@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
   GraduationCap, Server, Loader2, BookMarked,
   Sparkles, CheckCircle2, PlayCircle, Clock, Circle, Headphones,
-  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, BookA, ClipboardList, Tv,
+  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, ClipboardList, Tv,
 } from "lucide-react";
 import { VideosView } from "@/components/videos/VideosView";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile, Audiobook } from "@/lib/types";
@@ -22,14 +22,6 @@ import { buildKnownWordSet, computeCoverage, COMFORT_MIN, COMFORT_MAX, type Cove
 import { LessonComposerModal, type ComposerState, type LessonKind, type LessonLength } from "./LessonComposerModal";
 import { LessonRefineModal } from "./LessonRefineModal";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
-import { DictionaryPanel, entryToCardText, entryToAnalysis } from "@/components/dictionary/DictionaryPanel";
-import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
-import type { TrainBatch } from "@/lib/cards";
-import { WordModal } from "@/components/word-modal/WordModal";
-import { analyzeSelection } from "@/lib/ai/analyze";
-import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
-import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
-import type { AiAnalysis } from "@/lib/types";
 
 type Props = {
   books: Book[];
@@ -45,15 +37,20 @@ type Props = {
   onDownloadBook: (book: GutendexBook) => void;
   /** Turning a dictionary entry into a flashcard goes through the app's single card path. */
   onAddCard?: (card: Flashcard) => void;
-  /** Open the flashcard module narrowed to one batch's cards. */
-  /** «Тренировать эту пачку» — the pack carries its own training setup, if it has one. */
-  onTrainWords?: (batch: TrainBatch) => void;
-  /** Reload user flashcards from server when a batch is added/re-linked. */
+  /** Reload user flashcards from server when a photographed page adds some. */
   onReloadCards?: () => void;
-  /** Delete a whole group of cards at once — a pack that is nothing but its cards. */
-  onDeleteCards?: (ids: string[]) => void;
   onFindVideos?: (word: string, lang?: string) => void;
   initialTab?: TabKey;
+  /**
+   * A pack sent over from Словарь to be written up as a text or a lesson.
+   *
+   * The composer lives here, the packs live there; rather than duplicating the
+   * composer, the dictionary navigates here and hands the pack over. Consumed
+   * once — `onPackConsumed` clears it so returning to Каталог later does not
+   * pop the composer open again.
+   */
+  initialPack?: { title: string; brief: string; words: string[] } | null;
+  onPackConsumed?: () => void;
   initialVideoQuery?: string | null;
   initialVideoLang?: string | null;
 };
@@ -111,7 +108,7 @@ type SharedBook = {
   created_at: string;
 };
 
-type TabKey = "classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons" | "dictionary";
+type TabKey = "classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons";
 
 // Each tab is one source. The name carries it; the source and its licence show
 // up per item (the "Оригинал · CC BY-SA" link, the "≈" on estimated levels)
@@ -123,7 +120,6 @@ const TAB_LABELS: Record<TabKey, string> = {
   cefr: "CEFR тексты",
   videos: "Видео",
   lessons: "Мои уроки",
-  dictionary: "Словарь",
 };
 
 type LessonProgressMap = Record<string, {
@@ -256,35 +252,6 @@ function readPrefs(): DiscoverPrefs {
  * brings the article, plural and level as the course printed them — and the
  * page's own example goes first.
  */
-function mergeEntryWithAnalysis(entry: DictionaryEntry, base: AiAnalysis, full: AiAnalysis): AiAnalysis {
-  const aiWord = full.word!;
-  const baseWord = base.word!;
-  const examples = [
-    ...(entry.example ? [{ text: entry.example, translation: entry.example_translation }] : []),
-    ...(full.examples ?? []),
-  ].filter((ex, i, list) => list.findIndex((o) => o.text.trim() === ex.text.trim()) === i);
-
-  return {
-    word: {
-      ...aiWord,
-      text: entry.headword,
-      lemma: aiWord.lemma || entry.lemma,
-      partOfSpeech: entry.part_of_speech || aiWord.partOfSpeech,
-      posTag: baseWord.posTag !== "other" ? baseWord.posTag : aiWord.posTag,
-      gender: entry.article || aiWord.gender,
-      cefr: entry.cefr || aiWord.cefr,
-      translation: aiWord.translation || entry.translation,
-      explanation: [entry.note, aiWord.explanation].filter(Boolean).join("\n"),
-      nounDetails: {
-        article: entry.article || aiWord.nounDetails?.article,
-        plural: entry.plural || aiWord.nounDetails?.plural,
-      },
-      verbDetails: aiWord.verbDetails ?? baseWord.verbDetails,
-    },
-    examples,
-  };
-}
-
 export function DiscoverView({
   books,
   cards,
@@ -295,11 +262,11 @@ export function DiscoverView({
   downloadTasks,
   onDownloadBook,
   onAddCard,
-  onTrainWords,
   onReloadCards,
-  onDeleteCards,
   onFindVideos,
   initialTab,
+  initialPack,
+  onPackConsumed,
   initialVideoQuery,
   initialVideoLang,
 }: Props) {
@@ -403,14 +370,6 @@ export function DiscoverView({
   const [klexTotal, setKlexTotal] = useState(0);
   const [cefrTotal, setCefrTotal] = useState(0);
 
-  const [dictionary, setDictionary] = useState<DictionaryEntry[]>([]);
-  const [dictBatches, setDictBatches] = useState<DictionaryBatch[]>([]);
-  const [dictLoading, setDictLoading] = useState(false);
-  const [dictError, setDictError] = useState<string | null>(null);
-  // The dictionary reuses the app-wide word modal rather than inventing its
-  // own; the entry already holds everything the modal shows, so no AI call.
-  const [dictWord, setDictWord] = useState<{ entry: DictionaryEntry; analysis: AiAnalysis; enriching: boolean } | null>(null);
-  const [miniTextBusy, setMiniTextBusy] = useState(false);
   // Surfaces a degraded result from the photo flow: the lesson was saved, but
   // not in the form it was meant to take.
   const [toast, setToast] = useState<string | null>(null);
@@ -534,24 +493,6 @@ export function DiscoverView({
     }
   }, [user]);
 
-  const loadDictionary = useCallback(async () => {
-    if (!user) { setDictionary([]); return; }
-    setDictLoading(true);
-    setDictError(null);
-    try {
-      const res = await freshFetch(`/api/dictionary?language=${encodeURIComponent(profile.targetLanguage)}`, {
-        headers: await sbAuthHeaders(),
-      });
-      const data = await res.json() as { entries?: DictionaryEntry[]; batches?: DictionaryBatch[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Не удалось загрузить словарь.");
-      setDictionary(data.entries ?? []);
-      setDictBatches(data.batches ?? []);
-    } catch (err) {
-      setDictError(err instanceof Error ? err.message : "Не удалось загрузить словарь.");
-    } finally {
-      setDictLoading(false);
-    }
-  }, [user, profile.targetLanguage]);
 
   // Which words are already flashcards, so the entry says so instead of
   // silently making a duplicate.
@@ -560,44 +501,6 @@ export function DiscoverView({
     [cards],
   );
 
-  function addCardFromEntry(entry: DictionaryEntry) {
-    if (!onAddCard) return;
-    const { front, back } = entryToCardText(entry);
-    if (cardFronts.has(front.trim().toLowerCase())) {
-      showToast("Такая карточка уже есть");
-      return;
-    }
-    const srs = createDefaultSrsFields(null, "Словарь");
-    const card: Flashcard = {
-      id: `card-${Date.now()}`,
-      type: "word",
-      source: "Словарь",
-      addedAt: new Date().toISOString(),
-      ...srs,
-      front,
-      back,
-    };
-    onAddCard(card);
-    showToast("✓ Карточка добавлена");
-    if (user) {
-      void sbInsertFlashcard({
-        user_id: user.id,
-        vocabulary_item_id: null,
-        front: card.front,
-        back: card.back,
-        source_book_title: "Словарь",
-        selection_type: "word",
-        repetitions: srs.repetitions,
-        lapses: srs.lapses,
-        easiness_factor: srs.easeFactor,
-        interval_days: srs.intervalDays,
-        next_review_at: srs.dueAt,
-        last_reviewed_at: srs.lastReviewedAt,
-        source_book_id: null,
-        status: srs.status,
-      });
-    }
-  }
 
   // A word or example tapped inside the audiobook's "Обсудить с AI" chat —
   // same save path as the dictionary above, just sourced from the book title
@@ -641,140 +544,6 @@ export function DiscoverView({
     }
   }
 
-  async function deleteDictionaryEntry(id: string) {
-    setDictionary((prev) => prev.filter((e) => e.id !== id));
-    try {
-      await fetch(`/api/dictionary?id=${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        headers: await sbAuthHeaders(),
-      });
-    } catch {
-      void loadDictionary();
-    }
-  }
-
-  /**
-   * Give a group of cards that only share a source name the pack row it lacks.
-   *
-   * Until it has one there is nothing to delete, describe or configure — the
-   * screen shows a pack the learner cannot act on. Afterwards it is an
-   * ordinary pack, with every card's schedule untouched.
-   */
-  async function registerLoosePack(title: string) {
-    try {
-      const res = await fetch("/api/dictionary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
-        body: JSON.stringify({ title, language: profile.targetLanguage }),
-      });
-      const data = await res.json() as { adopted?: number; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Не удалось оформить пачку.");
-      await loadDictionary();
-      onReloadCards?.();
-      showToast(`Пачка «${title}» оформлена — карточек: ${data.adopted ?? 0}`);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Не удалось оформить пачку.");
-    }
-  }
-
-  async function deleteDictionaryBatch(batchId: string) {
-    setDictionary((prev) => prev.filter((e) => e.batch_id !== batchId));
-    setDictBatches((prev) => prev.filter((b) => b.id !== batchId));
-    try {
-      await fetch(`/api/dictionary?batchId=${encodeURIComponent(batchId)}`, {
-        method: "DELETE",
-        headers: await sbAuthHeaders(),
-      });
-    } catch {
-      void loadDictionary();
-    }
-  }
-
-  /**
-   * Opening a dictionary word shows the same word modal as everywhere else,
-   * instantly, from what the entry already knows — then quietly upgrades it
-   * with the full AI analysis (five examples, explanation, verb details), so
-   * the modal is identical to the one the reader's «Подробнее» opens. The
-   * textbook's own facts win where they overlap: its article, plural and
-   * level are the course's word, not the model's guess.
-   */
-  async function openDictWord(entry: DictionaryEntry) {
-    const base = entryToAnalysis(entry);
-    setDictWord({ entry, analysis: base, enriching: true });
-
-    const lookup = entry.lemma || entry.headword;
-    const cacheKey = makeAiCacheKey("word", lookup, profile.targetLanguage, profile.nativeLanguage);
-    try {
-      let full = getLocalAiAnalysis(cacheKey);
-      if (!full?.word) {
-        full = await analyzeSelection({
-          mode: "word",
-          word: lookup,
-          text: lookup,
-          sentence: entry.example || lookup,
-          sentenceBefore: "",
-          sentenceAfter: "",
-          nativeLanguage: profile.nativeLanguage,
-          targetLanguage: profile.targetLanguage,
-        });
-        if (full?.word) saveLocalAiAnalysis(cacheKey, full);
-      }
-      if (!full?.word) throw new Error("empty analysis");
-
-      const merged = mergeEntryWithAnalysis(entry, base, full);
-      setDictWord((cur) => (cur && cur.entry.id === entry.id ? { entry, analysis: merged, enriching: false } : cur));
-    } catch {
-      // The entry-only view is already complete enough to be useful.
-      setDictWord((cur) => (cur && cur.entry.id === entry.id ? { ...cur, enriching: false } : cur));
-    }
-  }
-
-  /**
-   * A short reading text built around one word, saved as a lesson and opened
-   * at once — the fastest way to see a dictionary word actually working.
-   */
-  async function createMiniTextForWord(entry: DictionaryEntry) {
-    if (miniTextBusy) return;
-    setMiniTextBusy(true);
-    try {
-      const level = ["A1", "A2", "B1", "B2", "C1", "C2"].includes(entry.cefr)
-        ? entry.cefr
-        : prefs.lessonLevel ?? "A2";
-      const res = await freshFetch("/api/lessons/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
-        body: JSON.stringify({
-          level,
-          topic: `Слово «${entry.headword}»`,
-          targetLanguage: profile.targetLanguage,
-          nativeLanguage: profile.nativeLanguage,
-          reviewWords: [entry.headword],
-          length: "short",
-          context: `Короткий текст, построенный вокруг слова «${entry.headword}» (${entry.translation}): показать его в нескольких типичных ситуациях и формах, чтобы слово можно было рассмотреть со всех сторон.`,
-        }),
-      });
-      const data = await res.json() as { id?: string; error?: string };
-      if (!res.ok || !data.id) throw new Error(data.error ?? "Не удалось создать текст.");
-
-      // Fetch the fresh list ourselves: the state update from loadMyLessons
-      // lands too late for this same handler to use.
-      const listRes = await freshFetch("/api/lessons", { headers: await sbAuthHeaders() });
-      const listData = await listRes.json() as { lessons?: SharedBook[] };
-      const lessons = listData.lessons ?? [];
-      setMyLessons(lessons);
-      const lesson = lessons.find((l) => l.id === data.id);
-      setDictWord(null);
-      if (lesson) {
-        await openSharedLesson(lesson, lessons);
-      } else {
-        showToast("Текст создан — смотрите в «Мои уроки»");
-      }
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Не удалось создать текст.");
-    } finally {
-      setMiniTextBusy(false);
-    }
-  }
 
   // The Klexikon title search is a server filter; settle the typing first.
   useEffect(() => {
@@ -796,10 +565,7 @@ export function DiscoverView({
       void loadMyLessons();
       void loadLessonProgress();
     }
-    if (activeTab === "dictionary") {
-      void loadDictionary();
-    }
-  }, [activeTab, loadSharedBooks, loadMyLessons, loadLessonProgress, loadDictionary]);
+  }, [activeTab, loadSharedBooks, loadMyLessons, loadLessonProgress]);
 
   // Default the generator to the learner's estimated level, unless they have
   // already picked one themselves (which readPrefs restores).
@@ -1163,6 +929,18 @@ export function DiscoverView({
     setComposerOpen(true);
   };
 
+  // A pack handed over from Словарь: open the composer on it as soon as this
+  // screen mounts with one, then let go of it.
+  useEffect(() => {
+    if (!initialPack) return;
+    setActiveTab("lessons");
+    openComposerForPack(initialPack);
+    onPackConsumed?.();
+    // openComposerForPack is re-created every render and is a pure setter
+    // chain; keying on the pack itself is what actually decides this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPack]);
+
   const refineLesson = async (id: string) => {
     const instructions = refineText.trim();
     if ((!instructions && !refineLength) || isRefining) return;
@@ -1275,7 +1053,7 @@ export function DiscoverView({
 
       {/* One tab per source — the source note below spells out which is which */}
       <div className="discover-tabs">
-        {(["classic", "audio", "klexikon", "cefr", "videos", "lessons", "dictionary"] as const).map((tab) => (
+        {(["classic", "audio", "klexikon", "cefr", "videos", "lessons"] as const).map((tab) => (
           <button
             key={tab}
             type="button"
@@ -1289,7 +1067,6 @@ export function DiscoverView({
             {tab === "cefr" && <BookMarked size={15} />}
             {tab === "videos" && <Tv size={15} />}
             {tab === "lessons" && <Wand2 size={15} />}
-            {tab === "dictionary" && <BookA size={15} />}
             {TAB_LABELS[tab]}
           </button>
         ))}
@@ -1748,48 +1525,6 @@ export function DiscoverView({
         />
       )}
 
-      {/* ── Dictionary: the learner's own words ─────────────────────────────── */}
-      {activeTab === "dictionary" && (
-        <>
-          {!user ? (
-            <div className="seed-card">
-              <BookA size={42} style={{ color: "var(--accent)" }} />
-              <h3>Войдите, чтобы вести словарь</h3>
-              <p>Слова сохраняются в вашем аккаунте и видны только вам.</p>
-            </div>
-          ) : (
-            <>
-              <DictionaryPanel
-                entries={dictionary}
-                batches={dictBatches}
-                cards={cards}
-                isLoading={dictLoading}
-                error={dictError}
-                language={profile.targetLanguage}
-                nativeLanguage={profile.nativeLanguage}
-                onPhotograph={() => { setPhotoMode("dictionary"); setPhotoOpen(true); }}
-                onOpenEntry={(entry) => void openDictWord(entry)}
-                onDeleteEntry={(id) => void deleteDictionaryEntry(id)}
-                onDeleteBatch={(id) => void deleteDictionaryBatch(id)}
-                onTrainBatch={(batch) => onTrainWords?.(batch)}
-                onCreateFromPack={openComposerForPack}
-                onRegisterPack={(title) => void registerLoosePack(title)}
-                onDeleteCards={onDeleteCards}
-              />
-              <button
-                type="button"
-                className="add-lesson-fab"
-                onClick={() => { setPhotoMode("dictionary"); setPhotoOpen(true); }}
-                aria-label="Сфотографировать слова"
-                title="Сфотографировать слова"
-              >
-                <Camera size={22} />
-              </button>
-            </>
-          )}
-        </>
-      )}
-
       {/* ── My lessons (AI-generated, private) ──────────────────────────────── */}
       {activeTab === "lessons" && (
         <>
@@ -2040,7 +1775,6 @@ export function DiscoverView({
           }}
           onWordsAdded={({ added, updated, warning }) => {
             setPhotoOpen(false);
-            void loadDictionary();
             onReloadCards?.();
             showToast(
               warning
@@ -2107,27 +1841,6 @@ export function DiscoverView({
         </div>
       )}
 
-      {/* A dictionary word opens the same word modal as everywhere else. */}
-      {dictWord && (
-        <WordModal
-          analysis={dictWord.analysis}
-          isOpen
-          lang={profile.targetLanguage}
-          nativeLang={profile.nativeLanguage}
-          selectedWord={dictWord.entry.headword}
-          onClose={() => setDictWord(null)}
-          onAddCard={() => addCardFromEntry(dictWord.entry)}
-          onAddExample={(text, translation) => {
-            if (onAddCard) {
-              const srs = createDefaultSrsFields(null, "Словарь");
-              onAddCard({ id: `card-${Date.now()}`, type: "phrase", source: "Словарь", addedAt: new Date().toISOString(), ...srs, front: text, back: translation });
-              showToast("✓ Карточка добавлена");
-            }
-          }}
-          onCreateText={() => void createMiniTextForWord(dictWord.entry)}
-          isCreatingText={miniTextBusy}
-        />
-      )}
 
       {/* Audiobook Details & Player Modal */}
       {selectedAudiobook && (

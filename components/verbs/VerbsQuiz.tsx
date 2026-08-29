@@ -20,6 +20,8 @@ type Props = {
   modes: Set<QuizMode>;
   conjugationTenses: Set<ConjugationTense>;
   onExit: () => void;
+  /** Reports one answered step so the pack's coverage bar can move. */
+  onRecord?: (entryId: string, correct: boolean) => void;
 };
 
 type QuizField = { key: string; label: string; expected: string };
@@ -117,7 +119,7 @@ function buildQueue(verbs: DictionaryEntry[], modes: Set<QuizMode>, conjugationT
  * flashcard schedule — this is a drill on top of the dictionary the learner
  * already has, not a second spaced-repetition track for the same words.
  */
-export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, onExit }: Props) {
+export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, onExit, onRecord }: Props) {
   const [queue, setQueue] = useState<QuizStep[]>(() => buildQueue(verbs, modes, conjugationTenses));
   const [index, setIndex] = useState(0);
   const [inputs, setInputs] = useState<Record<string, string>>({});
@@ -274,6 +276,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
     }
     setResults(next);
     setRevealed(true);
+    onRecord?.(step.entry.id, allGood);
     if (allGood) setCorrectCount((c) => c + 1);
     else setMistakes((m) => [...m, step]);
   }

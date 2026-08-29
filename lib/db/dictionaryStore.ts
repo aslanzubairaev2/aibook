@@ -452,6 +452,34 @@ export async function updateEntryForms(
   return error?.message ?? null;
 }
 
+/**
+ * Backfills the noun columns of one entry — gender, article, plural.
+ *
+ * Never blanks what is already there: a model that returned only the plural
+ * must not wipe an article the learner already had right. Same rule the photo
+ * import follows, for the same reason.
+ */
+export async function updateEntryNoun(
+  admin: SupabaseClient,
+  userId: string,
+  entryId: string,
+  noun: { gender?: string; article?: string; plural?: string },
+): Promise<string | null> {
+  const patch: Record<string, string> = {};
+  if (noun.gender?.trim()) patch.gender = noun.gender.trim();
+  if (noun.article?.trim()) patch.article = noun.article.trim();
+  if (noun.plural?.trim()) patch.plural = noun.plural.trim();
+  if (Object.keys(patch).length === 0) return null;
+
+  const { error } = await admin
+    .from("dictionary_entries")
+    .update(patch)
+    .eq("id", entryId)
+    .eq("user_id", userId);
+
+  return error?.message ?? null;
+}
+
 export async function discardDictionaryBatch(
   admin: SupabaseClient,
   userId: string,

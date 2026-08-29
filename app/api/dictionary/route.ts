@@ -7,6 +7,7 @@ import {
   findOrCreatePack,
   readBatches,
   updateEntryForms,
+  updateEntryNoun,
 } from "@/lib/db/dictionaryStore";
 
 export const dynamic = "force-dynamic";
@@ -132,10 +133,12 @@ export async function DELETE(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
-// PATCH /api/dictionary   body: { id, forms }
+// PATCH /api/dictionary   body: { id, forms?, noun? }
 //
-// Backfills the principal parts of one verb already in the dictionary —
-// merged into whatever `forms` it already has, never a blind overwrite.
+// Backfills what a dictionary entry was saved without: the principal parts of a
+// verb (`forms`, merged into whatever it already has) or the gender/article/
+// plural of a noun (`noun`, only the fields that actually carry a value).
+// Never a blind overwrite in either case.
 export async function PATCH(req: NextRequest) {
   const user = await getUserFromRequest(req);
   if (!user) {
@@ -145,9 +148,20 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Supabase не настроен на сервере." }, { status: 503 });
   }
 
-  const body = await req.json() as { id?: string; forms?: Record<string, string> };
+  const body = await req.json() as {
+    id?: string;
+    forms?: Record<string, string>;
+    noun?: { gender?: string; article?: string; plural?: string };
+  };
   const id = (body.id ?? "").trim();
   if (!id) return NextResponse.json({ error: "Не указано слово." }, { status: 400 });
+
+  if (body.noun && typeof body.noun === "object") {
+    const error = await updateEntryNoun(supabaseAdmin, user.id, id, body.noun);
+    if (error) return NextResponse.json({ error }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
+
   const forms = body.forms && typeof body.forms === "object" ? body.forms : {};
 
   const error = await updateEntryForms(supabaseAdmin, user.id, id, forms);
