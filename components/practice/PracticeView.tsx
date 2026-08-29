@@ -1,11 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BookA, ChevronRight, Flame, Repeat } from "lucide-react";
-import { computeDeckStats } from "@/lib/cards";
+import { ChevronRight } from "lucide-react";
 import { getCardVariantProgressMap, getLocalNounsDict, getLocalVerbsDict } from "@/lib/db/local";
-import { isNounEntry, nounGender } from "@/lib/nounForms";
-import { normalizePos } from "@/lib/verbForms";
+import { computeHomeStats, mergeDictionaries } from "@/lib/home/homeStats";
 import type { Flashcard, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -19,36 +17,30 @@ type Props = {
 /**
  * The one place the app trains anything.
  *
- * Карточки, Глаголы and Существительные used to be three unrelated entries
- * competing for room in a five-slot tab bar; they are three drills over the
- * same dictionary, so they belong behind one door. Each row says how much
- * material it currently has, read from the caches the screens themselves keep
- * — so the numbers are there instantly and cost no network call.
+ * Карточки, Глаголы and Существительные are three drills over the same
+ * dictionary, so they sit behind one door rather than each taking a slot in a
+ * five-slot tab bar.
+ *
+ * Оформление намеренно то же, что на главной: три одинаковые «плашки» с
+ * иконкой, надписью, заголовком, подписью и стрелкой читались как три
+ * одинаковых прямоугольника, между которыми нечего выбирать. Строка с
+ * конкретным числом — «5 глаголов без форм» — говорит больше, чем плашка.
+ *
+ * Числа читаются из тех же локальных кэшей, что и на главной: это подсказка о
+ * размере материала, а не величина, ради которой стоит ходить в сеть.
  */
 export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenNouns }: Props) {
-  // The card module's own boundary for "due today", so this tile and the
-  // trainer can never disagree about the number.
-  const todayEndTime = useMemo(() => {
-    const end = new Date();
-    end.setHours(23, 59, 59, 999);
-    return end.getTime();
-  }, []);
+  const entries = useState(() =>
+    mergeDictionaries(
+      getLocalVerbsDict(profile.targetLanguage)?.entries ?? [],
+      getLocalNounsDict(profile.targetLanguage)?.entries ?? [],
+    ),
+  )[0];
 
-  const dueCards = useMemo(
-    () => computeDeckStats(cards, getCardVariantProgressMap(), new Date(todayEndTime)).dueCards,
-    [cards, todayEndTime],
+  const { words, verbs, nouns } = useMemo(
+    () => computeHomeStats(cards, getCardVariantProgressMap(), entries),
+    [cards, entries],
   );
-
-  // Read once at mount: the counts are a hint about how much there is to do,
-  // not a live figure worth a request every time this screen is opened.
-  const counts = useState(() => {
-    const verbs = getLocalVerbsDict(profile.targetLanguage)?.entries ?? [];
-    const nouns = getLocalNounsDict(profile.targetLanguage)?.entries ?? [];
-    return {
-      verbs: verbs.filter((e) => normalizePos(e.part_of_speech).includes("глагол")).length,
-      nouns: nouns.filter((e) => isNounEntry(e) && nounGender(e) !== null).length,
-    };
-  })[0];
 
   return (
     <section className="screen practice-view">
@@ -59,45 +51,56 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
         </div>
       </header>
 
-      <div className="practice-list">
-        <button className="action-card study glass-card" onClick={onOpenCards} type="button">
-          <span className="action-card-icon">
-            <Flame size={24} fill={dueCards > 0 ? "var(--green)" : "none"} style={{ color: dueCards > 0 ? "var(--green)" : "var(--text-muted)" }} />
-          </span>
-          <span>
-            <span className="action-card-label">Карточки</span>
-            <strong className="action-card-title">
-              {dueCards > 0 ? `Повторить сегодня: ${dueCards}` : "Изучение слов и фраз"}
-            </strong>
-            <span className="action-card-sub">Слова, фразы и предложения — интервальное повторение</span>
-          </span>
-          <ChevronRight size={20} className="action-card-arrow" />
-        </button>
-
-        <button className="action-card reading glass-card" onClick={onOpenVerbs} type="button">
-          <span className="action-card-icon"><Repeat size={24} /></span>
-          <span>
-            <span className="action-card-label">Глаголы и времена</span>
-            <strong className="action-card-title">Формы и спряжения</strong>
-            <span className="action-card-sub">
-              {counts.verbs > 0 ? `${counts.verbs} глаголов из словаря` : "Infinitiv · Präteritum · Partizip II"}
-            </span>
-          </span>
-          <ChevronRight size={20} className="action-card-arrow" />
-        </button>
-
-        <button className="action-card nouns glass-card" onClick={onOpenNouns} type="button">
-          <span className="action-card-icon"><BookA size={24} /></span>
-          <span>
-            <span className="action-card-label">Артикли и существительные</span>
-            <strong className="action-card-title">Род и артикли</strong>
-            <span className="action-card-sub">
-              {counts.nouns > 0 ? `${counts.nouns} существительных из словаря` : "der · die · das и множественное число"}
-            </span>
-          </span>
-          <ChevronRight size={20} className="action-card-arrow" />
-        </button>
+      <div className="home-rows">
+        <PracticeRow
+          title="Карточки"
+          detail={
+            words.total > 0
+              ? `${words.total} карточек · ${words.learned} в памяти`
+              : "Слова, фразы и предложения"
+          }
+          badge={words.due > 0 ? String(words.due) : undefined}
+          onClick={onOpenCards}
+        />
+        <PracticeRow
+          title="Глаголы и времена"
+          detail={
+            verbs.total > 0
+              ? `${verbs.total} глаголов · неправильных ${verbs.irregular}`
+              : "Infinitiv · Präteritum · Partizip II"
+          }
+          hint={verbs.missingForms > 0 ? `${verbs.missingForms} без форм` : undefined}
+          onClick={onOpenVerbs}
+        />
+        <PracticeRow
+          title="Артикли и существительные"
+          detail={
+            nouns.total > 0
+              ? `${nouns.total} существительных · с артиклем ${nouns.withArticle}`
+              : "der · die · das и множественное число"
+          }
+          hint={nouns.withoutArticle > 0 ? `${nouns.withoutArticle} без артикля` : undefined}
+          onClick={onOpenNouns}
+        />
       </div>
     </section>
+  );
+}
+
+function PracticeRow({
+  title, detail, hint, badge, onClick,
+}: { title: string; detail: string; hint?: string; badge?: string; onClick: () => void }) {
+  return (
+    <button className="home-row" type="button" onClick={onClick}>
+      <span className="home-row-text">
+        <strong>{title}</strong>
+        <small>
+          {detail}
+          {hint && <em className="home-row-hint"> · {hint}</em>}
+        </small>
+      </span>
+      {badge && <span className="home-row-badge">{badge}</span>}
+      <ChevronRight size={15} className="home-row-arrow" />
+    </button>
   );
 }
