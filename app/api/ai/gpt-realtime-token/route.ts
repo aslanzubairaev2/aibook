@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOpenAiApiKeyForRequest } from "@/lib/ai/serverAuth";
-import { GPT_REALTIME_MODEL, GPT_REALTIME_REASONING_EFFORT, GPT_REALTIME_TRANSCRIBE_MODEL, GPT_REALTIME_TRANSLATE_INSTRUCTIONS, GPT_REALTIME_VOICE } from "@/lib/ai/gptRealtimeModels";
+import { GPT_REALTIME_MODEL, GPT_REALTIME_TRANSCRIBE_MODEL, GPT_REALTIME_VOICE } from "@/lib/ai/gptRealtimeModels";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +11,20 @@ type ClientSecretResponse = {
 
 /**
  * Issues a short-lived client secret for a WebRTC session against the
- * general-purpose gpt-realtime-2.1, steered into a translator by
- * `instructions` — the fallback path when gpt-realtime-translate's own
- * quality disappoints. Mirrors /api/ai/gpt-translate-token's shape exactly,
- * just against /v1/realtime/client_secrets instead of the translations
- * subresource.
+ * general-purpose gpt-realtime-2.1.
+ *
+ * TEMPORARY DIAGNOSTIC STATE: `instructions` and `reasoning.effort` (the
+ * translate-only system prompt and the "minimal" reasoning override — see
+ * GPT_REALTIME_TRANSLATE_INSTRUCTIONS / GPT_REALTIME_REASONING_EFFORT in
+ * gptRealtimeModels.ts, both still defined but unused here) are deliberately
+ * NOT sent. Even with them, the model waited for the speaker to finish and
+ * only then translated — same turn-based behavior a stock session has. The
+ * point of running it stock is to test, by voice, whether this model/session
+ * shape can do the closer-to-simultaneous translation the ChatGPT app
+ * achieves when told to "translate as I talk" directly, the way the user
+ * would drive the ChatGPT app itself. If it can, the fix is in how the turn
+ * is configured; if it can't either, the gap is inherent to this app's setup
+ * and no amount of prompt/reasoning tuning was going to close it.
  */
 export async function GET(req: Request) {
   try {
@@ -31,12 +40,6 @@ export async function GET(req: Request) {
         session: {
           type: "realtime",
           model: GPT_REALTIME_MODEL,
-          instructions: GPT_REALTIME_TRANSLATE_INSTRUCTIONS,
-          // Translating one sentence needs no multi-step reasoning; the
-          // default effort tier was enough for the model to narrate a
-          // thinking pause before answering — exactly what an interpreter
-          // must never do. See the constant's own comment for the reasoning.
-          reasoning: { effort: GPT_REALTIME_REASONING_EFFORT },
           audio: {
             input: {
               transcription: { model: GPT_REALTIME_TRANSCRIBE_MODEL },
