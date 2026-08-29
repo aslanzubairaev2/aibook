@@ -700,7 +700,7 @@ export function VideoPlayerModal({
                       <div className="video-cue-actions" aria-label="Действия с репликой">
                         <button
                           type="button"
-                          className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
+                          className="video-cue-action-btn"
                           onClick={(event) => { event.stopPropagation(); toggleCueTranslation(idx); }}
                           aria-label={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
                           title={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
@@ -708,15 +708,6 @@ export function VideoPlayerModal({
                           {isTranslationVisible(idx) ? <EyeOff size={14} /> : <Eye size={14} />}
                         </button>
                         <SpeakButton text={cue.text} lang={targetLanguage} size={14} />
-                        <button
-                          type="button"
-                          className="video-cue-action-btn"
-                          onClick={(event) => { event.stopPropagation(); setRepeatCueIndex((current) => current === idx ? null : idx); }}
-                          aria-label={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
-                          title={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
-                        >
-                          <Repeat2 size={14} />
-                        </button>
                         <button
                           type="button"
                           className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
