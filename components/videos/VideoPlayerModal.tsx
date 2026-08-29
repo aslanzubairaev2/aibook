@@ -58,6 +58,7 @@ export function VideoPlayerModal({
   const [discussCue, setDiscussCue] = useState<{ index: number; text: string } | null>(null);
   const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
   const [repeatCueIndex, setRepeatCueIndex] = useState<number | null>(null);
+  const [hoveredWord, setHoveredWord] = useState<{ key: string; translation: string; loading: boolean } | null>(null);
   const [isVideoFullscreen, setIsVideoFullscreen] = useState(false);
   const [watchedPercent, setWatchedPercent] = useState(0);
 
@@ -365,6 +366,39 @@ export function VideoPlayerModal({
     [targetLanguage, nativeLanguage]
   );
 
+  const hoverWordRequests = useRef(new Set<string>());
+  const handleWordHover = useCallback(async (rawWord: string, contextSentence: string) => {
+    const cleanWord = rawWord.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
+    if (!cleanWord || cleanWord.length < 2) return;
+    const key = makeAiCacheKey("word", cleanWord, targetLanguage, nativeLanguage);
+    const cached = getLocalAiAnalysis(key);
+    if (cached?.word?.translation) {
+      setHoveredWord({ key, translation: cached.word.translation, loading: false });
+      return;
+    }
+    setHoveredWord({ key, translation: "", loading: true });
+    if (hoverWordRequests.current.has(key)) return;
+    hoverWordRequests.current.add(key);
+    try {
+      const analysis = await analyzeSelection({
+        mode: "word",
+        word: cleanWord,
+        text: cleanWord,
+        sentence: contextSentence || cleanWord,
+        sentenceBefore: "",
+        sentenceAfter: "",
+        nativeLanguage,
+        targetLanguage,
+      });
+      if (analysis?.word) {
+        saveLocalAiAnalysis(key, analysis);
+        setHoveredWord((current) => current?.key === key ? { key, translation: analysis.word?.translation || "", loading: false } : current);
+      }
+    } finally {
+      hoverWordRequests.current.delete(key);
+    }
+  }, [nativeLanguage, targetLanguage]);
+
   // Jump to cue timestamp
   const handleSeekToCue = (startSec: number) => {
     if (playerRef.current && typeof playerRef.current.seekTo === "function") {
@@ -512,9 +546,20 @@ export function VideoPlayerModal({
             e.stopPropagation();
             void handleWordTap(token, text);
           }}
-          title="Нажмите для перевода и разбора"
+          onMouseEnter={() => void handleWordHover(token, text)}
+          onMouseLeave={() => {
+            const cleanWord = token.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
+            const key = makeAiCacheKey("word", cleanWord, targetLanguage, nativeLanguage);
+            setHoveredWord((current) => current?.key === key ? null : current);
+          }}
+          aria-label={`Перевод и разбор слова: ${token}`}
         >
           {token}
+          {hoveredWord?.key === makeAiCacheKey("word", token.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, ""), targetLanguage, nativeLanguage) && (
+            <span className="sub-word-tooltip" role="status">
+              {hoveredWord.loading ? "Переводим…" : hoveredWord.translation || "Перевод недоступен"}
+            </span>
+          )}
         </button>
       );
     });
