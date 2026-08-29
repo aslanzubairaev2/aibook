@@ -1,9 +1,7 @@
 // The chat behind "Обсудить с AI".
 //
-// Two things make this route different from the other AI routes: it runs on the
-// stronger model (see AI_CONFIG.discussModel — the discussion is the one place
-// that has to reason about the learner rather than extract fields), and it asks
-// for more than prose. The answer carries the follow-up chips and the buttons
+// The discussion uses the same fast model as the rest of the app, but asks for
+// more than prose. The answer carries the follow-up chips and the buttons
 // that open the app's own grammar tables, so the chat can offer "Спряжение
 // aufräumen" instead of pasting a paradigm into a message bubble.
 

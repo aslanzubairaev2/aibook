@@ -322,7 +322,7 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard, 
 
       {nextPage !== null && !error && <div className="videos-load-more"><button type="button" className="videos-search-submit-btn" onClick={() => void loadVideos(nextPage, true)} disabled={isLoadingMore}>{isLoadingMore ? <><Loader2 size={14} className="spin" /> Ищем ещё…</> : "Показать ещё"}</button></div>}
 
-      {activeVideo && <VideoPlayerModal video={activeVideo} profile={profile} onClose={() => setActiveVideo(null)} onAddCard={onAddCard} onProgress={(current, duration, cueIndex, cueText) => {
+      {activeVideo && <VideoPlayerModal video={activeVideo} profile={profile} userId={userId} onClose={() => setActiveVideo(null)} onAddCard={onAddCard} onProgress={(current, duration, cueIndex, cueText) => {
         const percent = duration > 0 ? Math.min(100, (current / duration) * 100) : 0;
         setProgress((previous) => ({ ...previous, [activeVideo.youtubeId]: { percent, position: current, maxPosition: Math.max(previous[activeVideo.youtubeId]?.maxPosition || 0, current) } }));
         if (userId) void sbUpsertVideoLibrary({ user_id: userId, video: activeVideo, is_favorite: favorites.some((item) => item.youtubeId === activeVideo.youtubeId), last_position_seconds: current, max_position_seconds: Math.max(progress[activeVideo.youtubeId]?.maxPosition || 0, current), progress_percent: percent, last_cue_index: cueIndex, last_cue_text: cueText });

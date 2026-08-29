@@ -1,17 +1,20 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { X, Subtitles, ListMusic, Loader2, Eye, EyeOff, MessageCircle, Plus, Repeat2, Maximize2, Minimize2 } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 import type { SubtitleCue } from "@/lib/videos/youtubeTranscript";
 import type { UserProfile, Flashcard, AiAnalysis, DiscussMessage } from "@/lib/types";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
+import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { speak } from "@/lib/tts";
 import { analyzeSelection, getAiHeaders } from "@/lib/ai/analyze";
-import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
-import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
+import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
+import { getLocalAiAnalysis, getLocalDiscussHistory, saveLocalAiAnalysis, saveLocalDiscussHistory } from "@/lib/db/local";
+import { sbGetCachedAnalysis, sbGetCachedWord, sbGetDiscussHistory, sbSaveCachedAnalysis, sbSaveCachedWord, sbSaveDiscussHistory } from "@/lib/db/supabase";
 
 declare global {
   interface Window {
@@ -24,6 +27,7 @@ type Props = {
   video: VideoItem;
   profile: UserProfile;
   onClose: () => void;
+  userId?: string | null;
   onAddCard?: (card: Flashcard) => void;
   onProgress?: (current: number, duration: number, cueIndex: number, cueText: string | null) => void;
 };
@@ -33,6 +37,7 @@ const TRANSLATION_PREFETCH_CUES = 4;
 export function VideoPlayerModal({
   video,
   profile,
+  userId,
   onClose,
   onAddCard,
   onProgress,
@@ -57,9 +62,18 @@ export function VideoPlayerModal({
   const [cueCardLoading, setCueCardLoading] = useState<number | null>(null);
   const [discussCue, setDiscussCue] = useState<{ index: number; text: string } | null>(null);
   const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
+  const [discussKey, setDiscussKey] = useState("");
+  const [isDiscussHistoryLoading, setIsDiscussHistoryLoading] = useState(false);
   const [repeatCueIndex, setRepeatCueIndex] = useState<number | null>(null);
-  const [hoveredWord, setHoveredWord] = useState<{ key: string; translation: string; loading: boolean } | null>(null);
+  const [hoveredWord, setHoveredWord] = useState<{ instanceKey: string; cacheKey: string; translation: string; loading: boolean; x: number; y: number } | null>(null);
+  const [dragSelection, setDragSelection] = useState<{ cueIndex: number; startToken: number; endToken: number } | null>(null);
+  const [panelSelection, setPanelSelection] = useState<{ cueIndex: number; text: string } | null>(null);
+  const [panelAnalysis, setPanelAnalysis] = useState<AiAnalysis | null>(null);
+  const [isPanelLoading, setIsPanelLoading] = useState(false);
   const [isVideoFullscreen, setIsVideoFullscreen] = useState(false);
+  const [overlayPortalTarget, setOverlayPortalTarget] = useState<HTMLElement | null>(
+    () => (typeof document === "undefined" ? null : document.body),
+  );
   const [watchedPercent, setWatchedPercent] = useState(0);
 
   const playerRef = useRef<any>(null);
@@ -73,11 +87,20 @@ export function VideoPlayerModal({
   const repeatJumpAtRef = useRef(0);
   const lastUiTimeRef = useRef(-Infinity);
   const onProgressRef = useRef(onProgress);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragSelectionRef = useRef<typeof dragSelection>(null);
+  const suppressWordClickRef = useRef(false);
   repeatCueIndexRef.current = repeatCueIndex;
   onProgressRef.current = onProgress;
 
   useEffect(() => {
-    const handleFullscreenChange = () => setIsVideoFullscreen(document.fullscreenElement === modalContentRef.current);
+    const handleFullscreenChange = () => {
+      const fullscreenRoot = document.fullscreenElement === modalContentRef.current
+        ? modalContentRef.current
+        : null;
+      setIsVideoFullscreen(Boolean(fullscreenRoot));
+      setOverlayPortalTarget(fullscreenRoot ?? document.body);
+    };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
@@ -170,17 +193,18 @@ export function VideoPlayerModal({
             if (repeatedCue && t >= repeatedCue.end) {
               if (performance.now() - repeatJumpAtRef.current > 250) {
                 repeatJumpAtRef.current = performance.now();
-                lastCueIdxRef.current = -1;
+                lastCueIdxRef.current = repeatedIndex ?? -1;
+                lastUiTimeRef.current = repeatedCue.start;
                 setCurrentTime(repeatedCue.start);
                 try {
                   playerRef.current.seekTo(repeatedCue.start, true);
                   playerRef.current.playVideo();
                 } catch {}
               }
-              return;
-            }
-            // Only trigger re-render when the active cue changes
-            if (idx !== lastCueIdxRef.current || t - lastUiTimeRef.current >= 0.25) {
+            } else if (idx !== lastCueIdxRef.current || t - lastUiTimeRef.current >= 0.25) {
+              // Only trigger re-render when the active cue changes. This branch
+              // deliberately does not run after a repeat seek, but the RAF loop
+              // always continues below.
               lastCueIdxRef.current = idx;
               lastUiTimeRef.current = t;
               setCurrentTime(t);
@@ -229,12 +253,43 @@ export function VideoPlayerModal({
   const activeCue = activeCueIndex >= 0 ? cues[activeCueIndex] : null;
 
   const requestTranslations = useCallback(async (indexes: number[]) => {
-    const missing = indexes.filter((index) => cues[index] && !translations[index] && !translatingCueIndexes.has(index));
-    if (missing.length === 0) return;
+    const requested = [...new Set(indexes)].filter((index) => cues[index] && !translations[index] && !translatingCueIndexes.has(index));
+    if (requested.length === 0) return;
+
+    const localHits: Record<number, string> = {};
+    const missingLocal = requested.filter((index) => {
+      const key = makeAiCacheKey("sentence", cues[index].text, targetLanguage, nativeLanguage);
+      const cached = getLocalAiAnalysis(key)?.sentence?.translation;
+      if (cached) localHits[index] = cached;
+      return !cached;
+    });
+    if (Object.keys(localHits).length > 0) {
+      setTranslations((current) => ({ ...current, ...localHits }));
+    }
+    if (missingLocal.length === 0) return;
 
     setTranslationError(null);
-    setTranslatingCueIndexes((current) => new Set([...current, ...missing]));
+    setTranslatingCueIndexes((current) => new Set([...current, ...missingLocal]));
     try {
+      const remoteResults = await Promise.all(missingLocal.map(async (index) => {
+        const key = makeAiCacheKey("sentence", cues[index].text, targetLanguage, nativeLanguage);
+        const cached = await sbGetCachedAnalysis(key);
+        return { index, key, translation: cached?.sentence?.translation || "" };
+      }));
+      const remoteHits: Record<number, string> = {};
+      for (const result of remoteResults) {
+        if (!result.translation) continue;
+        remoteHits[result.index] = result.translation;
+        saveLocalAiAnalysis(result.key, {
+          sentence: { text: cues[result.index].text, translation: result.translation },
+        });
+      }
+      if (Object.keys(remoteHits).length > 0) {
+        setTranslations((current) => ({ ...current, ...remoteHits }));
+      }
+
+      const missing = missingLocal.filter((index) => !remoteHits[index]);
+      if (missing.length === 0) return;
       const { getAiHeaders } = await import("@/lib/ai/analyze");
       const response = await fetch("/api/videos/translate", {
         method: "POST",
@@ -251,7 +306,13 @@ export function VideoPlayerModal({
         const next = { ...current };
         missing.forEach((index, translationIndex) => {
           const translation = data.translations?.[translationIndex];
-          if (translation) next[index] = translation;
+          if (translation) {
+            next[index] = translation;
+            const key = makeAiCacheKey("sentence", cues[index].text, targetLanguage, nativeLanguage);
+            const analysis: AiAnalysis = { sentence: { text: cues[index].text, translation } };
+            saveLocalAiAnalysis(key, analysis);
+            void sbSaveCachedAnalysis(key, "sentence", analysis);
+          }
         });
         return next;
       });
@@ -260,7 +321,7 @@ export function VideoPlayerModal({
     } finally {
       setTranslatingCueIndexes((current) => {
         const next = new Set(current);
-        missing.forEach((index) => next.delete(index));
+        missingLocal.forEach((index) => next.delete(index));
         return next;
       });
     }
@@ -350,6 +411,10 @@ export function VideoPlayerModal({
       try {
         let full = getLocalAiAnalysis(cacheKey);
         if (!full?.word) {
+          full = await sbGetCachedWord(cleanWord, targetLanguage, nativeLanguage);
+          if (full?.word) saveLocalAiAnalysis(cacheKey, full);
+        }
+        if (!full?.word) {
           full = await analyzeSelection({
             mode: "word",
             word: cleanWord,
@@ -360,7 +425,10 @@ export function VideoPlayerModal({
             nativeLanguage,
             targetLanguage,
           });
-          if (full?.word) saveLocalAiAnalysis(cacheKey, full);
+          if (full?.word) {
+            saveLocalAiAnalysis(cacheKey, full);
+            void sbSaveCachedWord(cleanWord, targetLanguage, nativeLanguage, full);
+          }
         }
         setWordModalAnalysis(full?.word ? full : null);
       } catch {
@@ -373,18 +441,22 @@ export function VideoPlayerModal({
   );
 
   const hoverWordRequests = useRef(new Set<string>());
-  const handleWordHover = useCallback(async (rawWord: string, contextSentence: string) => {
+  const loadHoverWord = useCallback(async (rawWord: string, contextSentence: string, instanceKey: string, x: number, y: number) => {
     const cleanWord = rawWord.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
     if (!cleanWord || cleanWord.length < 2) return;
-    const key = makeAiCacheKey("word", cleanWord, targetLanguage, nativeLanguage);
-    const cached = getLocalAiAnalysis(key);
+    const cacheKey = makeAiCacheKey("word", cleanWord, targetLanguage, nativeLanguage);
+    let cached = getLocalAiAnalysis(cacheKey);
+    if (!cached?.word) {
+      cached = await sbGetCachedWord(cleanWord, targetLanguage, nativeLanguage);
+      if (cached?.word) saveLocalAiAnalysis(cacheKey, cached);
+    }
     if (cached?.word?.translation) {
-      setHoveredWord({ key, translation: cached.word.translation, loading: false });
+      setHoveredWord({ instanceKey, cacheKey, translation: cached.word.translation, loading: false, x, y });
       return;
     }
-    setHoveredWord({ key, translation: "", loading: true });
-    if (hoverWordRequests.current.has(key)) return;
-    hoverWordRequests.current.add(key);
+    setHoveredWord({ instanceKey, cacheKey, translation: "", loading: true, x, y });
+    if (hoverWordRequests.current.has(cacheKey)) return;
+    hoverWordRequests.current.add(cacheKey);
     try {
       const analysis = await analyzeSelection({
         mode: "word",
@@ -397,13 +469,35 @@ export function VideoPlayerModal({
         targetLanguage,
       });
       if (analysis?.word) {
-        saveLocalAiAnalysis(key, analysis);
-        setHoveredWord((current) => current?.key === key ? { key, translation: analysis.word?.translation || "", loading: false } : current);
+        saveLocalAiAnalysis(cacheKey, analysis);
+        void sbSaveCachedWord(cleanWord, targetLanguage, nativeLanguage, analysis);
+        setHoveredWord((current) => current?.instanceKey === instanceKey
+          ? { ...current, translation: analysis.word?.translation || "", loading: false }
+          : current);
       }
     } finally {
-      hoverWordRequests.current.delete(key);
+      hoverWordRequests.current.delete(cacheKey);
     }
   }, [nativeLanguage, targetLanguage]);
+
+  const scheduleWordHover = useCallback((rawWord: string, contextSentence: string, instanceKey: string, element: HTMLElement) => {
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    const rect = element.getBoundingClientRect();
+    hoverTimerRef.current = setTimeout(() => {
+      void loadHoverWord(rawWord, contextSentence, instanceKey, rect.left + rect.width / 2, rect.top);
+    }, 1000);
+  }, [loadHoverWord]);
+
+  const clearWordHover = useCallback((instanceKey?: string) => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    setHoveredWord((current) => !instanceKey || current?.instanceKey === instanceKey ? null : current);
+  }, []);
+
+  useEffect(() => () => clearWordHover(), [clearWordHover]);
 
   // Jump to cue timestamp
   const handleSeekToCue = (startSec: number) => {
@@ -461,15 +555,36 @@ export function VideoPlayerModal({
     setCueCardLoading(null);
   };
 
-  const handleDiscussCue = (index: number, selectedText?: string) => {
+  const handleDiscussCue = useCallback(async (index: number, selectedText?: string) => {
     const cue = cues[index];
     if (!cue) return;
     if (playerRef.current && typeof playerRef.current.pauseVideo === "function") {
       try { playerRef.current.pauseVideo(); } catch {}
     }
-    setDiscussCue({ index, text: selectedText?.trim() || cue.text });
-    setDiscussMessages([]);
-  };
+    const text = selectedText?.trim() || cue.text;
+    const key = makeDiscussCacheKey("sentence", text, targetLanguage, nativeLanguage);
+    setDiscussCue({ index, text });
+    setDiscussKey(key);
+    setDiscussMessages(getLocalDiscussHistory(key));
+    setIsDiscussHistoryLoading(Boolean(userId));
+    if (!userId) return;
+    try {
+      const remoteHistory = await sbGetDiscussHistory(userId, key);
+      if (remoteHistory.length > 0) {
+        saveLocalDiscussHistory(key, remoteHistory);
+        setDiscussMessages(remoteHistory);
+      }
+    } finally {
+      setIsDiscussHistoryLoading(false);
+    }
+  }, [cues, nativeLanguage, targetLanguage, userId]);
+
+  const handleDiscussMessagesChange = useCallback((messages: DiscussMessage[]) => {
+    setDiscussMessages(messages);
+    if (!discussKey) return;
+    saveLocalDiscussHistory(discussKey, messages);
+    if (userId) void sbSaveDiscussHistory(userId, discussKey, messages);
+  }, [discussKey, userId]);
 
   const toggleRepeatCue = (index: number) => {
     setRepeatCueIndex((current) => {
@@ -479,17 +594,80 @@ export function VideoPlayerModal({
     });
   };
 
-  const handleCueTextSelection = (index: number) => {
-    const selection = window.getSelection();
-    const text = selection?.toString().trim() || "";
-    if (!selection || text.split(/\s+/).length < 2) return;
-    const anchor = selection.anchorNode;
-    const focus = selection.focusNode;
-    const container = document.querySelector(`[data-cue-text="${index}"]`);
-    if (!container || !anchor || !focus || !container.contains(anchor) || !container.contains(focus)) return;
-    selection.removeAllRanges();
-    handleDiscussCue(index, text);
-  };
+  const openSelectionPanel = useCallback(async (cueIndex: number, text: string) => {
+    const normalized = text.trim();
+    if (!normalized) return;
+    playerRef.current?.pauseVideo?.();
+    setPanelSelection({ cueIndex, text: normalized });
+    setPanelAnalysis(null);
+    setIsPanelLoading(true);
+    const key = makeAiCacheKey("sentence", normalized, targetLanguage, nativeLanguage);
+    try {
+      let analysis = getLocalAiAnalysis(key);
+      if (!analysis?.sentence) {
+        analysis = await sbGetCachedAnalysis(key);
+        if (analysis?.sentence) saveLocalAiAnalysis(key, analysis);
+      }
+      if (!analysis?.sentence) {
+        analysis = await analyzeSelection({
+          mode: "sentence",
+          word: normalized.split(/\s+/)[0] || normalized,
+          text: normalized,
+          sentence: normalized,
+          sentenceBefore: cues[cueIndex - 1]?.text || "",
+          sentenceAfter: cues[cueIndex + 1]?.text || "",
+          nativeLanguage,
+          targetLanguage,
+        });
+        saveLocalAiAnalysis(key, analysis);
+        void sbSaveCachedAnalysis(key, "sentence", analysis);
+      }
+      setPanelAnalysis(analysis);
+    } catch {
+      setPanelAnalysis(null);
+    } finally {
+      setIsPanelLoading(false);
+    }
+  }, [cues, nativeLanguage, targetLanguage]);
+
+  const finishDragSelection = useCallback(() => {
+    const selection = dragSelectionRef.current;
+    dragSelectionRef.current = null;
+    setDragSelection(null);
+    if (!selection || selection.startToken === selection.endToken) return;
+    suppressWordClickRef.current = true;
+    const cue = cues[selection.cueIndex];
+    if (!cue) return;
+    const tokens = cue.text.split(/(\s+)/);
+    const start = Math.min(selection.startToken, selection.endToken);
+    const end = Math.max(selection.startToken, selection.endToken);
+    const text = tokens.slice(start, end + 1).join("").trim();
+    if (text.split(/\s+/).length < 2) return;
+    void openSelectionPanel(selection.cueIndex, text);
+  }, [cues, openSelectionPanel]);
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const current = dragSelectionRef.current;
+      if (!current) return;
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-video-cue-index][data-video-token-index]");
+      if (!target || Number(target.dataset.videoCueIndex) !== current.cueIndex) return;
+      const endToken = Number(target.dataset.videoTokenIndex);
+      if (!Number.isFinite(endToken) || endToken === current.endToken) return;
+      const next = { ...current, endToken };
+      dragSelectionRef.current = next;
+      setDragSelection(next);
+    };
+    const finish = () => finishDragSelection();
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    };
+  }, [finishDragSelection]);
 
   useEffect(() => {
     const handleVideoShortcut = (event: KeyboardEvent) => {
@@ -544,36 +722,51 @@ export function VideoPlayerModal({
   };
 
   // Helper to tokenize subtitle text into words
-  const renderInteractiveSubtitleText = (text: string) => {
+  const renderInteractiveSubtitleText = (text: string, cueIndex: number) => {
     const tokens = text.split(/(\s+)/);
     return tokens.map((token, idx) => {
       const isWord = /[\p{L}\d]/u.test(token);
       if (!isWord) {
         return <span key={idx}>{token}</span>;
       }
+      const instanceKey = `${cueIndex}:${idx}`;
+      const isDragged = dragSelection?.cueIndex === cueIndex
+        && idx >= Math.min(dragSelection.startToken, dragSelection.endToken)
+        && idx <= Math.max(dragSelection.startToken, dragSelection.endToken);
       return (
         <button
           key={idx}
           type="button"
-          className="sub-interactive-word"
+          className={`sub-interactive-word ${isDragged ? "is-drag-selected" : ""}`}
+          data-video-cue-index={cueIndex}
+          data-video-token-index={idx}
+          onPointerDown={(event) => {
+            if (event.pointerType === "mouse" && event.button !== 0) return;
+            clearWordHover();
+            const next = { cueIndex, startToken: idx, endToken: idx };
+            dragSelectionRef.current = next;
+            setDragSelection(next);
+          }}
+          onPointerEnter={() => {
+            const current = dragSelectionRef.current;
+            if (!current || current.cueIndex !== cueIndex || current.endToken === idx) return;
+            const next = { ...current, endToken: idx };
+            dragSelectionRef.current = next;
+            setDragSelection(next);
+          }}
           onClick={(e) => {
             e.stopPropagation();
+            if (suppressWordClickRef.current) {
+              suppressWordClickRef.current = false;
+              return;
+            }
             void handleWordTap(token, text);
           }}
-          onMouseEnter={() => void handleWordHover(token, text)}
-          onMouseLeave={() => {
-            const cleanWord = token.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
-            const key = makeAiCacheKey("word", cleanWord, targetLanguage, nativeLanguage);
-            setHoveredWord((current) => current?.key === key ? null : current);
-          }}
+          onMouseEnter={(event) => scheduleWordHover(token, text, instanceKey, event.currentTarget)}
+          onMouseLeave={() => clearWordHover(instanceKey)}
           aria-label={`Перевод и разбор слова: ${token}`}
         >
           {token}
-          {hoveredWord?.key === makeAiCacheKey("word", token.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, ""), targetLanguage, nativeLanguage) && (
-            <span className="sub-word-tooltip" role="status">
-              {hoveredWord.loading ? "Переводим…" : hoveredWord.translation || "Перевод недоступен"}
-            </span>
-          )}
         </button>
       );
     });
@@ -649,14 +842,14 @@ export function VideoPlayerModal({
               <Loader2 size={14} className="spin" />
               <span>Загрузка синхронных субтитров...</span>
             </div>
-          ) : cues.length > 0 ? (
+          ) : cues.length > 0 && !showFullTranscript ? (
             <div className="video-subtitle-bar">
               <div className="video-subtitle-live-content">
                 {activeCue ? (
                   <div className="video-live-cue">
                     <span className="video-cue-time">{formatTime(activeCue.start)}</span>
                     <div className="video-cue-copy">
-                      <span className="video-cue-text">{renderInteractiveSubtitleText(activeCue.text)}</span>
+                      <span className="video-cue-text">{renderInteractiveSubtitleText(activeCue.text, activeCueIndex)}</span>
                       {renderCueTranslation(activeCueIndex, true, showLiveTranslation, false)}
                     </div>
                   </div>
@@ -696,6 +889,18 @@ export function VideoPlayerModal({
           {/* ── Full Scrollable Transcript (Optional Accordion) ─────────────── */}
           {showFullTranscript && cues.length > 0 && (
             <div className="video-full-transcript-panel" ref={activeCueScrollRef}>
+              <div className="video-transcript-expanded-toolbar">
+                <button
+                  type="button"
+                  className="video-transcript-collapse-btn"
+                  onClick={() => setShowFullTranscript(false)}
+                  aria-label="Свернуть список реплик"
+                  title="Свернуть список реплик"
+                >
+                  <ListMusic size={14} />
+                  <span>Свернуть</span>
+                </button>
+              </div>
               <div className="video-transcript-list">
               {cues.map((cue, idx) => {
                   const isActive = idx === activeCueIndex;
@@ -708,7 +913,7 @@ export function VideoPlayerModal({
                     >
                       <span className="transcript-time">{formatTime(cue.start)}</span>
                       <div className="transcript-line">
-                        <span className="video-transcript-text" data-cue-text={idx} onMouseUp={() => handleCueTextSelection(idx)} onTouchEnd={() => handleCueTextSelection(idx)}>{renderInteractiveSubtitleText(cue.text)}</span>
+                        <span className="video-transcript-text" data-cue-text={idx}>{renderInteractiveSubtitleText(cue.text, idx)}</span>
                         {renderCueTranslation(idx, false, undefined, false)}
                       </div>
                       <div className="video-cue-actions" aria-label="Действия с репликой">
@@ -761,9 +966,19 @@ export function VideoPlayerModal({
         </div>
       </div>
 
-      {/* ── Interactive WordModal for Tap-To-Translate & Cards ─────────────── */}
-      {isWordModalOpen && (
-        <div className="video-word-modal-layer">
+      {overlayPortalTarget && createPortal(<>
+        {hoveredWord && (
+          <div
+            className="sub-word-tooltip floating"
+            role="status"
+            style={{ left: hoveredWord.x, top: hoveredWord.y }}
+          >
+            {hoveredWord.loading ? "Переводим…" : hoveredWord.translation || "Перевод недоступен"}
+          </div>
+        )}
+
+        {/* ── Interactive WordModal for Tap-To-Translate & Cards ───────────── */}
+        {isWordModalOpen && <div className="video-word-modal-layer">
           <WordModal
             analysis={wordModalAnalysis}
             isOpen={isWordModalOpen}
@@ -792,27 +1007,50 @@ export function VideoPlayerModal({
               void handleWordTap(word, activeCue?.text || "");
             }}
           />
-        </div>
-      )}
+        </div>}
 
-      {discussCue && (
-        <div className="video-discuss-modal-layer">
-        <DiscussAiModal
-          isOpen
-          mode="sentence"
-          selectedText={discussCue.text}
-          sentence={discussCue.text}
-          sentenceBefore={cues[discussCue.index - 1]?.text || ""}
-          sentenceAfter={cues[discussCue.index + 1]?.text || ""}
-          nativeLanguage={nativeLanguage}
-          targetLanguage={targetLanguage}
-          messages={discussMessages}
-          onMessagesChange={setDiscussMessages}
-          onClose={() => setDiscussCue(null)}
-          onWordTap={(word, contextSentence) => void handleWordTap(word, contextSentence)}
-        />
-        </div>
-      )}
+        {panelSelection && <div className="video-ai-panel-layer">
+          <AiPanel
+            selection={{ token: panelSelection.text, phraseText: panelSelection.text, sentence: panelSelection.text, isCustomSentence: true }}
+            analysis={panelAnalysis}
+            isLoading={isPanelLoading}
+            activeTab="sentence"
+            availableTabs={["sentence"]}
+            lang={targetLanguage}
+            ttsProvider={profile.ttsProvider}
+            isGuest={!userId}
+            onClose={() => { setPanelSelection(null); setPanelAnalysis(null); }}
+            onOpenWordModal={() => {}}
+            onDiscuss={() => {
+              const selected = panelSelection;
+              setPanelSelection(null);
+              void handleDiscussCue(selected.cueIndex, selected.text);
+            }}
+            onAddCard={() => handleAddCard(panelSelection.text, panelAnalysis?.sentence?.translation || "", "sentence", panelSelection.text)}
+            onWordTap={(word) => void handleWordTap(word, panelSelection.text)}
+            onTabChange={() => {}}
+            onTtsProviderChange={() => {}}
+          />
+        </div>}
+
+        {discussCue && <div className="video-discuss-modal-layer">
+          <DiscussAiModal
+            isOpen
+            mode="sentence"
+            selectedText={discussCue.text}
+            sentence={discussCue.text}
+            sentenceBefore={cues[discussCue.index - 1]?.text || ""}
+            sentenceAfter={cues[discussCue.index + 1]?.text || ""}
+            nativeLanguage={nativeLanguage}
+            targetLanguage={targetLanguage}
+            messages={discussMessages}
+            onMessagesChange={handleDiscussMessagesChange}
+            isHistoryLoading={isDiscussHistoryLoading}
+            onClose={() => setDiscussCue(null)}
+            onWordTap={(word, contextSentence) => void handleWordTap(word, contextSentence)}
+          />
+        </div>}
+      </>, overlayPortalTarget)}
     </>
   );
 }
