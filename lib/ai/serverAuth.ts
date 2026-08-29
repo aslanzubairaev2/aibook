@@ -37,8 +37,19 @@ export async function getApiKeyForRequest(req: Request): Promise<string> {
   const clientKey = req.headers.get("x-gemini-key") || "";
   const isAllowed = await isOwnerRequest(req);
 
+  // Explicit local-only convenience for testing the app in a browser with
+  // the server key. This can never affect production access.
+  if (process.env.NODE_ENV !== "production" && process.env.AI_ALLOW_DEV_AI === "true" && process.env.GEMINI_API_KEY) {
+    return process.env.GEMINI_API_KEY;
+  }
+
   // If in allowlist, use server-side GEMINI_API_KEY
   if (isAllowed && process.env.GEMINI_API_KEY) {
+    return process.env.GEMINI_API_KEY;
+  }
+
+  // In development mode, allow server GEMINI_API_KEY if present
+  if (process.env.NODE_ENV === "development" && process.env.GEMINI_API_KEY) {
     return process.env.GEMINI_API_KEY;
   }
 
@@ -48,7 +59,7 @@ export async function getApiKeyForRequest(req: Request): Promise<string> {
   }
 
   // Otherwise, deny access
-  throw new Error("Access Denied: AI is only available to owners or users who have set their own Gemini API key in Settings.");
+  throw new Error("Для распознавания речи требуется Gemini API ключ. Укажите его в Настройках или в поле ввода ниже.");
 }
 
 /**

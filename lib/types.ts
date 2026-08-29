@@ -410,7 +410,7 @@ export type CardVariantState = Partial<Record<Exclude<TrainVariant, "forward">, 
    durationFormatted?: string; // e.g. "04:12"
    audioUrl: string; // direct MP3 streaming URL
  };
- 
+
  export type Audiobook = {
    id: string; // Identifier e.g. "sammlung_deutscher_gedichte_018_1506_librivox"
    title: string;
@@ -451,4 +451,37 @@ export type CardVariantState = Partial<Record<Exclude<TrainVariant, "forward">, 
    totalChapters?: number;
    cefrLevel?: CefrLevel | null;
    cefrConfidence?: CefrConfidence;
+ };
+
+ // ─── Audiobook Transcripts & Read-Along ─────────────────────────────────────
+ export type AudiobookWordTimestamp = {
+   word: string;
+   start: number; // seconds
+   end: number;   // seconds
+ };
+
+ export type AudiobookSegment = {
+   id: string;
+   start: number; // seconds
+   end: number;   // seconds
+   text: string;
+   words?: AudiobookWordTimestamp[];
+ };
+
+ export type AudiobookUsage = {
+   promptTokens: number;
+   outputTokens: number;
+   totalTokens: number;
+   costUsd: number;
+ };
+
+ export type AudiobookTranscript = {
+   audiobookId: string;
+   chapterIndex: number;
+   language: string;
+   segments: AudiobookSegment[];
+   rawText?: string;
+   modelUsed?: string;
+   usage?: AudiobookUsage;
+   createdAt?: string;
  };

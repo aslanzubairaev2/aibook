@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, X, ChevronRight, Loader2, FileText } from "lucide-react";
+import { Plus, X, ChevronRight, Loader2, FileText, Tv } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { GrammarModal, POS_GRAMMAR_LABEL } from "@/components/word-modal/GrammarModal";
 import type { AiAnalysis, PosTag, WordAnalysis } from "@/lib/types";
@@ -20,6 +20,7 @@ type Props = {
   onAddLemma?: (lemma: string) => void;
   onWordTap?: (word: string, contextSentence: string) => void;
   onAddExample?: (text: string, translation: string) => void;
+  onFindVideos?: (word: string) => void;
   /**
    * Write a short reading text built around this word. When the host screen
    * can open lessons it passes its own handler (the dictionary opens the text
@@ -60,7 +61,7 @@ function articleGender(article: string): string {
   return "";
 }
 
-export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onAddExample, onCreateText, isCreatingText }: Props) {
+export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onAddExample, onCreateText, isCreatingText, onFindVideos }: Props) {
   const [grammarOpen, setGrammarOpen] = useState(false);
   // The built-in fallback for "мини-текст": save into «Мои уроки» right here.
   const [miniState, setMiniState] = useState<"idle" | "busy" | "done" | "error">("idle");
@@ -306,6 +307,23 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
             </button>
           );
         })()}
+
+        {onFindVideos && (
+          <button
+            type="button"
+            className="grammar-open-btn"
+            onClick={() => {
+              onFindVideos(word.lemma || displayWord);
+              onClose();
+            }}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <Tv size={16} />
+              Видео с этим словом
+            </span>
+            <ChevronRight size={18} />
+          </button>
+        )}
         </>
         )}
 

@@ -16,6 +16,7 @@ import {
   Clock,
   Volume2,
   VolumeX,
+  ScrollText,
 } from "lucide-react";
 import type { Audiobook, AudiobookChapter, CefrConfidence, CefrLevel, DiscussMessage, AiAnalysis } from "@/lib/types";
 import {
@@ -37,6 +38,7 @@ import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { WordModal } from "@/components/word-modal/WordModal";
+import { AudiobookReadAlongModal } from "./AudiobookReadAlongModal";
 
 type Props = {
   audiobook: Audiobook;
@@ -137,6 +139,11 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [isMuted, setIsMuted] = useState(false);
   const [showChaptersList, setShowChaptersList] = useState(false);
+  const [isReadAlongOpen, setIsReadAlongOpen] = useState(false);
+  // "Repeat this sentence until you start distinguishing the words" — an A-B
+  // loop over one read-along segment. Chapter-relative, so it must not
+  // survive a chapter change (see the reset effect below).
+  const [loopSegment, setLoopSegment] = useState<{ start: number; end: number } | null>(null);
 
   // Compact AI overview, shown right beside the title/metadata.
   const [review, setReview] = useState<string | null>(null);
@@ -299,6 +306,51 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
     audioRef.current?.pause();
     setIsPlaying(false);
   }, []);
+
+  // High-frequency 60fps clock for zero-latency word karaoke tracking. Also
+  // the loop-back point for "repeat this sentence": checked here rather than
+  // on the native `timeupdate` event because that event fires too coarsely
+  // (as little as ~4x/sec in some browsers) to catch the end of a short
+  // sentence before it plays into the next one.
+  useEffect(() => {
+    if (!isPlaying) return;
+    let animId: number;
+    const tick = () => {
+      if (audioRef.current && !audioRef.current.paused) {
+        const t = audioRef.current.currentTime;
+        if (loopSegment && t >= loopSegment.end) {
+          audioRef.current.currentTime = loopSegment.start;
+          setCurrentTime(loopSegment.start);
+        } else {
+          setCurrentTime(t);
+        }
+      }
+      animId = requestAnimationFrame(tick);
+    };
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [isPlaying, loopSegment]);
+
+  // A loop is chapter-relative (segment times come from that chapter's
+  // transcript) — carrying it into a different chapter would repeat the
+  // wrong window of audio. Reset during render (React's documented pattern
+  // for clearing state when a prop changes) rather than in an effect, so
+  // it lands in the same render as the chapter switch instead of a tick
+  // later.
+  const [loopResetChapterIndex, setLoopResetChapterIndex] = useState(currentChapterIndex);
+  if (currentChapterIndex !== loopResetChapterIndex) {
+    setLoopResetChapterIndex(currentChapterIndex);
+    setLoopSegment(null);
+  }
+
+  const handleToggleLoopSegment = useCallback((segment: { start: number; end: number } | null) => {
+    setLoopSegment(segment);
+    if (segment && audioRef.current) {
+      audioRef.current.currentTime = segment.start;
+      setCurrentTime(segment.start);
+      safePlay();
+    }
+  }, [safePlay]);
 
   const handlePlayPause = useCallback(() => {
     if (!audioRef.current || !currentChapter) return;
@@ -735,6 +787,34 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
               </button>
             </div>
 
+            {/* Read-Along (Karaoke / Transcript Mode) Button */}
+            <button
+              type="button"
+              className="audio-read-along-btn"
+              onClick={() => setIsReadAlongOpen(true)}
+              disabled={isLoadingChapters || !currentChapter}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                width: "100%",
+                marginTop: "12px",
+                padding: "10px 16px",
+                background: "rgba(212, 168, 71, 0.12)",
+                border: "1px solid var(--accent)",
+                borderRadius: "var(--radius-md, 10px)",
+                color: "var(--accent)",
+                fontWeight: "700",
+                fontSize: "13.5px",
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <ScrollText size={16} />
+              <span>Читать текст синхронно (Текст / Караоке)</span>
+            </button>
+
             {/* Chapters list drawer */}
             {showChaptersList && chapters.length > 0 && (
               <div className="audio-chapters-drawer">
@@ -806,6 +886,39 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
         onWordTap={(word, context) => void loadWordModalAnalysis(word, context)}
         onAddExample={onAddWordCard ? (text, translation) => onAddWordCard(text, translation, "phrase") : undefined}
       />
+
+      {/* Fullscreen Read-Along Karaoke Modal */}
+      {isReadAlongOpen && (
+        <AudiobookReadAlongModal
+          audiobook={details || audiobook}
+          currentChapterIndex={currentChapterIndex}
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          duration={duration}
+          playbackSpeed={playbackSpeed}
+          nativeLanguage={nativeLanguage}
+          onPlayPause={handlePlayPause}
+          onSeek={handleSeek}
+          onSpeedChange={(speed) => {
+            setPlaybackSpeed(speed);
+            if (audioRef.current) audioRef.current.playbackRate = speed;
+          }}
+          onChapterChange={(idx) => {
+            setCurrentChapterIndex(idx);
+            setCurrentTime(0);
+          }}
+          onClose={() => {
+            setIsReadAlongOpen(false);
+            // The regular player has no repeat indicator or stop control —
+            // leaving a loop running after close would trap playback in that
+            // ~30s window with no visible way out except reopening read-along.
+            setLoopSegment(null);
+          }}
+          onAddWordCard={onAddWordCard}
+          loopSegment={loopSegment}
+          onToggleLoopSegment={handleToggleLoopSegment}
+        />
+      )}
     </div>
   );
 }
