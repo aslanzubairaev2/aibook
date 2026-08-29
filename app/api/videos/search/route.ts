@@ -56,7 +56,10 @@ export async function GET(request: Request) {
   const limit = Math.min(12, Math.max(1, Number.parseInt(searchParams.get("limit") || "12", 10) || 12));
   const useAi = searchParams.get("ai") === "true";
   const intentLanguage = language === "en" ? "en" : "de";
-  const { intent, aiApplied } = await resolveIntent(request, query, intentLanguage, useAi);
+  const directQuery = query.length > 0;
+  const { intent, aiApplied } = directQuery
+    ? { intent: { ...DEFAULT_INTENT, keywords: query }, aiApplied: false }
+    : await resolveIntent(request, query, intentLanguage, useAi);
   const filters: VideoFilters = {
     language,
     cefrLevel: requestedLevel === "all" ? intent.cefrLevel : requestedLevel,
@@ -65,7 +68,10 @@ export async function GET(request: Request) {
     captionsOnly: requestedCaptions || intent.captionsOnly,
   };
 
-  const searchOptions = {
+  const searchOptions = directQuery ? {
+    page,
+    limit,
+  } : {
     page,
     limit,
     cefrLevel: filters.cefrLevel,
@@ -73,9 +79,12 @@ export async function GET(request: Request) {
     duration: filters.duration,
     captionsOnly: filters.captionsOnly,
   };
-  const searches = language === "all"
-    ? await Promise.all([searchYouTube(intent.keywords, "de", searchOptions), searchYouTube(intent.keywords, "en", searchOptions)])
-    : [await searchYouTube(intent.keywords, language, searchOptions)];
+  const searchLanguage = language === "en" ? "en" : "de";
+  const searches = directQuery
+    ? [await searchYouTube(query, searchLanguage, searchOptions)]
+    : language === "all"
+      ? await Promise.all([searchYouTube(intent.keywords, "de", searchOptions), searchYouTube(intent.keywords, "en", searchOptions)])
+      : [await searchYouTube(intent.keywords, language, searchOptions)];
   const networkVideos = searches.flatMap((result) => result.videos);
   const networkAvailable = searches.some((result) => result.networkAvailable);
   const hasMore = searches.some((result) => result.hasMore);
@@ -89,6 +98,18 @@ export async function GET(request: Request) {
       aiApplied,
       intent,
     }, { headers: { "Cache-Control": "private, max-age=300" } });
+  }
+
+  if (directQuery) {
+    return NextResponse.json({
+      videos: [],
+      nextPage: null,
+      source: "network",
+      networkAvailable,
+      aiApplied: false,
+      intent,
+      warning: networkAvailable ? "По вашему запросу видео не найдены." : "YouTube временно недоступен; попробуйте ещё раз позже.",
+    }, { headers: { "Cache-Control": "private, max-age=60" } });
   }
 
   const fallback = filterVideos(getVideosByLanguage(language), filters)
