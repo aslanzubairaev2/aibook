@@ -12,10 +12,23 @@ const TIMEDTEXT_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.83 Safari/537.36,gzip(gfe)";
 const WATCH_PAGE_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+const SUPADATA_URL = "https://api.supadata.ai/v1/transcript";
 
 type CaptionTrack = {
   baseUrl?: string;
   languageCode?: string;
+};
+
+type SupadataCue = {
+  text?: string;
+  offset?: number;
+  duration?: number;
+};
+
+type SupadataResponse = {
+  content?: SupadataCue[];
+  jobId?: string;
+  status?: string;
 };
 
 function decodeHtml(html: string): string {
@@ -153,6 +166,56 @@ async function getWatchPageCaptionTracks(videoId: string, preferredLang: string)
   return getCaptionTracks(playerResponse);
 }
 
+function supadataApiKey(): string | null {
+  return process.env.SUPADATA_API_KEY || null;
+}
+
+function parseSupadataCues(data: SupadataResponse): SubtitleCue[] {
+  return normalizeSubtitleCues((data.content || [])
+    .filter((cue) => typeof cue.text === "string" && typeof cue.offset === "number" && typeof cue.duration === "number")
+    .map((cue) => ({
+      start: (cue.offset as number) / 1000,
+      end: ((cue.offset as number) + (cue.duration as number)) / 1000,
+      duration: (cue.duration as number) / 1000,
+      text: decodeHtml((cue.text as string).trim()),
+    }))
+    .filter((cue) => cue.text.length > 0));
+}
+
+async function fetchSupadataTranscript(videoId: string, preferredLang: string): Promise<SubtitleCue[]> {
+  const key = supadataApiKey();
+  if (!key) return [];
+
+  const params = new URLSearchParams({
+    url: `https://www.youtube.com/watch?v=${videoId}`,
+    lang: preferredLang,
+    text: "false",
+    mode: "auto",
+  });
+  const response = await fetch(`${SUPADATA_URL}?${params}`, {
+    headers: { "x-api-key": key },
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) return [];
+  let data = await response.json() as SupadataResponse;
+
+  // Long videos may be processed asynchronously by Supadata.
+  if (data.jobId) {
+    for (let attempt = 0; attempt < 8 && data.jobId; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      const jobResponse = await fetch(`${SUPADATA_URL}/${encodeURIComponent(data.jobId)}`, {
+        headers: { "x-api-key": key },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!jobResponse.ok) return [];
+      data = await jobResponse.json() as SupadataResponse;
+      if (data.content?.length || ["failed", "error", "completed"].includes(data.status || "")) break;
+    }
+  }
+
+  return parseSupadataCues(data);
+}
+
 // In-memory cache for transcripts
 const transcriptCache = new Map<string, SubtitleCue[]>();
 
@@ -166,6 +229,12 @@ export async function fetchYouTubeTranscript(
   }
 
   try {
+    const supadataCues = await fetchSupadataTranscript(videoId, preferredLang);
+    if (supadataCues.length > 0) {
+      transcriptCache.set(cacheKey, supadataCues);
+      return supadataCues;
+    }
+
     const res = await fetch(INNERTUBE_PLAYER_URL, {
       method: "POST",
       headers: {
