@@ -6,6 +6,10 @@ import { DictionaryPanel, entryToAnalysis, entryToCardText } from "@/components/
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { WordModal } from "@/components/word-modal/WordModal";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
+import {
+  invalidateDictionaryCache, isDictionaryFresh, readDictionaryCache, writeDictionaryCache,
+} from "@/lib/db/dictionaryCache";
+import { useQuickWord } from "@/components/word-modal/useQuickWord";
 import type { TrainBatch } from "@/lib/cards";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
@@ -49,8 +53,11 @@ export function DictionaryView({
   // load on the id keeps a tab switch from refetching the whole dictionary.
   const userId = user?.id ?? null;
 
-  const [entries, setEntries] = useState<DictionaryEntry[]>([]);
-  const [batches, setBatches] = useState<DictionaryBatch[]>([]);
+  // Список берётся из кэша сессии сразу же — возврат на этот экран не должен
+  // выглядеть как первый заход.
+  const cached = userId ? readDictionaryCache(userId, profile.targetLanguage) : null;
+  const [entries, setEntries] = useState<DictionaryEntry[]>(cached?.entries ?? []);
+  const [batches, setBatches] = useState<DictionaryBatch[]>(cached?.batches ?? []);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The dictionary reuses the app-wide word modal rather than inventing its own.
@@ -63,9 +70,26 @@ export function DictionaryView({
     window.setTimeout(() => setToast((cur) => (cur === message ? null : cur)), 2400);
   }, []);
 
-  const loadDictionary = useCallback(async () => {
+  /**
+   * Читает словарь, показывая при этом уже известное.
+   *
+   * `force` — после фотографии или удаления, когда снимок заведомо устарел.
+   * Обычный вход на экран внутри окна свежести не ходит в сеть вообще, а за
+   * его пределами перечитывает молча, оставляя старый список на экране: он
+   * верен ровно до тех пор, пока не придёт новый.
+   */
+  const loadDictionary = useCallback(async (force = false) => {
     if (!userId) { setEntries([]); setBatches([]); return; }
-    setIsLoading(true);
+
+    const snapshot = readDictionaryCache(userId, profile.targetLanguage);
+    if (snapshot) {
+      setEntries(snapshot.entries);
+      setBatches(snapshot.batches);
+      if (!force && isDictionaryFresh(snapshot)) return;
+    }
+
+    // Спиннер показывается только тогда, когда показывать больше нечего.
+    if (!snapshot) setIsLoading(true);
     setError(null);
     try {
       const res = await freshFetch(`/api/dictionary?language=${encodeURIComponent(profile.targetLanguage)}`, {
@@ -73,16 +97,51 @@ export function DictionaryView({
       });
       const data = await res.json() as { entries?: DictionaryEntry[]; batches?: DictionaryBatch[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Не удалось загрузить словарь.");
-      setEntries(data.entries ?? []);
-      setBatches(data.batches ?? []);
+      const fresh = { entries: data.entries ?? [], batches: data.batches ?? [] };
+      setEntries(fresh.entries);
+      setBatches(fresh.batches);
+      writeDictionaryCache(userId, profile.targetLanguage, fresh);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Не удалось загрузить словарь.");
+      // Устаревший список полезнее пустого экрана с ошибкой, поэтому ошибка
+      // показывается только когда показывать больше нечего.
+      if (!snapshot) setError(err instanceof Error ? err.message : "Не удалось загрузить словарь.");
     } finally {
       setIsLoading(false);
     }
   }, [userId, profile.targetLanguage]);
 
   useEffect(() => { void loadDictionary(); }, [loadDictionary]);
+
+  const reloadDictionary = useCallback(() => {
+    if (userId) invalidateDictionaryCache(userId, profile.targetLanguage);
+    void loadDictionary(true);
+  }, [loadDictionary, userId, profile.targetLanguage]);
+
+  /**
+   * Быстрое превью форм по удержанию.
+   *
+   * Словарная статья знает о слове почти всё, что нужно подсказке — перевод,
+   * часть речи, артикль, множественное число, сохранённые формы глагола, —
+   * поэтому здесь она открывается вообще без обращения к сети.
+   */
+  const { openQuickWord, quickWordPopover } = useQuickWord({
+    targetLanguage: profile.targetLanguage,
+    nativeLanguage: profile.nativeLanguage,
+    authHeaders: sbAuthHeaders,
+    onExpand: () => { /* карточка уже открыта коротким тапом */ },
+  });
+
+  const holdEntry = useCallback((entry: DictionaryEntry, anchor: DOMRect) => {
+    openQuickWord(entry.lemma || entry.headword, anchor, {
+      lemma: entry.lemma || entry.headword,
+      translation: entry.translation,
+      partOfSpeech: entry.part_of_speech,
+      article: entry.article,
+      plural: entry.plural,
+      forms: entry.forms,
+      context: entry.example,
+    });
+  }, [openQuickWord]);
 
   // Which words are already flashcards, so adding one says so instead of
   // silently making a duplicate.
@@ -131,7 +190,13 @@ export function DictionaryView({
   }
 
   async function deleteEntry(id: string) {
-    setEntries((prev) => prev.filter((e) => e.id !== id));
+    // Кэш обновляется вместе с экраном: иначе возврат на словарь воскресил бы
+    // удалённое слово из снимка, снятого до удаления.
+    setEntries((prev) => {
+      const next = prev.filter((e) => e.id !== id);
+      if (userId) writeDictionaryCache(userId, profile.targetLanguage, { entries: next, batches });
+      return next;
+    });
     try {
       await fetch(`/api/dictionary?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
@@ -143,8 +208,11 @@ export function DictionaryView({
   }
 
   async function deleteBatch(batchId: string) {
-    setEntries((prev) => prev.filter((e) => e.batch_id !== batchId));
-    setBatches((prev) => prev.filter((b) => b.id !== batchId));
+    const nextEntries = entries.filter((e) => e.batch_id !== batchId);
+    const nextBatches = batches.filter((b) => b.id !== batchId);
+    setEntries(nextEntries);
+    setBatches(nextBatches);
+    if (userId) writeDictionaryCache(userId, profile.targetLanguage, { entries: nextEntries, batches: nextBatches });
     try {
       await fetch(`/api/dictionary?batchId=${encodeURIComponent(batchId)}`, {
         method: "DELETE",
@@ -168,7 +236,7 @@ export function DictionaryView({
       });
       const data = await res.json() as { adopted?: number; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Не удалось оформить пачку.");
-      await loadDictionary();
+      reloadDictionary();
       onReloadCards?.();
       showToast(`Пачка «${title}» оформлена — карточек: ${data.adopted ?? 0}`);
     } catch (err) {
@@ -239,6 +307,7 @@ export function DictionaryView({
             nativeLanguage={profile.nativeLanguage}
             onPhotograph={() => setPhotoOpen(true)}
             onOpenEntry={(entry) => void openWord(entry)}
+            onHoldEntry={holdEntry}
             onDeleteEntry={(id) => void deleteEntry(id)}
             onDeleteBatch={(id) => void deleteBatch(id)}
             onTrainBatch={(batch) => onTrainWords?.(batch)}
@@ -294,7 +363,7 @@ export function DictionaryView({
           onCreated={() => setPhotoOpen(false)}
           onWordsAdded={({ added, updated, warning }) => {
             setPhotoOpen(false);
-            void loadDictionary();
+            reloadDictionary();
             onReloadCards?.();
             showToast(
               warning
@@ -306,6 +375,8 @@ export function DictionaryView({
           }}
         />
       )}
+
+      {quickWordPopover}
 
       {toast && <div className="toast">{toast}</div>}
     </section>

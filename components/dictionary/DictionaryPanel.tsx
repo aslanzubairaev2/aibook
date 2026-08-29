@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Layers, Loader2, Search, SlidersHorizontal, Trash2, X,
+  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Layers, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { getCardVariantProgressMap, getLocalPackSort, saveLocalPackSort } from "@/lib/db/local";
@@ -11,9 +11,61 @@ import { FORM_LABEL, isIrregularGermanVerb, normalizePos } from "@/lib/verbForms
 import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/search/multiTerm";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
+import { useLongPress } from "@/lib/hooks/useLongPress";
 import type { AiAnalysis, CefrLevel, Flashcard, PackSort, PosTag } from "@/lib/types";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
+
+/** Каркас словаря на время первой загрузки — две пачки по несколько строк. */
+function DictionarySkeleton() {
+  return (
+    <div className="dict-skeleton" aria-busy="true" aria-label="Загружаю словарь">
+      {[0, 1].map((pack) => (
+        <section className="dict-skeleton-pack" key={pack}>
+          <div className="dict-skeleton-head">
+            <span className="shimmer-line medium" />
+            <span className="shimmer-line short" />
+          </div>
+          {Array.from({ length: pack === 0 ? 4 : 3 }).map((_, row) => (
+            <div className="dict-skeleton-row" key={row}>
+              <span className="shimmer-line short" />
+              <span className="shimmer-line medium" />
+            </div>
+          ))}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Строка словаря: короткий тап открывает карточку слова, удержание — быстрое
+ * превью форм.
+ *
+ * Вынесено в отдельный компонент, потому что жест держит собственное
+ * состояние (таймер, точка касания), а хук нельзя вызывать внутри `map`.
+ */
+function DictionaryRowButton({
+  entry, onOpenEntry, onHoldEntry, children,
+}: {
+  entry: DictionaryEntry;
+  onOpenEntry: (entry: DictionaryEntry) => void;
+  onHoldEntry?: (entry: DictionaryEntry, anchor: DOMRect) => void;
+  children: React.ReactNode;
+}) {
+  const { handlers, consumedLongPress } = useLongPress(({ rect }) => onHoldEntry?.(entry, rect));
+
+  return (
+    <button
+      type="button"
+      className={`dict-row${onHoldEntry ? " quick-press-target" : ""}`}
+      {...(onHoldEntry ? handlers : {})}
+      onClick={() => { if (!consumedLongPress()) onOpenEntry(entry); }}
+    >
+      {children}
+    </button>
+  );
+}
 
 // The row has little width to spare; the chip carries the familiar
 // dictionary-style abbreviation, and the full label lives in the word modal.
@@ -69,6 +121,8 @@ type Props = {
   nativeLanguage: string;
   onPhotograph: () => void;
   onOpenEntry: (entry: DictionaryEntry) => void;
+  /** Долгое удержание / правая кнопка на слове — быстрое превью его форм. */
+  onHoldEntry?: (entry: DictionaryEntry, anchor: DOMRect) => void;
   onDeleteEntry: (id: string) => void;
   onDeleteBatch: (batchId: string) => void;
   /** Open the flashcard trainer narrowed to this pack's cards. */
@@ -111,7 +165,7 @@ type Props = {
  */
 export function DictionaryPanel({
   entries, batches, cards, isLoading, error, language, nativeLanguage,
-  onPhotograph, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch, onCreateFromPack,
+  onPhotograph, onOpenEntry, onHoldEntry, onDeleteEntry, onDeleteBatch, onTrainBatch, onCreateFromPack,
   onRegisterPack, onDeleteCards,
 }: Props) {
   const [query, setQuery] = useState("");
@@ -311,13 +365,10 @@ export function DictionaryPanel({
       return next;
     });
 
-  if (isLoading) {
-    return (
-      <div className="dict-loading">
-        <Loader2 className="spin" size={22} /> Загружаю словарь...
-      </div>
-    );
-  }
+  // Первый заход рисует форму будущего списка, а не крутящийся кружок посреди
+  // пустоты: экран сразу занимает то место, которое займут слова, поэтому
+  // появление данных ничего не сдвигает.
+  if (isLoading) return <DictionarySkeleton />;
 
   if (error) {
     return (
@@ -696,7 +747,7 @@ export function DictionaryPanel({
                 <div className="dict-list">
                   {group.entries.map((entry) => (
                     <div key={entry.id} className="dict-row-wrap">
-                      <button type="button" className="dict-row" onClick={() => onOpenEntry(entry)}>
+                      <DictionaryRowButton entry={entry} onOpenEntry={onOpenEntry} onHoldEntry={onHoldEntry}>
                         <div className="dict-row-main">
                           <span className={`dict-word gender-${entry.gender || "none"}`}>{entry.headword}</span>
                           <span className="dict-translation">
@@ -709,7 +760,7 @@ export function DictionaryPanel({
                           {entry.plural && <span className="dict-chip">{entry.plural}</span>}
                           {entry.cefr && <span className="dict-chip level">{entry.cefr}</span>}
                         </div>
-                      </button>
+                      </DictionaryRowButton>
                       <span className="dict-row-side" onClick={(e) => e.stopPropagation()}>
                         <SpeakButton text={entry.headword} lang={language} size={15} />
                       </span>

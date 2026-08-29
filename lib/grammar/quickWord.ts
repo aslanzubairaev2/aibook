@@ -141,6 +141,9 @@ export function localQuickWord(
       partizip2: partizip2 || verb.partizip2,
       hilfsverb: hilfsverb === "sein" || hilfsverb === "haben" ? hilfsverb : verb.hilfsverb,
       source: praeteritum && partizip2 ? "table" : verb.source,
+      // Формы из учебника или из уже полученного ответа — проверенные, и
+      // сомнение правила к ним больше не относится.
+      provisional: praeteritum && partizip2 ? false : verb.provisional,
     };
   }
 
@@ -227,7 +230,7 @@ export function mergeQuickWord(base: QuickWord, answer: QuickWordAnswer, hints: 
         provisional: fromTable ? false : local.provisional && !answered,
       };
     }
-  } else if (pos !== "verb") {
+  } else {
     verb = null;
   }
 
@@ -240,7 +243,7 @@ export function mergeQuickWord(base: QuickWord, answer: QuickWordAnswer, hints: 
       plural: hints.plural?.trim() || answer.plural || base.noun?.plural || "",
       predicted: !stored && !answer.article && Boolean(base.noun?.predicted),
     };
-  } else if (pos !== "noun") {
+  } else {
     noun = null;
   }
 

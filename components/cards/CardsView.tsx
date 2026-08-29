@@ -49,6 +49,8 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { ReverseWordModal } from "@/components/word-modal/ReverseWordModal";
 import { useQuickWord } from "@/components/word-modal/useQuickWord";
+import { isDictionaryFresh, readDictionaryCache, writeDictionaryCache } from "@/lib/db/dictionaryCache";
+import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { useLongPress } from "@/lib/hooks/useLongPress";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { describeCardFamiliarity } from "@/lib/ai/wordProfile";
@@ -307,11 +309,12 @@ type AllCardRowProps = {
   facts: WordFacts | undefined;
   targetLanguage: string;
   onWordTap: (word: string, e: React.MouseEvent) => void;
+  onWordHold: (word: string, anchor: DOMRect) => void;
   onDiscuss: (card: Flashcard) => void;
   onDelete: (id: string) => void;
 };
 
-const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWordTap, onDiscuss, onDelete }: AllCardRowProps) {
+const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWordTap, onWordHold, onDiscuss, onDelete }: AllCardRowProps) {
   const color = STATUS_COLORS[card.status] ?? "var(--accent)";
   return (
     <div className="flash-card" style={{ display: "flex", gap: 12, alignItems: "flex-start", justifyContent: "space-between" }}>
@@ -327,10 +330,10 @@ const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWor
         </div>
         {/* Front is spoken and word-tappable, like text everywhere else in the app. */}
         <div className="flash-card-front" style={{ fontSize: 15, display: "flex", alignItems: "flex-start", gap: 6 }}>
-          <TokenizedText text={card.front} style={{ flex: 1 }} onWordTap={onWordTap} />
+          <TokenizedText text={card.front} style={{ flex: 1 }} onWordTap={onWordTap} onWordHold={onWordHold} />
           <SpeakButton text={card.front} lang={targetLanguage} size={15} />
         </div>
-        <TokenizedText text={card.back} style={{ fontSize: 13, color: "var(--text-muted)" }} onWordTap={onWordTap} />
+        <TokenizedText text={card.back} style={{ fontSize: 13, color: "var(--text-muted)" }} onWordTap={onWordTap} onWordHold={onWordHold} />
         <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
@@ -836,26 +839,45 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // schema change. Cards from the reader fall back to the heuristic below.
   const [wordFacts, setWordFacts] = useState<Map<string, WordFacts>>(new Map());
   useEffect(() => {
+    const userId = user?.id;
+    if (!userId) { setWordFacts(new Map()); return; }
+
+    const toFacts = (entries: DictionaryEntry[]) => {
+      const map = new Map<string, WordFacts>();
+      for (const e of entries) {
+        const fact = { pos: e.part_of_speech ?? "", cefr: e.cefr ?? "" };
+        map.set(normalizeFront(e.headword), fact);
+        map.set(normalizeFront(e.lemma), fact);
+      }
+      return map;
+    };
+
+    // Тот же снимок словаря, что и на экране «Словарь». Раньше здесь был
+    // безусловный запрос за всем словарём при каждом монтировании — а Supabase
+    // отдаёт новый объект `user` на каждом обновлении токена, так что «каждое
+    // монтирование» означало ещё и каждое переключение вкладки.
+    const snapshot = readDictionaryCache(userId, targetLanguage);
+    if (snapshot) setWordFacts(toFacts(snapshot.entries));
+    if (isDictionaryFresh(snapshot)) return;
+
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch("/api/dictionary", { headers: await sbAuthHeaders() });
+        const res = await fetch(`/api/dictionary?language=${encodeURIComponent(targetLanguage)}`, { headers: await sbAuthHeaders() });
         if (!res.ok) return;
-        const data = await res.json() as { entries?: { headword: string; lemma: string; part_of_speech: string; cefr: string }[] };
+        // Читается полная запись, а не четыре поля: этот же снимок кладётся в
+        // общий кэш, из которого его берёт экран «Словарь».
+        const data = await res.json() as { entries?: DictionaryEntry[]; batches?: DictionaryBatch[] };
         if (cancelled) return;
-        const map = new Map<string, WordFacts>();
-        for (const e of data.entries ?? []) {
-          const fact = { pos: e.part_of_speech ?? "", cefr: e.cefr ?? "" };
-          map.set(normalizeFront(e.headword), fact);
-          map.set(normalizeFront(e.lemma), fact);
-        }
-        setWordFacts(map);
+        const entries = data.entries ?? [];
+        setWordFacts(toFacts(entries));
+        writeDictionaryCache(userId, targetLanguage, { entries, batches: data.batches ?? [] });
       } catch {
         // Chips simply fall back to the heuristic.
       }
     })();
     return () => { cancelled = true; };
-  }, [user]);
+  }, [user?.id, targetLanguage]);
 
   // Part of speech for a card, normalized the same way the Словарь screen's
   // own filter is — so a card carried over with «продолжить изучение» while
@@ -1272,6 +1294,28 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     e.stopPropagation();
     void openWordModalFor(word);
   }, [openWordModalFor]);
+
+  // Быстрое превью форм: удержание на телефоне, правая кнопка на компьютере.
+  const { openQuickWord, quickWordPopover } = useQuickWord({
+    targetLanguage,
+    nativeLanguage,
+    authHeaders: sbAuthHeaders,
+    onExpand: (word) => void openWordModalFor(word),
+  });
+
+  /**
+   * Подсказке передаётся то, что карточка уже знает о слове: перевод с её
+   * оборотной стороны и часть речи из `wordFacts`. Это снимает сетевой запрос
+   * там, где ответ уже лежит на экране.
+   */
+  const holdWordOfCard = useCallback((card: Flashcard) => (word: string, anchor: DOMRect) => {
+    const isFrontWord = normalizeToken(word) === normalizeToken(card.front);
+    openQuickWord(word, anchor, {
+      translation: isFrontWord ? card.back.split("\n")[0] : undefined,
+      partOfSpeech: isFrontWord ? wordFacts.get(normalizeFront(card.front))?.pos : undefined,
+      context: card.front,
+    });
+  }, [openQuickWord, wordFacts]);
 
   /**
    * «Как это сказать» for one word of a native-language prompt.
@@ -1825,6 +1869,10 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         .zen-toggle:hover { border-color: var(--accent); color: var(--accent); }
       `}</style>
 
+      {/* Быстрое превью форм — уходит порталом в body, поэтому место в дереве
+          значения не имеет. */}
+      {quickWordPopover}
+
       {/* Word Modal */}
       <WordModal
         analysis={wordModal.analysis}
@@ -1990,7 +2038,13 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               </div>
               <div className="card-list">
                 {visibleDueCards.map((card) => (
-                  <DueCardRow key={card.id} card={card} skillState={skillProgress[card.id] ?? EMPTY_SKILL_STATE} />
+                  <DueCardRow
+                    key={card.id}
+                    card={card}
+                    skillState={skillProgress[card.id] ?? EMPTY_SKILL_STATE}
+                    onWordTap={handleWordTap}
+                    onWordHold={holdWordOfCard(card)}
+                  />
                 ))}
                 {hasMoreRows && <div ref={sentinelRef} style={{ height: 1 }} />}
               </div>
@@ -2508,6 +2562,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                           text={promptText}
                           style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
                           onWordTap={handleWordTap}
+                          onWordHold={holdWordOfCard(currentCard)}
                         />
                       )}
                     </div>
@@ -2537,6 +2592,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                             text={currentCard.front}
                             style={{ fontSize: cardFontSize(currentCard.front), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3, textAlign: "center" }}
                             onWordTap={handleWordTap}
+                            onWordHold={holdWordOfCard(currentCard)}
                           />
                           <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center" }}>{currentCard.back}</div>
                         </div>
@@ -2546,6 +2602,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                             text={answerText}
                             style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}
                             onWordTap={handleWordTap}
+                            onWordHold={holdWordOfCard(currentCard)}
                           />
                           {backParts.details && (
                             <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
@@ -2740,6 +2797,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                   facts={wordFacts.get(normalizeFront(card.front))}
                   targetLanguage={targetLanguage}
                   onWordTap={handleWordTap}
+                  onWordHold={holdWordOfCard(card)}
                   onDiscuss={openDiscussCallback}
                   onDelete={onDeleteCard}
                 />

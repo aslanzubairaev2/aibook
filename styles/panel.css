@@ -419,3 +419,44 @@
   color: var(--text-primary);
   transition: background 0.12s ease, color 0.12s ease;
 }
+
+/* ─── Каркас словаря на первую загрузку ──────────────────────────────────── */
+/*
+   Полоски стоят ровно там, где встанут слово и перевод, поэтому появление
+   данных ничего не двигает — экран не «прыгает» под уже занесённым пальцем.
+*/
+.dict-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 8px;
+}
+
+.dict-skeleton-pack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+
+.dict-skeleton-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dict-skeleton-head .shimmer-line:first-child { height: 13px; }
+
+.dict-skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.dict-skeleton-row .shimmer-line:first-child { height: 12px; }
+.dict-skeleton-row .shimmer-line:last-child { height: 9px; opacity: 0.55; }
