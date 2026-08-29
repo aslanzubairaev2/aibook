@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Captions, ChevronDown, Loader2, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
+import { Captions, ChevronDown, History, Heart, Loader2, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { getAiHeaders } from "@/lib/ai/analyze";
 import { VIDEO_CATEGORIES, VIDEO_PLAYLISTS } from "@/lib/videos/data";
 import type { VideoCategory, VideoCefrLevel, VideoDurationFilter, VideoItem, VideoSearchIntent } from "@/lib/videos/types";
@@ -28,6 +28,9 @@ type SearchResponse = {
 };
 
 const QUICK_TOPICS = ["Разговор в аэропорту", "Работа", "Животные", "Еда", "Грамматика", "Сказки"];
+const VIDEO_FAVORITES_KEY = "aibook_video_favorites_v1";
+const VIDEO_HISTORY_KEY = "aibook_video_history_v1";
+type VideoCollection = "search" | "favorites" | "history";
 
 async function getVideoSearchHeaders(): Promise<HeadersInit> {
   try {
@@ -58,7 +61,39 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
   const [intent, setIntent] = useState<VideoSearchIntent | null>(null);
   const [aiApplied, setAiApplied] = useState(false);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [favorites, setFavorites] = useState<VideoItem[]>([]);
+  const [history, setHistory] = useState<VideoItem[]>([]);
+  const [collection, setCollection] = useState<VideoCollection>("search");
   const requestId = useRef(0);
+
+  useEffect(() => {
+    try {
+      setFavorites(JSON.parse(localStorage.getItem(VIDEO_FAVORITES_KEY) || "[]") as VideoItem[]);
+      setHistory(JSON.parse(localStorage.getItem(VIDEO_HISTORY_KEY) || "[]") as VideoItem[]);
+    } catch {
+      setFavorites([]);
+      setHistory([]);
+    }
+  }, []);
+
+  const toggleFavorite = (video: VideoItem) => {
+    setFavorites((current) => {
+      const next = current.some((item) => item.youtubeId === video.youtubeId)
+        ? current.filter((item) => item.youtubeId !== video.youtubeId)
+        : [video, ...current].slice(0, 100);
+      localStorage.setItem(VIDEO_FAVORITES_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const selectVideo = (video: VideoItem) => {
+    setHistory((current) => {
+      const next = [video, ...current.filter((item) => item.youtubeId !== video.youtubeId)].slice(0, 100);
+      localStorage.setItem(VIDEO_HISTORY_KEY, JSON.stringify(next));
+      return next;
+    });
+    setActiveVideo(video);
+  };
 
   const activeFilterCount = useMemo(() => {
     return Number(selectedLang !== defaultLang) + Number(selectedCefr !== "all") + Number(selectedCategory !== "all") + Number(selectedDuration !== "any") + Number(captionsOnly);
@@ -131,11 +166,13 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
     const query = searchQuery.trim();
+    setCollection("search");
     setSubmittedSearch(query);
     void loadVideos(0, false, query);
   };
 
   const chooseQuickTopic = (topic: string) => {
+    setCollection("search");
     setSearchQuery(topic);
     setSubmittedSearch(topic);
     void loadVideos(0, false, topic);
@@ -144,6 +181,7 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
   const choosePlaylist = (playlistId: string) => {
     const playlist = VIDEO_PLAYLISTS.find((item) => item.id === playlistId);
     if (!playlist) return;
+    setCollection("search");
     setSearchQuery(playlist.query);
     setSubmittedSearch("");
     void loadVideos(0, false, "", playlist.query);
@@ -196,6 +234,12 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
         </select>
       </label>
 
+      <div className="videos-collection-tabs" role="tablist" aria-label="Мои видео">
+        <button type="button" className={collection === "favorites" ? "active" : ""} onClick={() => setCollection("favorites")}><Heart size={14} /> Избранное ({favorites.length})</button>
+        <button type="button" className={collection === "history" ? "active" : ""} onClick={() => setCollection("history")}><History size={14} /> История ({history.length})</button>
+        {collection !== "search" && <button type="button" onClick={() => setCollection("search")}>Результаты поиска</button>}
+      </div>
+
       {filtersOpen && (
         <div className="all-filter-panel">
           <FilterGroup label="Язык">
@@ -233,7 +277,12 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
       {warning && <div className="videos-search-warning" role="status">{warning}</div>}
       {error && <div className="videos-search-error" role="alert"><span>{error}</span><button type="button" onClick={() => void loadVideos(0, false)}>Повторить</button></div>}
 
-      {!isLoading && !error && (videos.length > 0 ? <div className="videos-grid">{videos.map((video) => <VideoCard key={video.youtubeId} video={video} onSelect={setActiveVideo} />)}</div> : <div className="seed-card videos-empty"><p>Ничего не найдено. Уберите один из фильтров или попробуйте другую формулировку.</p></div>)}
+      {!isLoading && !error && (() => {
+        const visibleVideos = collection === "favorites" ? favorites : collection === "history" ? history : videos;
+        return visibleVideos.length > 0
+          ? <div className="videos-grid">{visibleVideos.map((video) => <VideoCard key={video.youtubeId} video={video} onSelect={selectVideo} isFavorite={favorites.some((item) => item.youtubeId === video.youtubeId)} onToggleFavorite={toggleFavorite} />)}</div>
+          : <div className="seed-card videos-empty"><p>{collection === "favorites" ? "Здесь появятся видео, которые вы сохраните." : collection === "history" ? "История просмотров пока пуста." : "Ничего не найдено. Уберите один из фильтров или попробуйте другую формулировку."}</p></div>;
+      })()}
 
       {nextPage !== null && !error && <div className="videos-load-more"><button type="button" className="videos-search-submit-btn" onClick={() => void loadVideos(nextPage, true)} disabled={isLoadingMore}>{isLoadingMore ? <><Loader2 size={14} className="spin" /> Ищем ещё…</> : "Показать ещё"}</button></div>}
 

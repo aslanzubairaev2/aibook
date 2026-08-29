@@ -1,15 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Play, Clock, Captions } from "lucide-react";
+import { Play, Clock, Captions, Heart } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 
 type Props = {
   video: VideoItem;
   onSelect: (video: VideoItem) => void;
+  isFavorite?: boolean;
+  onToggleFavorite?: (video: VideoItem) => void;
 };
 
-export function VideoCard({ video, onSelect }: Props) {
+export function VideoCard({ video, onSelect, isFavorite = false, onToggleFavorite }: Props) {
   const [imgError, setImgError] = useState(false);
 
   const thumbUrl =
@@ -61,6 +63,17 @@ export function VideoCard({ video, onSelect }: Props) {
           <span className="video-badge captions-badge" title="Синхронный текст доступен">
             <Captions size={11} />
           </span>
+        )}
+        {onToggleFavorite && (
+          <button
+            type="button"
+            className={`video-favorite-btn ${isFavorite ? "active" : ""}`}
+            onClick={(event) => { event.stopPropagation(); onToggleFavorite(video); }}
+            aria-label={isFavorite ? "Убрать из избранного" : "Добавить в избранное"}
+            title={isFavorite ? "Убрать из избранного" : "Сохранить видео"}
+          >
+            <Heart size={14} fill={isFavorite ? "currentColor" : "none"} />
+          </button>
         )}
       </div>
 
