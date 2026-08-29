@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import type { ReaderSelectionSnapshot, DiscussMessage, CardFilters, SkillProgress, TrainVariant } from "@/lib/types";
+import type { VideoItem } from "@/lib/videos/types";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -132,6 +133,66 @@ export type DbUserSettings = {
   /** Which engine the Live Translate screen uses; see LiveTranslateProvider. */
   live_translate_provider?: string | null;
 };
+
+export type DbVideoLibrary = {
+  user_id: string;
+  youtube_id: string;
+  title: string;
+  channel: string;
+  language: string;
+  duration: string;
+  thumbnail_url: string | null;
+  description: string | null;
+  cefr_level: string;
+  category: string;
+  is_favorite: boolean;
+  last_position_seconds: number;
+  max_position_seconds: number;
+  progress_percent: number;
+  last_cue_index: number | null;
+  last_cue_text: string | null;
+  last_watched_at: string;
+};
+
+export async function sbGetVideoLibrary(userId: string): Promise<DbVideoLibrary[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("video_library")
+    .select("*")
+    .eq("user_id", userId)
+    .order("last_watched_at", { ascending: false });
+  if (error) { console.error("sbGetVideoLibrary:", error.message); return []; }
+  return (data ?? []) as DbVideoLibrary[];
+}
+
+export async function sbUpsertVideoLibrary(entry: {
+  user_id: string;
+  video: VideoItem;
+  is_favorite?: boolean;
+  last_position_seconds?: number;
+  max_position_seconds?: number;
+  progress_percent?: number;
+  last_cue_index?: number | null;
+  last_cue_text?: string | null;
+}): Promise<void> {
+  if (!supabase) return;
+  const { video, ...progress } = entry;
+  const { error } = await supabase.from("video_library").upsert({
+    ...progress,
+    youtube_id: video.youtubeId,
+    title: video.title,
+    channel: video.channel,
+    language: video.language,
+    duration: video.duration,
+    thumbnail_url: video.thumbnailUrl ?? null,
+    description: video.description ?? null,
+    cefr_level: video.cefrLevel,
+    category: video.category,
+    last_watched_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "user_id,youtube_id" });
+  if (error) console.error("sbUpsertVideoLibrary:", error.message);
+}
 
 // ─── Books ────────────────────────────────────────────────────────────────────
 
