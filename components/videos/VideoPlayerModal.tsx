@@ -898,7 +898,10 @@ export function VideoPlayerModal({
               <div className="video-subtitle-live-content">
                 {activeCue ? (
                   <div className="video-live-cue">
-                    <span className="video-cue-time">{formatTime(activeCue.start)}</span>
+                    <span className="video-cue-meta">
+                      <span className="video-cue-time">{formatTime(activeCue.start)}</span>
+                      <span className="video-cue-count">{cues.length} реплик</span>
+                    </span>
                     <div className="video-cue-copy">
                       <span className="video-cue-text">{renderInteractiveSubtitleText(activeCue.text, activeCueIndex)}</span>
                       {renderCueTranslation(activeCueIndex, true, showLiveTranslation, false)}
@@ -920,7 +923,7 @@ export function VideoPlayerModal({
                 title="Показать полный транскрипт"
               >
                 <ListMusic size={14} />
-                <span>{showFullTranscript ? "Скрыть текст" : `Текст (${cues.length})`}</span>
+                <span>{showFullTranscript ? "Скрыть текст" : "Текст"}</span>
               </button>
               <button
                 type="button"
@@ -982,6 +985,7 @@ export function VideoPlayerModal({
                           type="button"
                           className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
                           onClick={(event) => { event.stopPropagation(); toggleRepeatCue(idx); }}
+                          aria-pressed={repeatCueIndex === idx}
                           aria-label={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
                           title={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
                         >
