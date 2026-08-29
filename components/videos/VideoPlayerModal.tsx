@@ -403,6 +403,13 @@ export function VideoPlayerModal({
       if (event.repeat || isWordModalOpen || discussCue) return;
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
+      if (event.code === "Space") {
+        event.preventDefault();
+        const playerState = typeof playerRef.current?.getPlayerState === "function" ? playerRef.current.getPlayerState() : -1;
+        if (playerState === 2) playerRef.current?.playVideo?.();
+        else playerRef.current?.pauseVideo?.();
+        return;
+      }
       const cueIndex = activeCueIndex;
       const cue = cueIndex >= 0 ? cues[cueIndex] : null;
       if (!cue) return;
@@ -576,7 +583,7 @@ export function VideoPlayerModal({
                     >
                       <span className="transcript-time">{formatTime(cue.start)}</span>
                       <div className="transcript-line">
-                        {renderInteractiveSubtitleText(cue.text)}
+                        <span className="video-transcript-text">{renderInteractiveSubtitleText(cue.text)}</span>
                         {renderCueTranslation(idx, false, undefined, false)}
                       </div>
                       <div className="video-cue-actions" aria-label="Действия с репликой">
