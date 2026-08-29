@@ -70,6 +70,8 @@ export function VideoPlayerModal({
   const lastCueIdxRef = useRef(-1);
   const lastProgressReportRef = useRef(0);
   const repeatCueIndexRef = useRef<number | null>(null);
+  const repeatJumpAtRef = useRef(0);
+  const lastUiTimeRef = useRef(-Infinity);
   const onProgressRef = useRef(onProgress);
   repeatCueIndexRef.current = repeatCueIndex;
   onProgressRef.current = onProgress;
@@ -118,8 +120,6 @@ export function VideoPlayerModal({
   // ── 2. Initialize YouTube IFrame Player API ────────────────────────────────
   useEffect(() => {
     let rafId: number | null = null;
-    let lastCueIdx = -1;
-
     const createPlayer = () => {
       if (!window.YT || !window.YT.Player) return;
 
@@ -168,15 +168,21 @@ export function VideoPlayerModal({
             const repeatedIndex = repeatCueIndexRef.current;
             const repeatedCue = repeatedIndex === null ? null : cs[repeatedIndex];
             if (repeatedCue && t >= repeatedCue.end) {
-              try {
-                playerRef.current.seekTo(repeatedCue.start, true);
-                playerRef.current.playVideo();
-              } catch {}
+              if (performance.now() - repeatJumpAtRef.current > 250) {
+                repeatJumpAtRef.current = performance.now();
+                lastCueIdxRef.current = -1;
+                setCurrentTime(repeatedCue.start);
+                try {
+                  playerRef.current.seekTo(repeatedCue.start, true);
+                  playerRef.current.playVideo();
+                } catch {}
+              }
               return;
             }
             // Only trigger re-render when the active cue changes
-            if (idx !== lastCueIdxRef.current) {
+            if (idx !== lastCueIdxRef.current || t - lastUiTimeRef.current >= 0.25) {
               lastCueIdxRef.current = idx;
+              lastUiTimeRef.current = t;
               setCurrentTime(t);
             }
             if (onProgressRef.current && t - lastProgressReportRef.current >= 2) {
@@ -465,6 +471,14 @@ export function VideoPlayerModal({
     setDiscussMessages([]);
   };
 
+  const toggleRepeatCue = (index: number) => {
+    setRepeatCueIndex((current) => {
+      const next = current === index ? null : index;
+      lastCueIdxRef.current = -1;
+      return next;
+    });
+  };
+
   const handleCueTextSelection = (index: number) => {
     const selection = window.getSelection();
     const text = selection?.toString().trim() || "";
@@ -711,7 +725,7 @@ export function VideoPlayerModal({
                         <button
                           type="button"
                           className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
-                          onClick={(event) => { event.stopPropagation(); setRepeatCueIndex((current) => current === idx ? null : idx); }}
+                          onClick={(event) => { event.stopPropagation(); toggleRepeatCue(idx); }}
                           aria-label={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
                           title={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
                         >
