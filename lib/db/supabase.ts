@@ -177,9 +177,7 @@ export async function sbUpsertVideoLibrary(entry: {
 }): Promise<void> {
   if (!supabase) return;
   const { video, ...progress } = entry;
-  const { error } = await supabase.from("video_library").upsert({
-    ...progress,
-    youtube_id: video.youtubeId,
+  const videoFields = {
     title: video.title,
     channel: video.channel,
     language: video.language,
@@ -188,10 +186,37 @@ export async function sbUpsertVideoLibrary(entry: {
     description: video.description ?? null,
     cefr_level: video.cefrLevel,
     category: video.category,
+  };
+  const suppliedProgress = Object.fromEntries(
+    Object.entries(progress).filter(([, value]) => value !== undefined),
+  );
+  const { data: updated, error: updateError } = await supabase
+    .from("video_library")
+    .update({
+      ...videoFields,
+      ...suppliedProgress,
+      last_watched_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", entry.user_id)
+    .eq("youtube_id", video.youtubeId)
+    .select("youtube_id")
+    .maybeSingle();
+  if (updateError) {
+    console.error("sbUpsertVideoLibrary update:", updateError.message);
+    return;
+  }
+  if (updated) return;
+
+  const { error: insertError } = await supabase.from("video_library").insert({
+    user_id: entry.user_id,
+    youtube_id: video.youtubeId,
+    ...videoFields,
+    ...suppliedProgress,
     last_watched_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }, { onConflict: "user_id,youtube_id" });
-  if (error) console.error("sbUpsertVideoLibrary:", error.message);
+  });
+  if (insertError) console.error("sbUpsertVideoLibrary insert:", insertError.message);
 }
 
 // ─── Books ────────────────────────────────────────────────────────────────────

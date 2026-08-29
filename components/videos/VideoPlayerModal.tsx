@@ -28,6 +28,7 @@ type Props = {
   profile: UserProfile;
   onClose: () => void;
   userId?: string | null;
+  resumePositionSeconds?: number;
   onAddCard?: (card: Flashcard) => void;
   onProgress?: (current: number, duration: number, cueIndex: number, cueText: string | null) => void;
 };
@@ -38,6 +39,7 @@ export function VideoPlayerModal({
   video,
   profile,
   userId,
+  resumePositionSeconds = 0,
   onClose,
   onAddCard,
   onProgress,
@@ -87,6 +89,7 @@ export function VideoPlayerModal({
   const repeatJumpAtRef = useRef(0);
   const lastUiTimeRef = useRef(-Infinity);
   const onProgressRef = useRef(onProgress);
+  const hasRestoredPositionRef = useRef(false);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragSelectionRef = useRef<typeof dragSelection>(null);
   const suppressWordClickRef = useRef(false);
@@ -139,6 +142,11 @@ export function VideoPlayerModal({
       isMounted = false;
     };
   }, [video.youtubeId, video.language]);
+
+  useEffect(() => {
+    setPlayerReady(false);
+    hasRestoredPositionRef.current = false;
+  }, [video.youtubeId]);
 
   // ── 2. Initialize YouTube IFrame Player API ────────────────────────────────
   useEffect(() => {
@@ -233,16 +241,59 @@ export function VideoPlayerModal({
     };
   }, [video.youtubeId]);
 
+  // Restore the last position only after the IFrame API has finished loading.
+  // The parent may receive the remote progress a moment after the modal opens,
+  // so a zero position is deliberately not treated as a completed restore.
+  useEffect(() => {
+    if (!playerReady || hasRestoredPositionRef.current) return;
+    const position = Number(resumePositionSeconds);
+    if (!Number.isFinite(position) || position <= 3) return;
+
+    const player = playerRef.current;
+    if (!player || typeof player.seekTo !== "function") return;
+    try {
+      const duration = typeof player.getDuration === "function" ? Number(player.getDuration()) : 0;
+      if (duration > 0 && position >= duration - 5) return;
+      hasRestoredPositionRef.current = true;
+      player.seekTo(position, true);
+      player.playVideo();
+    } catch {
+      // The player can briefly reject a seek while its media is still loading.
+      // A later progress update can retry because the ref remains false.
+    }
+  }, [playerReady, resumePositionSeconds]);
+
+  const reportProgressNow = useCallback(() => {
+    const player = playerRef.current;
+    if (!player || typeof player.getCurrentTime !== "function" || !onProgressRef.current) return;
+    try {
+      const current = Number(player.getCurrentTime());
+      const duration = typeof player.getDuration === "function" ? Number(player.getDuration()) : 0;
+      if (!Number.isFinite(current) || !Number.isFinite(duration) || duration <= 0) return;
+      const cueIndex = cuesRef.current.findIndex((cue) => current >= cue.start && current < cue.end);
+      lastProgressReportRef.current = current;
+      setWatchedPercent(Math.min(100, (current / duration) * 100));
+      onProgressRef.current(current, duration, cueIndex, cuesRef.current[cueIndex]?.text || null);
+    } catch {
+      // The iframe may already be destroyed while the modal is closing.
+    }
+  }, []);
+
+  const handleClose = useCallback(() => {
+    reportProgressNow();
+    onClose();
+  }, [onClose, reportProgressNow]);
+
   // Keyboard close
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape" && !isWordModalOpen) {
-        onClose();
+        handleClose();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, isWordModalOpen]);
+  }, [handleClose, isWordModalOpen]);
 
   // ── 3. Find Active Subtitle Cue ────────────────────────────────────────────
   const activeCueIndex = useMemo(() => {
@@ -776,7 +827,7 @@ export function VideoPlayerModal({
     <>
       <div
         className="video-modal-overlay"
-        onClick={onClose}
+        onClick={handleClose}
         role="dialog"
         aria-modal="true"
         aria-labelledby="video-modal-title"
@@ -816,7 +867,7 @@ export function VideoPlayerModal({
             <button
               type="button"
               className="video-modal-close-btn"
-              onClick={onClose}
+              onClick={handleClose}
               aria-label="Закрыть плеер"
             >
               <X size={18} />
