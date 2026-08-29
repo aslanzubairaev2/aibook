@@ -5,7 +5,7 @@ import { franc } from "franc-min";
 import { AppShell } from "@/components/ui/AppShell";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
-import { LiveChatModal } from "@/components/livechat/LiveChatModal";
+import { LiveChatModal, prewarmLiveChat } from "@/components/livechat/LiveChatModal";
 import { LiveTranslateView } from "@/components/live-translate/LiveTranslateView";
 import { LibraryView } from "@/components/library/LibraryView";
 import { DiscoverView } from "@/components/discover/DiscoverView";
@@ -265,6 +265,16 @@ function AppInner() {
   // re-running loadData on every onAuthStateChange (token refresh, tab focus / app
   // resume), which would re-apply the synced last view and yank the reader back.
   const loadedIdentityRef = useRef<string | null>(null);
+
+  // Голосовой режим — одна из двух главных кнопок на главной, так что всё, что
+  // можно выяснить до нажатия (модель и ключ), выясняется на простое сразу
+  // после запуска. К моменту нажатия остаётся только само подключение.
+  useEffect(() => {
+    if (!isHydrated) return;
+    const idle = window.requestIdleCallback?.bind(window) ?? ((cb: () => void) => window.setTimeout(cb, 1200));
+    const id = idle(() => prewarmLiveChat());
+    return () => window.cancelIdleCallback?.(id as number);
+  }, [isHydrated]);
 
   useEffect(() => {
     if (!isHydrated) return;

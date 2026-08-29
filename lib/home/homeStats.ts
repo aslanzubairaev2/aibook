@@ -8,7 +8,10 @@
 // Ни одно число здесь не «примерно»: если посчитать нечестно нельзя, поле
 // просто не показывается — см. `articlesToLearn`.
 
-import { computeDeckStats, type DeckStats } from "@/lib/cards";
+import {
+  ALL_TRAIN_VARIANTS, computeDeckStats, endOfTodayMs, getVariantProgress, isVariantDue,
+  type DeckStats,
+} from "@/lib/cards";
 import { isNounEntry, nounGender, GENDER_ORDER, type NounGender } from "@/lib/nounForms";
 import { isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
@@ -34,6 +37,8 @@ export type NounStats = {
 
 export type HomeStats = {
   deck: DeckStats;
+  /** Карточка, с которой начнётся сегодняшнее повторение. */
+  nextUp: Flashcard | null;
   /** Слов и фраз в колоде, и сколько из них уже держится в памяти. */
   words: { total: number; learned: number; due: number; fresh: number };
   verbs: VerbStats;
@@ -99,6 +104,7 @@ export function computeHomeStats(
 
   return {
     deck,
+    nextUp: pickNextUp(cards, variantProgress, now),
     words: {
       total: deck.totalCards,
       learned: deck.learnedCards,
@@ -109,6 +115,43 @@ export function computeHomeStats(
     nouns: computeNounStats(entries),
     hasDictionary: entries.length > 0,
   };
+}
+
+/**
+ * Первая карточка сегодняшней очереди.
+ *
+ * Главная показывает не «60 карточек», а само слово, с которого начнётся
+ * повторение: это единственный экран, где приложение может показать
+ * собственный материал учащегося вместо статистики о нём.
+ *
+ * Порядок — по сроку: самое просроченное первым, ровно как их и покажет
+ * тренажёр. Поэтому слово на главной и первое слово в сессии совпадают, а не
+ * выглядят как два независимых выбора.
+ */
+export function pickNextUp(
+  cards: Flashcard[],
+  variantProgress: Record<string, CardVariantState>,
+  now = new Date(),
+): Flashcard | null {
+  const todayEnd = endOfTodayMs(now);
+  let best: Flashcard | null = null;
+  let bestDue = Infinity;
+
+  for (const card of cards) {
+    // Считать надо по всем направлениям, а не только по «узнаванию»: именно так
+    // считает `computeDeckStats`, а значит и кнопка «Повторить N». Проверка по
+    // одному направлению давала расхождение, при котором заголовок сообщал «на
+    // сегодня всё», пока кнопка рядом предлагала повторить шестьдесят карточек.
+    for (const variant of ALL_TRAIN_VARIANTS) {
+      const progress = getVariantProgress(card, variant, variantProgress);
+      if (!isVariantDue(progress, todayEnd)) continue;
+      // Новая карточка ещё не назначена на день — она встаёт после
+      // просроченных, но перед теми, что подошли только сегодня.
+      const due = progress.status === "new" ? todayEnd : Date.parse(progress.dueAt);
+      if (due < bestDue) { best = card; bestDue = due; }
+    }
+  }
+  return best;
 }
 
 /** Словари глаголов и существительных пересекаются — объединяем по id. */

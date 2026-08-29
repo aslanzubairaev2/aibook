@@ -1,0 +1,308 @@
+/* ─── Главная ─────────────────────────────────────────────────────────────── */
+/*
+   Ведущая идея экрана: показывать не статистику про немецкий, а сам немецкий.
+   Наверху стоит слово, с которого начнётся сегодняшнее повторение, набранное
+   тем же шрифтом, что и текст в читалке, — на главной оно звучит тем же
+   голосом, что и в книге.
+
+   Дальше ритм намеренно меняется: крупное слово → два действия → три плитки с
+   числами → одна составная полоса. Ни один блок не повторяет форму соседнего,
+   поэтому экран читается сверху вниз, а не как список одинаковых строк.
+*/
+
+.home { padding-top: 0; }
+
+/* Шапка остаётся на месте при прокрутке: серия и выход в библиотеку нужны с
+   любой позиции экрана, а не только с самого верха. */
+.home-bar {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 -16px 20px;
+  padding: 14px 16px 12px;
+  background: linear-gradient(var(--bg-primary) 86%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.home-wordmark {
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.home-pulse { margin-top: 1px; color: var(--text-muted); font-size: 12px; }
+.home-pulse b { color: var(--accent); font-weight: 800; }
+
+.home-guest {
+  margin-bottom: 16px;
+  padding: 9px 12px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+/* ── Слово дня ────────────────────────────────────────────────────────────
+   Единственное место на экране с крупной типографикой. Подложка почти не
+   видна — вес несёт само слово, а не прямоугольник под ним. */
+.focus {
+  margin-bottom: 18px;
+  padding: 26px 20px 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(120% 100% at 0% 0%, rgba(212, 168, 71, 0.09), transparent 62%),
+    var(--bg-secondary);
+}
+
+.focus-eyebrow {
+  margin-bottom: 12px;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.focus-word {
+  font-family: var(--font-reading);
+  font-size: clamp(30px, 9vw, 40px);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  animation: focus-rise 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Основные формы — тот же шрифт, но тише: это продолжение слова, а не подпись. */
+.focus-forms {
+  margin-top: 7px;
+  font-family: var(--font-reading);
+  font-size: 15px;
+  font-style: italic;
+  color: var(--surface-dim);
+  overflow-wrap: anywhere;
+}
+
+.focus-meaning {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.focus--empty,
+.focus--done { padding: 22px 20px; }
+.focus--done .focus-eyebrow { color: var(--green); }
+.focus--empty .focus-eyebrow { color: var(--text-muted); }
+.focus-invite { color: var(--text-muted); font-size: 13.5px; line-height: 1.5; }
+
+@keyframes focus-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── Два действия дня ─────────────────────────────────────────────────────
+   Повторить и поговорить. Голосовой режим стоит здесь, а не иконкой в углу:
+   говорение — половина изучения языка, а не служебная функция. */
+.home-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 26px;
+}
+
+.home-act {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 700;
+  transition: transform var(--transition-fast), filter var(--transition-fast);
+}
+.home-act:active:not(:disabled) { transform: scale(0.98); }
+.home-act:disabled { opacity: 0.45; cursor: default; }
+.home-act span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.home-act--primary { background: var(--accent); color: var(--text-dark); }
+.home-act--primary:hover:not(:disabled) { filter: brightness(1.08); }
+
+.home-act--voice {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.home-act--voice:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Три тренажёра ────────────────────────────────────────────────────────
+   Три — собственный ритм немецкой грамматики: три артикля, три основные формы
+   глагола. Плитки узкие и в один ряд, поэтому читаются как один блок выбора, а
+   не как три одинаковые полосы друг под другом. */
+.home-triad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 26px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 11px 13px;
+  border: 1px solid var(--border);
+  border-top-width: 2px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: inherit;
+  text-align: left;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.tile:hover { background: var(--bg-elevated); }
+
+.tile-title {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tile-value {
+  font-size: 25px;
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-note {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.3;
+}
+.tile-note.is-alert { color: var(--accent-dim); font-weight: 700; }
+
+/* Цвет несут верхняя кромка и число, а не заливка: три залитых плитки снова
+   стали бы тремя одинаковыми пятнами. */
+.tile--words { border-top-color: var(--accent); }
+.tile--words .tile-value { color: var(--accent); }
+.tile--verbs { border-top-color: var(--blue); }
+.tile--verbs .tile-value { color: var(--blue); }
+.tile--nouns { border-top-color: var(--green); }
+.tile--nouns .tile-value { color: var(--green); }
+
+.tile--words:hover { border-color: var(--accent); }
+.tile--verbs:hover { border-color: var(--blue); }
+.tile--nouns:hover { border-color: var(--green); }
+
+/* ── der / die / das ──────────────────────────────────────────────────────
+   Три артикля — самое узнаваемое, что есть в немецком, и цвета за ними в
+   приложении уже закреплены. Одна составная полоса читается как соотношение;
+   три отдельные читались бы как таблица. */
+.split { margin-bottom: 26px; }
+
+.split-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  margin-bottom: 10px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.split-seg { display: block; height: 100%; }
+.split-seg--m { background: #6ea8e0; }
+.split-seg--f { background: #e08aa8; }
+.split-seg--n { background: #7fc9a0; }
+
+.split-legend { display: flex; gap: 16px; }
+
+.split-key {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.split-key b { color: var(--text-primary); font-weight: 700; font-variant-numeric: tabular-nums; }
+.split-key.is-weakest { color: var(--text-primary); }
+.split-key.is-weakest b { color: var(--accent); }
+
+.split-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+.split-note {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.split-note b { color: var(--text-primary); font-weight: 700; }
+
+/* ── Второстепенное ───────────────────────────────────────────────────────
+   Здесь строки уместны: это именно список входов, а не главное действие. */
+.home-more { display: flex; flex-direction: column; }
+
+.more-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 12px 2px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.more-row:last-child { border-bottom: none; }
+.more-row:hover strong { color: var(--accent); }
+.more-row:hover .more-row-arrow { color: var(--accent); transform: translateX(2px); }
+
+.more-row-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
+.more-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.more-row-text strong {
+  font-size: 14px;
+  font-weight: 700;
+  transition: color var(--transition-fast);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.more-row-text small { color: var(--text-muted); font-size: 11.5px; }
+
+.more-row-arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color var(--transition-fast), transform var(--transition-fast);
+}
+
+/* ── «Практика»: тот же язык, что и на главной ────────────────────────────
+   Экран остаётся отдельной вкладкой, но повторяет ритм главной, чтобы два
+   входа в одни и те же тренажёры не выглядели как два разных приложения. */
+.practice-view .home-triad { margin-top: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-word { animation: none; }
+  .home-act,
+  .more-row-arrow,
+  .tile { transition: none; }
+}

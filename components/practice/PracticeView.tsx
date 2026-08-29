@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ChevronRight } from "lucide-react";
+
 import { getCardVariantProgressMap, getLocalNounsDict, getLocalVerbsDict } from "@/lib/db/local";
 import { computeHomeStats, mergeDictionaries } from "@/lib/home/homeStats";
 import type { Flashcard, UserProfile } from "@/lib/types";
@@ -51,35 +52,43 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
         </div>
       </header>
 
-      <div className="home-rows">
-        <PracticeRow
-          title="Карточки"
-          detail={
-            words.total > 0
-              ? `${words.total} карточек · ${words.learned} в памяти`
-              : "Слова, фразы и предложения"
-          }
-          badge={words.due > 0 ? String(words.due) : undefined}
+      {/* Те же три плитки, что и на главной: два входа в одни и те же
+          тренажёры не должны выглядеть как два разных приложения. */}
+      <div className="home-triad">
+        <PracticeTile
+          tone="words" title="Слова" value={words.total}
+          note={words.due > 0 ? `${words.due} на сегодня` : `${words.learned} в памяти`}
+          alert={words.due > 0}
           onClick={onOpenCards}
         />
-        <PracticeRow
-          title="Глаголы и времена"
-          detail={
-            verbs.total > 0
-              ? `${verbs.total} глаголов · неправильных ${verbs.irregular}`
-              : "Infinitiv · Präteritum · Partizip II"
-          }
-          hint={verbs.missingForms > 0 ? `${verbs.missingForms} без форм` : undefined}
+        <PracticeTile
+          tone="verbs" title="Глаголы" value={verbs.total}
+          note={verbs.missingForms > 0 ? `${verbs.missingForms} без форм` : `${verbs.irregular} неправильных`}
+          alert={verbs.missingForms > 0}
           onClick={onOpenVerbs}
         />
-        <PracticeRow
+        <PracticeTile
+          tone="nouns" title="Артикли" value={nouns.total}
+          note={nouns.withoutArticle > 0 ? `${nouns.withoutArticle} без артикля` : `${nouns.withArticle} с артиклем`}
+          alert={nouns.withoutArticle > 0}
+          onClick={onOpenNouns}
+        />
+      </div>
+
+      <div className="home-more">
+        <PracticeEntry
+          title="Карточки"
+          note="Слова, фразы и предложения — интервальное повторение"
+          onClick={onOpenCards}
+        />
+        <PracticeEntry
+          title="Глаголы и времена"
+          note="Infinitiv · Präteritum · Partizip II, спряжение по временам"
+          onClick={onOpenVerbs}
+        />
+        <PracticeEntry
           title="Артикли и существительные"
-          detail={
-            nouns.total > 0
-              ? `${nouns.total} существительных · с артиклем ${nouns.withArticle}`
-              : "der · die · das и множественное число"
-          }
-          hint={nouns.withoutArticle > 0 ? `${nouns.withoutArticle} без артикля` : undefined}
+          note="der · die · das, род по окончанию и множественное число"
           onClick={onOpenNouns}
         />
       </div>
@@ -87,20 +96,26 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
   );
 }
 
-function PracticeRow({
-  title, detail, hint, badge, onClick,
-}: { title: string; detail: string; hint?: string; badge?: string; onClick: () => void }) {
+function PracticeTile({
+  tone, title, value, note, alert, onClick,
+}: { tone: string; title: string; value: number; note: string; alert?: boolean; onClick: () => void }) {
   return (
-    <button className="home-row" type="button" onClick={onClick}>
-      <span className="home-row-text">
+    <button className={`tile tile--${tone}`} type="button" onClick={onClick}>
+      <span className="tile-title">{title}</span>
+      <span className="tile-value">{value}</span>
+      <span className={`tile-note${alert ? " is-alert" : ""}`}>{note}</span>
+    </button>
+  );
+}
+
+function PracticeEntry({ title, note, onClick }: { title: string; note: string; onClick: () => void }) {
+  return (
+    <button className="more-row" type="button" onClick={onClick}>
+      <span className="more-row-text">
         <strong>{title}</strong>
-        <small>
-          {detail}
-          {hint && <em className="home-row-hint"> · {hint}</em>}
-        </small>
+        <small>{note}</small>
       </span>
-      {badge && <span className="home-row-badge">{badge}</span>}
-      <ChevronRight size={15} className="home-row-arrow" />
+      <ChevronRight size={15} className="more-row-arrow" />
     </button>
   );
 }

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { ConnectivityBanner } from "@/components/pwa/ConnectivityBanner";
 import { DevSwCleanup } from "@/components/pwa/DevSwCleanup";
 import "../styles/globals.css";
+import "../styles/home.css";
 import "../styles/reader.css";
 import "../styles/panel.css";
 import "../styles/modal.css";

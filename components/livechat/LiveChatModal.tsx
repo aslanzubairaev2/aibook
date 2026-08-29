@@ -192,21 +192,47 @@ async function resolveLiveModel(): Promise<string> {
   return DEFAULT_LIVE_MODEL;
 }
 
-/** Owners get the key from the server's env (set on Vercel); everyone else uses their local key. */
+/**
+ * Owners get the key from the server's env (set on Vercel); everyone else uses
+ * their local key.
+ *
+ * Кэшируется на время жизни страницы, как и модель: ключ не меняется между
+ * нажатиями, а round trip за ним стоял ровно между кнопкой «Поговорить» и
+ * началом разговора — каждый раз заново.
+ */
+let cachedGeminiKey: string | null = null;
 async function resolveGeminiKey(): Promise<string | null> {
+  if (cachedGeminiKey) return cachedGeminiKey;
   try {
     const headers = await sbAuthHeaders();
     if (headers.Authorization) {
       const res = await fetch("/api/ai/live-key", { headers });
       if (res.ok) {
         const data = await res.json();
-        if (data.apiKey) return data.apiKey as string;
+        if (data.apiKey) {
+          cachedGeminiKey = data.apiKey as string;
+          return cachedGeminiKey;
+        }
       }
     }
   } catch {
     // fall through to the local key
   }
   return getLocalGeminiKey();
+}
+
+/**
+ * Заранее выясняет, чем открывать голосовую сессию.
+ *
+ * Голосовой режим теперь стоит одной из двух главных кнопок на главной, и
+ * между нажатием и разговором не должно быть ничего, что можно было выяснить
+ * заранее. Вызывается на простое после запуска; результат ложится в те же
+ * кэши, из которых читает сам разговор, так что второй раз это ничего не
+ * стоит. Любая ошибка здесь молча игнорируется — это подготовка, а не работа.
+ */
+export function prewarmLiveChat(): void {
+  void resolveLiveModel().catch(() => {});
+  void resolveGeminiKey().catch(() => {});
 }
 
 export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textContext, cards, onAddCard, onClose, onOpenSettings }: Props) {

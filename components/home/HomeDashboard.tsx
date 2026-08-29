@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Flame, Headphones, Languages, Library, Phone } from "lucide-react";
+import { ChevronRight, Headphones, Languages, Library, Mic, Play } from "lucide-react";
 import { AudiobookDetailModal } from "@/components/discover/AudiobookDetailModal";
 import type { Audiobook, Book, Flashcard, UserProfile } from "@/lib/types";
 import { useAuth } from "@/lib/auth/useAuth";
 import { getCardVariantProgressMap, getLocalNounsDict, getLocalVerbsDict } from "@/lib/db/local";
 import { computeHomeStats, mergeDictionaries } from "@/lib/home/homeStats";
-import { GENDER_ARTICLE, GENDER_ORDER, type NounGender } from "@/lib/nounForms";
+import { splitCardBack } from "@/lib/cards";
+import { conjugateGerman } from "@/lib/grammar/germanVerbs";
+import { GENDER_ARTICLE, type NounGender } from "@/lib/nounForms";
 import { formatAudioDuration, getLastPlayedAudiobook } from "@/lib/audio/audiobooks";
 
 type Props = {
@@ -25,17 +27,21 @@ type Props = {
 };
 
 /**
- * Главная — то, чем занимаются каждый день, а не витрина.
+ * Главная.
  *
- * Раньше здесь стояли полки Gutendex: две сетки книг, которые тянулись из
- * внешнего каталога при каждом открытии приложения и до прихода которых экран
- * состоял из серых прямоугольников. Владелец эти книги не читает, так что
- * витрина ушла в «Каталог» целиком, а её место заняло то, ради чего сюда и
- * заходят: повторение и три тренажёра над собственным словарём.
+ * Ведущая идея: на этом экране приложение показывает не статистику про немецкий,
+ * а сам немецкий. Наверху стоит слово, с которого начнётся сегодняшнее
+ * повторение, со своими формами — то же самое, что учащийся увидит первым в
+ * тренажёре. «60 карточек» — это отчёт; «sprechen · sprach · gesprochen» —
+ * это работа.
  *
- * Всё, что здесь показано, считается из локальных данных — карточки приходят
- * из зеркала при запуске, словарь из кэшей «Глаголов» и «Существительных».
- * Поэтому страница появляется заполненной сразу и работает офлайн.
+ * Формы под словом считает локальный морфологический движок
+ * (`lib/grammar/germanVerbs`), поэтому они появляются мгновенно и не стоят ни
+ * одного запроса. Набрано слово тем же шрифтом (Lora), которым набран текст в
+ * читалке: на главной оно звучит тем же голосом, что и в книге.
+ *
+ * Всё остальное считается из локальных кэшей — страница не ходит в сеть вовсе
+ * и работает офлайн.
  */
 export function HomeDashboard({
   book, profile, cards,
@@ -44,8 +50,6 @@ export function HomeDashboard({
 }: Props) {
   const { user } = useAuth();
 
-  // Словарь читается один раз при монтировании: это подсказка о размере
-  // материала, а не живая величина, ради которой стоит ходить в сеть.
   const entries = useState(() =>
     mergeDictionaries(
       getLocalVerbsDict(profile.targetLanguage)?.entries ?? [],
@@ -87,138 +91,88 @@ export function HomeDashboard({
   }, [continueListening, profile.targetLanguage]);
 
   const [openAudiobook, setOpenAudiobook] = useState<Audiobook | null>(null);
-  const { deck, words, verbs, nouns } = stats;
+  const { deck, nextUp, words, verbs, nouns } = stats;
 
   return (
-    <section className="screen home-screen">
+    <section className="screen home">
       <header className="home-bar">
-        <div className="home-bar-text">
+        <div>
           <h1 className="home-wordmark">AIBook</h1>
           <p className="home-pulse">
             {deck.streak > 0 ? <><b>{deck.streak}</b> {dayWord(deck.streak)} подряд</> : "Начните серию сегодня"}
-            {deck.reviewedToday > 0 && <> · сегодня повторено <b>{deck.reviewedToday}</b></>}
+            {deck.reviewedToday > 0 && <> · сегодня <b>{deck.reviewedToday}</b></>}
           </p>
         </div>
-        <div className="home-bar-actions">
-          <button className="icon-btn" onClick={onOpenLiveChat} type="button" aria-label="Голосовой чат с AI">
-            <Phone size={18} />
-          </button>
-          <button className="icon-btn" onClick={onOpenBooks} type="button" aria-label="Библиотека">
-            <Library size={18} />
-          </button>
-        </div>
+        <button className="icon-btn" onClick={onOpenBooks} type="button" aria-label="Библиотека">
+          <Library size={18} />
+        </button>
       </header>
 
       {!user && (
-        <p className="home-guest-note">
-          Вы вошли как гость — прогресс хранится только в этом браузере.
-        </p>
+        <p className="home-guest">Вы вошли как гость — прогресс хранится только в этом браузере.</p>
       )}
 
-      {/* Единственный крупный акцент на странице. Всё остальное — строки. */}
-      <button
-        className={`home-today${words.due > 0 ? " is-due" : ""}`}
-        type="button"
-        onClick={onOpenCards}
-        disabled={words.total === 0}
-      >
-        <span className="home-today-label">
-          <Flame size={13} /> {words.due > 0 ? "К повторению сегодня" : "На сегодня всё"}
-        </span>
-        <span className="home-today-count">
-          {words.total === 0 ? "—" : words.due > 0 ? words.due : "✓"}
-        </span>
-        {words.total > 0 && (
-          <span className="home-today-meter" aria-hidden>
-            <i style={{ width: `${percent(words.learned, words.total)}%` }} />
-          </span>
-        )}
-        <span className="home-today-sub">
-          {words.total === 0
-            ? "Сфотографируйте страницу словаря, чтобы начать"
-            : `в памяти ${words.learned} из ${words.total}${words.fresh > 0 ? ` · ${words.fresh} новых` : ""}`}
-        </span>
-      </button>
+      <FocusWord card={nextUp} due={words.due} total={words.total} language={profile.targetLanguage} />
 
-      <HomeSection title="Продолжить изучать">
-        <HomeRow
-          title="Слова"
-          detail={words.total > 0 ? `${words.total} карточек · ${words.learned} в памяти` : "Пока пусто"}
-          badge={words.due > 0 ? String(words.due) : undefined}
-          onClick={onOpenCards}
-        />
-        <HomeRow
+      {/* Две вещи, которые делают каждый день: повторить и поговорить.
+          Голосовой режим стоит здесь, а не иконкой в углу — говорение это
+          половина изучения языка, а не служебная функция. */}
+      <div className="home-actions">
+        <button className="home-act home-act--primary" type="button" onClick={onOpenCards} disabled={words.total === 0}>
+          <Play size={17} fill="currentColor" />
+          <span>{words.due > 0 ? `Повторить ${words.due}` : "Повторение"}</span>
+        </button>
+        <button className="home-act home-act--voice" type="button" onClick={onOpenLiveChat}>
+          <Mic size={17} />
+          <span>Поговорить</span>
+        </button>
+      </div>
+
+      {/* Триада тренажёров. Три — собственный ритм немецкой грамматики:
+          три артикля, три основные формы глагола. */}
+      <div className="home-triad">
+        <DrillTile tone="words" title="Слова" value={words.total} note={`${words.learned} в памяти`} onClick={onOpenCards} />
+        <DrillTile
+          tone="verbs"
           title="Глаголы"
-          detail={
-            verbs.total > 0
-              ? `${verbs.total} · неправильных ${verbs.irregular}`
-              : "Infinitiv · Präteritum · Partizip II"
-          }
-          hint={verbs.missingForms > 0 ? `${verbs.missingForms} без форм` : undefined}
+          value={verbs.total}
+          note={verbs.missingForms > 0 ? `${verbs.missingForms} без форм` : `${verbs.irregular} неправильных`}
+          alert={verbs.missingForms > 0}
           onClick={onOpenVerbs}
         />
-        <HomeRow
-          title="Существительные"
-          detail={
-            nouns.total > 0
-              ? `${nouns.total} · с артиклем ${nouns.withArticle}`
-              : "der · die · das и множественное число"
-          }
-          hint={nouns.withoutArticle > 0 ? `${nouns.withoutArticle} без артикля` : undefined}
+        <DrillTile
+          tone="nouns"
+          title="Артикли"
+          value={nouns.total}
+          note={nouns.withoutArticle > 0 ? `${nouns.withoutArticle} без артикля` : `${nouns.withArticle} с артиклем`}
+          alert={nouns.withoutArticle > 0}
           onClick={onOpenNouns}
         />
-        <HomeRow title="Мой словарь" detail="Все слова и пачки" onClick={onOpenDictionary} />
-      </HomeSection>
+      </div>
 
-      {/* Артикли показываются только когда есть что показывать: три слова —
-          это не распределение, а три слова. */}
+      {/* Показывается только когда есть что показывать: три слова — это не
+          распределение, а три слова. */}
       {nouns.withArticle >= 6 && (
-        <HomeSection title="Артикли в вашем словаре">
-          <div className="home-genders">
-            {GENDER_ORDER.filter((g) => g !== "pl").map((gender) => (
-              <GenderBar
-                key={gender}
-                gender={gender}
-                count={nouns.byGender[gender]}
-                total={nouns.withArticle}
-                weakest={nouns.weakestGender === gender}
-              />
-            ))}
-          </div>
-          {nouns.weakestGender && (
-            <p className="home-note">
-              Меньше всего слов на <b>{GENDER_ARTICLE[nouns.weakestGender]}</b> — эта группа
-              узнаётся хуже просто потому, что встречается реже.
-            </p>
-          )}
-        </HomeSection>
+        <ArticleSplit byGender={nouns.byGender} total={nouns.withArticle} weakest={nouns.weakestGender} />
       )}
 
-      <HomeSection title="Ещё">
-        <HomeRow
-          title="Live перевод"
-          detail="Русский перевод почти без задержки"
-          icon={<Languages size={16} />}
-          onClick={onOpenLiveTranslate}
-        />
+      <div className="home-more">
+        <MoreRow icon={<Languages size={15} />} title="Live перевод" note="Русский почти без задержки" onClick={onOpenLiveTranslate} />
         {listeningAudiobook && continueListening && (
-          <HomeRow
+          <MoreRow
+            icon={<Headphones size={15} />}
             title={listeningAudiobook.title}
-            detail={`${continueListening.chapterTitle || `Глава ${continueListening.chapterIndex + 1}`} · ${formatAudioDuration(continueListening.currentTimeSeconds)}`}
-            icon={<Headphones size={16} />}
+            note={`${continueListening.chapterTitle || `Глава ${continueListening.chapterIndex + 1}`} · ${formatAudioDuration(continueListening.currentTimeSeconds)}`}
             onClick={() => setOpenAudiobook(listeningAudiobook)}
           />
         )}
-        {/* Полок с книгами здесь больше нет, но начатая книга — это не витрина,
-            а закладка: бросать читателя посреди главы незачем. */}
+        {/* Полок с книгами здесь нет, но начатая книга — не витрина, а
+            закладка: бросать читателя посреди главы незачем. */}
         {book && book.progress > 0 && (
-          <HomeRow
-            title={book.title}
-            detail={`${book.chapterTitle} · ${Math.round(book.progress)}%`}
-            onClick={onContinueReading}
-          />
+          <MoreRow title={book.title} note={`${book.chapterTitle} · ${Math.round(book.progress)}%`} onClick={onContinueReading} />
         )}
-      </HomeSection>
+        <MoreRow title="Мой словарь" note="Все слова и пачки" onClick={onOpenDictionary} />
+      </div>
 
       {openAudiobook && (
         <AudiobookDetailModal
@@ -234,65 +188,118 @@ export function HomeDashboard({
   );
 }
 
-/** Заголовок раздела — прописными и мелким, разделитель, а не рамка. */
-function HomeSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="home-section">
-      <h2 className="home-section-title">{title}</h2>
-      <div className="home-rows">{children}</div>
-    </section>
-  );
-}
-
 /**
- * Строка списка.
+ * Слово, с которого начнётся сегодняшнее повторение.
  *
- * Намеренно не карточка: у неё нет ни фона, ни рамки, ни собственной тени —
- * только волосяная линия снизу. Десять таких строк читаются как список, а
- * десять «плашек» — как десять одинаковых прямоугольников.
+ * Формы под ним — не украшение: это ровно то, что спросят. Для глагола
+ * показываются Präteritum и Partizip II, для остального — перевод.
  */
-function HomeRow({
-  title, detail, hint, badge, icon, onClick,
-}: {
-  title: string;
-  detail: string;
-  hint?: string;
-  badge?: string;
-  icon?: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button className="home-row" type="button" onClick={onClick}>
-      {icon && <span className="home-row-icon">{icon}</span>}
-      <span className="home-row-text">
-        <strong>{title}</strong>
-        <small>
-          {detail}
-          {hint && <em className="home-row-hint"> · {hint}</em>}
-        </small>
-      </span>
-      {badge && <span className="home-row-badge">{badge}</span>}
-      <ChevronRight size={15} className="home-row-arrow" />
-    </button>
-  );
-}
+function FocusWord({
+  card, due, total, language,
+}: { card: Flashcard | null; due: number; total: number; language: string }) {
+  if (total === 0) {
+    return (
+      <div className="focus focus--empty">
+        <p className="focus-eyebrow">Пока пусто</p>
+        <p className="focus-invite">Сфотографируйте страницу словаря — приложение разберёт её на слова.</p>
+      </div>
+    );
+  }
 
-function GenderBar({
-  gender, count, total, weakest,
-}: { gender: NounGender; count: number; total: number; weakest: boolean }) {
+  if (!card) {
+    return (
+      <div className="focus focus--done">
+        <p className="focus-eyebrow">На сегодня всё</p>
+        <p className="focus-invite">Повторения закончились. Возвращайтесь завтра или добавьте новые слова.</p>
+      </div>
+    );
+  }
+
+  const headword = card.front.trim();
+  const forms = language === "de" ? conjugateGerman(headword.replace(/^(der|die|das)\s+/i, "")) : null;
+  const meaning = splitCardBack(card.back).meaning;
+
   return (
-    <div className={`home-gender${weakest ? " is-weakest" : ""}`}>
-      <span className={`home-gender-art gender-${gender}`}>{GENDER_ARTICLE[gender]}</span>
-      <span className="home-gender-track" aria-hidden>
-        <i className={`gender-fill-${gender}`} style={{ width: `${percent(count, total)}%` }} />
-      </span>
-      <span className="home-gender-count">{count}</span>
+    <div className="focus">
+      <p className="focus-eyebrow">
+        Сегодня · {due} {cardWord(due)}
+      </p>
+      <p className="focus-word">{headword}</p>
+      {/* Непроверенные формы не показываются — тот же принцип, что и во
+          всплывающей подсказке: лучше ничего, чем «gehte». */}
+      {forms && !forms.provisional && (
+        <p className="focus-forms">
+          {forms.praeteritum} · {forms.hilfsverb === "sein" ? "ist" : "hat"} {forms.partizip2}
+        </p>
+      )}
+      {meaning && <p className="focus-meaning">{meaning}</p>}
     </div>
   );
 }
 
-function percent(value: number, total: number): number {
-  return total > 0 ? Math.round((value / total) * 100) : 0;
+/** Плитка тренажёра: крупное число, свой цвет, одна строка пояснения. */
+function DrillTile({
+  tone, title, value, note, alert, onClick,
+}: { tone: string; title: string; value: number; note: string; alert?: boolean; onClick: () => void }) {
+  return (
+    <button className={`tile tile--${tone}`} type="button" onClick={onClick}>
+      <span className="tile-title">{title}</span>
+      <span className="tile-value">{value}</span>
+      <span className={`tile-note${alert ? " is-alert" : ""}`}>{note}</span>
+    </button>
+  );
+}
+
+/**
+ * der / die / das одной полосой.
+ *
+ * Три артикля — самое узнаваемое, что есть в немецком, и в приложении у них уже
+ * есть закреплённые цвета. Одна составная полоса читается как соотношение,
+ * тогда как три отдельные — как таблица.
+ */
+function ArticleSplit({
+  byGender, total, weakest,
+}: { byGender: Record<NounGender, number>; total: number; weakest: NounGender | null }) {
+  const parts: NounGender[] = ["m", "f", "n"];
+
+  return (
+    <section className="split">
+      <div className="split-bar" role="img" aria-label={`Существительных: der ${byGender.m}, die ${byGender.f}, das ${byGender.n}`}>
+        {parts.map((g) => (
+          <i key={g} className={`split-seg split-seg--${g}`} style={{ flexGrow: byGender[g] || 0.001 }} />
+        ))}
+      </div>
+      <div className="split-legend">
+        {parts.map((g) => (
+          <span key={g} className={`split-key${weakest === g ? " is-weakest" : ""}`}>
+            <i className={`split-dot split-seg--${g}`} />
+            {GENDER_ARTICLE[g]} <b>{byGender[g]}</b>
+          </span>
+        ))}
+      </div>
+      {weakest && (
+        <p className="split-note">
+          Слов на <b>{GENDER_ARTICLE[weakest]}</b> меньше всего — эта группа узнаётся хуже
+          просто потому, что реже попадается.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function MoreRow({
+  icon, title, note, onClick,
+}: { icon?: React.ReactNode; title: string; note: string; onClick: () => void }) {
+  return (
+    <button className="more-row" type="button" onClick={onClick}>
+      {icon && <span className="more-row-icon">{icon}</span>}
+      <span className="more-row-text">
+        <strong>{title}</strong>
+        <small>{note}</small>
+      </span>
+      <ChevronRight size={15} className="more-row-arrow" />
+    </button>
+  );
 }
 
 function dayWord(n: number): string {
@@ -302,4 +309,13 @@ function dayWord(n: number): string {
   if (mod10 === 1) return "день";
   if (mod10 >= 2 && mod10 <= 4) return "дня";
   return "дней";
+}
+
+function cardWord(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return "карточек";
+  if (mod10 === 1) return "карточка";
+  if (mod10 >= 2 && mod10 <= 4) return "карточки";
+  return "карточек";
 }
