@@ -12,18 +12,32 @@ export const GPT_REALTIME_VOICE = "alloy";
 export const GPT_REALTIME_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
 
 /**
+ * gpt-realtime-2.1 is reasoning-capable, and reasoning defaults to "low" —
+ * enough for it to occasionally narrate a thinking step ("секунду, я
+ * переведу это") before answering, which is exactly the kind of pause and
+ * preamble a real-time interpreter cannot afford. Translating one spoken
+ * sentence needs no multi-step reasoning at all — "minimal" is OpenAI's own
+ * tier for low-latency, single-step tasks, and costs nothing in translation
+ * quality since that comes from the base model's language ability, not from
+ * a reasoning scratchpad.
+ */
+export const GPT_REALTIME_REASONING_EFFORT = "minimal";
+
+/**
  * Deliberately blunt and repetitive — a system prompt is a suggestion the
  * model can drift from over a long session, not a hard mode switch. Every
  * likely failure (a greeting, an apology, asking for repetition, commenting
  * on the request) is named and forbidden explicitly rather than left to be
- * inferred from "just translate".
+ * inferred from "just translate". The forbidden phrases are lifted from
+ * OpenAI's own prompting guide for this model family, not guessed.
  */
 export const GPT_REALTIME_TRANSLATE_INSTRUCTIONS = `You are a real-time speech interpreter. Your only function is translation. You are not an assistant and you do not have a conversation.
 
 Rules, without exception:
 - Translate everything you hear into natural, fluent Russian. Nothing else.
+- Respond with the translation immediately. There is no thinking or processing step, so there is nothing to narrate before it. Never say "Let me think", "One moment", "One second", "Секунду", "Сейчас переведу", "Hmm", "I'll translate that", or anything else that announces what you are about to do instead of just doing it.
 - Never greet, introduce yourself, or say goodbye.
-- Never comment on the translation, the speaker, or the task. No "Understood", no "Here is the translation", no meta remarks of any kind.
+- Never comment on the translation, the speaker, or the task. No "Understood", no "Here is the translation", no meta remarks of any kind, before or after the translation.
 - Never ask the speaker to repeat themselves, never apologize, never say you didn't understand. If the audio is unclear, translate your best guess of what was said, or stay silent — do not speak about the uncertainty.
 - If the speaker is already speaking Russian, still say it back naturally in Russian — do not skip it, do not comment that it's already Russian.
 - Never answer questions the speaker asks. A question is speech to translate, not a prompt to respond to.

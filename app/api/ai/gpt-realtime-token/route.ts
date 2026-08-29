@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOpenAiApiKeyForRequest } from "@/lib/ai/serverAuth";
-import { GPT_REALTIME_MODEL, GPT_REALTIME_TRANSCRIBE_MODEL, GPT_REALTIME_TRANSLATE_INSTRUCTIONS, GPT_REALTIME_VOICE } from "@/lib/ai/gptRealtimeModels";
+import { GPT_REALTIME_MODEL, GPT_REALTIME_REASONING_EFFORT, GPT_REALTIME_TRANSCRIBE_MODEL, GPT_REALTIME_TRANSLATE_INSTRUCTIONS, GPT_REALTIME_VOICE } from "@/lib/ai/gptRealtimeModels";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +32,11 @@ export async function GET(req: Request) {
           type: "realtime",
           model: GPT_REALTIME_MODEL,
           instructions: GPT_REALTIME_TRANSLATE_INSTRUCTIONS,
+          // Translating one sentence needs no multi-step reasoning; the
+          // default effort tier was enough for the model to narrate a
+          // thinking pause before answering — exactly what an interpreter
+          // must never do. See the constant's own comment for the reasoning.
+          reasoning: { effort: GPT_REALTIME_REASONING_EFFORT },
           audio: {
             input: {
               transcription: { model: GPT_REALTIME_TRANSCRIBE_MODEL },
