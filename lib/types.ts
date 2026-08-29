@@ -4,6 +4,9 @@ export type SelectionType = "word" | "phrase" | "sentence";
 export type TtsProvider =
   | "local" | "gemini" | "deepgram" | "speechify" | "inworld" | "openai" | "cartesia" | "elevenlabs";
 
+/** Which engine powers the Live Translate screen — see components/live-translate. */
+export type LiveTranslateProvider = "gemini" | "openai";
+
 export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
 export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated" | "librivox" | "archive_audio";
 
@@ -127,6 +130,8 @@ export type UserProfile = {
   /** Likewise the model, for trying an engine's models against each other. */
   ttsModels?: Partial<Record<TtsProvider, string>>;
   cardFilters?: CardFilters;
+  /** Defaults to "gemini" wherever unset — see LiveTranslateProvider. */
+  liveTranslateProvider?: LiveTranslateProvider;
 };
 
 // Normalized, language-agnostic part of speech used to decide which grammar

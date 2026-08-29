@@ -5,24 +5,31 @@ import { ArrowLeft, Languages, Mic, MicOff, Volume2, X } from "lucide-react";
 import { getLocalGeminiKey } from "@/lib/db/local";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { LiveTranslateSession } from "@/lib/ai/liveTranslate";
+import { GptLiveTranslateSession } from "@/lib/ai/gptLiveTranslate";
 import { LIVE_TRANSLATE_LABELS, accumulateLiveUsage, appendTranscript, calculateLiveUsage, type LiveTranslateState, type LiveUsageMetadata, type LiveUsageTotals } from "@/lib/ai/liveTranslateState";
 import { LIVE_TRANSLATE_MODEL } from "@/lib/ai/liveModels";
+import { GPT_TRANSLATE_MODEL, GPT_TRANSLATE_USD_PER_MINUTE } from "@/lib/ai/gptTranslateModels";
 import { keepScreenAwake, type ScreenAwakeHandle } from "@/lib/audio/wakeLock";
+import type { UserProfile } from "@/lib/types";
 
-type Props = { onBack: () => void };
+type Props = { onBack: () => void; profile: UserProfile };
 
 /** Transcript deltas arrive several times a second; repainting on each one is
  *  pointless work on the same thread that has to encode outgoing audio. */
 const TRANSCRIPT_FLUSH_MS = 200;
 
-export function LiveTranslateView({ onBack }: Props) {
+/** Whatever engine is active only needs to be stopped the same way. */
+type AnyLiveSession = { close: () => void };
+
+export function LiveTranslateView({ onBack, profile }: Props) {
+  const provider = profile.liveTranslateProvider ?? "gemini";
   const [state, setState] = useState<LiveTranslateState>("ready");
   const [sourceText, setSourceText] = useState("");
   const [showText, setShowText] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [usage, setUsage] = useState<LiveUsageTotals>(() => calculateLiveUsage());
-  const sessionRef = useRef<LiveTranslateSession | null>(null);
+  const sessionRef = useRef<AnyLiveSession | null>(null);
   const transcriptRef = useRef("");
   const wakeRef = useRef<ScreenAwakeHandle | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -54,6 +61,40 @@ export function LiveTranslateView({ onBack }: Props) {
     if (log) log.scrollTop = log.scrollHeight;
   }, [sourceText, showText]);
 
+  async function connectGemini(headers: Record<string, string>) {
+    const localKey = getLocalGeminiKey();
+    if (localKey) headers["x-gemini-key"] = localKey;
+    const response = await fetch("/api/ai/live-translate-token", { headers });
+    const data = await response.json() as { token?: string; error?: string };
+    if (!response.ok || !data.token) throw new Error(data.error || "Токен недоступен");
+    const session = new LiveTranslateSession(data.token, {
+      onState: setState,
+      onSourceText: (text) => { transcriptRef.current = appendTranscript(transcriptRef.current, text); },
+      onUsage: (metadata: LiveUsageMetadata) => setUsage((current) => accumulateLiveUsage(current, metadata)),
+      onError: (kind, message) => { stopSession(); setState(kind); setError(message); },
+    });
+    sessionRef.current = session;
+    setSessionActive(true);
+    wakeRef.current = keepScreenAwake();
+    await session.connect();
+  }
+
+  async function connectGpt(headers: Record<string, string>) {
+    const response = await fetch("/api/ai/gpt-translate-token", { headers });
+    const data = await response.json() as { token?: string; error?: string };
+    if (!response.ok || !data.token) throw new Error(data.error || "Токен недоступен");
+    const session = new GptLiveTranslateSession(data.token, {
+      onState: setState,
+      onSourceText: (text) => { transcriptRef.current = appendTranscript(transcriptRef.current, text); },
+      onUsage: (totals) => setUsage(totals),
+      onError: (kind, message) => { stopSession(); setState(kind); setError(message); },
+    });
+    sessionRef.current = session;
+    setSessionActive(true);
+    wakeRef.current = keepScreenAwake();
+    await session.connect();
+  }
+
   async function toggleSession() {
     if (sessionRef.current) { stopSession(); setState("stopped"); return; }
     setError(null);
@@ -62,21 +103,8 @@ export function LiveTranslateView({ onBack }: Props) {
     setUsage(calculateLiveUsage());
     try {
       const headers = await sbAuthHeaders();
-      const localKey = getLocalGeminiKey();
-      if (localKey) headers["x-gemini-key"] = localKey;
-      const response = await fetch("/api/ai/live-translate-token", { headers });
-      const data = await response.json() as { token?: string; error?: string };
-      if (!response.ok || !data.token) throw new Error(data.error || "Токен недоступен");
-      const session = new LiveTranslateSession(data.token, {
-        onState: setState,
-        onSourceText: (text) => { transcriptRef.current = appendTranscript(transcriptRef.current, text); },
-        onUsage: (metadata: LiveUsageMetadata) => setUsage((current) => accumulateLiveUsage(current, metadata)),
-        onError: (kind, message) => { stopSession(); setState(kind); setError(message); },
-      });
-      sessionRef.current = session;
-      setSessionActive(true);
-      wakeRef.current = keepScreenAwake();
-      await session.connect();
+      if (provider === "openai") await connectGpt(headers);
+      else await connectGemini(headers);
     } catch (err) {
       stopSession();
       setState("connection-error");
@@ -85,6 +113,11 @@ export function LiveTranslateView({ onBack }: Props) {
   }
 
   const running = sessionActive && !["ready", "stopped", "mic-error", "connection-error"].includes(state);
+  const modelLabel = provider === "openai" ? GPT_TRANSLATE_MODEL : LIVE_TRANSLATE_MODEL;
+  // Driven by the selected engine, not usage.costBasis: before the first
+  // session callback arrives, usage is still Gemini-shaped even when GPT is
+  // the active provider, which would otherwise flash "вход 0 · выход 0".
+  const perMinute = provider === "openai";
 
   return (
     <section className="live-translate-screen" aria-label="Live перевод">
@@ -114,7 +147,12 @@ export function LiveTranslateView({ onBack }: Props) {
         <button type="button" className={`live-translate-chip${showText ? " is-on" : ""}`} onClick={() => setShowText((value) => !value)} aria-expanded={showText}>
           {showText ? "Скрыть текст" : "Показать текст"}
         </button>
-        <span className="live-translate-cost" title="Оценка по usageMetadata текущей сессии, а не счёт. Транскрипция добавляет текстовые токены сверх аудио.">
+        <span
+          className="live-translate-cost"
+          title={perMinute
+            ? `Оценка по времени сессии: $${GPT_TRANSLATE_USD_PER_MINUTE.toFixed(3)}/мин, а не счёт.`
+            : "Оценка по usageMetadata текущей сессии, а не счёт. Транскрипция добавляет текстовые токены сверх аудио."}
+        >
           ${usage.estimatedUsd.toFixed(4)}
         </span>
       </footer>
@@ -128,7 +166,10 @@ export function LiveTranslateView({ onBack }: Props) {
           <div className="live-translate-overlay-log" ref={logRef}>
             <p>{sourceText || "Транскрипция появится здесь во время разговора…"}</p>
           </div>
-          <small>Язык собеседника определяется автоматически · {LIVE_TRANSLATE_MODEL} · вход {usage.inputTokens.toLocaleString("ru-RU")} · выход {usage.outputTokens.toLocaleString("ru-RU")}</small>
+          <small>
+            Язык собеседника определяется автоматически · {modelLabel}
+            {!perMinute && ` · вход ${usage.inputTokens.toLocaleString("ru-RU")} · выход ${usage.outputTokens.toLocaleString("ru-RU")}`}
+          </small>
         </aside>
       )}
     </section>

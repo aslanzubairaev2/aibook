@@ -50,3 +50,18 @@ export async function getApiKeyForRequest(req: Request): Promise<string> {
   // Otherwise, deny access
   throw new Error("Access Denied: AI is only available to owners or users who have set their own Gemini API key in Settings.");
 }
+
+/**
+ * The OpenAI key for GPT Live Translate.
+ *
+ * Owner-only, no bring-your-own-key path — the same posture the app already
+ * takes for OpenAI's TTS voice (GPT_API_KEY is a server secret there too;
+ * see app/api/tts/route.ts). GPT_VOICE_ID's env carries GPT_API_KEY /
+ * OPENAI_API_KEY as the two accepted names, so this checks both.
+ */
+export async function getOpenAiApiKeyForRequest(req: Request): Promise<string> {
+  const isAllowed = await isOwnerRequest(req);
+  const key = (process.env.GPT_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+  if (isAllowed && key) return key;
+  throw new Error("Access Denied: GPT Live Translate is only available to owners.");
+}

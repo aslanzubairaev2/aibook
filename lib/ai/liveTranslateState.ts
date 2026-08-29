@@ -1,4 +1,16 @@
+import type { LiveTranslateProvider } from "@/lib/types";
+
 export type LiveTranslateState = "ready" | "connecting" | "listening" | "translating" | "stopped" | "mic-error" | "connection-error";
+
+/** A stored value that predates the column, or that never got set, falls back to Gemini. */
+export function normalizeLiveTranslateProvider(value: unknown): LiveTranslateProvider {
+  return value === "openai" ? "openai" : "gemini";
+}
+
+export const LIVE_TRANSLATE_PROVIDER_LABELS: Record<LiveTranslateProvider, string> = {
+  gemini: "Gemini Live",
+  openai: "GPT Live",
+};
 
 export type LiveUsageMetadata = {
   totalTokenCount?: number;
@@ -14,6 +26,12 @@ export type LiveUsageTotals = {
   totalTokens: number;
   estimatedUsd: number;
   detailUnavailable: boolean;
+  /**
+   * How estimatedUsd was derived. gpt-realtime-translate bills a flat rate per
+   * connected minute, not per token — there is no token breakdown to show, so
+   * the footer reads differently for it than for Gemini's token estimate.
+   */
+  costBasis?: "tokens" | "per-minute";
 };
 
 const INPUT_AUDIO_USD_PER_MILLION = 3.5;
@@ -66,4 +84,16 @@ export function accumulateLiveUsage(current: LiveUsageTotals, metadata?: LiveUsa
     responseTokensDetails: [...(current.detailUnavailable ? [] : [{ tokenCount: current.outputTokens }]), ...(metadata.responseTokensDetails ?? [])],
   });
   return next;
+}
+
+/** Flat per-minute usage for gpt-realtime-translate — see GPT_TRANSLATE_USD_PER_MINUTE. */
+export function calculatePerMinuteUsage(connectedSeconds: number, usdPerMinute: number): LiveUsageTotals {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedUsd: Math.max(0, connectedSeconds) * (usdPerMinute / 60),
+    detailUnavailable: false,
+    costBasis: "per-minute",
+  };
 }

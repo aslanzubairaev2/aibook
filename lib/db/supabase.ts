@@ -129,6 +129,8 @@ export type DbUserSettings = {
   last_book_id?: string | null;
   last_view_updated_at?: string | null;
   card_filters?: CardFilters | null;
+  /** Which engine the Live Translate screen uses; see LiveTranslateProvider. */
+  live_translate_provider?: string | null;
 };
 
 // ─── Books ────────────────────────────────────────────────────────────────────
@@ -329,6 +331,16 @@ export async function sbUpsertSettings(settings: DbUserSettings): Promise<void> 
     const retry = await supabase
       .from("user_settings")
       .upsert(withoutVoices, { onConflict: "user_id" });
+    if (retry.error) console.error("sbUpsertSettings:", retry.error.message);
+    return;
+  }
+
+  if (error.message.includes("live_translate_provider")) {
+    console.warn("Skipping live_translate_provider: the column is not available yet.");
+    const { live_translate_provider: _provider, ...withoutProvider } = settings;
+    const retry = await supabase
+      .from("user_settings")
+      .upsert(withoutProvider, { onConflict: "user_id" });
     if (retry.error) console.error("sbUpsertSettings:", retry.error.message);
     return;
   }

@@ -21,7 +21,8 @@ import {
   type TtsModelOption,
   type TtsVoiceOption,
 } from "@/lib/ttsProviders";
-import type { TtsProvider, UserProfile } from "@/lib/types";
+import { LIVE_TRANSLATE_PROVIDER_LABELS, normalizeLiveTranslateProvider } from "@/lib/ai/liveTranslateState";
+import type { LiveTranslateProvider, TtsProvider, UserProfile } from "@/lib/types";
 
 /**
  * What to say about the selected model.
@@ -195,7 +196,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
     saveLocalGeminiKey(val);
   }
 
-  async function setLang(field: "nativeLanguage" | "targetLanguage" | "ttsProvider" | "uiLanguage", value: string) {
+  async function setLang(field: "nativeLanguage" | "targetLanguage" | "ttsProvider" | "uiLanguage" | "liveTranslateProvider", value: string) {
     const updated: UserProfile = { ...profile, [field]: value };
     // A voice the new target language has no support for would silently do
     // nothing; drop back to the browser voice instead.
@@ -215,6 +216,7 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
         tts_provider: updated.ttsProvider ?? "local",
         tts_voices: (updated.ttsVoices ?? {}) as Record<string, string>,
         tts_models: (updated.ttsModels ?? {}) as Record<string, string>,
+        live_translate_provider: updated.liveTranslateProvider ?? "gemini",
         reading_minutes: updated.readingMinutes,
         books_started: updated.booksStarted,
         books_finished: updated.booksFinished,
@@ -501,6 +503,24 @@ export function SettingsView({ profile, onProfileChange, onNavigate }: Props) {
                 is how ElevenLabs came to be missing from it. */}
             {availableProviders.map((provider) => (
               <option key={provider} value={provider}>{getTtsProviderLabel(provider)}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="setting-row">
+          <div className="setting-row-main">
+            <div className="setting-row-label">Модель Live-перевода</div>
+            <div className="setting-row-value">
+              {LIVE_TRANSLATE_PROVIDER_LABELS[normalizeLiveTranslateProvider(profile.liveTranslateProvider)]}
+            </div>
+          </div>
+          <select
+            className="lang-select"
+            value={normalizeLiveTranslateProvider(profile.liveTranslateProvider)}
+            onChange={(e) => void setLang("liveTranslateProvider", e.target.value as LiveTranslateProvider)}
+          >
+            {(Object.keys(LIVE_TRANSLATE_PROVIDER_LABELS) as LiveTranslateProvider[]).map((provider) => (
+              <option key={provider} value={provider}>{LIVE_TRANSLATE_PROVIDER_LABELS[provider]}</option>
             ))}
           </select>
         </div>

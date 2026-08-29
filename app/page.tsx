@@ -26,6 +26,7 @@ import { freshFetch } from "@/lib/net/freshFetch";
 import { parseBook } from "@/lib/parser/index";
 import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress, type TrainBatch } from "@/lib/cards";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
+import { normalizeLiveTranslateProvider } from "@/lib/ai/liveTranslateState";
 import type { AppSection, Book, CardVariantState, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
 import { HomeworkView, type HomeworkBook } from "@/components/homework/HomeworkView";
 import type { HomeworkAnswers } from "@/components/homework/homeworkAnswers";
@@ -516,6 +517,11 @@ function AppInner() {
         booksFinished: dbSettings.books_finished ?? 0,
         savedItems: dbCards.length,
         cardFilters: dbSettings.card_filters ?? getLocalProfile().cardFilters,
+        // Before the column exists the account has no preference set, so
+        // whatever this device already chose (or the "gemini" default) stands.
+        liveTranslateProvider: dbSettings.live_translate_provider
+          ? normalizeLiveTranslateProvider(dbSettings.live_translate_provider)
+          : getLocalProfile().liveTranslateProvider,
       };
       setProfile(updated);
       saveLocalProfile(updated);
@@ -1038,7 +1044,7 @@ function AppInner() {
         />
       )}
 
-      {section === "live-translate" && <LiveTranslateView onBack={() => setSection("home")} />}
+      {section === "live-translate" && <LiveTranslateView onBack={() => setSection("home")} profile={profile} />}
 
       {section === "books" && (
         <LibraryView
