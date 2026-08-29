@@ -6,6 +6,8 @@ export type GptRealtimeCallbacks = {
   onSourceText: (text: string) => void;
   onUsage: (totals: LiveUsageTotals) => void;
   onError: (kind: "mic-error" | "connection-error", message: string) => void;
+  /** The model string the server actually resolved the session to — not what was requested. */
+  onModelConfirmed?: (model: string) => void;
 };
 
 const CALLS_URL = "https://api.openai.com/v1/realtime/calls";
@@ -15,6 +17,7 @@ type RealtimeEvent = {
   delta?: string;
   response?: { usage?: GptRealtimeUsage };
   error?: { message?: string };
+  session?: { model?: string };
 };
 
 /**
@@ -122,6 +125,13 @@ export class GptRealtimeSession {
       return;
     }
     switch (event.type) {
+      case "session.created":
+      case "session.updated":
+        if (event.session?.model) {
+          console.info(`GPT Realtime: server confirmed model "${event.session.model}"`);
+          this.callbacks.onModelConfirmed?.(event.session.model);
+        }
+        break;
       case "conversation.item.input_audio_transcription.delta":
         if (event.delta) this.callbacks.onSourceText(event.delta);
         break;

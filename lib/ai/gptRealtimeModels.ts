@@ -49,13 +49,20 @@ export const GPT_REALTIME_AUDIO_INPUT_USD_PER_MILLION = 32;
 export const GPT_REALTIME_AUDIO_OUTPUT_USD_PER_MILLION = 64;
 export const GPT_REALTIME_TEXT_INPUT_USD_PER_MILLION = 4;
 export const GPT_REALTIME_TEXT_OUTPUT_USD_PER_MILLION = 24;
+/** Cached input — audio or text — is a flat $0.4/1M regardless of modality. */
+export const GPT_REALTIME_CACHED_INPUT_USD_PER_MILLION = 0.4;
 
 /** The subset of a `response.done` event's `response.usage` object this app prices. */
 export type GptRealtimeUsage = {
   input_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
-  input_token_details?: { text_tokens?: number; audio_tokens?: number };
+  input_token_details?: {
+    text_tokens?: number;
+    audio_tokens?: number;
+    cached_tokens?: number;
+    cached_tokens_details?: { text_tokens?: number; audio_tokens?: number };
+  };
   output_token_details?: { text_tokens?: number; audio_tokens?: number };
 };
 
@@ -64,16 +71,30 @@ export type GptRealtimeUsage = {
  * separately and far apart ($32 vs $4 per million in, $64 vs $24 out) — a
  * single blended rate would misprice a session by a wide margin, so each
  * turn's cost is computed from the actual audio/text split before summing.
+ *
+ * A Realtime conversation resends the accumulating history as input context
+ * on every turn — most of `input_token_details.audio_tokens` on turn 10 is
+ * turns 1–9 being replayed, not new audio, and OpenAI bills that replayed
+ * part at the heavily discounted cached rate ($0.4/1M, not $32/1M). Pricing
+ * the whole figure at the fresh rate — which an earlier version of this
+ * function did — overstated the running total more and more as a session
+ * went on, compounding turn over turn; a 20-second session showing $0.20
+ * instead of the low cents it should have been was this bug, not real spend.
  */
 export function accumulateGptRealtimeUsage(current: LiveUsageTotals, usage: GptRealtimeUsage): LiveUsageTotals {
   const inAudio = usage.input_token_details?.audio_tokens ?? 0;
   const inText = usage.input_token_details?.text_tokens ?? Math.max(0, (usage.input_tokens ?? 0) - inAudio);
+  const cachedAudio = Math.min(inAudio, usage.input_token_details?.cached_tokens_details?.audio_tokens ?? 0);
+  const cachedText = Math.min(inText, usage.input_token_details?.cached_tokens_details?.text_tokens ?? 0);
+  const freshAudio = inAudio - cachedAudio;
+  const freshText = inText - cachedText;
   const outAudio = usage.output_token_details?.audio_tokens ?? 0;
   const outText = usage.output_token_details?.text_tokens ?? Math.max(0, (usage.output_tokens ?? 0) - outAudio);
 
   const turnCost = (
-    inAudio * GPT_REALTIME_AUDIO_INPUT_USD_PER_MILLION +
-    inText * GPT_REALTIME_TEXT_INPUT_USD_PER_MILLION +
+    freshAudio * GPT_REALTIME_AUDIO_INPUT_USD_PER_MILLION +
+    freshText * GPT_REALTIME_TEXT_INPUT_USD_PER_MILLION +
+    (cachedAudio + cachedText) * GPT_REALTIME_CACHED_INPUT_USD_PER_MILLION +
     outAudio * GPT_REALTIME_AUDIO_OUTPUT_USD_PER_MILLION +
     outText * GPT_REALTIME_TEXT_OUTPUT_USD_PER_MILLION
   ) / 1_000_000;

@@ -31,6 +31,7 @@ export function LiveTranslateView({ onBack, profile }: Props) {
   const [sessionActive, setSessionActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [usage, setUsage] = useState<LiveUsageTotals>(() => calculateLiveUsage());
+  const [confirmedModel, setConfirmedModel] = useState<string | null>(null);
   const sessionRef = useRef<AnyLiveSession | null>(null);
   const transcriptRef = useRef("");
   const wakeRef = useRef<ScreenAwakeHandle | null>(null);
@@ -106,6 +107,7 @@ export function LiveTranslateView({ onBack, profile }: Props) {
       onSourceText: (text) => { transcriptRef.current = appendTranscript(transcriptRef.current, text); },
       onUsage: (totals) => setUsage(totals),
       onError: (kind, message) => { stopSession(); setState(kind); setError(message); },
+      onModelConfirmed: setConfirmedModel,
     });
     sessionRef.current = session;
     setSessionActive(true);
@@ -119,6 +121,7 @@ export function LiveTranslateView({ onBack, profile }: Props) {
     transcriptRef.current = "";
     setSourceText("");
     setUsage(calculateLiveUsage());
+    setConfirmedModel(null);
     try {
       const headers = await sbAuthHeaders();
       if (provider === "openai") await connectGpt(headers);
@@ -132,7 +135,14 @@ export function LiveTranslateView({ onBack, profile }: Props) {
   }
 
   const running = sessionActive && !["ready", "stopped", "mic-error", "connection-error"].includes(state);
-  const modelLabel = provider === "openai" ? GPT_TRANSLATE_MODEL : provider === "openai-realtime" ? GPT_REALTIME_MODEL : LIVE_TRANSLATE_MODEL;
+  // For the duplex engine, prefer what the server actually confirmed
+  // (session.created) over the requested id — the whole point of tracking it
+  // is to catch a silent fallback to a different model.
+  const modelLabel = provider === "openai"
+    ? GPT_TRANSLATE_MODEL
+    : provider === "openai-realtime"
+      ? (confirmedModel ?? GPT_REALTIME_MODEL)
+      : LIVE_TRANSLATE_MODEL;
   // Driven by the selected engine, not usage.costBasis: before the first
   // session callback arrives, usage is still Gemini-shaped even when GPT is
   // the active provider, which would otherwise flash "вход 0 · выход 0".
