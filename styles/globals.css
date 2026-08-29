@@ -2865,3 +2865,71 @@ textarea,
   line-height: 1.45;
 }
 .home-note b { color: var(--text-primary); font-weight: 700; }
+
+/* ─── Обложка книги ──────────────────────────────────────────────────────── */
+/*
+   Цветная подложка есть с первого кадра, картинка проявляется поверх. Смысл в
+   том, что до загрузки на экране стоит осмысленный прямоугольник, а не дыра, и
+   что появление обложки ничего не двигает: место под неё уже занято через
+   aspect-ratio.
+*/
+.cover {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  color: rgba(20, 18, 16, 0.62);
+  font-weight: 900;
+}
+
+.cover-label { font-size: 12px; letter-spacing: 0.04em; }
+
+/*
+   Полка библиотеки — не сетка каталога: там обложка это маленькая иконка
+   фиксированного размера рядом со строкой. Размер задан здесь, а не наследуется
+   от `.book-cover` выше по файлу: две одноклассовые записи разрешаются порядком
+   в файле, и полагаться на него — значит однажды молча его переставить.
+*/
+.cover--shelf {
+  width: 52px;
+  height: 70px;
+  flex-shrink: 0;
+  aspect-ratio: auto;
+  border-radius: 6px;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+.cover--shelf .cover-label { font-size: 11px; }
+
+.cover-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+.cover-img.is-loaded { opacity: 1; }
+
+/* Появление обложки не должно мигать у тех, кто просил не анимировать. */
+@media (prefers-reduced-motion: reduce) {
+  .cover-img { transition: none; }
+}
+
+/* Значок поверх обложки — «это аудиокнига». */
+.cover-badge {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 10px;
+}

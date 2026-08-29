@@ -9,6 +9,7 @@ import {
   Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, ClipboardList, Tv,
 } from "lucide-react";
 import { VideosView } from "@/components/videos/VideosView";
+import { BookCover } from "@/components/ui/BookCover";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile, Audiobook } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
 import { AudiobookDetailModal } from "./AudiobookDetailModal";
@@ -1109,14 +1110,21 @@ export function DiscoverView({
           ) : (
             <>
               <div className={`discover-grid${isLoading ? " is-refreshing" : ""}`}>
-                {results.map((bookInfo) => {
+                {results.map((bookInfo, index) => {
                   const coverUrl = getCoverUrl(bookInfo);
                   const isInLibrary = titleSet.has(bookInfo.title.toLowerCase());
                   return (
                     <button key={bookInfo.id} type="button" className="catalog-book" onClick={() => setSelectedBook(bookInfo)}>
-                      <span className="catalog-cover" style={coverUrl ? { backgroundImage: `url(${coverUrl})` } : { background: pickColor(bookInfo.title) }}>
-                        {!coverUrl && (bookInfo.languages?.[0] || "en").toUpperCase()}
-                      </span>
+                      {/* Первый ряд грузится сразу, остальное — по мере прокрутки:
+                          страница каталога перестала тянуть два десятка обложек
+                          с gutenberg.org одновременно ради шести видимых. */}
+                      <BookCover
+                        url={coverUrl}
+                        title={bookInfo.title}
+                        fallbackColor={pickColor(bookInfo.title)}
+                        label={(bookInfo.languages?.[0] || "en").toUpperCase()}
+                        eager={index < 6}
+                      />
                       <span className="catalog-book-body">
                         <strong>{bookInfo.title}</strong>
                         <span>{bookInfo.authors?.[0]?.name || "Неизвестен"}</span>
@@ -1259,39 +1267,21 @@ export function DiscoverView({
           ) : (
             <>
               <div className={`discover-grid${isAudioLoading ? " is-refreshing" : ""}`}>
-                {audiobooks.map((b) => (
+                {audiobooks.map((b, index) => (
                   <button
                     key={b.id}
                     type="button"
                     className="catalog-book"
                     onClick={() => setSelectedAudiobook(b)}
                   >
-                    <span
-                      className="catalog-cover"
-                      style={
-                        b.coverUrl
-                          ? { backgroundImage: `url(${b.coverUrl})` }
-                          : { background: pickColor(b.title) }
-                      }
+                    <BookCover
+                      url={b.coverUrl}
+                      title={b.title}
+                      fallbackColor={pickColor(b.title)}
+                      eager={index < 6}
                     >
-                      <span
-                        style={{
-                          position: "absolute",
-                          bottom: 4,
-                          right: 4,
-                          background: "rgba(0,0,0,0.75)",
-                          borderRadius: "4px",
-                          padding: "2px 4px",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "2px",
-                          color: "#fff",
-                          fontSize: "10px",
-                        }}
-                      >
-                        <Headphones size={11} />
-                      </span>
-                    </span>
+                      <span className="cover-badge"><Headphones size={11} /></span>
+                    </BookCover>
                     <span className="catalog-book-body">
                       <strong>{b.title}</strong>
                       <span>{b.author}</span>

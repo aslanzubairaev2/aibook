@@ -7,6 +7,7 @@ import { saveLocalBook, deleteLocalBook } from "@/lib/db/local";
 import { sbUpsertBook, sbUpsertChapter, sbDeleteBook } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { BOOK_FORMATS } from "@/lib/config";
+import { BookCover } from "@/components/ui/BookCover";
 import type { Book, AppSection } from "@/lib/types";
 
 import { franc } from "franc-min";
@@ -245,7 +246,7 @@ export function LibraryView({ books, activeBookId, openingBookId, onBooksChange,
         </div>
       ) : (
         <div className="book-list">
-          {books.map((book) => (
+          {books.map((book, index) => (
             <div
               key={book.id}
               role="button"
@@ -254,12 +255,14 @@ export function LibraryView({ books, activeBookId, openingBookId, onBooksChange,
               onClick={() => onOpenBook(book)}
               onKeyDown={(e) => { if (e.key === "Enter") onOpenBook(book); }}
             >
-              <span 
-                className="book-cover" 
-                style={book.coverUrl ? { backgroundImage: `url(${book.coverUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: book.coverColor }}
-              >
-                {!book.coverUrl && book.language.toUpperCase()}
-              </span>
+              <BookCover
+                className="cover--shelf"
+                url={book.coverUrl}
+                title={book.title}
+                fallbackColor={book.coverColor}
+                label={book.language.toUpperCase()}
+                eager={index < 8}
+              />
               <span className="book-info">
                 <span className="book-info-title">
                   {book.title}
