@@ -132,6 +132,28 @@ describe("reading a vocabulary page into entries", () => {
     assert.deepEqual(entries.map((e) => e.plural), ["die Zeitungen", "die Mädchen", "die Bälle"]);
   });
 
+  // A real deck ended up with ~300 words that had a filled gender/article but
+  // no partOfSpeech at all — invisible to every screen that filters by part
+  // of speech, including the Существительные trainer itself, even though the
+  // word was recognised as a noun the whole time.
+  test("a noun recognised only by its gender/article gets partOfSpeech filled in", () => {
+    const { entries } = parseDictionaryEntries({
+      entries: [
+        { headword: "das Mädchen", lemma: "Mädchen", translation: "девочка", article: "das", plural: "die Mädchen" },
+        { headword: "der Ball", lemma: "Ball", translation: "мяч", gender: "m", plural: "die Bälle" },
+        // Already labelled — left exactly as it was, not overwritten.
+        { headword: "die Zeitung", lemma: "Zeitung", translation: "газета", partOfSpeech: "существительное" },
+        // No gender, no article, no leading article on the headword: nothing
+        // says this is a noun, so nothing should be invented for it either.
+        { headword: "schnell", lemma: "schnell", translation: "быстрый" },
+      ],
+    });
+    assert.deepEqual(
+      entries.map((e) => e.partOfSpeech),
+      ["существительное", "существительное", "существительное", ""],
+    );
+  });
+
   test("an answer with no entries yields none, not a guess", () => {
     assert.deepEqual(parseDictionaryEntries({}).entries, []);
     assert.deepEqual(parseDictionaryEntries(null).entries, []);

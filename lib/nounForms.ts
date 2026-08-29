@@ -36,8 +36,21 @@ export const GENDER_CHIP: Record<NounGender, string> = {
   pl: "die (Pl.)",
 };
 
-export function isNounEntry(partOfSpeech: string): boolean {
-  return normalizePos(partOfSpeech).includes("существительное");
+/**
+ * Whether an entry is a noun — trusting the stored part-of-speech first, and
+ * falling back to what only a noun could carry when that field is blank.
+ *
+ * The fallback exists for real rows already in the database: a photo import
+ * bug (fixed in `applyNounFieldRules`) left roughly half of one learner's
+ * photographed word lists with a filled gender/article but an empty
+ * `part_of_speech` — invisible to a strict `.includes("существительное")`
+ * check even though the entry has everything the noun trainer needs.
+ */
+export function isNounEntry(entry: { part_of_speech: string; gender?: string; article?: string; headword?: string }): boolean {
+  const pos = normalizePos(entry.part_of_speech);
+  if (pos.includes("существительное")) return true;
+  if (pos) return false; // an explicit different part of speech overrides the fallback
+  return Boolean(entry.gender?.trim()) || Boolean(entry.article?.trim()) || /^(der|die|das)\s/i.test(entry.headword ?? "");
 }
 
 /**

@@ -46,7 +46,7 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
     const nouns = getLocalNounsDict(profile.targetLanguage)?.entries ?? [];
     return {
       verbs: verbs.filter((e) => normalizePos(e.part_of_speech).includes("глагол")).length,
-      nouns: nouns.filter((e) => isNounEntry(e.part_of_speech) && nounGender(e) !== null).length,
+      nouns: nouns.filter((e) => isNounEntry(e) && nounGender(e) !== null).length,
     };
   })[0];
 

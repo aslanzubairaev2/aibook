@@ -156,8 +156,15 @@ function isNoun(entry: DictionaryEntryDraft): boolean {
  * and both make this mistake.
  */
 export function applyNounFieldRules(entry: DictionaryEntryDraft): DictionaryEntryDraft {
-  if (isNoun(entry)) return entry;
-  return { ...entry, gender: "", article: "", plural: "" };
+  if (!isNoun(entry)) return { ...entry, gender: "", article: "", plural: "" };
+  // isNoun() just recognised this as a noun from its gender/article/headword
+  // alone — the model filled those in but left partOfSpeech blank, something
+  // that turned out to happen for roughly half of one learner's photographed
+  // word lists. Write the classification back so every screen that reads
+  // partOfSpeech (search filters, the verb table's own exclusion check, the
+  // Существительные trainer) can see it too, not just the fields this
+  // function already protects.
+  return entry.partOfSpeech.trim() ? entry : { ...entry, partOfSpeech: "существительное" };
 }
 
 const A1_DICTIONARY_WORDS = new Set([

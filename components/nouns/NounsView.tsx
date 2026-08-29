@@ -138,7 +138,7 @@ export function NounsView({ profile, onBack }: Props) {
   // Every noun in the dictionary, with or without a gender yet — split below
   // into the real table and the «Без артикля» backlog.
   const allNounEntries = useMemo(
-    () => entries.filter((e) => isNounEntry(e.part_of_speech)),
+    () => entries.filter((e) => isNounEntry(e)),
     [entries],
   );
 

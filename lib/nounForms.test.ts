@@ -6,6 +6,7 @@ import {
   genderRuleExplanation,
   genderRuleHint,
   GENDER_RULES,
+  isNounEntry,
   nounArticle,
   nounGender,
   suffixRuleFor,
@@ -98,4 +99,27 @@ test("every rule's article agrees with the gender it teaches", () => {
       `разбор для ${rule.label} не называет артикль ${expected[rule.gender]}`,
     );
   }
+});
+
+test("a row with no part_of_speech but a filled gender/article is still a noun", () => {
+  // The exact shape a broken photo import left in the real database: gender
+  // and article filled in by the model, part_of_speech left blank.
+  assert.equal(isNounEntry({ part_of_speech: "", gender: "f", article: "die" }), true);
+  assert.equal(isNounEntry({ part_of_speech: "", gender: "", article: "der" }), true);
+  assert.equal(isNounEntry({ part_of_speech: "", gender: "", article: "", headword: "das Fenster" }), true);
+});
+
+test("an explicit non-noun part of speech is never overridden by the fallback", () => {
+  // A verb entry with no gender/article of its own must not be reclassified
+  // just because its part_of_speech happens to be missing metadata a noun
+  // would have — the check on the stored value always wins first.
+  assert.equal(isNounEntry({ part_of_speech: "глагол", gender: "", article: "" }), false);
+});
+
+test("a row with nothing at all — no part_of_speech, no gender, no article — is not a noun", () => {
+  assert.equal(isNounEntry({ part_of_speech: "", gender: "", article: "", headword: "schnell" }), false);
+});
+
+test("the stored part_of_speech is trusted first, whatever its case", () => {
+  assert.equal(isNounEntry({ part_of_speech: "Существительное", gender: "" }), true);
 });
