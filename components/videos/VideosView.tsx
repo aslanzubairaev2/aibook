@@ -64,7 +64,7 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
     return Number(selectedLang !== defaultLang) + Number(selectedCefr !== "all") + Number(selectedCategory !== "all") + Number(selectedDuration !== "any") + Number(captionsOnly);
   }, [captionsOnly, defaultLang, selectedCategory, selectedCefr, selectedDuration, selectedLang]);
 
-  const loadVideos = useCallback(async (page: number, append: boolean, query = submittedSearch) => {
+  const loadVideos = useCallback(async (page: number, append: boolean, query = submittedSearch, playlistQuery = "") => {
     const currentRequest = ++requestId.current;
     if (append) setIsLoadingMore(true);
     else setIsLoading(true);
@@ -82,6 +82,10 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
         ai: "true",
       });
       if (query.trim()) params.set("q", query.trim());
+      if (playlistQuery.trim()) {
+        params.delete("q");
+        params.set("playlist", playlistQuery.trim());
+      }
       const response = await fetch(`/api/videos/search?${params}`, { headers: await getVideoSearchHeaders() });
       const data = await response.json() as SearchResponse & { error?: string };
       if (!response.ok) throw new Error(data.error || "Не удалось получить видео из YouTube.");
@@ -141,8 +145,8 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
     const playlist = VIDEO_PLAYLISTS.find((item) => item.id === playlistId);
     if (!playlist) return;
     setSearchQuery(playlist.query);
-    setSubmittedSearch(playlist.query);
-    void loadVideos(0, false, playlist.query);
+    setSubmittedSearch("");
+    void loadVideos(0, false, "", playlist.query);
   };
 
   const resetFilters = () => {

@@ -1,4 +1,5 @@
 import { fetchYouTubeTranscript } from "./youtubeTranscript";
+import { hasOfficialYouTubeApi, searchYouTubeOfficial } from "./youtubeDataApi";
 import type { VideoCategory, VideoCefrLevel, VideoDurationFilter, VideoItem } from "./types";
 
 type SearchOptions = {
@@ -135,6 +136,13 @@ export async function searchYouTube(query: string, lang: "de" | "en" = "de", opt
   const cacheKey = JSON.stringify({ query: searchTerms.toLowerCase(), lang, page, limit, ...options });
   const cached = searchCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (hasOfficialYouTubeApi()) {
+    try {
+      return await searchYouTubeOfficial(searchTerms, lang, options);
+    } catch (error) {
+      console.warn("Official YouTube API unavailable; falling back to public search.", error);
+    }
+  }
   try {
     const response = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(searchTerms)}`, {
       headers: {

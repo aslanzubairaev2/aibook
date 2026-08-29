@@ -3,6 +3,7 @@ import { getVideosByLanguage, filterVideos } from "@/lib/videos/data";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { buildVideoSearchIntent } from "@/lib/videos/searchIntent";
 import { searchYouTube } from "@/lib/videos/youtubeSearch";
+import { searchYouTubePlaylistOfficial } from "@/lib/videos/youtubeDataApi";
 import type { VideoCategory, VideoCefrLevel, VideoDurationFilter, VideoFilters, VideoItem, VideoSearchIntent } from "@/lib/videos/types";
 
 export const runtime = "nodejs";
@@ -47,6 +48,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const contextualQuery = searchParams.get("word") || searchParams.get("book") || "";
   const query = (searchParams.get("q") || contextualQuery).trim();
+  const playlistQuery = (searchParams.get("playlist") || "").trim();
   const language = asLanguage(searchParams.get("lang"));
   const requestedLevel = asLevel(searchParams.get("level"));
   const requestedCategory = asCategory(searchParams.get("category"));
@@ -57,8 +59,9 @@ export async function GET(request: Request) {
   const useAi = searchParams.get("ai") === "true";
   const intentLanguage = language === "en" ? "en" : "de";
   const directQuery = query.length > 0;
-  const { intent, aiApplied } = directQuery
-    ? { intent: { ...DEFAULT_INTENT, keywords: query }, aiApplied: false }
+  const playlistMode = playlistQuery.length > 0;
+  const { intent, aiApplied } = directQuery || playlistMode
+    ? { intent: { ...DEFAULT_INTENT, keywords: playlistMode ? playlistQuery : query }, aiApplied: false }
     : await resolveIntent(request, query, intentLanguage, useAi);
   const filters: VideoFilters = {
     language,
@@ -68,7 +71,7 @@ export async function GET(request: Request) {
     captionsOnly: requestedCaptions || intent.captionsOnly,
   };
 
-  const searchOptions = directQuery ? {
+  const searchOptions = directQuery || playlistMode ? {
     page,
     limit,
   } : {
@@ -80,7 +83,9 @@ export async function GET(request: Request) {
     captionsOnly: filters.captionsOnly,
   };
   const searchLanguage = language === "en" ? "en" : "de";
-  const searches = directQuery
+  const searches = playlistMode
+    ? [await searchYouTubePlaylistOfficial(playlistQuery, searchLanguage, searchOptions).catch(() => searchYouTube(playlistQuery, searchLanguage, searchOptions))]
+    : directQuery
     ? [await searchYouTube(query, searchLanguage, searchOptions)]
     : language === "all"
       ? await Promise.all([searchYouTube(intent.keywords, "de", searchOptions), searchYouTube(intent.keywords, "en", searchOptions)])
@@ -100,7 +105,7 @@ export async function GET(request: Request) {
     }, { headers: { "Cache-Control": "private, max-age=300" } });
   }
 
-  if (directQuery) {
+  if (directQuery || playlistMode) {
     return NextResponse.json({
       videos: [],
       nextPage: null,
