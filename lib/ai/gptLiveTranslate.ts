@@ -74,10 +74,20 @@ export class GptLiveTranslateSession {
       const pc = new RTCPeerConnection();
       this.pc = pc;
 
+      // A detached <audio> element is unreliable for playback — some
+      // browsers, mobile ones especially, never actually route sound out of
+      // an element that was created but never attached to the document, even
+      // with autoplay set. It stays visually invisible either way (no
+      // `controls`), so there is nothing to hide.
       this.audioEl = document.createElement("audio");
       this.audioEl.autoplay = true;
+      document.body.appendChild(this.audioEl);
       pc.ontrack = (event) => {
-        if (this.audioEl) this.audioEl.srcObject = event.streams[0] ?? null;
+        if (!this.audioEl) return;
+        this.audioEl.srcObject = event.streams[0] ?? null;
+        // autoplay is not guaranteed to fire on a stream attached this long
+        // after the click that started the session; ask explicitly too.
+        void this.audioEl.play().catch(() => undefined);
       };
 
       for (const track of this.stream.getAudioTracks()) pc.addTrack(track, this.stream);
@@ -162,6 +172,6 @@ export class GptLiveTranslateSession {
     if (this.pc) { this.pc.ontrack = null; this.pc.onconnectionstatechange = null; this.pc.close(); this.pc = null; }
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = null;
-    if (this.audioEl) { this.audioEl.srcObject = null; this.audioEl = null; }
+    if (this.audioEl) { this.audioEl.srcObject = null; this.audioEl.remove(); this.audioEl = null; }
   }
 }
