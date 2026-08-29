@@ -2,7 +2,7 @@
 
 - Агент: Claude
 - Ветка: `claude/nouns-articles-training-b34edb`
-- Commit: см. `git log` ветки (последний)
+- Commit: `71473aa`
 - Статус: ready-for-review
 
 ## Сделано
