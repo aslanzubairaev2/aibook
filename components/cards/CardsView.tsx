@@ -48,6 +48,8 @@ import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertC
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { ReverseWordModal } from "@/components/word-modal/ReverseWordModal";
+import { useQuickWord } from "@/components/word-modal/useQuickWord";
+import { useLongPress } from "@/lib/hooks/useLongPress";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { describeCardFamiliarity } from "@/lib/ai/wordProfile";
 import { ProductiveTrainer } from "@/components/cards/ProductiveTrainer";
@@ -182,28 +184,55 @@ function ttsProvidersFor(lang: string): { value: TtsProvider; label: string }[] 
 type TokenizedTextProps = {
   text: string;
   style?: React.CSSProperties;
+  className?: string;
   onWordTap: (word: string, e: React.MouseEvent) => void;
+  /** Долгое удержание / правая кнопка — быстрое превью форм. */
+  onWordHold?: (word: string, anchor: DOMRect) => void;
 };
 
-const TokenizedText = memo(function TokenizedText({ text, style, onWordTap }: TokenizedTextProps) {
+const TokenizedText = memo(function TokenizedText({ text, style, className, onWordTap, onWordHold }: TokenizedTextProps) {
   const tokens = useMemo(() => splitIntoTokens(text), [text]);
   return (
-    <div style={style}>
+    <div style={style} className={className}>
       {tokens.map((tok, i) => {
         if (!normalizeToken(tok)) return <span key={i}>{tok}</span>;
         return (
-          <span
-            key={i}
-            onClick={(e) => onWordTap(tok, e)}
-            style={{ cursor: "pointer", borderRadius: 2, transition: "background 0.15s" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(212, 168, 71, 0.15)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-          >
-            {tok}
-          </span>
+          <QuickToken key={i} token={tok} onWordTap={onWordTap} onWordHold={onWordHold} />
         );
       })}
     </div>
+  );
+});
+
+/**
+ * Одно слово: короткий тап открывает полную карточку, удержание — быстрое
+ * превью форм.
+ *
+ * Разделение живёт здесь, а не в обработчике клика, потому что после удержания
+ * браузер всё равно досылает click — и без этой проверки поверх маленькой
+ * подсказки сразу же открывалась бы большая модалка.
+ */
+const QuickToken = memo(function QuickToken({
+  token, onWordTap, onWordHold,
+}: { token: string; onWordTap: (word: string, e: React.MouseEvent) => void; onWordHold?: (word: string, anchor: DOMRect) => void }) {
+  const { handlers, consumedLongPress } = useLongPress(
+    ({ rect }) => onWordHold?.(token, rect),
+  );
+
+  return (
+    <span
+      {...(onWordHold ? handlers : {})}
+      className={onWordHold ? "quick-press-target" : undefined}
+      onClick={(e) => {
+        if (consumedLongPress()) { e.stopPropagation(); return; }
+        onWordTap(token, e);
+      }}
+      style={{ cursor: "pointer", borderRadius: 2, transition: "background 0.15s" }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(212, 168, 71, 0.15)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+    >
+      {token}
+    </span>
   );
 });
 
@@ -224,7 +253,14 @@ type WordFacts = { pos: string; cefr: string };
 /** One shared empty object, so a row without skill progress stays memo-stable. */
 const EMPTY_SKILL_STATE: CardSkillState = {};
 
-const DueCardRow = memo(function DueCardRow({ card, skillState }: { card: Flashcard; skillState: CardSkillState }) {
+type DueCardRowProps = {
+  card: Flashcard;
+  skillState: CardSkillState;
+  onWordTap: (word: string, e: React.MouseEvent) => void;
+  onWordHold: (word: string, anchor: DOMRect) => void;
+};
+
+const DueCardRow = memo(function DueCardRow({ card, skillState, onWordTap, onWordHold }: DueCardRowProps) {
   const color = STATUS_COLORS[card.status] ?? "var(--accent)";
   return (
     <div className="flash-card" style={{ borderLeft: `4px solid ${color}` }}>
@@ -237,8 +273,23 @@ const DueCardRow = memo(function DueCardRow({ card, skillState }: { card: Flashc
           </span>
         </div>
       </div>
-      <div className="flash-card-front" style={{ fontSize: 16 }}>{card.front}</div>
-      <div className="flash-card-back" style={{ fontSize: 13, color: "var(--text-muted)" }}>{card.back}</div>
+      {/* Слова здесь такие же живые, как в списке «Все»: тап открывает карточку
+          слова, удержание — быстрое превью форм. Раньше это была мёртвая
+          строка текста, и весь список «на сегодня» нельзя было потрогать. */}
+      <TokenizedText
+        text={card.front}
+        className="flash-card-front"
+        style={{ fontSize: 16 }}
+        onWordTap={onWordTap}
+        onWordHold={onWordHold}
+      />
+      <TokenizedText
+        text={card.back}
+        className="flash-card-back"
+        style={{ fontSize: 13, color: "var(--text-muted)" }}
+        onWordTap={onWordTap}
+        onWordHold={onWordHold}
+      />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(240, 230, 211, 0.05)" }}>
         <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
         {card.intervalDays > 0 && (
