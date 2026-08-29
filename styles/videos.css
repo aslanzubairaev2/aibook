@@ -9,9 +9,11 @@
 
 /* Search Bar Row */
 .videos-search-row {
+  position: relative;
   display: flex;
   gap: 8px;
   align-items: center;
+  min-height: 38px;
 }
 
 .videos-search-input-wrap {
@@ -19,6 +21,17 @@
   flex: 1;
   display: flex;
   align-items: center;
+}
+
+/* Expand over the controls while typing, without changing the row layout. */
+.videos-search-input-wrap:focus-within {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  width: 100%;
+  background: var(--bg-card, #1c1915);
+  border-radius: var(--radius-pill, 999px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
 }
 
 .videos-search-icon {
@@ -82,6 +95,32 @@
 .videos-search-submit-btn:hover {
   border-color: var(--accent);
   background: rgba(212, 168, 71, 0.1);
+}
+
+.videos-playlist-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.videos-playlist-select {
+  min-width: 0;
+  flex: 1;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.videos-playlist-select:focus {
+  border-color: var(--accent);
 }
 
 /* Count & Reset Row */

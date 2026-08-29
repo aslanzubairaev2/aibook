@@ -1,9 +1,10 @@
 import { GERMAN_VIDEOS } from "./germanVideos";
 import { ENGLISH_VIDEOS } from "./englishVideos";
 import { VIDEO_CATEGORIES } from "./categories";
+import { VIDEO_PLAYLISTS } from "./playlists";
 import type { VideoItem, VideoFilters } from "../types";
 
-export { GERMAN_VIDEOS, ENGLISH_VIDEOS, VIDEO_CATEGORIES };
+export { GERMAN_VIDEOS, ENGLISH_VIDEOS, VIDEO_CATEGORIES, VIDEO_PLAYLISTS };
 
 export const ALL_VIDEOS: VideoItem[] = [...GERMAN_VIDEOS, ...ENGLISH_VIDEOS];
 

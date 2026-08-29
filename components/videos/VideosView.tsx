@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Captions, ChevronDown, Loader2, Search, SlidersHorizontal, Sparkles, X } from "lucide-react";
 import { getAiHeaders } from "@/lib/ai/analyze";
-import { VIDEO_CATEGORIES } from "@/lib/videos/data";
+import { VIDEO_CATEGORIES, VIDEO_PLAYLISTS } from "@/lib/videos/data";
 import type { VideoCategory, VideoCefrLevel, VideoDurationFilter, VideoItem, VideoSearchIntent } from "@/lib/videos/types";
 import type { Flashcard, UserProfile } from "@/lib/types";
 import { VideoCard } from "./VideoCard";
@@ -137,6 +137,14 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
     void loadVideos(0, false, topic);
   };
 
+  const choosePlaylist = (playlistId: string) => {
+    const playlist = VIDEO_PLAYLISTS.find((item) => item.id === playlistId);
+    if (!playlist) return;
+    setSearchQuery(playlist.query);
+    setSubmittedSearch(playlist.query);
+    void loadVideos(0, false, playlist.query);
+  };
+
   const resetFilters = () => {
     setSelectedLang(defaultLang);
     setSelectedCefr("all");
@@ -159,6 +167,9 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
             placeholder="Например: короткий диалог в аэропорту для A1"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") event.currentTarget.blur();
+            }}
           />
           {searchQuery && <button type="button" className="videos-clear-btn" onClick={() => setSearchQuery("")} aria-label="Очистить поиск"><X size={14} /></button>}
         </div>
@@ -167,6 +178,19 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard }
         </button>
         <button type="submit" className="videos-search-submit-btn"><Sparkles size={14} /> Найти</button>
       </form>
+
+      <label className="videos-playlist-select-wrap">
+        <span>Подборка</span>
+        <select
+          className="videos-playlist-select"
+          defaultValue=""
+          aria-label="Выбрать тематическую подборку видео"
+          onChange={(event) => choosePlaylist(event.target.value)}
+        >
+          <option value="">Выберите курс или плейлист</option>
+          {VIDEO_PLAYLISTS.map((playlist) => <option key={playlist.id} value={playlist.id}>{playlist.title} — {playlist.description}</option>)}
+        </select>
+      </label>
 
       {filtersOpen && (
         <div className="all-filter-panel">
