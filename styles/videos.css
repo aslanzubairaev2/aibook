@@ -795,10 +795,19 @@
 
 .video-transcript-item.active {
   z-index: 2;
+  align-content: stretch;
   padding-right: 0;
   background: var(--cue-active-bg);
   color: var(--text-primary);
   border-left: 3px solid var(--accent);
+  /* Угол, к которому примыкает полуостров, скругляться не должен — иначе на стыке
+     появляется выемка и два фона перестают читаться как один. */
+  border-top-right-radius: 0;
+}
+
+.video-transcript-item.active:first-child {
+  border-top-right-radius: var(--radius-sm, 8px);
+  border-bottom-right-radius: 0;
 }
 
 .transcript-time {
@@ -828,26 +837,25 @@
 .video-cue-actions {
   position: absolute;
   right: 0;
-  bottom: calc(100% - 7px);
+  bottom: 100%;
   z-index: 3;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  padding: 5px 6px 11px;
+  padding: 5px 6px;
   border-radius: 9px 9px 0 0;
   background: var(--cue-active-bg);
-  box-shadow: -8px -6px 18px rgba(0, 0, 0, 0.38);
-  opacity: 1;
+  /* Отрицательный spread не даёт тени пролиться на плашку и подчеркнуть шов. */
+  box-shadow: -6px -6px 14px -6px rgba(0, 0, 0, 0.5);
 }
 
 /* У самой первой реплики места сверху нет — полуостров переворачивается вниз. */
 .video-transcript-item:first-child .video-cue-actions {
-  top: calc(100% - 7px);
+  top: 100%;
   bottom: auto;
-  padding: 11px 6px 5px;
   border-radius: 0 0 9px 9px;
-  box-shadow: -8px 6px 18px rgba(0, 0, 0, 0.38);
+  box-shadow: -6px 6px 14px -6px rgba(0, 0, 0, 0.5);
 }
 
 .video-cue-playback-btn {
@@ -859,10 +867,14 @@
   padding: 0;
   border: 0;
   border-left: 1px solid rgba(212, 168, 71, 0.22);
-  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+  border-radius: 0 0 var(--radius-sm, 8px) 0;
   background: rgba(212, 168, 71, 0.1);
   color: var(--accent);
   cursor: pointer;
+}
+
+.video-transcript-item:first-child .video-cue-playback-btn {
+  border-radius: 0 var(--radius-sm, 8px) 0 0;
 }
 
 .video-cue-playback-btn:hover,
@@ -1279,12 +1291,18 @@
     line-height: 1.45;
   }
 
-  /* На узком экране пять кнопок полуострова складываются в 3 + 2, как в макете. */
+  /* На узком экране пять кнопок полуострова складываются в 3 + 2, как в макете.
+     Четвёртая кнопка стартует со второй колонки, чтобы нижний ряд был прижат
+     к правому краю полуострова, а не висел под левыми иконками. */
   .video-cue-actions {
     display: grid;
     grid-template-columns: repeat(3, 25px);
     justify-content: end;
     gap: 4px;
+  }
+
+  .video-cue-actions > *:nth-child(4) {
+    grid-column: 2;
   }
 
   .video-cue-playback-btn {
