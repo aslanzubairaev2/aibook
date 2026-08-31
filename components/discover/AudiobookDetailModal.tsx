@@ -284,9 +284,14 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
   // addressed for its own player; this modal needed its own copy because the
   // UX redesign rewrote the component around it.
   const playRequestIdRef = useRef(0);
+  // This is separate from React's `isPlaying`: loading a new source emits a
+  // transient pause event, but it must not cancel an intentional chapter
+  // transition that should continue playing when the new source is ready.
+  const shouldPlayRef = useRef(false);
 
   const safePlay = useCallback(() => {
     if (!audioRef.current) return;
+    shouldPlayRef.current = true;
     const requestId = ++playRequestIdRef.current;
     audioRef.current
       .play()
@@ -297,11 +302,13 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
         if (playRequestIdRef.current !== requestId) return; // superseded — expected
         if (isBenignPlaybackAbort(err)) return;
         console.error("Audio playback error:", err);
+        shouldPlayRef.current = false;
         setIsPlaying(false);
       });
   }, []);
 
   const pauseAudio = useCallback(() => {
+    shouldPlayRef.current = false;
     playRequestIdRef.current += 1; // invalidate any play() still in flight
     audioRef.current?.pause();
     setIsPlaying(false);
@@ -372,6 +379,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
 
   const handleNextChapter = useCallback(() => {
     if (currentChapterIndex < chapters.length - 1) {
+      shouldPlayRef.current = true;
       setCurrentChapterIndex((prev) => prev + 1);
       setCurrentTime(0);
       setIsPlaying(true);
@@ -382,6 +390,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
     if (currentTime > 5 || currentChapterIndex === 0) {
       handleSeek(0);
     } else {
+      shouldPlayRef.current = true;
       setCurrentChapterIndex((prev) => Math.max(0, prev - 1));
       setCurrentTime(0);
       setIsPlaying(true);
@@ -400,15 +409,17 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
   // Sync audio source when chapter changes
   useEffect(() => {
     if (!audioRef.current || !currentChapter) return;
-    const sourceChanged = syncAudioSource(
+    syncAudioSource(
       audioRef.current,
       currentChapter.audioUrl,
       playbackSpeed,
       syncedAudioUrlRef.current
     );
     syncedAudioUrlRef.current = currentChapter.audioUrl;
-    if (sourceChanged && isPlaying) safePlay();
-  }, [currentChapterIndex, currentChapter, playbackSpeed, isPlaying, safePlay]);
+    // `load()` is asynchronous. Calling play() here races the source load and
+    // can leave the player silent until a page reload. `onLoadedMetadata` /
+    // `onCanPlay` starts it once the new source is ready.
+  }, [currentChapterIndex, currentChapter, playbackSpeed, safePlay]);
 
   // Invalidate any in-flight play() and stop the element on unmount (closing
   // the modal), so a superseded promise never resolves into a component that
@@ -652,11 +663,28 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
                     audioRef.current.currentTime = pendingSeekSecondsRef.current;
                     pendingSeekSecondsRef.current = null;
                   }
+                  if (shouldPlayRef.current) safePlay();
                 }
               }}
-              onEnded={handleNextChapter}
-              onPause={() => setIsPlaying(false)}
+              onCanPlay={() => {
+                if (shouldPlayRef.current && audioRef.current?.paused) safePlay();
+              }}
+              onEnded={() => {
+                if (currentChapterIndex < chapters.length - 1) {
+                  handleNextChapter();
+                } else {
+                  shouldPlayRef.current = false;
+                  setIsPlaying(false);
+                }
+              }}
+              onPause={() => {
+                if (!shouldPlayRef.current) setIsPlaying(false);
+              }}
               onPlay={() => setIsPlaying(true)}
+              onError={() => {
+                shouldPlayRef.current = false;
+                setIsPlaying(false);
+              }}
             />
 
             <div className="audio-player-header">
