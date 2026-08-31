@@ -66,6 +66,12 @@
 5. Кнопка Play/Pause занимает ровно высоту фона плашки: `align-self: stretch` + `align-content: stretch`
    на активной реплике (без него лишняя высота от `min-height` не отдавалась строке грида).
 
+## Preview
+
+- Ветка запушена в `origin`, Vercel собрал preview с коммита `c2b344c`:
+  https://aibook-itelalt7a-azamats-projects-799bf3a6.vercel.app
+- `main` не трогали. Каждый следующий push в ветку создаёт новый preview-URL.
+
 ## Риски и продолжение
 
 - Полуостров перекрывает правую часть предыдущей реплики — это задумано, но при очень длинной
