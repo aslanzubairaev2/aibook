@@ -2,6 +2,7 @@
 
 - Агент: Codex
 - Ветка: `fix/discuss-input-interactions`
+- Commit реализации: `4f3d669`
 - Основа: `9ac47fd`, завершённые правки Claude по дизайну реплик.
 - Статус: changes-requested (только согласие на аудиодиктовку)
 
@@ -37,7 +38,8 @@
 
 ## Preview
 
-URL будет добавлен после сборки в существующем проекте video-transcript-controls. Production и main не изменяются.
+- URL: https://video-transcript-controls-exbkvxvbh-azamats-projects-799bf3a6.vercel.app
+- Vercel: Ready, target=preview. Production и main не изменены.
 
 ## Риски
 
