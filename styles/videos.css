@@ -310,14 +310,14 @@
 .video-word-modal-layer {
   position: fixed;
   inset: 0;
-  z-index: 10001;
+  z-index: 10004;
   pointer-events: none;
 }
 .video-word-modal-layer > * {
   pointer-events: auto;
 }
 .video-word-modal-layer .word-modal-backdrop {
-  z-index: 10001;
+  z-index: 10004;
 }
 
 .video-discuss-modal-layer {
@@ -686,6 +686,8 @@
   cursor: pointer;
   border-radius: 3px;
   transition: background 0.15s, color 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .sub-interactive-word:hover {
@@ -770,7 +772,8 @@
 }
 
 .video-transcript-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: flex-start;
   gap: 8px;
   padding: 6px 8px;
@@ -814,6 +817,36 @@
   flex-direction: column;
 }
 
+.video-cue-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  align-self: flex-start;
+  margin: 0 0 4px auto;
+  opacity: 1;
+}
+
+.video-cue-playback-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: 0 0 0 6px;
+  border: 1px solid rgba(212, 168, 71, 0.38);
+  border-radius: 50%;
+  background: rgba(212, 168, 71, 0.16);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.video-cue-playback-btn:hover,
+.video-cue-playback-btn:focus-visible {
+  border-color: var(--accent);
+  background: rgba(212, 168, 71, 0.28);
+  outline: none;
+}
+
 .sub-word-tooltip {
   position: absolute;
   z-index: 20;
@@ -834,6 +867,14 @@
   line-height: 1.25;
   white-space: normal;
   pointer-events: none;
+}
+
+.sub-word-tooltip-details {
+  display: block;
+  margin-top: 4px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .video-cue-meta {
@@ -877,9 +918,7 @@
     text-decoration: none;
   }
 
-  .sub-word-tooltip {
-    display: none;
-  }
+  .sub-word-tooltip { max-width: 240px; }
 }
 
 @media (min-width: 900px) {
@@ -957,18 +996,6 @@
 .video-transcript-text {
   display: block;
   overflow-wrap: anywhere;
-}
-
-.video-cue-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 8px;
-  flex: 0 0 auto;
-  align-self: flex-start;
-  margin-top: 1px;
-  opacity: 0.7;
-  vertical-align: middle;
 }
 
 .video-cue-action-btn,
@@ -1237,6 +1264,13 @@
     margin: 0;
     justify-self: end;
     opacity: 1;
+  }
+
+  .video-cue-playback-btn {
+    align-self: end;
+    width: 28px;
+    height: 28px;
+    margin: 0 0 2px 4px;
   }
 
   .video-transcript-collapse-btn span {

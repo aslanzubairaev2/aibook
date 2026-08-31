@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { X, Subtitles, ListMusic, Loader2, Eye, EyeOff, MessageCircle, Plus, Repeat2, Maximize2, Minimize2 } from "lucide-react";
+import { X, Subtitles, ListMusic, Loader2, Eye, EyeOff, MessageCircle, Plus, Repeat2, Maximize2, Minimize2, Play, Pause } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 import type { SubtitleCue } from "@/lib/videos/youtubeTranscript";
-import type { UserProfile, Flashcard, AiAnalysis, DiscussMessage } from "@/lib/types";
+import type { UserProfile, Flashcard, AiAnalysis, DiscussMessage, AiMode } from "@/lib/types";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
@@ -34,6 +34,21 @@ type Props = {
 };
 
 const TRANSLATION_PREFETCH_CUES = 4;
+const SEPARABLE_PARTICLES = new Set(["ab", "an", "auf", "aus", "ein", "mit", "nach", "vor", "weg", "zu", "zurück", "zusammen"]);
+
+function inferSeparableVerb(rawWord: string, sentence: string): string | null {
+  const word = rawWord.toLowerCase();
+  if (new Set(["bin", "bist", "ist", "sind", "war", "waren", "hat", "haben"]).has(word)) return null;
+  const tokens = sentence.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const wordIndex = tokens.indexOf(word);
+  if (wordIndex < 0) return null;
+  const particle = tokens.slice(wordIndex + 1, Math.min(tokens.length, wordIndex + 6)).find((token) => SEPARABLE_PARTICLES.has(token));
+  if (!particle || !/[a-zäöüß]/u.test(word)) return null;
+  let stem = word;
+  if (/(?:st|t|en|e)$/u.test(stem)) stem = stem.replace(/(?:st|t|en|e)$/u, "");
+  if (stem.length < 2) return null;
+  return `${particle}${stem}en`;
+}
 
 export function VideoPlayerModal({
   video,
@@ -54,6 +69,7 @@ export function VideoPlayerModal({
   const [translatingCueIndexes, setTranslatingCueIndexes] = useState<Set<number>>(new Set());
   const [translationError, setTranslationError] = useState<string | null>(null);
   const [playerReady, setPlayerReady] = useState(false);
+  const [isPlayerPlaying, setIsPlayerPlaying] = useState(false);
 
   // Word modal state for live translation & flashcard adding
   const [wordModalSelection, setWordModalSelection] = useState("");
@@ -62,12 +78,12 @@ export function VideoPlayerModal({
   const [isWordModalLoading, setIsWordModalLoading] = useState(false);
   const [cardAddedNotice, setCardAddedNotice] = useState<string | null>(null);
   const [cueCardLoading, setCueCardLoading] = useState<number | null>(null);
-  const [discussCue, setDiscussCue] = useState<{ index: number; text: string } | null>(null);
+  const [discussCue, setDiscussCue] = useState<{ index: number; text: string; mode: AiMode; sentence: string } | null>(null);
   const [discussMessages, setDiscussMessages] = useState<DiscussMessage[]>([]);
   const [discussKey, setDiscussKey] = useState("");
   const [isDiscussHistoryLoading, setIsDiscussHistoryLoading] = useState(false);
   const [repeatCueIndex, setRepeatCueIndex] = useState<number | null>(null);
-  const [hoveredWord, setHoveredWord] = useState<{ instanceKey: string; cacheKey: string; translation: string; loading: boolean; x: number; y: number } | null>(null);
+  const [hoveredWord, setHoveredWord] = useState<{ instanceKey: string; cacheKey: string; translation: string; details?: string[]; loading: boolean; x: number; y: number } | null>(null);
   const [dragSelection, setDragSelection] = useState<{ cueIndex: number; startToken: number; endToken: number } | null>(null);
   const [panelSelection, setPanelSelection] = useState<{ cueIndex: number; text: string } | null>(null);
   const [panelAnalysis, setPanelAnalysis] = useState<AiAnalysis | null>(null);
@@ -91,6 +107,7 @@ export function VideoPlayerModal({
   const onProgressRef = useRef(onProgress);
   const hasRestoredPositionRef = useRef(false);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragSelectionRef = useRef<typeof dragSelection>(null);
   const suppressWordClickRef = useRef(false);
   repeatCueIndexRef.current = repeatCueIndex;
@@ -167,6 +184,9 @@ export function VideoPlayerModal({
           events: {
             onReady: () => {
               setPlayerReady(true);
+            },
+            onStateChange: (event: { data: number }) => {
+              setIsPlayerPlaying(event.data === 1);
             },
           },
         });
@@ -444,6 +464,7 @@ export function VideoPlayerModal({
     async (rawWord: string, contextSentence: string) => {
       const cleanWord = rawWord.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
       if (!cleanWord || cleanWord.length < 2) return;
+      const lookupWord = inferSeparableVerb(cleanWord, contextSentence) || cleanWord;
 
       // 1. Pause video playback immediately
       if (playerRef.current && typeof playerRef.current.pauseVideo === "function") {
@@ -453,23 +474,23 @@ export function VideoPlayerModal({
       }
 
       // 2. Open WordModal
-      setWordModalSelection(cleanWord);
+      setWordModalSelection(lookupWord);
       setIsWordModalOpen(true);
       setIsWordModalLoading(true);
       setWordModalAnalysis(null);
 
-      const cacheKey = makeAiCacheKey("word", cleanWord, targetLanguage, nativeLanguage);
+      const cacheKey = makeAiCacheKey("word", lookupWord, targetLanguage, nativeLanguage);
       try {
         let full = getLocalAiAnalysis(cacheKey);
         if (!full?.word) {
-          full = await sbGetCachedWord(cleanWord, targetLanguage, nativeLanguage);
+          full = await sbGetCachedWord(lookupWord, targetLanguage, nativeLanguage);
           if (full?.word) saveLocalAiAnalysis(cacheKey, full);
         }
         if (!full?.word) {
           full = await analyzeSelection({
             mode: "word",
-            word: cleanWord,
-            text: cleanWord,
+            word: lookupWord,
+            text: lookupWord,
             sentence: contextSentence || cleanWord,
             sentenceBefore: "",
             sentenceAfter: "",
@@ -478,7 +499,7 @@ export function VideoPlayerModal({
           });
           if (full?.word) {
             saveLocalAiAnalysis(cacheKey, full);
-            void sbSaveCachedWord(cleanWord, targetLanguage, nativeLanguage, full);
+            void sbSaveCachedWord(lookupWord, targetLanguage, nativeLanguage, full);
           }
         }
         setWordModalAnalysis(full?.word ? full : null);
@@ -501,8 +522,11 @@ export function VideoPlayerModal({
       cached = await sbGetCachedWord(cleanWord, targetLanguage, nativeLanguage);
       if (cached?.word) saveLocalAiAnalysis(cacheKey, cached);
     }
+    const details = cached?.word?.verbDetails
+      ? [cached.word.verbDetails.infinitive, cached.word.verbDetails.tense, cached.word.verbDetails.person].filter(Boolean) as string[]
+      : undefined;
     if (cached?.word?.translation) {
-      setHoveredWord({ instanceKey, cacheKey, translation: cached.word.translation, loading: false, x, y });
+      setHoveredWord({ instanceKey, cacheKey, translation: cached.word.translation, details, loading: false, x, y });
       return;
     }
     setHoveredWord({ instanceKey, cacheKey, translation: "", loading: true, x, y });
@@ -522,8 +546,11 @@ export function VideoPlayerModal({
       if (analysis?.word) {
         saveLocalAiAnalysis(cacheKey, analysis);
         void sbSaveCachedWord(cleanWord, targetLanguage, nativeLanguage, analysis);
+        const details = analysis.word?.verbDetails
+          ? [analysis.word.verbDetails.infinitive, analysis.word.verbDetails.tense, analysis.word.verbDetails.person].filter(Boolean) as string[]
+          : undefined;
         setHoveredWord((current) => current?.instanceKey === instanceKey
-          ? { ...current, translation: analysis.word?.translation || "", loading: false }
+          ? { ...current, translation: analysis.word?.translation || "", details, loading: false }
           : current);
       }
     } finally {
@@ -545,6 +572,10 @@ export function VideoPlayerModal({
       clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
     }
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
     setHoveredWord((current) => !instanceKey || current?.instanceKey === instanceKey ? null : current);
   }, []);
 
@@ -559,6 +590,17 @@ export function VideoPlayerModal({
       } catch {}
     }
   };
+
+  const togglePlayerPlayback = useCallback(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    try {
+      if (isPlayerPlaying) player.pauseVideo?.();
+      else player.playVideo?.();
+    } catch {
+      // The iframe may still be changing state after a seek.
+    }
+  }, [isPlayerPlaying]);
 
   // Add card handler
   const handleAddCard = (front: string, back: string, type: Flashcard["type"] = "word", source = activeCue?.text || video.title) => {
@@ -606,15 +648,16 @@ export function VideoPlayerModal({
     setCueCardLoading(null);
   };
 
-  const handleDiscussCue = useCallback(async (index: number, selectedText?: string) => {
+  const handleDiscussCue = useCallback(async (index: number, selectedText?: string, mode: AiMode = "sentence", sentenceOverride?: string) => {
     const cue = cues[index];
     if (!cue) return;
     if (playerRef.current && typeof playerRef.current.pauseVideo === "function") {
       try { playerRef.current.pauseVideo(); } catch {}
     }
     const text = selectedText?.trim() || cue.text;
-    const key = makeDiscussCacheKey("sentence", text, targetLanguage, nativeLanguage);
-    setDiscussCue({ index, text });
+    const sentence = sentenceOverride?.trim() || cue.text;
+    const key = makeDiscussCacheKey(mode, text, targetLanguage, nativeLanguage);
+    setDiscussCue({ index, text, mode, sentence });
     setDiscussKey(key);
     setDiscussMessages(getLocalDiscussHistory(key));
     setIsDiscussHistoryLoading(Boolean(userId));
@@ -629,6 +672,11 @@ export function VideoPlayerModal({
       setIsDiscussHistoryLoading(false);
     }
   }, [cues, nativeLanguage, targetLanguage, userId]);
+
+  const handleDiscussWord = useCallback((word: string, sentence?: string) => {
+    const index = activeCueIndex >= 0 ? activeCueIndex : 0;
+    void handleDiscussCue(index, word, "word", sentence || word);
+  }, [activeCueIndex, handleDiscussCue]);
 
   const handleDiscussMessagesChange = useCallback((messages: DiscussMessage[]) => {
     setDiscussMessages(messages);
@@ -794,6 +842,13 @@ export function VideoPlayerModal({
           onPointerDown={(event) => {
             if (event.pointerType === "mouse" && event.button !== 0) return;
             clearWordHover();
+            if (event.pointerType === "touch") {
+              const rect = event.currentTarget.getBoundingClientRect();
+              longPressTimerRef.current = setTimeout(() => {
+                suppressWordClickRef.current = true;
+                void loadHoverWord(token, text, instanceKey, rect.left + rect.width / 2, rect.top);
+              }, 650);
+            }
             const next = { cueIndex, startToken: idx, endToken: idx };
             dragSelectionRef.current = next;
             setDragSelection(next);
@@ -812,6 +867,17 @@ export function VideoPlayerModal({
               return;
             }
             void handleWordTap(token, text);
+          }}
+          onPointerUp={() => {
+            if (longPressTimerRef.current) {
+              clearTimeout(longPressTimerRef.current);
+              longPressTimerRef.current = null;
+            }
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            const rect = event.currentTarget.getBoundingClientRect();
+            void loadHoverWord(token, text, instanceKey, rect.left + rect.width / 2, rect.top);
           }}
           onMouseEnter={(event) => scheduleWordHover(token, text, instanceKey, event.currentTarget)}
           onMouseLeave={() => clearWordHover(instanceKey)}
@@ -967,50 +1033,63 @@ export function VideoPlayerModal({
                     >
                       <span className="transcript-time">{formatTime(cue.start)}</span>
                       <div className="transcript-line">
+                        {isActive && (
+                          <div className="video-cue-actions" aria-label="Действия с активной репликой">
+                            <button
+                              type="button"
+                              className="video-cue-action-btn"
+                              onClick={(event) => { event.stopPropagation(); toggleCueTranslation(idx); }}
+                              aria-label={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
+                              title={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
+                            >
+                              {isTranslationVisible(idx) ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                            <SpeakButton text={cue.text} lang={targetLanguage} size={14} />
+                            <button
+                              type="button"
+                              className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
+                              onClick={(event) => { event.stopPropagation(); toggleRepeatCue(idx); }}
+                              aria-pressed={repeatCueIndex === idx}
+                              aria-label={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
+                              title={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
+                            >
+                              <Repeat2 size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className="video-cue-action-btn"
+                              onClick={(event) => { event.stopPropagation(); handleDiscussCue(idx); }}
+                              aria-label="Обсудить реплику с AI"
+                              title="Обсудить реплику с AI"
+                            >
+                              <MessageCircle size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              className="video-cue-action-btn"
+                              onClick={(event) => { event.stopPropagation(); void handleAddCueCard(idx); }}
+                              aria-label="Добавить реплику в карточки"
+                              title="Добавить реплику в карточки"
+                              disabled={cueCardLoading === idx}
+                            >
+                              {cueCardLoading === idx ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
+                            </button>
+                          </div>
+                        )}
                         <span className="video-transcript-text" data-cue-text={idx}>{renderInteractiveSubtitleText(cue.text, idx)}</span>
                         {renderCueTranslation(idx, false, undefined, false)}
                       </div>
-                      <div className="video-cue-actions" aria-label="Действия с репликой">
+                      {isActive && (
                         <button
                           type="button"
-                          className="video-cue-action-btn"
-                          onClick={(event) => { event.stopPropagation(); toggleCueTranslation(idx); }}
-                          aria-label={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
-                          title={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
+                          className="video-cue-playback-btn"
+                          onClick={(event) => { event.stopPropagation(); togglePlayerPlayback(); }}
+                          aria-label={isPlayerPlaying ? "Поставить видео на паузу" : "Продолжить видео"}
+                          title={isPlayerPlaying ? "Пауза" : "Продолжить"}
                         >
-                          {isTranslationVisible(idx) ? <EyeOff size={14} /> : <Eye size={14} />}
+                          {isPlayerPlaying ? <Pause size={15} /> : <Play size={15} />}
                         </button>
-                        <SpeakButton text={cue.text} lang={targetLanguage} size={14} />
-                        <button
-                          type="button"
-                          className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
-                          onClick={(event) => { event.stopPropagation(); toggleRepeatCue(idx); }}
-                          aria-pressed={repeatCueIndex === idx}
-                          aria-label={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
-                          title={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
-                        >
-                          <Repeat2 size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="video-cue-action-btn"
-                          onClick={(event) => { event.stopPropagation(); handleDiscussCue(idx); }}
-                          aria-label="Обсудить реплику с AI"
-                          title="Обсудить реплику с AI"
-                        >
-                          <MessageCircle size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="video-cue-action-btn"
-                          onClick={(event) => { event.stopPropagation(); void handleAddCueCard(idx); }}
-                          aria-label="Добавить реплику в карточки"
-                          title="Добавить реплику в карточки"
-                          disabled={cueCardLoading === idx}
-                        >
-                          {cueCardLoading === idx ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
-                        </button>
-                      </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1028,7 +1107,14 @@ export function VideoPlayerModal({
             role="status"
             style={{ left: hoveredWord.x, top: hoveredWord.y }}
           >
-            {hoveredWord.loading ? "Переводим…" : hoveredWord.translation || "Перевод недоступен"}
+            {hoveredWord.loading ? "Переводим…" : (
+              <>
+                <strong>{hoveredWord.translation || "Перевод недоступен"}</strong>
+                {hoveredWord.details && hoveredWord.details.length > 0 && (
+                  <span className="sub-word-tooltip-details">{hoveredWord.details.join(" · ")}</span>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -1061,6 +1147,7 @@ export function VideoPlayerModal({
             onWordTap={(word) => {
               void handleWordTap(word, activeCue?.text || "");
             }}
+            onDiscuss={handleDiscussWord}
           />
         </div>}
 
@@ -1091,9 +1178,9 @@ export function VideoPlayerModal({
         {discussCue && <div className="video-discuss-modal-layer">
           <DiscussAiModal
             isOpen
-            mode="sentence"
+            mode={discussCue.mode}
             selectedText={discussCue.text}
-            sentence={discussCue.text}
+            sentence={discussCue.sentence}
             sentenceBefore={cues[discussCue.index - 1]?.text || ""}
             sentenceAfter={cues[discussCue.index + 1]?.text || ""}
             nativeLanguage={nativeLanguage}

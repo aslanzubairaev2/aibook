@@ -56,6 +56,18 @@
   border-bottom: 1px solid var(--border);
 }
 
+.word-modal .modal-top-bar .speak-btn,
+.word-modal .modal-top-bar .word-discuss-btn {
+  width: 42px;
+  height: 42px;
+}
+
+.word-modal .example-item .speak-btn,
+.word-modal .example-item .example-discuss-btn {
+  width: 40px;
+  height: 40px;
+}
+
 /* ─── Word Hero ──────────────────────────────────────────────────────────── */
 .word-hero {
   margin: 16px 0 20px;
@@ -989,6 +1001,23 @@
 
 .discuss-add-example-btn:hover { background: rgba(212, 168, 71, 0.28); }
 .discuss-add-example-btn:active { transform: scale(0.94); }
+
+.discuss-example-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid rgba(212, 168, 71, 0.3);
+  border-radius: 8px;
+  background: rgba(212, 168, 71, 0.16);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.discuss-example-btn:hover { background: rgba(212, 168, 71, 0.28); }
 
 /* ─── API Error Modal ─────────────────────────────────────────────────────── */
 .api-error-modal {

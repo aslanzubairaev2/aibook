@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, X, ChevronRight, Loader2, FileText, Tv } from "lucide-react";
+import { Plus, X, ChevronRight, Loader2, FileText, Tv, MessageCircle } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { GrammarModal, POS_GRAMMAR_LABEL } from "@/components/word-modal/GrammarModal";
 import type { AiAnalysis, PosTag, WordAnalysis } from "@/lib/types";
@@ -19,6 +19,7 @@ type Props = {
   onAddCard: () => void;
   onAddLemma?: (lemma: string) => void;
   onWordTap?: (word: string, contextSentence: string) => void;
+  onDiscuss?: (text: string, contextSentence?: string) => void;
   onAddExample?: (text: string, translation: string) => void;
   onFindVideos?: (word: string) => void;
   /**
@@ -61,7 +62,7 @@ function articleGender(article: string): string {
   return "";
 }
 
-export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onAddExample, onCreateText, isCreatingText, onFindVideos }: Props) {
+export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selectedWord, onClose, onAddCard, onAddLemma, onWordTap, onDiscuss, onAddExample, onCreateText, isCreatingText, onFindVideos }: Props) {
   const [grammarOpen, setGrammarOpen] = useState(false);
   // The built-in fallback for "мини-текст": save into «Мои уроки» right here.
   const [miniState, setMiniState] = useState<"idle" | "busy" | "done" | "error">("idle");
@@ -116,7 +117,12 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
           <button className="icon-btn" onClick={onClose} type="button" aria-label={CLOSE_LABEL}>
             <X size={20} />
           </button>
-          {displayWord && <SpeakButton text={displayWord} lang={lang} size={18} />}
+          {displayWord && <SpeakButton text={displayWord} lang={lang} size={22} />}
+          {onDiscuss && displayWord && (
+            <button className="icon-btn word-discuss-btn" onClick={() => { onClose(); onDiscuss(displayWord); }} type="button" aria-label="Обсудить слово с AI" title="Обсудить слово с AI">
+              <MessageCircle size={21} />
+            </button>
+          )}
           <button className="pill-btn" onClick={onAddCard} type="button" style={{ marginLeft: "auto" }} disabled={!word?.translation}>
             <Plus size={15} />
             {CARD_LABEL}
@@ -218,7 +224,6 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
               return (
                 <div key={i} className="example-item" style={{ flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
                   <div style={{ display: "flex", gap: "8px", width: "100%", alignItems: "flex-start" }}>
-                    <span className="example-num">{i + 1}.</span>
                     <span style={{ flex: 1 }}>
                       {tokens.map((token, tokIdx) => {
                         const norm = normalizeToken(token);
@@ -237,7 +242,19 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
                         );
                       })}
                     </span>
-                    <SpeakButton text={text} lang={lang} size={14} />
+                    <SpeakButton text={text} lang={lang} size={20} />
+                    {onDiscuss && (
+                      <button
+                        type="button"
+                        className="icon-btn example-discuss-btn"
+                        aria-label="Обсудить пример с AI"
+                        title="Обсудить пример с AI"
+                        onClick={() => { onClose(); onDiscuss(text, text); }}
+                        style={{ flexShrink: 0 }}
+                      >
+                        <MessageCircle size={17} />
+                      </button>
+                    )}
                     {onAddExample && translation && (
                       <button
                         type="button"

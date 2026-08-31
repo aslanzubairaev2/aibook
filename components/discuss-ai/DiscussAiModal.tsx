@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Loader2, Mic, Send, X, Quote, Plus, Table2 } from "lucide-react";
+import { Loader2, Mic, Send, X, Quote, Plus, Table2, MessageCircle } from "lucide-react";
 import { discussWithAi } from "@/lib/ai/discuss";
 import { INITIAL_DISCUSS_REQUEST } from "@/lib/ai/buildDiscussPrompt";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
@@ -198,6 +198,25 @@ export function DiscussAiModal({
     recognition.lang = nativeLanguage === "ru" ? "ru-RU" : nativeLanguage;
     recognition.continuous = false; // continuous: false is critical for iOS and Android webview stability
     recognition.interimResults = true;
+    recognition.maxAlternatives = 3;
+    // Chrome has one recognition language per session. Keep the learner's
+    // native language as the base (questions are usually Russian), but bias
+    // the browser recognizer toward the German words from the current chat so
+    // mixed phrases such as «использовать denkst du вместе с an» survive.
+    const GrammarList = (window as any).SpeechGrammarList || (window as any).webkitSpeechGrammarList;
+    const grammarWords = `${selectedText} ${sentence}`
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((word) => word.length > 1)
+      .slice(0, 80);
+    if (GrammarList && grammarWords.length > 0) {
+      try {
+        const grammar = new GrammarList();
+        grammar.addFromString(`#JSGF V1.0; grammar aibook; public <words> = ${grammarWords.join(" | ")};`, 1);
+        recognition.grammars = grammar;
+      } catch {
+        // Grammar bias is optional and unsupported in some Chromium builds.
+      }
+    }
 
     recognition.onstart = () => {
       setIsListening(true);
@@ -267,7 +286,7 @@ export function DiscussAiModal({
       try { recognition.abort(); } catch { /* ignore */ }
       recognitionRef.current = null;
     };
-  }, [isOpen, nativeLanguage]);
+  }, [isOpen, nativeLanguage, selectedText, sentence]);
 
   // Auto-send initial analysis prompt (hidden from user)
   useEffect(() => {
@@ -299,16 +318,19 @@ export function DiscussAiModal({
         message: INITIAL_DISCUSS_REQUEST,
       });
       if (latestMessagesRef.current.length === 0) {
+        latestMessagesRef.current = [response];
         onMessagesChange([response]);
       }
     } catch {
       if (latestMessagesRef.current.length === 0) {
-        onMessagesChange([
+        const fallback: DiscussMessage[] = [
           {
             role: "model",
             contentParts: [{ type: "text", text: ERROR_TEXT }],
           },
-        ]);
+        ];
+        latestMessagesRef.current = fallback;
+        onMessagesChange(fallback);
       }
     } finally {
       setIsSending(false);
@@ -320,6 +342,7 @@ export function DiscussAiModal({
     const text = messageText.trim();
     if (!text || isSending) return;
 
+    const previousMessages = latestMessagesRef.current;
     let fullText = text;
     if (quotedText) {
       fullText = `[Цитата: "${quotedText}"] ${text}`;
@@ -327,7 +350,8 @@ export function DiscussAiModal({
     }
 
     const userMessage: DiscussMessage = { role: "user", text };
-    const history = [...messages, userMessage];
+    const history = [...previousMessages, userMessage];
+    latestMessagesRef.current = history;
     onMessagesChange(history);
     setInput("");
     setIsSending(true);
@@ -344,22 +368,26 @@ export function DiscussAiModal({
         learnerLevel: learnerLevel.summary,
         wordProfile,
         homeworkContext,
-        history: messages,
+        history: previousMessages,
         message: fullText,
       });
-      onMessagesChange([...history, response]);
+      const nextMessages = [...history, response];
+      latestMessagesRef.current = nextMessages;
+      onMessagesChange(nextMessages);
     } catch {
-      onMessagesChange([
+      const nextMessages: DiscussMessage[] = [
         ...history,
         {
           role: "model",
           contentParts: [{ type: "text", text: ERROR_TEXT }],
         },
-      ]);
+      ];
+      latestMessagesRef.current = nextMessages;
+      onMessagesChange(nextMessages);
     } finally {
       setIsSending(false);
     }
-  }, [isSending, quotedText, messages, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage, learnerLevel.summary, wordProfile, homeworkContext]);
+  }, [isSending, quotedText, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage, learnerLevel.summary, wordProfile, homeworkContext]);
 
   // Keep ref updated to prevent SpeechRecognition from getting stale values
   useEffect(() => {
@@ -504,6 +532,9 @@ export function DiscussAiModal({
                   lang={targetLanguage}
                   onWordTap={onWordTap}
                   onAddExample={onAddExample}
+                  onDiscussExample={(text) => {
+                    void sendMessage(`Разбери этот пример подробнее: «${text}». Объясни грамматику и дай несколько новых примеров.`);
+                  }}
                 />
                 {message.role === "model" && (
                   <button
@@ -625,17 +656,19 @@ function DiscussMessageContent({
   lang,
   onWordTap,
   onAddExample,
+  onDiscussExample,
 }: {
   message: DiscussMessage;
   lang: string;
   onWordTap: (word: string, contextSentence: string) => void;
   onAddExample?: (text: string, translation: string) => void;
+  onDiscussExample?: (text: string) => void;
 }) {
   if (message.contentParts?.length) {
     return (
       <div className="discuss-content-parts">
         {message.contentParts.map((part, index) => (
-          <Part key={`${part.text}-${index}`} part={part} lang={lang} onWordTap={onWordTap} onAddExample={onAddExample} />
+          <Part key={`${part.text}-${index}`} part={part} lang={lang} onWordTap={onWordTap} onAddExample={onAddExample} onDiscussExample={onDiscussExample} />
         ))}
       </div>
     );
@@ -649,11 +682,13 @@ function Part({
   lang,
   onWordTap,
   onAddExample,
+  onDiscussExample,
 }: {
   part: DiscussContentPart;
   lang: string;
   onWordTap: (word: string, contextSentence: string) => void;
   onAddExample?: (text: string, translation: string) => void;
+  onDiscussExample?: (text: string) => void;
 }) {
   if (part.type !== "learning") return <span>{part.text}</span>;
 
@@ -680,7 +715,18 @@ function Part({
               );
             })}
           </span>
-          <SpeakButton text={part.text} lang={lang} size={12} />
+          <SpeakButton text={part.text} lang={lang} size={19} />
+          {onDiscussExample && (
+            <button
+              type="button"
+              className="discuss-example-btn"
+              aria-label="Обсудить пример подробнее"
+              title="Обсудить этот пример подробнее"
+              onClick={() => onDiscussExample(part.text)}
+            >
+              <MessageCircle size={17} />
+            </button>
+          )}
         </span>
         {part.translation && <span className="discuss-learning-translation">{part.translation}</span>}
       </span>

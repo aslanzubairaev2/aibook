@@ -1140,6 +1140,27 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     }
   }
 
+  function openDiscussForWord(word: string, context?: string) {
+    const base = currentCard;
+    const card: Flashcard = base
+      ? { ...base, front: word, back: context || base.back }
+      : {
+        id: `discussion-${word}`,
+        type: "word",
+        front: word,
+        back: "",
+        source: "Обсуждение слова",
+        addedAt: new Date().toISOString(),
+        status: "new",
+        lapses: 0,
+        intervalDays: 0,
+        easeFactor: 2.5,
+        repetitions: 0,
+        dueAt: new Date().toISOString(),
+      };
+    void openDiscussForCard(card);
+  }
+
   function handleDiscussMessagesChange(messages: DiscussMessage[]) {
     setDiscuss((prev) => ({ ...prev, messages }));
     if (discuss.cacheKey) {
@@ -1786,6 +1807,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         onAddCard={() => void addCard(wordModal.word, wordModal.analysis?.word?.translation ?? "", "word")}
         onAddLemma={(lemma) => void addCard(lemma, wordModal.analysis?.word?.translation ?? "", "word")}
         onWordTap={(word) => void openWordModalFor(word)}
+        onDiscuss={(word, context) => openDiscussForWord(word, context)}
         onAddExample={(text, translation) => void addCard(text, translation, "phrase")}
         onFindVideos={onFindVideos ? (word) => onFindVideos(word, targetLanguage) : undefined}
       />
