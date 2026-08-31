@@ -143,6 +143,10 @@ export function AudiobookReadAlongModal({
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("word");
+  // A lookup may resolve after the learner has already tapped another word.
+  // Keep a monotonically increasing id so an old response cannot put the
+  // first/previous word back into the panel.
+  const analysisRequestIdRef = useRef(0);
 
   // Sub-Modals
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
@@ -255,6 +259,7 @@ export function AudiobookReadAlongModal({
   ) => {
     const norm = normalizeToken(token);
     if (!norm) return;
+    const requestId = ++analysisRequestIdRef.current;
 
     // Immediately seek audio to exact word timestamp
     if (typeof wordTimestamp === "number") {
@@ -283,14 +288,17 @@ export function AudiobookReadAlongModal({
     setSelection({ token, phraseText, sentence, sentenceBefore, sentenceAfter });
     setActiveTab("word");
     setDiscussMessages([]);
+    setAnalysis(null);
+    setIsLoadingAnalysis(false);
 
     const cacheKey = makeAiCacheKey("word", norm, lang, nativeLang);
     const localCached = getLocalAiAnalysis(cacheKey);
     if (localCached) {
-      setAnalysis(localCached);
+      if (analysisRequestIdRef.current === requestId) setAnalysis(localCached);
       return;
     }
     const sbCached = await sbGetCachedAnalysis(cacheKey);
+    if (analysisRequestIdRef.current !== requestId) return;
     if (sbCached) {
       setAnalysis(sbCached);
       saveLocalAiAnalysis(cacheKey, sbCached);
@@ -299,13 +307,14 @@ export function AudiobookReadAlongModal({
     setIsLoadingAnalysis(true);
     try {
       const res = await analyzeSelection({ mode: "word", word: norm, sentence, sentenceBefore, sentenceAfter, nativeLanguage: nativeLang, targetLanguage: lang });
+      if (analysisRequestIdRef.current !== requestId) return;
       setAnalysis(res);
       saveLocalAiAnalysis(cacheKey, res);
       void sbSaveCachedAnalysis(cacheKey, "word", res);
     } catch (err) {
       console.error("Audiobook word AI analysis error:", err);
     } finally {
-      setIsLoadingAnalysis(false);
+      if (analysisRequestIdRef.current === requestId) setIsLoadingAnalysis(false);
     }
   };
 
