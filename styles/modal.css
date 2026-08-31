@@ -941,6 +941,33 @@
   opacity: 0.45;
 }
 
+.discuss-dictation-status {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.discuss-input .discuss-dictation-status button {
+  width: auto;
+  min-height: 42px;
+  flex-shrink: 0;
+  padding: 0 10px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.discuss-dictation-error {
+  grid-column: 1 / -1;
+  color: var(--red);
+  font-size: 12px;
+}
+
 /* ─── Quote ──────────────────────────────────────────────────────────────── */
 .discuss-quote-bar {
   grid-column: 1 / -1;

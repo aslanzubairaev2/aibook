@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { Loader2, Mic, Send, X, Quote, Plus, Table2, MessageCircle } from "lucide-react";
+import { Loader2, Mic, Square, Send, X, Quote, Plus, Table2, MessageCircle } from "lucide-react";
+import { useGeminiDictation } from "@/lib/audio/useGeminiDictation";
 import { discussWithAi } from "@/lib/ai/discuss";
 import { INITIAL_DISCUSS_REQUEST } from "@/lib/ai/buildDiscussPrompt";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
@@ -73,7 +74,6 @@ const ACTION_POS: Record<Exclude<DiscussActionKind, "word">, PosTag> = {
 
 const DISCUSS_LABEL = "Обсудить с AI";
 const CLOSE_LABEL = "Закрыть";
-const LISTENING_PLACEHOLDER = "Слушаю...";
 const QUESTION_PLACEHOLDER = "Короткий вопрос";
 const VOICE_INPUT_LABEL = "Голосовой ввод";
 const SEND_LABEL = "Отправить";
@@ -103,10 +103,11 @@ export function DiscussAiModal({
 }: Props) {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [speechSupported, setSpeechSupported] = useState(false);
+  const appendDictation = useCallback((text: string) => {
+    setInput(previous => [previous.trim(), text].filter(Boolean).join(" "));
+  }, []);
+  const dictation = useGeminiDictation(isOpen, `${selectedText} ${sentence}`, appendDictation);
   const [quotedText, setQuotedText] = useState<string | null>(null);
-  const [placeholderOverride, setPlaceholderOverride] = useState<string | null>(null);
   // Estimated from books read and deck size, locally — see lib/ai/userLevel.
   // `ready` gates the opening request so the very first answer is already
   // pitched at the right level instead of being generic.
@@ -114,23 +115,12 @@ export function DiscussAiModal({
   const [grammarFor, setGrammarFor] = useState<{ word: string; posTag: PosTag } | null>(null);
   const initialSentRef = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<any>(null);
-  const interimRef = useRef("");
   const latestSelectionRef = useRef("");
-  const placeholderTimerRef = useRef<any>(null);
   const latestMessagesRef = useRef(messages);
 
   useEffect(() => {
     latestMessagesRef.current = messages;
   }, [messages]);
-
-  useEffect(() => {
-    return () => {
-      if (placeholderTimerRef.current) {
-        clearTimeout(placeholderTimerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -185,108 +175,6 @@ export function DiscussAiModal({
   }, [isOpen]);
 
   const sendInitialPromptRef = useRef<() => void>(() => {});
-  const sendMessageRef = useRef<(text: string) => Promise<void>>(async () => {});
-
-  // Speech recognition setup with ref-based callbacks to completely avoid stale state closures
-  useEffect(() => {
-    if (!isOpen) return;
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    setSpeechSupported(Boolean(SpeechRecognition));
-    if (!SpeechRecognition) return;
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = nativeLanguage === "ru" ? "ru-RU" : nativeLanguage;
-    recognition.continuous = false; // continuous: false is critical for iOS and Android webview stability
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 3;
-    // Chrome has one recognition language per session. Keep the learner's
-    // native language as the base (questions are usually Russian), but bias
-    // the browser recognizer toward the German words from the current chat so
-    // mixed phrases such as «использовать denkst du вместе с an» survive.
-    const GrammarList = (window as any).SpeechGrammarList || (window as any).webkitSpeechGrammarList;
-    const grammarWords = `${selectedText} ${sentence}`
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((word) => word.length > 1)
-      .slice(0, 80);
-    if (GrammarList && grammarWords.length > 0) {
-      try {
-        const grammar = new GrammarList();
-        grammar.addFromString(`#JSGF V1.0; grammar aibook; public <words> = ${grammarWords.join(" | ")};`, 1);
-        recognition.grammars = grammar;
-      } catch {
-        // Grammar bias is optional and unsupported in some Chromium builds.
-      }
-    }
-
-    recognition.onstart = () => {
-      setIsListening(true);
-      interimRef.current = "";
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-      const finalText = interimRef.current.trim();
-      if (finalText) {
-        void sendMessageRef.current(finalText);
-        interimRef.current = "";
-      }
-    };
-
-    recognition.onerror = (event: any) => {
-      console.warn("Speech recognition error:", event.error);
-      setIsListening(false);
-      interimRef.current = "";
-
-      let errorMsg = "";
-      if (event.error === "not-allowed") {
-        errorMsg = "Требуется HTTPS и доступ к микрофону";
-      } else if (event.error === "no-speech") {
-        errorMsg = "Речь не услышана";
-      } else if (event.error === "audio-capture") {
-        errorMsg = "Микрофон не найден";
-      } else if (event.error === "network") {
-        errorMsg = "Ошибка сети";
-      } else {
-        errorMsg = `Ошибка ввода: ${event.error}`;
-      }
-
-      setPlaceholderOverride(errorMsg);
-      if (placeholderTimerRef.current) {
-        clearTimeout(placeholderTimerRef.current);
-      }
-      placeholderTimerRef.current = setTimeout(() => {
-        setPlaceholderOverride(null);
-      }, 4000);
-    };
-
-    recognition.onresult = (event: any) => {
-      let finalTranscript = "";
-      let interimTranscript = "";
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalTranscript += result[0].transcript;
-        } else {
-          interimTranscript += result[0].transcript;
-        }
-      }
-
-      if (finalTranscript.trim()) {
-        interimRef.current = finalTranscript.trim();
-        setInput("");
-        recognition.stop();
-      } else if (interimTranscript.trim()) {
-        setInput(interimTranscript.trim());
-      }
-    };
-
-    recognitionRef.current = recognition;
-    return () => {
-      try { recognition.abort(); } catch { /* ignore */ }
-      recognitionRef.current = null;
-    };
-  }, [isOpen, nativeLanguage, selectedText, sentence]);
 
   // Auto-send initial analysis prompt (hidden from user)
   useEffect(() => {
@@ -340,7 +228,7 @@ export function DiscussAiModal({
 
   const sendMessage = useCallback(async function sendMessage(messageText: string) {
     const text = messageText.trim();
-    if (!text || isSending) return;
+    if (!text || isSending || dictation.busy) return;
 
     const previousMessages = latestMessagesRef.current;
     let fullText = text;
@@ -387,12 +275,7 @@ export function DiscussAiModal({
     } finally {
       setIsSending(false);
     }
-  }, [isSending, quotedText, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage, learnerLevel.summary, wordProfile, homeworkContext]);
-
-  // Keep ref updated to prevent SpeechRecognition from getting stale values
-  useEffect(() => {
-    sendMessageRef.current = sendMessage;
-  }, [sendMessage]);
+  }, [isSending, dictation.busy, quotedText, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage, learnerLevel.summary, wordProfile, homeworkContext]);
 
   const lastModelMessage = useMemo(
     () => [...messages].reverse().find((message) => message.role === "model"),
@@ -424,16 +307,10 @@ export function DiscussAiModal({
     });
   }, [lastModelMessage, mode, selectedText]);
 
+  const { supported: dictationSupported, toggle: toggleDictation } = dictation;
   const toggleListening = useCallback(() => {
-    if (!recognitionRef.current || isSending) return;
-    if (isListening) {
-      recognitionRef.current.stop();
-    } else {
-      setInput("");
-      interimRef.current = "";
-      recognitionRef.current.start();
-    }
-  }, [isSending, isListening]);
+    if (!isSending && dictationSupported) void toggleDictation();
+  }, [isSending, dictationSupported, toggleDictation]);
 
   const handleAction = useCallback((action: DiscussAction) => {
     if (action.kind === "word") {
@@ -602,7 +479,7 @@ export function DiscussAiModal({
               <button
                 key={prompt}
                 type="button"
-                disabled={isSending}
+                disabled={isSending || dictation.busy}
                 onClick={() => void sendMessage(prompt)}
                 title={index < 3 ? `${prompt} — клавиша ${index + 1}` : prompt}
               >
@@ -614,24 +491,37 @@ export function DiscussAiModal({
           <input
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder={placeholderOverride || (isListening ? LISTENING_PLACEHOLDER : QUESTION_PLACEHOLDER)}
-            disabled={isSending}
+            aria-label={QUESTION_PLACEHOLDER}
+            placeholder={dictation.phase === "recording" ? "Записываю…" : QUESTION_PLACEHOLDER}
+            disabled={isSending || dictation.busy}
           />
-          {speechSupported && (
+          {dictation.supported && (
             <button
               type="button"
-              className={isListening ? "listening" : ""}
+              className={dictation.phase === "recording" ? "listening" : ""}
               onClick={toggleListening}
-              disabled={isSending}
-              aria-label={VOICE_INPUT_LABEL}
+              disabled={isSending || dictation.phase === "requesting" || dictation.phase === "transcribing"}
+              aria-label={dictation.phase === "recording" ? "Остановить запись и распознать" : VOICE_INPUT_LABEL}
               title={`${VOICE_INPUT_LABEL} — клавиша 5`}
             >
-              <Mic size={17} />
+              {dictation.phase === "recording" ? <Square size={17} /> : dictation.busy ? <Loader2 size={17} className="spin" /> : <Mic size={17} />}
             </button>
           )}
-          <button type="submit" disabled={!input.trim() || isSending} aria-label={SEND_LABEL}>
+          <button type="submit" disabled={!input.trim() || isSending || dictation.busy} aria-label={SEND_LABEL}>
             <Send size={17} />
           </button>
+          <div className="discuss-dictation-status">
+            <span role="status">
+              {!dictation.supported ? "Диктовка недоступна в этом браузере." :
+                dictation.phase === "recording" ? `Запись ${dictation.seconds} / 60 с · нажмите стоп для распознавания` :
+                dictation.phase === "requesting" ? "Ожидаю доступ к микрофону…" :
+                dictation.phase === "transcribing" ? "Gemini распознаёт… Отмена не отменяет расход квоты." :
+                "Gemini · до 60 с · аудио отправляется Google"}
+              {!dictation.busy && dictation.submittedSeconds > 0 && ` · сегодня на устройстве: ${Math.ceil(dictation.submittedSeconds)} с`}
+            </span>
+            {dictation.busy && <button type="button" onClick={dictation.cancel}>Отмена</button>}
+          </div>
+          {dictation.error && <div className="discuss-dictation-error" role="alert">{dictation.error}</div>}
         </form>
       </section>
 
