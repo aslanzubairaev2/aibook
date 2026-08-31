@@ -83,7 +83,6 @@ export function VideoPlayerModal({
   const [discussKey, setDiscussKey] = useState("");
   const [isDiscussHistoryLoading, setIsDiscussHistoryLoading] = useState(false);
   const [repeatCueIndex, setRepeatCueIndex] = useState<number | null>(null);
-  const [hoveredWord, setHoveredWord] = useState<{ instanceKey: string; cacheKey: string; translation: string; details?: string[]; loading: boolean; x: number; y: number } | null>(null);
   const [dragSelection, setDragSelection] = useState<{ cueIndex: number; startToken: number; endToken: number } | null>(null);
   const [panelSelection, setPanelSelection] = useState<{ cueIndex: number; text: string } | null>(null);
   const [panelAnalysis, setPanelAnalysis] = useState<AiAnalysis | null>(null);
@@ -106,8 +105,6 @@ export function VideoPlayerModal({
   const lastUiTimeRef = useRef(-Infinity);
   const onProgressRef = useRef(onProgress);
   const hasRestoredPositionRef = useRef(false);
-  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragSelectionRef = useRef<typeof dragSelection>(null);
   const suppressWordClickRef = useRef(false);
   repeatCueIndexRef.current = repeatCueIndex;
@@ -218,7 +215,7 @@ export function VideoPlayerModal({
             const idx = cs.findIndex((c) => t >= c.start && t < c.end);
             const repeatedIndex = repeatCueIndexRef.current;
             const repeatedCue = repeatedIndex === null ? null : cs[repeatedIndex];
-            if (repeatedCue && t >= repeatedCue.end) {
+            if (repeatedCue && t >= repeatedCue.end && playerRef.current.getPlayerState?.() === 1) {
               if (performance.now() - repeatJumpAtRef.current > 250) {
                 repeatJumpAtRef.current = performance.now();
                 lastCueIdxRef.current = repeatedIndex ?? -1;
@@ -512,75 +509,6 @@ export function VideoPlayerModal({
     [targetLanguage, nativeLanguage]
   );
 
-  const hoverWordRequests = useRef(new Set<string>());
-  const loadHoverWord = useCallback(async (rawWord: string, contextSentence: string, instanceKey: string, x: number, y: number) => {
-    const cleanWord = rawWord.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
-    if (!cleanWord || cleanWord.length < 2) return;
-    const cacheKey = makeAiCacheKey("word", cleanWord, targetLanguage, nativeLanguage);
-    let cached = getLocalAiAnalysis(cacheKey);
-    if (!cached?.word) {
-      cached = await sbGetCachedWord(cleanWord, targetLanguage, nativeLanguage);
-      if (cached?.word) saveLocalAiAnalysis(cacheKey, cached);
-    }
-    const details = cached?.word?.verbDetails
-      ? [cached.word.verbDetails.infinitive, cached.word.verbDetails.tense, cached.word.verbDetails.person].filter(Boolean) as string[]
-      : undefined;
-    if (cached?.word?.translation) {
-      setHoveredWord({ instanceKey, cacheKey, translation: cached.word.translation, details, loading: false, x, y });
-      return;
-    }
-    setHoveredWord({ instanceKey, cacheKey, translation: "", loading: true, x, y });
-    if (hoverWordRequests.current.has(cacheKey)) return;
-    hoverWordRequests.current.add(cacheKey);
-    try {
-      const analysis = await analyzeSelection({
-        mode: "word",
-        word: cleanWord,
-        text: cleanWord,
-        sentence: contextSentence || cleanWord,
-        sentenceBefore: "",
-        sentenceAfter: "",
-        nativeLanguage,
-        targetLanguage,
-      });
-      if (analysis?.word) {
-        saveLocalAiAnalysis(cacheKey, analysis);
-        void sbSaveCachedWord(cleanWord, targetLanguage, nativeLanguage, analysis);
-        const details = analysis.word?.verbDetails
-          ? [analysis.word.verbDetails.infinitive, analysis.word.verbDetails.tense, analysis.word.verbDetails.person].filter(Boolean) as string[]
-          : undefined;
-        setHoveredWord((current) => current?.instanceKey === instanceKey
-          ? { ...current, translation: analysis.word?.translation || "", details, loading: false }
-          : current);
-      }
-    } finally {
-      hoverWordRequests.current.delete(cacheKey);
-    }
-  }, [nativeLanguage, targetLanguage]);
-
-  const scheduleWordHover = useCallback((rawWord: string, contextSentence: string, instanceKey: string, element: HTMLElement) => {
-    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-    const rect = element.getBoundingClientRect();
-    hoverTimerRef.current = setTimeout(() => {
-      void loadHoverWord(rawWord, contextSentence, instanceKey, rect.left + rect.width / 2, rect.top);
-    }, 1000);
-  }, [loadHoverWord]);
-
-  const clearWordHover = useCallback((instanceKey?: string) => {
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-    setHoveredWord((current) => !instanceKey || current?.instanceKey === instanceKey ? null : current);
-  }, []);
-
-  useEffect(() => () => clearWordHover(), [clearWordHover]);
-
   // Jump to cue timestamp
   const handleSeekToCue = (startSec: number) => {
     if (playerRef.current && typeof playerRef.current.seekTo === "function") {
@@ -753,24 +681,26 @@ export function VideoPlayerModal({
       if (!target || Number(target.dataset.videoCueIndex) !== current.cueIndex) return;
       const endToken = Number(target.dataset.videoTokenIndex);
       if (!Number.isFinite(endToken) || endToken === current.endToken) return;
+      playerRef.current?.pauseVideo?.();
       const next = { ...current, endToken };
       dragSelectionRef.current = next;
       setDragSelection(next);
     };
     const finish = () => finishDragSelection();
+    const cancel = () => { dragSelectionRef.current = null; setDragSelection(null); };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", finish);
+    window.addEventListener("pointercancel", cancel);
     return () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
+      window.removeEventListener("pointercancel", cancel);
     };
   }, [finishDragSelection]);
 
   useEffect(() => {
     const handleVideoShortcut = (event: KeyboardEvent) => {
-      if (event.repeat || isWordModalOpen || discussCue) return;
+      if (event.repeat || isWordModalOpen || discussCue || panelSelection || dragSelectionRef.current) return;
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
       if (event.code === "Space") {
@@ -811,7 +741,7 @@ export function VideoPlayerModal({
 
     window.addEventListener("keydown", handleVideoShortcut);
     return () => window.removeEventListener("keydown", handleVideoShortcut);
-  }, [activeCueIndex, cues, currentTime, discussCue, handleAddCueCard, handleDiscussCue, isWordModalOpen, targetLanguage]);
+  }, [activeCueIndex, cues, currentTime, discussCue, panelSelection, handleAddCueCard, handleDiscussCue, isWordModalOpen, targetLanguage]);
 
   // Format seconds to mm:ss
   const formatTime = (sec: number) => {
@@ -828,7 +758,6 @@ export function VideoPlayerModal({
       if (!isWord) {
         return <span key={idx}>{token}</span>;
       }
-      const instanceKey = `${cueIndex}:${idx}`;
       const isDragged = dragSelection?.cueIndex === cueIndex
         && idx >= Math.min(dragSelection.startToken, dragSelection.endToken)
         && idx <= Math.max(dragSelection.startToken, dragSelection.endToken);
@@ -841,14 +770,6 @@ export function VideoPlayerModal({
           data-video-token-index={idx}
           onPointerDown={(event) => {
             if (event.pointerType === "mouse" && event.button !== 0) return;
-            clearWordHover();
-            if (event.pointerType === "touch") {
-              const rect = event.currentTarget.getBoundingClientRect();
-              longPressTimerRef.current = setTimeout(() => {
-                suppressWordClickRef.current = true;
-                void loadHoverWord(token, text, instanceKey, rect.left + rect.width / 2, rect.top);
-              }, 650);
-            }
             const next = { cueIndex, startToken: idx, endToken: idx };
             dragSelectionRef.current = next;
             setDragSelection(next);
@@ -856,6 +777,7 @@ export function VideoPlayerModal({
           onPointerEnter={() => {
             const current = dragSelectionRef.current;
             if (!current || current.cueIndex !== cueIndex || current.endToken === idx) return;
+            playerRef.current?.pauseVideo?.();
             const next = { ...current, endToken: idx };
             dragSelectionRef.current = next;
             setDragSelection(next);
@@ -868,19 +790,6 @@ export function VideoPlayerModal({
             }
             void handleWordTap(token, text);
           }}
-          onPointerUp={() => {
-            if (longPressTimerRef.current) {
-              clearTimeout(longPressTimerRef.current);
-              longPressTimerRef.current = null;
-            }
-          }}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            const rect = event.currentTarget.getBoundingClientRect();
-            void loadHoverWord(token, text, instanceKey, rect.left + rect.width / 2, rect.top);
-          }}
-          onMouseEnter={(event) => scheduleWordHover(token, text, instanceKey, event.currentTarget)}
-          onMouseLeave={() => clearWordHover(instanceKey)}
           aria-label={`Перевод и разбор слова: ${token}`}
         >
           {token}
@@ -898,7 +807,7 @@ export function VideoPlayerModal({
         aria-modal="true"
         aria-labelledby="video-modal-title"
       >
-        <div ref={modalContentRef} className="video-modal-content" onClick={(e) => e.stopPropagation()}>
+        <div ref={modalContentRef} className="video-modal-content" data-word-language={targetLanguage} onClick={(e) => e.stopPropagation()}>
           {/* Header */}
           <header className="video-modal-header">
             <div className="video-modal-title-wrap">
@@ -1029,6 +938,17 @@ export function VideoPlayerModal({
                       key={idx}
                       ref={isActive ? activeCueItemRef : undefined}
                       className={`video-transcript-item ${isActive ? "active" : ""}`}
+                      onPointerDownCapture={(event) => {
+                        if (event.button === 0) suppressWordClickRef.current = false;
+                      }}
+                      onClickCapture={(event) => {
+                        // A drag ending on another word produces a click on their common parent.
+                        if (suppressWordClickRef.current) {
+                          suppressWordClickRef.current = false;
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }
+                      }}
                       onClick={() => handleSeekToCue(cue.start)}
                     >
                       {isActive && (
@@ -1101,23 +1021,6 @@ export function VideoPlayerModal({
       </div>
 
       {overlayPortalTarget && createPortal(<>
-        {hoveredWord && (
-          <div
-            className="sub-word-tooltip floating"
-            role="status"
-            style={{ left: hoveredWord.x, top: hoveredWord.y }}
-          >
-            {hoveredWord.loading ? "Переводим…" : (
-              <>
-                <strong>{hoveredWord.translation || "Перевод недоступен"}</strong>
-                {hoveredWord.details && hoveredWord.details.length > 0 && (
-                  <span className="sub-word-tooltip-details">{hoveredWord.details.join(" · ")}</span>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
         {/* ── Interactive WordModal for Tap-To-Translate & Cards ───────────── */}
         {isWordModalOpen && <div className="video-word-modal-layer">
           <WordModal

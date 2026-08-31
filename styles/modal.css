@@ -704,6 +704,59 @@
   gap: 3px;
 }
 
+/* Text and translation share the left column; equal actions fill the right. */
+.discuss-learning-part {
+  align-items: stretch;
+  gap: 8px;
+}
+
+.discuss-learning-actions {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.discuss-learning-actions > .speak-btn,
+.discuss-learning-actions > .discuss-example-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  min-width: 40px;
+  height: auto;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(212, 168, 71, 0.3);
+  border-radius: 8px;
+  background: rgba(212, 168, 71, 0.16);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.quick-word-preview {
+  position: fixed;
+  z-index: 2147483000;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: #242014;
+  color: var(--surface);
+  box-shadow: 0 8px 32px #0008;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.quick-word-preview strong { color: var(--accent); }
+.quick-word-preview small { display: block; opacity: 0.75; margin-top: 4px; }
+
 .discuss-learning-main {
   display: inline-flex;
   max-width: 100%;

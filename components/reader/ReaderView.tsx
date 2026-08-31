@@ -1341,6 +1341,7 @@ export function ReaderView({
           </div>
           )}
           <div
+            data-word-language={book.language}
             className={`reader-token-layer${dragSelection?.isDragging ? " is-selecting" : ""}`}
             onPointerUp={finishTokenDrag}
             onPointerCancel={() => setDragSelection(null)}
@@ -1399,6 +1400,7 @@ export function ReaderView({
                     <span key={tokIdx} className="reader-token-wrap">
                       <span
                         data-token-id={`${paraIndex}-${tokIdx}`}
+                        data-word-context={para}
                         data-para-index={paraIndex}
                         data-token-index={tokIdx}
                         role="button"

@@ -357,7 +357,7 @@ export function AudiobookReadAlongModal({
 
   return (
     <div className="read-along-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="read-along-modal">
+      <div className="read-along-modal" data-word-language={lang}>
         <div className="read-along-header">
           <div className="read-along-title-block">
             <strong>{audiobook.title}</strong>
@@ -649,6 +649,7 @@ export function AudiobookReadAlongModal({
                           if (isBlurredAhead) return;
                           if (e.key === "Enter") handleWordTap(token, segment, segIdx, wordStart);
                         }}
+                        data-word-context={segment.text}
                         className={`read-along-word ${isWordSelected ? "selected" : ""} ${isPhraseContext ? "phrase-context" : ""} ${isKaraokeCurrent ? "karaoke-current" : ""} ${isKaraokeSpoken ? "karaoke-spoken" : ""}`}
                       >
                         {token}

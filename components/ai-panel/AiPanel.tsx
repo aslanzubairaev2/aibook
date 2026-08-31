@@ -341,6 +341,7 @@ function ClickableText({ text, lang, onWordTap, className }: { text: string; lan
             key={i}
             role="button"
             tabIndex={0}
+            data-word-context={text}
             className={`panel-clickable-word ${isSpoken ? "karaoke-spoken" : ""}`}
             onClick={() => onWordTap(chunk)}
             onKeyDown={(e) => { if (e.key === "Enter") onWordTap(chunk); }}

@@ -107,6 +107,7 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
     <div className="modal-backdrop word-modal-backdrop" onClick={onClose}>
       <section
         className="word-modal"
+        data-word-language={lang}
         role="dialog"
         aria-modal
         aria-label={WORD_MODAL_LABEL}
@@ -234,6 +235,7 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
                             role="button"
                             tabIndex={0}
                             className="text-token"
+                            data-word-context={text}
                             onClick={() => onWordTap?.(token, text)}
                             onKeyDown={(e) => { if (e.key === "Enter") onWordTap?.(token, text); }}
                           >

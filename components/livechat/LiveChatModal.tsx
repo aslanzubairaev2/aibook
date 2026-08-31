@@ -82,6 +82,7 @@ function renderWords(text: string, onWordTap: (word: string, contextSentence: st
       <span
         key={i}
         className="livechat-clickable-word"
+        data-word-context={text}
         role="button"
         tabIndex={0}
         onClick={() => onWordTap(token, text)}

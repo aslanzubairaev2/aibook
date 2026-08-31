@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { franc } from "franc-min";
+import { QuickWordPreview } from "@/components/word-modal/QuickWordPreview";
 import { AppShell } from "@/components/ui/AppShell";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
@@ -1037,6 +1038,7 @@ function AppInner() {
         setSection(next);
       }}
     >
+      <QuickWordPreview nativeLanguage={profile.nativeLanguage} targetLanguage={profile.targetLanguage} />
       {section === "home" && (
         <HomeDashboard
           book={lastBook}

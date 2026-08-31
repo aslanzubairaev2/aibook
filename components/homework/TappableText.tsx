@@ -23,6 +23,7 @@ export function TappableText({ text, onWordTap }: Props) {
             role="button"
             tabIndex={0}
             className="hw-tappable-word"
+            data-word-context={text}
             onClick={() => onWordTap(token, text)}
             onKeyDown={(e) => { if (e.key === "Enter") onWordTap(token, text); }}
           >

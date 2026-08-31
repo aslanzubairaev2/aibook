@@ -507,7 +507,7 @@ export function DiscussAiModal({
 
   return (
     <div className="modal-backdrop discuss-backdrop" onClick={onClose}>
-      <section className="discuss-modal" role="dialog" aria-modal aria-label={DISCUSS_LABEL} onClick={(e) => e.stopPropagation()}>
+      <section className="discuss-modal" data-word-language={targetLanguage} role="dialog" aria-modal aria-label={DISCUSS_LABEL} onClick={(e) => e.stopPropagation()}>
         <header className="discuss-header">
           <div>
             <span>{DISCUSS_LABEL}</span>
@@ -696,7 +696,7 @@ function Part({
     <span className="discuss-learning-part">
       <span className="discuss-learning-content">
         <span className="discuss-learning-main">
-          <span className="discuss-learning-text">
+          <span className="discuss-learning-text" data-word-context={part.text}>
             {splitIntoTokens(part.text).map((token, index) => {
               if (!normalizeToken(token)) return <span key={index}>{token}</span>;
               return (
@@ -715,7 +715,11 @@ function Part({
               );
             })}
           </span>
-          <SpeakButton text={part.text} lang={lang} size={19} />
+        </span>
+        {part.translation && <span className="discuss-learning-translation">{part.translation}</span>}
+      </span>
+      <span className="discuss-learning-actions">
+          <SpeakButton text={part.text} lang={lang} size={20} />
           {onDiscussExample && (
             <button
               type="button"
@@ -724,11 +728,10 @@ function Part({
               title="Обсудить этот пример подробнее"
               onClick={() => onDiscussExample(part.text)}
             >
-              <MessageCircle size={17} />
+              <MessageCircle size={20} />
             </button>
           )}
-        </span>
-        {part.translation && <span className="discuss-learning-translation">{part.translation}</span>}
+
       </span>
       {onAddExample && part.translation && (
         <button
