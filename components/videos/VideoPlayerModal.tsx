@@ -1031,51 +1031,51 @@ export function VideoPlayerModal({
                       className={`video-transcript-item ${isActive ? "active" : ""}`}
                       onClick={() => handleSeekToCue(cue.start)}
                     >
+                      {isActive && (
+                        <div className="video-cue-actions" aria-label="Действия с активной репликой">
+                          <button
+                            type="button"
+                            className="video-cue-action-btn"
+                            onClick={(event) => { event.stopPropagation(); toggleCueTranslation(idx); }}
+                            aria-label={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
+                            title={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
+                          >
+                            {isTranslationVisible(idx) ? <EyeOff size={14} /> : <Eye size={14} />}
+                          </button>
+                          <SpeakButton text={cue.text} lang={targetLanguage} size={14} />
+                          <button
+                            type="button"
+                            className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
+                            onClick={(event) => { event.stopPropagation(); toggleRepeatCue(idx); }}
+                            aria-pressed={repeatCueIndex === idx}
+                            aria-label={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
+                            title={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
+                          >
+                            <Repeat2 size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="video-cue-action-btn"
+                            onClick={(event) => { event.stopPropagation(); handleDiscussCue(idx); }}
+                            aria-label="Обсудить реплику с AI"
+                            title="Обсудить реплику с AI"
+                          >
+                            <MessageCircle size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="video-cue-action-btn"
+                            onClick={(event) => { event.stopPropagation(); void handleAddCueCard(idx); }}
+                            aria-label="Добавить реплику в карточки"
+                            title="Добавить реплику в карточки"
+                            disabled={cueCardLoading === idx}
+                          >
+                            {cueCardLoading === idx ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
+                          </button>
+                        </div>
+                      )}
                       <span className="transcript-time">{formatTime(cue.start)}</span>
                       <div className="transcript-line">
-                        {isActive && (
-                          <div className="video-cue-actions" aria-label="Действия с активной репликой">
-                            <button
-                              type="button"
-                              className="video-cue-action-btn"
-                              onClick={(event) => { event.stopPropagation(); toggleCueTranslation(idx); }}
-                              aria-label={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
-                              title={isTranslationVisible(idx) ? "Скрыть перевод строки" : "Показать перевод строки"}
-                            >
-                              {isTranslationVisible(idx) ? <EyeOff size={14} /> : <Eye size={14} />}
-                            </button>
-                            <SpeakButton text={cue.text} lang={targetLanguage} size={14} />
-                            <button
-                              type="button"
-                              className={`video-cue-action-btn ${repeatCueIndex === idx ? "active" : ""}`}
-                              onClick={(event) => { event.stopPropagation(); toggleRepeatCue(idx); }}
-                              aria-pressed={repeatCueIndex === idx}
-                              aria-label={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
-                              title={repeatCueIndex === idx ? "Выключить повтор реплики" : "Повторять реплику"}
-                            >
-                              <Repeat2 size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              className="video-cue-action-btn"
-                              onClick={(event) => { event.stopPropagation(); handleDiscussCue(idx); }}
-                              aria-label="Обсудить реплику с AI"
-                              title="Обсудить реплику с AI"
-                            >
-                              <MessageCircle size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              className="video-cue-action-btn"
-                              onClick={(event) => { event.stopPropagation(); void handleAddCueCard(idx); }}
-                              aria-label="Добавить реплику в карточки"
-                              title="Добавить реплику в карточки"
-                              disabled={cueCardLoading === idx}
-                            >
-                              {cueCardLoading === idx ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
-                            </button>
-                          </div>
-                        )}
                         <span className="video-transcript-text" data-cue-text={idx}>{renderInteractiveSubtitleText(cue.text, idx)}</span>
                         {renderCueTranslation(idx, false, undefined, false)}
                       </div>
@@ -1087,7 +1087,7 @@ export function VideoPlayerModal({
                           aria-label={isPlayerPlaying ? "Поставить видео на паузу" : "Продолжить видео"}
                           title={isPlayerPlaying ? "Пауза" : "Продолжить"}
                         >
-                          {isPlayerPlaying ? <Pause size={15} /> : <Play size={15} />}
+                          {isPlayerPlaying ? <Pause size={20} /> : <Play size={20} />}
                         </button>
                       )}
                     </div>

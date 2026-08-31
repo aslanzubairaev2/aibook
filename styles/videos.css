@@ -728,6 +728,9 @@
 
 /* ── Full Transcript Panel ──────────────────────────────────────────────── */
 .video-full-transcript-panel {
+  /* Активная реплика и её «полуостров» с кнопками должны быть одного, непрозрачного
+     цвета: полуостров ложится поверх предыдущей реплики и не должен просвечивать. */
+  --cue-active-bg: rgb(43, 36, 23);
   position: relative;
   max-height: 180px;
   overflow-y: auto;
@@ -772,6 +775,7 @@
 }
 
 .video-transcript-item {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: flex-start;
@@ -790,7 +794,9 @@
 }
 
 .video-transcript-item.active {
-  background: rgba(212, 168, 71, 0.12);
+  z-index: 2;
+  padding-right: 0;
+  background: var(--cue-active-bg);
   color: var(--text-primary);
   border-left: 3px solid var(--accent);
 }
@@ -817,34 +823,56 @@
   flex-direction: column;
 }
 
+/* «Полуостров»: панель действий приклеена к правому верхнему углу активной реплики
+   и налегает на предыдущую строку — вместе с блоком силуэт читается как лежащая «Г». */
 .video-cue-actions {
-  display: inline-flex;
+  position: absolute;
+  right: 0;
+  bottom: calc(100% - 7px);
+  z-index: 3;
+  display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  align-self: flex-start;
-  margin: 0 0 4px auto;
+  padding: 5px 6px 11px;
+  border-radius: 9px 9px 0 0;
+  background: var(--cue-active-bg);
+  box-shadow: -8px -6px 18px rgba(0, 0, 0, 0.38);
   opacity: 1;
 }
 
+/* У самой первой реплики места сверху нет — полуостров переворачивается вниз. */
+.video-transcript-item:first-child .video-cue-actions {
+  top: calc(100% - 7px);
+  bottom: auto;
+  padding: 11px 6px 5px;
+  border-radius: 0 0 9px 9px;
+  box-shadow: -8px 6px 18px rgba(0, 0, 0, 0.38);
+}
+
 .video-cue-playback-btn {
-  display: inline-grid;
+  align-self: stretch;
+  display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  margin: 0 0 0 6px;
-  border: 1px solid rgba(212, 168, 71, 0.38);
-  border-radius: 50%;
-  background: rgba(212, 168, 71, 0.16);
+  width: 46px;
+  margin: -6px 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid rgba(212, 168, 71, 0.22);
+  border-radius: 0 var(--radius-sm, 6px) var(--radius-sm, 6px) 0;
+  background: rgba(212, 168, 71, 0.1);
   color: var(--accent);
   cursor: pointer;
 }
 
 .video-cue-playback-btn:hover,
 .video-cue-playback-btn:focus-visible {
-  border-color: var(--accent);
-  background: rgba(212, 168, 71, 0.28);
+  background: rgba(212, 168, 71, 0.24);
   outline: none;
+}
+
+.video-cue-playback-btn:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .sub-word-tooltip {
@@ -1031,11 +1059,6 @@
 .video-cue-action-btn:disabled {
   cursor: wait;
   opacity: 0.65;
-}
-
-.video-transcript-item:hover .video-cue-actions,
-.video-transcript-item.active .video-cue-actions {
-  opacity: 1;
 }
 
 .video-favorite-btn {
@@ -1236,14 +1259,15 @@
 
   .video-transcript-item {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 83px;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 7px;
-    min-height: 68px;
+    min-height: 48px;
     padding: 8px 7px 8px 10px;
     font-size: 12.5px;
   }
 
   .video-transcript-item.active {
+    padding-right: 0;
     padding-left: 8px;
   }
 
@@ -1255,22 +1279,17 @@
     line-height: 1.45;
   }
 
+  /* На узком экране пять кнопок полуострова складываются в 3 + 2, как в макете. */
   .video-cue-actions {
     display: grid;
     grid-template-columns: repeat(3, 25px);
     justify-content: end;
     gap: 4px;
-    width: 83px;
-    margin: 0;
-    justify-self: end;
-    opacity: 1;
   }
 
   .video-cue-playback-btn {
-    align-self: end;
-    width: 28px;
-    height: 28px;
-    margin: 0 0 2px 4px;
+    width: 40px;
+    margin: -8px 0;
   }
 
   .video-transcript-collapse-btn span {
