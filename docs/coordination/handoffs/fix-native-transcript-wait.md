@@ -2,7 +2,7 @@
 
 - Агент: Codex
 - Ветка: `fix/native-transcript-wait`
-- Commit: первый commit этой ветки (код, тесты и этот handoff)
+- Commit: `9d4efcc` (код и тесты)
 - Статус: ready-for-review
 
 ## Причина
@@ -71,6 +71,8 @@ https://supabase.com/docs/guides/auth/password-security#password-strength-and-le
 
 - URL: не создан на момент handoff.
 - Production-код не опубликован, main не изменён.
+- Push ветки заблокирован auto-review: требуется явное разрешение на публикацию
+  этого commit в удалённой ветке. Обход ограничения не предпринимался.
 
 ## Риски и продолжение
 
