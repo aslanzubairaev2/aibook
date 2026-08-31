@@ -2,7 +2,7 @@
 
 - Агент: Codex
 - Ветка: `fix/gemini-mixed-dictation`
-- Commit: коммит, содержащий этот handoff
+- Commit: `fad8fb3` (реализация)
 - Статус: ready-for-review
 
 ## Границы задачи
@@ -41,6 +41,7 @@
 ## Preview
 
 - URL: не создан. Production не обновлялся в этой задаче.
+- Push `fix/gemini-mixed-dictation` в публичный `github.com/aslanzubairaev2/aibook` отклонён автоматической проверкой безопасности: необходимо явное согласие на публикацию этого коммита в этот репозиторий. Обход отказа не предпринимался.
 
 ## Риски и продолжение
 
