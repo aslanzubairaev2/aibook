@@ -29,6 +29,7 @@ type Props = {
   onTtsProviderChange: (provider: NonNullable<UserProfile["ttsProvider"]>) => void;
   onNext?: (level: Tab) => void;
   onPrev?: (level: Tab) => void;
+  availableTabs?: Tab[];
 };
 
 export function AiPanel({
@@ -50,6 +51,7 @@ export function AiPanel({
   onTtsProviderChange,
   onNext,
   onPrev,
+  availableTabs,
 }: Props) {
   const [tts, setTts] = useState<TTSState>(getTTSState());
   const lastSentenceRef = useRef(selection.sentence);
@@ -77,11 +79,14 @@ export function AiPanel({
     lastSentenceRef.current = selection.sentence;
   }, [selection.sentence, tts.autoNext, lang]);
 
-  const tabs: { id: Tab; label: string }[] = [
+  const allTabs: { id: Tab; label: string }[] = [
     { id: "word", label: "Слово" },
     { id: "phrase", label: "Фраза" },
     { id: "sentence", label: "Предложение" },
   ];
+  const tabs = availableTabs
+    ? allTabs.filter((tab) => availableTabs.includes(tab.id))
+    : allTabs;
   const availableProviders = getAvailableTtsProviders(lang);
   const activeProvider = resolveTtsProvider(ttsProvider, lang);
   const hasActiveAnalysis =
