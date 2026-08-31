@@ -16,23 +16,21 @@
 // sign anything is wrong, which is exactly what a "hangs, then a real error
 // or a real answer eventually shows up" bug report always turns out to be.
 //
-// Both a genuine network failure and a timeout here are reported the same
-// way — from the caller's perspective, "no response" is "no response" either
-// way — as window events so the UI (ConnectivityBanner) can warn the user
-// instead of failing silently.
+// A slow response is not proof of being offline or showing cached data.
+// Report timeouts separately from genuine network failures.
 
 export const DATA_STALE_EVENT = "aibook:data-stale";
 export const DATA_OFFLINE_EVENT = "aibook:data-offline";
 export const DATA_FRESH_EVENT = "aibook:data-fresh";
+export const DATA_TIMEOUT_EVENT = "aibook:data-timeout";
 
 // Allow for SW network timeout (10s) plus clock skew between client and server.
 const STALE_THRESHOLD_MS = 2 * 60 * 1000;
 
-// How long any single call through this module waits before giving up.
-// Generous enough for a cold serverless start or a slower AI generation
-// (verb/noun form backfill, a grammar table), far short of the minutes a
-// genuinely hung connection can otherwise run silently for.
+// Ordinary data reads stay bounded at 20s. AI callers explicitly opt into
+// the longer budget: 110s upstream < 120s route < 135s browser/network.
 const DEFAULT_TIMEOUT_MS = 20_000;
+export const AI_REQUEST_TIMEOUT_MS = 135_000;
 
 export type DataStaleDetail = { url: string; ageMs: number };
 export type DataOfflineDetail = { url: string };
@@ -63,16 +61,24 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const externalSignal = init.signal;
-  const onExternalAbort = () => controller.abort();
+  externalSignal?.throwIfAborted();
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
   externalSignal?.addEventListener("abort", onExternalAbort);
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
 
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (err) {
-    if (!externalSignal?.aborted) {
-      emit(DATA_OFFLINE_EVENT, { url: String(input) } satisfies DataOfflineDetail);
+    if (externalSignal?.aborted) throw externalSignal.reason;
+    if (timedOut) {
+      emit(DATA_TIMEOUT_EVENT, { url: String(input) });
+      throw new DOMException("Сервер не успел ответить. Попробуйте запрос ещё раз; автоматического повтора не было.", "TimeoutError");
     }
+    emit(DATA_OFFLINE_EVENT, { url: String(input) } satisfies DataOfflineDetail);
     throw err;
   } finally {
     clearTimeout(timer);
@@ -91,7 +97,7 @@ export async function freshFetch(input: RequestInfo | URL, init?: RequestInit, t
   const ageMs = dateHeader ? Date.now() - new Date(dateHeader).getTime() : 0;
   if (res.ok && ageMs > STALE_THRESHOLD_MS) {
     emit(DATA_STALE_EVENT, { url: String(input), ageMs } satisfies DataStaleDetail);
-  } else {
+  } else if (res.ok) {
     emit(DATA_FRESH_EVENT);
   }
   return res;

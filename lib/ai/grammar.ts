@@ -1,6 +1,6 @@
 import type { GrammarTable, PosTag } from "@/lib/types";
 import { getAiHeaders } from "@/lib/ai/analyze";
-import { fetchWithTimeout } from "@/lib/net/freshFetch";
+import { AI_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "@/lib/net/freshFetch";
 
 export interface FetchGrammarParams {
   word: string;
@@ -18,7 +18,7 @@ export async function fetchGrammar(params: FetchGrammarParams): Promise<GrammarT
     method: "POST",
     headers,
     body: JSON.stringify(params),
-  });
+  }, AI_REQUEST_TIMEOUT_MS);
 
   if (!res.ok) {
     let err = "";

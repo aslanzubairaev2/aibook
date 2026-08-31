@@ -1,6 +1,6 @@
 import { getAiHeaders } from "@/lib/ai/analyze";
 import type { VerbPhrasePromptParams } from "@/lib/ai/buildVerbPhrasePrompt";
-import { fetchWithTimeout } from "@/lib/net/freshFetch";
+import { AI_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "@/lib/net/freshFetch";
 
 export async function fetchVerbPhrase(params: VerbPhrasePromptParams): Promise<{ example: string; exampleTranslation: string }> {
   const headers = await getAiHeaders();
@@ -8,7 +8,7 @@ export async function fetchVerbPhrase(params: VerbPhrasePromptParams): Promise<{
     method: "POST",
     headers,
     body: JSON.stringify(params),
-  });
+  }, AI_REQUEST_TIMEOUT_MS);
 
   if (!res.ok) {
     let err = "";

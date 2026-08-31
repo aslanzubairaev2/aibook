@@ -70,6 +70,8 @@ function looksUnavailable(err: unknown): boolean {
   );
 }
 
+export const maxDuration = 120;
+
 export async function POST(req: Request) {
   let apiKey: string;
   try {
@@ -121,6 +123,8 @@ export async function POST(req: Request) {
     model,
     contents,
     config: {
+      httpOptions: { timeout: 110_000 },
+      abortSignal: req.signal,
       systemInstruction,
       responseMimeType: "application/json",
       responseSchema: RESPONSE_SCHEMA as never,

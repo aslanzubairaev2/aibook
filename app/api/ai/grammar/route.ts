@@ -90,7 +90,7 @@ function isValidVerbMatrix(matrix: unknown): boolean {
 // the invocation means a stuck one gets killed and freed rather than sitting
 // on the platform indefinitely after the client has already given up on it
 // (see `fetchWithTimeout` in lib/net/freshFetch.ts).
-export const maxDuration = 30;
+export const maxDuration = 120;
 
 export async function POST(req: Request) {
   let apiKey: string;
@@ -118,7 +118,7 @@ export async function POST(req: Request) {
       },
     });
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(prompt, { timeout: 110_000, signal: req.signal });
     const text = result.response.text();
     const parsed = parseJsonObject(text);
 

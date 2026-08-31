@@ -16,6 +16,8 @@ function parseJsonObject(text: string) {
   }
 }
 
+export const maxDuration = 120;
+
 export async function POST(req: Request) {
   let apiKey: string;
   try {
@@ -52,7 +54,7 @@ export async function POST(req: Request) {
       },
     });
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent(prompt, { timeout: 110_000, signal: req.signal });
     const text = result.response.text();
     const parsed = parseJsonObject(text);
     return NextResponse.json(parsed);

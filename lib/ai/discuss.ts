@@ -1,7 +1,7 @@
 import type { AiMode, DiscussMessage, DiscussWordProfile } from "@/lib/types";
 import { supabase } from "@/lib/db/supabase";
 import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
-import { fetchWithTimeout } from "@/lib/net/freshFetch";
+import { AI_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "@/lib/net/freshFetch";
 
 export type DiscussRequest = {
   mode: AiMode;
@@ -49,7 +49,7 @@ export async function discussWithAi(request: DiscussRequest): Promise<DiscussMes
     method: "POST",
     headers,
     body: JSON.stringify(request),
-  }, 30_000);
+  }, AI_REQUEST_TIMEOUT_MS);
 
   if (!res.ok) {
     let err = "";

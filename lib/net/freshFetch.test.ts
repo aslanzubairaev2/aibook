@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fetchWithTimeout, freshFetch } from "./freshFetch.ts";
+import { AI_REQUEST_TIMEOUT_MS, DATA_OFFLINE_EVENT, DATA_TIMEOUT_EVENT, fetchWithTimeout, freshFetch } from "./freshFetch.ts";
 
 // Real production incident this guards against: a word-lookup or grammar
 // request hung for several minutes with the skeleton spinning and nothing on
@@ -48,7 +48,7 @@ test("a request that never answers is aborted rather than left to hang forever",
   await withFakeFetch(neverAnswers(), async () => {
     await assert.rejects(
       () => fetchWithTimeout("/api/ai/grammar", {}, 20),
-      (err: unknown) => err instanceof DOMException && err.name === "AbortError",
+      (err: unknown) => err instanceof DOMException && err.name === "TimeoutError",
     );
   });
 });
@@ -95,7 +95,59 @@ test("freshFetch propagates a hung request's abort instead of resolving with not
   await withFakeFetch(neverAnswers(), async () => {
     await assert.rejects(
       () => freshFetch("/api/dictionary?language=de", undefined, 20),
-      (err: unknown) => err instanceof DOMException && err.name === "AbortError",
+      (err: unknown) => err instanceof DOMException && err.name === "TimeoutError",
     );
+  });
+});
+
+test("AI request still waits at 20 seconds and returns the answer at 45 seconds", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let signal: AbortSignal | null | undefined;
+  let calls = 0;
+  await withFakeFetch((async (_url, init) => {
+    calls++;
+    signal = init?.signal;
+    await new Promise(resolve => setTimeout(resolve, 45_000));
+    assert.equal(signal?.aborted, false);
+    return jsonResponse({ translation: "ответ" });
+  }) as typeof fetch, async () => {
+    const pending = fetchWithTimeout("/api/ai/analyze", {}, AI_REQUEST_TIMEOUT_MS);
+    t.mock.timers.tick(20_001);
+    assert.equal(signal?.aborted, false);
+    t.mock.timers.tick(25_000);
+    assert.equal((await pending).status, 200);
+    assert.equal(calls, 1);
+  });
+});
+
+test("timeout is not reported as offline; a genuine network error still is", async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const events: string[] = [];
+  const target = new EventTarget();
+  target.addEventListener(DATA_TIMEOUT_EVENT, () => events.push("timeout"));
+  target.addEventListener(DATA_OFFLINE_EVENT, () => events.push("offline"));
+  Object.defineProperty(globalThis, "window", { configurable: true, value: target });
+  try {
+    await withFakeFetch(neverAnswers(), async () => {
+      await assert.rejects(fetchWithTimeout("/api/ai/analyze", {}, 10), { name: "TimeoutError" });
+    });
+    assert.deepEqual(events, ["timeout"]);
+    await withFakeFetch(async () => { throw new TypeError("Failed to fetch"); }, async () => {
+      await assert.rejects(fetchWithTimeout("/api/ai/analyze"));
+    });
+    assert.deepEqual(events, ["timeout", "offline"]);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("a pre-cancelled request is never sent to the server", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let calls = 0;
+  await withFakeFetch(async () => { calls++; return jsonResponse({}); }, async () => {
+    await assert.rejects(fetchWithTimeout("/api/ai/analyze", { signal: controller.signal }), { name: "AbortError" });
+    assert.equal(calls, 0);
   });
 });
