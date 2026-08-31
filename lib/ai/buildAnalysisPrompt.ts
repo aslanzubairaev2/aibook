@@ -38,10 +38,13 @@ export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
       explanation: `short dictionary-style note in ${p.nativeLanguage}`,
       nounDetails: {
         article: "article if it is a noun, otherwise empty string",
-        plural: "plural form if it is a noun, otherwise empty string",
+        singular: "nominative singular with article if applicable; use — if no singular exists; empty for non-nouns",
+        plural: "nominative plural with article if applicable; use — if no plural exists; empty for non-nouns",
       },
       verbDetails: {
         infinitive: "infinitive if it is a verb, otherwise empty string",
+        praeteritum: "bare simple past, German third-person singular Präteritum WITHOUT pronoun, e.g. saß; empty for non-verbs",
+        partizip2: "bare past participle WITHOUT auxiliary or pronoun, e.g. gesessen (NOT hat gesessen); empty for non-verbs",
         tense: "tense/person context if obvious, otherwise empty string",
         person: "person/number if obvious, otherwise empty string",
       },

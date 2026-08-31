@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Layers, Loader2, Search, SlidersHorizontal, Trash2, X,
+  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Layers, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { getCardVariantProgressMap, getLocalPackSort, saveLocalPackSort } from "@/lib/db/local";
@@ -313,8 +313,33 @@ export function DictionaryPanel({
 
   if (isLoading) {
     return (
-      <div className="dict-loading">
-        <Loader2 className="spin" size={22} /> Загружаю словарь...
+      <div className="dict-loading-shell" aria-busy="true" aria-label="Загрузка словаря">
+        <div className="dict-skeleton-toolbar">
+          <span className="skeleton-block dict-skeleton-filter" />
+          <span className="skeleton-block dict-skeleton-count" />
+          <span className="skeleton-block dict-skeleton-search" />
+        </div>
+        <p className="dict-loading-label">Загружаю словарь…</p>
+        <div className="dict-skeleton-batches">
+          {["76%", "52%", "34%"].map((progress, index) => (
+            <div className="dict-skeleton-batch" key={progress}>
+              <div className="dict-skeleton-batch-head">
+                <div className="dict-skeleton-title-wrap">
+                  <span className="skeleton-block dict-skeleton-title" style={{ width: `${index === 1 ? 58 : 42}%` }} />
+                  <span className="skeleton-block dict-skeleton-meta" style={{ width: `${index === 2 ? 34 : 48}%` }} />
+                </div>
+                <span className="skeleton-block dict-skeleton-percent" />
+                <span className="skeleton-block dict-skeleton-chevron" />
+              </div>
+              <span className="skeleton-block dict-skeleton-progress" style={{ width: progress }} />
+              <div className="dict-skeleton-rows">
+                <div className="dict-skeleton-row"><span className="skeleton-block" /><span className="skeleton-block" /></div>
+                <div className="dict-skeleton-row"><span className="skeleton-block" /><span className="skeleton-block" /></div>
+                <div className="dict-skeleton-row"><span className="skeleton-block" /><span className="skeleton-block" /></div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

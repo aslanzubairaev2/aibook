@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Play, Clock, Captions, Heart } from "lucide-react";
+import { Play, Clock, Captions, Heart, Trash2, Loader2 } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 
 type Props = {
@@ -10,9 +10,11 @@ type Props = {
   isFavorite?: boolean;
   onToggleFavorite?: (video: VideoItem) => void;
   progressPercent?: number;
+  onRemoveHistory?: (video: VideoItem) => void;
+  isRemovingHistory?: boolean;
 };
 
-export function VideoCard({ video, onSelect, isFavorite = false, onToggleFavorite, progressPercent = 0 }: Props) {
+export function VideoCard({ video, onSelect, isFavorite = false, onToggleFavorite, progressPercent = 0, onRemoveHistory, isRemovingHistory = false }: Props) {
   const [imgError, setImgError] = useState(false);
 
   const thumbUrl =
@@ -26,6 +28,7 @@ export function VideoCard({ video, onSelect, isFavorite = false, onToggleFavorit
       className="video-card"
       onClick={() => onSelect(video)}
       onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onSelect(video);
@@ -84,6 +87,14 @@ export function VideoCard({ video, onSelect, isFavorite = false, onToggleFavorit
         <h3 className="video-card-title" title={video.title}>
           {video.title}
         </h3>
+        {onRemoveHistory && (
+          <button type="button" className="video-remove-history" disabled={isRemovingHistory}
+            onClick={(event) => { event.stopPropagation(); onRemoveHistory(video); }}
+            title="Удалить из истории" aria-label={`Удалить из истории: ${video.title}`}>
+            {isRemovingHistory ? <Loader2 size={16} className="spin" /> : <Trash2 size={16} />}
+            Удалить
+          </button>
+        )}
       </div>
     </article>
   );

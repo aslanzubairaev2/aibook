@@ -169,10 +169,13 @@ export type WordAnalysis = {
   explanation?: string;
   nounDetails?: {
     article?: string;
+    singular?: string;
     plural?: string;
   };
   verbDetails?: {
     infinitive?: string;
+    praeteritum?: string;
+    partizip2?: string;
     tense?: string;
     person?: string;
   };

@@ -7,6 +7,7 @@ import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
 import { sbGetCachedWord, sbSaveCachedWord } from "@/lib/db/supabase";
 import type { AiAnalysis } from "@/lib/types";
+import { hasQuickWordForms, quickWordForms } from "@/lib/ai/quickWordForms";
 
 // Only elements that already implement word lookup. Never intercept ordinary text or links.
 const WORDS = '.sub-interactive-word, .discuss-clickable-word, .panel-clickable-word, .hw-tappable-word, .livechat-clickable-word, .read-along-word[role="button"], .text-token[role="button"], [data-token-id][role="button"]';
@@ -16,12 +17,12 @@ const pending = new Map<string, Promise<AiAnalysis | null>>();
 async function lookup(word: string, sentence: string, targetLanguage: string, nativeLanguage: string) {
   const key = makeAiCacheKey("word", word, targetLanguage, nativeLanguage);
   const local = getLocalAiAnalysis(key);
-  if (local?.word) return local;
+  if (local?.word && hasQuickWordForms(local.word)) return local;
   const existing = pending.get(key);
   if (existing) return existing;
   const promise = (async () => {
     const cached = await sbGetCachedWord(word, targetLanguage, nativeLanguage);
-    if (cached?.word) { saveLocalAiAnalysis(key, cached); return cached; }
+    if (cached?.word && hasQuickWordForms(cached.word)) { saveLocalAiAnalysis(key, cached); return cached; }
     const result = await analyzeSelection({ mode: "word", word, text: word, sentence, sentenceBefore: "", sentenceAfter: "", targetLanguage, nativeLanguage });
     if (result?.word) {
       saveLocalAiAnalysis(key, result);
@@ -158,14 +159,12 @@ export function QuickWordPreview({ nativeLanguage, targetLanguage }: { nativeLan
 
   if (!preview || !portal) return null;
   const word = preview.analysis?.word;
-  const details = word?.verbDetails;
+  const forms = quickWordForms(word);
   return createPortal(
     <div ref={popup} className="quick-word-preview" role={preview.pinned ? "dialog" : "tooltip"} aria-label={`Быстрый разбор: ${preview.word}`} style={{ pointerEvents: preview.pinned ? "auto" : "none" }} onClick={e => e.stopPropagation()}>
       <strong>{preview.word}</strong>
       <div role="status">{preview.loading ? "Загружаем перевод…" : preview.error || word?.translation || "Перевод недоступен"}</div>
-      {word?.partOfSpeech && <small>{word.partOfSpeech}</small>}
-      {details && <small>{[details.infinitive, details.tense, details.person].filter(Boolean).join(" · ")}</small>}
-      {preview.pinned && <small>Закрыть: Escape или нажатие вне подсказки</small>}
+      {forms && <small>{forms}</small>}
     </div>, portal,
   );
 }

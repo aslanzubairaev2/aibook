@@ -1973,6 +1973,46 @@ textarea,
   padding: 40px 0; color: var(--text-muted); font-size: 13px;
 }
 
+/* The dictionary keeps its layout while data arrives, so the page does not
+   jump from a lone spinner into a completely different shelf. */
+.dict-loading-shell { display: flex; flex-direction: column; gap: 12px; }
+.dict-loading-label { margin: 0 2px 2px; color: var(--text-muted); font-size: 12px; }
+.dict-skeleton-toolbar { display: flex; align-items: center; gap: 10px; height: 56px; }
+.dict-skeleton-filter { width: 98px; height: 40px; border-radius: 999px; }
+.dict-skeleton-count { width: 74px; height: 13px; margin-left: auto; border-radius: 5px; }
+.dict-skeleton-search { width: 40px; height: 40px; border-radius: 50%; }
+.dict-skeleton-batches { display: flex; flex-direction: column; gap: 10px; }
+.dict-skeleton-batch {
+  overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+.dict-skeleton-batch-head { display: flex; align-items: center; gap: 10px; padding: 14px; }
+.dict-skeleton-title-wrap { display: flex; flex: 1; flex-direction: column; gap: 7px; }
+.dict-skeleton-title { width: 42%; height: 15px; border-radius: 5px; }
+.dict-skeleton-meta { width: 48%; height: 10px; border-radius: 4px; }
+.dict-skeleton-percent { width: 28px; height: 13px; border-radius: 4px; }
+.dict-skeleton-chevron { width: 17px; height: 17px; border-radius: 50%; }
+.dict-skeleton-progress { display: block; height: 3px; margin: 0 14px 0 14px; border-radius: 2px; }
+.dict-skeleton-rows { margin-top: 8px; border-top: 1px solid var(--border); }
+.dict-skeleton-row { display: flex; justify-content: space-between; gap: 20px; padding: 13px 14px; border-bottom: 1px solid var(--border); }
+.dict-skeleton-row:last-child { border-bottom: 0; }
+.dict-skeleton-row span:first-child { width: 32%; height: 13px; border-radius: 4px; }
+.dict-skeleton-row span:last-child { width: 22%; height: 10px; border-radius: 4px; }
+
+/* Shared by screens that expose a camera/action FAB. Discover used to carry
+   this in its local style tag, leaving DictionaryView with browser defaults. */
+.dictionary-view .add-lesson-fab {
+  position: fixed; right: max(16px, calc(50% - 304px)); bottom: 78px; z-index: 25;
+  display: flex; align-items: center; justify-content: center;
+  width: 52px; height: 52px; padding: 0; border: 0; border-radius: 50%;
+  background: var(--accent); color: var(--text-dark);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45), 0 0 0 1px rgba(212,168,71,0.35);
+  cursor: pointer; transition: transform var(--transition-fast), background var(--transition-fast);
+}
+.dictionary-view .add-lesson-fab:hover { background: var(--accent-bright); }
+.dictionary-view .add-lesson-fab:active { transform: scale(0.92); }
+.dictionary-view .add-lesson-fab:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }
+
 /* Toolbar: filters toggle left, count centre, magnifier right. The search
    input floats over the row so opening it never shifts the layout. */
 .dict-toolbar-sticky {
@@ -2645,3 +2685,12 @@ textarea,
 .gender-rules-family { display: block; font-size: 11.5px; color: var(--text-muted); margin-top: 3px; }
 .gender-rules-item p { font-size: 13px; line-height: 1.45; color: var(--text-primary); margin-top: 6px; }
 .gender-rules-footer { margin-top: 22px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.video-remove-history {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; min-height: 44px; margin-top: 10px; padding: 6px 8px; font-size: 12px;
+  color: var(--text-muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+}
+.video-remove-history:hover { color: var(--text-primary); border-color: var(--accent); }
+.video-remove-history:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.video-remove-history:disabled { opacity: .5; cursor: wait; }

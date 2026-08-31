@@ -8,7 +8,7 @@ import type { VideoCategory, VideoCefrLevel, VideoDurationFilter, VideoItem, Vid
 import type { Flashcard, UserProfile } from "@/lib/types";
 import { VideoCard } from "./VideoCard";
 import { VideoPlayerModal } from "./VideoPlayerModal";
-import { sbGetVideoLibrary, sbUpsertVideoLibrary } from "@/lib/db/supabase";
+import { sbGetVideoLibrary, sbUpsertVideoLibrary, sbHideVideoFromHistory } from "@/lib/db/supabase";
 
 type Props = {
   cards: Flashcard[];
@@ -65,6 +65,10 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard, 
   const [reloadNonce, setReloadNonce] = useState(0);
   const [favorites, setFavorites] = useState<VideoItem[]>([]);
   const [history, setHistory] = useState<VideoItem[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [removingHistory, setRemovingHistory] = useState<Set<string>>(new Set());
+  const libraryRevision = useRef(0);
+  const historyRemovals = useRef(new Set<string>());
   const [collection, setCollection] = useState<VideoCollection>("search");
   const [progress, setProgress] = useState<Record<string, { percent: number; position: number; maxPosition: number }>>({});
   const requestId = useRef(0);
@@ -81,7 +85,10 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard, 
 
   useEffect(() => {
     if (!userId) return;
+    let cancelled = false;
+    const revision = libraryRevision.current;
     void sbGetVideoLibrary(userId).then((rows) => {
+      if (cancelled || revision !== libraryRevision.current) return;
       const nextProgress: Record<string, { percent: number; position: number; maxPosition: number }> = {};
       const remoteFavorites: VideoItem[] = [];
       const remoteHistory: VideoItem[] = [];
@@ -102,15 +109,22 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard, 
           source: "network",
         };
         if (row.is_favorite) remoteFavorites.push(video);
-        remoteHistory.push(video);
+        if (!row.hidden_from_history) remoteHistory.push(video);
       }
       setProgress(nextProgress);
       setFavorites(remoteFavorites);
       setHistory(remoteHistory);
+      localStorage.setItem(VIDEO_HISTORY_KEY, JSON.stringify(remoteHistory));
+      localStorage.setItem(VIDEO_FAVORITES_KEY, JSON.stringify(remoteFavorites));
+    }).catch(() => {
+      // Keep the local library on a network failure; an error is not an empty history.
+      if (!cancelled) setHistoryError("Не удалось обновить историю. Показаны сохранённые на устройстве видео.");
     });
+    return () => { cancelled = true; };
   }, [userId]);
 
   const toggleFavorite = (video: VideoItem) => {
+    libraryRevision.current++;
     setFavorites((current) => {
       const next = current.some((item) => item.youtubeId === video.youtubeId)
         ? current.filter((item) => item.youtubeId !== video.youtubeId)
@@ -121,11 +135,32 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard, 
     });
   };
 
+  const removeHistory = async (video: VideoItem) => {
+    if (historyRemovals.current.has(video.youtubeId)) return;
+    historyRemovals.current.add(video.youtubeId);
+    setRemovingHistory(new Set(historyRemovals.current));
+    setHistoryError(null);
+    libraryRevision.current++;
+    try {
+      if (userId) await sbHideVideoFromHistory(userId, video.youtubeId);
+      setHistory(current => current.filter(item => item.youtubeId !== video.youtubeId));
+      const stored = JSON.parse(localStorage.getItem(VIDEO_HISTORY_KEY) || "[]") as VideoItem[];
+      localStorage.setItem(VIDEO_HISTORY_KEY, JSON.stringify(stored.filter(item => item.youtubeId !== video.youtubeId)));
+    } catch {
+      setHistoryError("Не удалось удалить видео из истории. Проверьте подключение и повторите.");
+    } finally {
+      historyRemovals.current.delete(video.youtubeId);
+      setRemovingHistory(new Set(historyRemovals.current));
+    }
+  };
+
   const selectVideo = (video: VideoItem) => {
+    if (historyRemovals.current.has(video.youtubeId)) return;
+    libraryRevision.current++;
     setHistory((current) => {
       const next = [video, ...current.filter((item) => item.youtubeId !== video.youtubeId)].slice(0, 100);
       localStorage.setItem(VIDEO_HISTORY_KEY, JSON.stringify(next));
-      if (userId) void sbUpsertVideoLibrary({ user_id: userId, video, is_favorite: favorites.some((item) => item.youtubeId === video.youtubeId), last_position_seconds: progress[video.youtubeId]?.position || 0, max_position_seconds: progress[video.youtubeId]?.maxPosition || 0, progress_percent: progress[video.youtubeId]?.percent || 0 });
+      if (userId) void sbUpsertVideoLibrary({ user_id: userId, video, hidden_from_history: false, is_favorite: favorites.some((item) => item.youtubeId === video.youtubeId), last_position_seconds: progress[video.youtubeId]?.position || 0, max_position_seconds: progress[video.youtubeId]?.maxPosition || 0, progress_percent: progress[video.youtubeId]?.percent || 0 });
       return next;
     });
     setActiveVideo(video);
@@ -313,10 +348,11 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard, 
       {warning && <div className="videos-search-warning" role="status">{warning}</div>}
       {error && <div className="videos-search-error" role="alert"><span>{error}</span><button type="button" onClick={() => void loadVideos(0, false)}>Повторить</button></div>}
 
+      {historyError && <div className="videos-search-error" role="alert">{historyError}</div>}
       {!isLoading && !error && (() => {
         const visibleVideos = collection === "favorites" ? favorites : collection === "history" ? history : videos;
         return visibleVideos.length > 0
-          ? <div className="videos-grid">{visibleVideos.map((video) => <VideoCard key={video.youtubeId} video={video} onSelect={selectVideo} progressPercent={progress[video.youtubeId]?.percent} isFavorite={favorites.some((item) => item.youtubeId === video.youtubeId)} onToggleFavorite={toggleFavorite} />)}</div>
+          ? <div className="videos-grid">{visibleVideos.map((video) => <VideoCard key={video.youtubeId} video={video} onSelect={selectVideo} progressPercent={progress[video.youtubeId]?.percent} isFavorite={favorites.some((item) => item.youtubeId === video.youtubeId)} onToggleFavorite={toggleFavorite} onRemoveHistory={collection === "history" ? removeHistory : undefined} isRemovingHistory={removingHistory.has(video.youtubeId)} />)}</div>
           : <div className="seed-card videos-empty"><p>{collection === "favorites" ? "Здесь появятся видео, которые вы сохраните." : collection === "history" ? "История просмотров пока пуста." : "Ничего не найдено. Уберите один из фильтров или попробуйте другую формулировку."}</p></div>;
       })()}
 

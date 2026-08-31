@@ -146,6 +146,7 @@ export type DbVideoLibrary = {
   cefr_level: string;
   category: string;
   is_favorite: boolean;
+  hidden_from_history?: boolean;
   last_position_seconds: number;
   max_position_seconds: number;
   progress_percent: number;
@@ -161,7 +162,7 @@ export async function sbGetVideoLibrary(userId: string): Promise<DbVideoLibrary[
     .select("*")
     .eq("user_id", userId)
     .order("last_watched_at", { ascending: false });
-  if (error) { console.error("sbGetVideoLibrary:", error.message); return []; }
+  if (error) throw new Error(error.message);
   return (data ?? []) as DbVideoLibrary[];
 }
 
@@ -169,6 +170,7 @@ export async function sbUpsertVideoLibrary(entry: {
   user_id: string;
   video: VideoItem;
   is_favorite?: boolean;
+  hidden_from_history?: boolean;
   last_position_seconds?: number;
   max_position_seconds?: number;
   progress_percent?: number;
@@ -217,6 +219,16 @@ export async function sbUpsertVideoLibrary(entry: {
     updated_at: new Date().toISOString(),
   });
   if (insertError) console.error("sbUpsertVideoLibrary insert:", insertError.message);
+}
+
+/** Remove only the history entry; favorites and playback progress stay intact. */
+export async function sbHideVideoFromHistory(userId: string, youtubeId: string): Promise<void> {
+  if (!supabase) throw new Error("Supabase не настроен");
+  const { error } = await supabase.from("video_library")
+    .update({ hidden_from_history: true, updated_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("youtube_id", youtubeId);
+  if (error) throw new Error(error.message);
 }
 
 // ─── Books ────────────────────────────────────────────────────────────────────
