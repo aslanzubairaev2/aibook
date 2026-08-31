@@ -1,4 +1,4 @@
-import { fetchYouTubeTranscript } from "./youtubeTranscript";
+import { readTranscriptCache } from "./transcriptCacheServer";
 import { hasOfficialYouTubeApi, searchYouTubeOfficial } from "./youtubeDataApi";
 import type { VideoCategory, VideoCefrLevel, VideoDurationFilter, VideoItem } from "./types";
 
@@ -114,14 +114,15 @@ async function validateCandidate(candidate: Candidate): Promise<VideoItem | null
   try {
     const embed = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${candidate.youtubeId}&format=json`, { signal: AbortSignal.timeout(7000) });
     if (!embed.ok) return null;
-    const cues = await fetchYouTubeTranscript(candidate.youtubeId, candidate.language);
+    // Search must never spend Supadata credits on unopened videos.
+    const cues = await readTranscriptCache(candidate.youtubeId, candidate.language).catch(() => null);
     const searchableText = `${candidate.title} ${candidate.description} ${candidate.channel}`;
     return {
       ...candidate,
       cefrLevel: inferVideoLevel(searchableText),
       category: inferVideoCategory(searchableText),
       tags: [],
-      hasSubtitles: cues.length > 0,
+      hasSubtitles: cues?.length ? true : undefined,
       source: "network",
     };
   } catch {

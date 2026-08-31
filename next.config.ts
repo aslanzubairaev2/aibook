@@ -12,6 +12,12 @@ const withPWA = withPWAInit({
   workboxOptions: {
     runtimeCaching: [
       {
+        urlPattern: ({ sameOrigin, url: { pathname } }) => sameOrigin && pathname === "/api/videos/transcript",
+        // Pending/error responses must not be replaced with an old empty result.
+        handler: "NetworkOnly",
+        method: "GET",
+      },
+      {
         urlPattern: ({ sameOrigin, url: { pathname } }) =>
           sameOrigin && pathname.startsWith("/api/") && !pathname.startsWith("/api/auth/callback"),
         handler: "NetworkFirst",

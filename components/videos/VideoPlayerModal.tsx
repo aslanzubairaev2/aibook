@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { X, Subtitles, ListMusic, Loader2, Eye, EyeOff, MessageCircle, Plus, Repeat2, Maximize2, Minimize2, Play, Pause } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 import type { SubtitleCue } from "@/lib/videos/youtubeTranscript";
+import { loadTranscript } from "@/lib/videos/loadTranscript";
 import type { UserProfile, Flashcard, AiAnalysis, DiscussMessage, AiMode } from "@/lib/types";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
@@ -61,6 +62,9 @@ export function VideoPlayerModal({
 }: Props) {
   const [cues, setCues] = useState<SubtitleCue[]>([]);
   const [isLoadingCues, setIsLoadingCues] = useState(true);
+  const [subtitleStatus, setSubtitleStatus] = useState("Загрузка синхронных субтитров…");
+  const [subtitleError, setSubtitleError] = useState<string | null>(null);
+  const [subtitleRetry, setSubtitleRetry] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const [showLiveTranslation, setShowLiveTranslation] = useState(false);
@@ -127,35 +131,28 @@ export function VideoPlayerModal({
 
   // ── 1. Fetch timed subtitles from backend ──────────────────────────────────
   useEffect(() => {
-    let isMounted = true;
+    const controller = new AbortController();
     setIsLoadingCues(true);
-
-    fetch(`/api/videos/transcript?v=${video.youtubeId}&lang=${video.language}`)
-      .then((res) => (res.ok ? res.json() : { cues: [] }))
-      .then((data) => {
-        if (isMounted) {
-          const c = data.cues || [];
-          setCues(c);
-          cuesRef.current = c;
-          setShowLiveTranslation(false);
-          setRevealedTranslations(new Set());
-          setTranslations({});
-          setTranslationError(null);
-          setIsLoadingCues(false);
-        }
+    setSubtitleError(null);
+    setSubtitleStatus("Загрузка синхронных субтитров…");
+    setCues([]);
+    cuesRef.current = [];
+    void loadTranscript(video.youtubeId, video.language, controller.signal, setSubtitleStatus)
+      .then((loaded) => {
+        if (controller.signal.aborted) return;
+        setCues(loaded);
+        cuesRef.current = loaded;
+        setShowLiveTranslation(false);
+        setRevealedTranslations(new Set());
+        setTranslations({});
+        setTranslationError(null);
       })
-      .catch(() => {
-        if (isMounted) {
-          setCues([]);
-          cuesRef.current = [];
-          setIsLoadingCues(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [video.youtubeId, video.language]);
+      .catch((error) => {
+        if (!controller.signal.aborted) setSubtitleError(error instanceof Error ? error.message : "Не удалось загрузить субтитры.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setIsLoadingCues(false); });
+    return () => controller.abort();
+  }, [video.youtubeId, video.language, subtitleRetry]);
 
   useEffect(() => {
     setPlayerReady(false);
@@ -866,7 +863,12 @@ export function VideoPlayerModal({
           {isLoadingCues ? (
             <div className="video-subtitle-bar loading">
               <Loader2 size={14} className="spin" />
-              <span>Загрузка синхронных субтитров...</span>
+              <span role="status">{subtitleStatus}</span>
+            </div>
+          ) : cues.length === 0 ? (
+            <div className="video-subtitle-bar" role={subtitleError ? "alert" : "status"}>
+              <span>{subtitleError || "Готовых субтитров для этого видео нет. AI-генерация отключена."}</span>
+              <button type="button" className="video-transcript-toggle-btn" onClick={() => setSubtitleRetry(value => value + 1)}>Повторить</button>
             </div>
           ) : cues.length > 0 && !showFullTranscript ? (
             <div className="video-subtitle-bar">

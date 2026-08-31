@@ -1,3 +1,5 @@
+import { readTranscriptCache, writeTranscriptCache } from "./transcriptCacheServer";
+
 export type SubtitleCue = {
   start: number; // In seconds
   end: number; // In seconds
@@ -148,6 +150,7 @@ function selectCaptionTrack(tracks: CaptionTrack[], preferredLang: string): Capt
 async function downloadTranscript(track: CaptionTrack): Promise<SubtitleCue[]> {
   if (!track.baseUrl) return [];
   const response = await fetch(track.baseUrl, {
+    signal: AbortSignal.timeout(10000),
     headers: { "User-Agent": TIMEDTEXT_USER_AGENT },
   });
   if (!response.ok) return [];
@@ -156,6 +159,7 @@ async function downloadTranscript(track: CaptionTrack): Promise<SubtitleCue[]> {
 
 async function getWatchPageCaptionTracks(videoId: string, preferredLang: string): Promise<CaptionTrack[]> {
   const response = await fetch(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&hl=${encodeURIComponent(preferredLang)}`, {
+    signal: AbortSignal.timeout(10000),
     headers: {
       "User-Agent": WATCH_PAGE_USER_AGENT,
       "Accept-Language": `${preferredLang},en;q=0.8`,
@@ -182,96 +186,127 @@ function parseSupadataCues(data: SupadataResponse): SubtitleCue[] {
     .filter((cue) => cue.text.length > 0));
 }
 
-async function fetchSupadataTranscript(videoId: string, preferredLang: string): Promise<SubtitleCue[]> {
-  const key = supadataApiKey();
-  if (!key) return [];
+export type TranscriptResult =
+  | { status: "completed"; cues: SubtitleCue[] }
+  | { status: "pending"; jobId: string }
+  | { status: "unavailable"; cues: SubtitleCue[] };
 
-  const params = new URLSearchParams({
-    url: `https://www.youtube.com/watch?v=${videoId}`,
-    lang: preferredLang,
-    text: "false",
-    mode: "auto",
-  });
-  const response = await fetch(`${SUPADATA_URL}?${params}`, {
-    headers: { "x-api-key": key },
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!response.ok) return [];
-  let data = await response.json() as SupadataResponse;
-
-  // Long videos may be processed asynchronously by Supadata.
-  if (data.jobId) {
-    for (let attempt = 0; attempt < 8 && data.jobId; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 750));
-      const jobResponse = await fetch(`${SUPADATA_URL}/${encodeURIComponent(data.jobId)}`, {
-        headers: { "x-api-key": key },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!jobResponse.ok) return [];
-      data = await jobResponse.json() as SupadataResponse;
-      if (data.content?.length || ["failed", "error", "completed"].includes(data.status || "")) break;
-    }
+export class TranscriptError extends Error {
+  retryable: boolean;
+  httpStatus: number;
+  constructor(message: string, retryable = true, httpStatus = 503) {
+    super(message);
+    this.retryable = retryable;
+    this.httpStatus = httpStatus;
   }
-
-  return parseSupadataCues(data);
 }
 
-// In-memory cache for transcripts
+// Only native subtitle requests can create entries in this map.
+const nativeJobs = new Map<string, string>();
 const transcriptCache = new Map<string, SubtitleCue[]>();
 
-export async function fetchYouTubeTranscript(
-  videoId: string,
-  preferredLang = "de"
-): Promise<SubtitleCue[]> {
+/** One bounded network step; the browser keeps polling the SAME job until it finishes. */
+const inFlight = new Map<string, Promise<TranscriptResult>>();
+export async function getTranscriptResult(videoId: string, preferredLang = "de", savedJobId?: string): Promise<TranscriptResult> {
+  const id = `${videoId}:${preferredLang}`;
+  const active = inFlight.get(id);
+  if (active) return active;
+  const request = fetchTranscriptStep(videoId, preferredLang, savedJobId);
+  inFlight.set(id, request);
+  try { return await request; } finally { inFlight.delete(id); }
+}
+
+async function fetchTranscriptStep(videoId: string, preferredLang: string, savedJobId?: string): Promise<TranscriptResult> {
   const cacheKey = `${videoId}:${preferredLang}`;
-  if (transcriptCache.has(cacheKey)) {
-    return transcriptCache.get(cacheKey)!;
+  const cached = transcriptCache.get(cacheKey);
+  if (cached) return { status: "completed", cues: cached };
+  let persisted: SubtitleCue[] | null;
+  try { persisted = await readTranscriptCache(videoId, preferredLang); }
+  catch (error) { throw new TranscriptError(error instanceof Error ? error.message : "Кэш субтитров недоступен."); }
+  if (persisted) {
+    transcriptCache.set(cacheKey, persisted);
+    return { status: "completed", cues: persisted };
   }
+  const key = supadataApiKey();
+  const jobId = savedJobId || nativeJobs.get(cacheKey);
+  let cues: SubtitleCue[];
 
-  try {
-    const supadataCues = await fetchSupadataTranscript(videoId, preferredLang);
-    if (supadataCues.length > 0) {
-      transcriptCache.set(cacheKey, supadataCues);
-      return supadataCues;
+  if (key) {
+    const params = new URLSearchParams({
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      lang: preferredLang, text: "false", mode: "native",
+    });
+    const response = await fetch(jobId ? `${SUPADATA_URL}/${encodeURIComponent(jobId)}` : `${SUPADATA_URL}?${params}`, {
+      headers: { "x-api-key": key },
+      cache: "no-store",
+      signal: AbortSignal.timeout(30000),
+    }).catch(() => {
+      throw new TranscriptError(
+        jobId ? "Ответ Supadata задерживается. Продолжаем проверять задание…"
+          : "Не получен номер задания Supadata. Автоповтор остановлен, чтобы не тратить кредиты повторно. Попробуйте позже.",
+        Boolean(jobId), jobId ? 503 : 422,
+      );
+    });
+    if (response.status === 206) {
+      nativeJobs.delete(cacheKey);
+      return { status: "unavailable", cues: [] };
     }
-
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({})) as { details?: string; message?: string };
+      const quotaExceeded = response.status === 429 && /plan usage limit|quota|credits|balance/i.test(errorData.details || "");
+      const retryable = !quotaExceeded && (response.status === 429 || (Boolean(jobId) && response.status >= 500));
+      if (!retryable) nativeJobs.delete(cacheKey);
+      throw new TranscriptError(
+        quotaExceeded ? "Исчерпан лимит Supadata. Субтитры станут доступны после обновления квоты. AI-генерация отключена."
+          : response.status === 404 && jobId ? "Срок хранения задания истёк. Повторите загрузку субтитров."
+          : response.status === 429 ? "Supadata временно ограничил запросы. Продолжаем ожидание…"
+          : "Не удалось получить субтитры от Supadata.",
+        retryable, retryable ? 503 : 422,
+      );
+    }
+    const data = await response.json() as SupadataResponse;
+    if (data.status === "failed" || data.status === "error") {
+      nativeJobs.delete(cacheKey);
+      throw new TranscriptError("Supadata не смог получить субтитры. Генерация отключена.", false, 422);
+    }
+    const activeJobId = data.jobId || jobId;
+    if (data.status === "queued" || data.status === "active" || (data.jobId && !data.content && data.status !== "completed")) {
+      if (!activeJobId) throw new TranscriptError("Supadata не вернул номер задания.");
+      nativeJobs.set(cacheKey, activeJobId);
+      return { status: "pending", jobId: activeJobId };
+    }
+    if (!Array.isArray(data.content)) throw new TranscriptError("Supadata вернул некорректный ответ.");
+    cues = parseSupadataCues(data);
+    nativeJobs.delete(cacheKey);
+  } else {
+    // These fallbacks only read existing YouTube caption tracks, never generate audio text.
     const res = await fetch(INNERTUBE_PLAYER_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": INNERTUBE_USER_AGENT,
-      },
-      body: JSON.stringify({
-        context: {
-          client: {
-            clientName: "ANDROID",
-            clientVersion: INNERTUBE_CLIENT_VERSION,
-          },
-        },
-        videoId,
-      }),
+      signal: AbortSignal.timeout(10000),
+      headers: { "Content-Type": "application/json", "User-Agent": INNERTUBE_USER_AGENT },
+      body: JSON.stringify({ context: { client: { clientName: "ANDROID", clientVersion: INNERTUBE_CLIENT_VERSION } }, videoId }),
     });
-
-    if (!res.ok) return [];
-    const data = res.ok ? await res.json() : null;
-    const primaryTrack = selectCaptionTrack(getCaptionTracks(data), preferredLang);
-    let cues = primaryTrack ? await downloadTranscript(primaryTrack) : [];
-
-    // Serverless IP ranges are occasionally rejected by the Android Innertube
-    // endpoint even though the public watch page still exposes caption tracks.
-    // Falling back to that page keeps the transcript available on Vercel too.
-    if (cues.length === 0) {
-      const fallbackTrack = selectCaptionTrack(await getWatchPageCaptionTracks(videoId, preferredLang), preferredLang);
-      cues = fallbackTrack ? await downloadTranscript(fallbackTrack) : [];
+    const primaryTrack = res.ok ? selectCaptionTrack(getCaptionTracks(await res.json()), preferredLang) : null;
+    cues = primaryTrack ? await downloadTranscript(primaryTrack) : [];
+    if (!cues.length) {
+      const track = selectCaptionTrack(await getWatchPageCaptionTracks(videoId, preferredLang), preferredLang);
+      cues = track ? await downloadTranscript(track) : [];
     }
+  }
+  if (!cues.length) return { status: "unavailable", cues: [] };
+  transcriptCache.set(cacheKey, cues);
+  // A cache write failure must not discard subtitles we have already paid for.
+  try { await writeTranscriptCache(videoId, preferredLang, cues); }
+  catch { console.error("Transcript cache write failed; returning cues for browser persistence.", { videoId }); }
+  return { status: "completed", cues };
+}
 
-    if (cues.length > 0) {
-      transcriptCache.set(cacheKey, cues);
-    }
-
-    return cues;
-  } catch (err) {
-    console.error(`fetchYouTubeTranscript error for ${videoId}:`, err);
+/** Search enrichment is best-effort and must not hold a serverless function open. */
+export async function fetchYouTubeTranscript(videoId: string, preferredLang = "de"): Promise<SubtitleCue[]> {
+  try {
+    const result = await getTranscriptResult(videoId, preferredLang);
+    return result.status === "completed" ? result.cues : [];
+  } catch {
     return [];
   }
 }

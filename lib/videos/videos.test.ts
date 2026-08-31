@@ -9,7 +9,7 @@ import {
   findVideosForWord,
   findVideosForBook,
 } from "./data/index.ts";
-import { fetchYouTubeTranscript, normalizeSubtitleCues } from "./youtubeTranscript.ts";
+import { normalizeSubtitleCues } from "./youtubeTranscript.ts";
 import { inferVideoCategory, inferVideoLevel } from "./youtubeSearch.ts";
 
 test("videos dataset contains German and English videos", () => {
@@ -57,15 +57,6 @@ test("findVideosForBook finds relevant videos for book titles", () => {
   assert.ok(travelVideos.length > 0);
 });
 
-test("fetchYouTubeTranscript parses timed subtitle cues for valid video", async () => {
-  const cues = await fetchYouTubeTranscript("dC6ZGLzdaTs", "de");
-  assert.ok(Array.isArray(cues));
-  if (cues.length > 0) {
-    assert.ok(cues[0].start >= 0);
-    assert.ok(cues[0].end > cues[0].start);
-    assert.ok(cues[0].text.length > 0);
-  }
-});
 
 test("normalizes overlapping YouTube caption durations", () => {
   const cues = normalizeSubtitleCues([
