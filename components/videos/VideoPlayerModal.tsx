@@ -16,7 +16,6 @@ import { analyzeSelection, getAiHeaders } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, getLocalDiscussHistory, saveLocalAiAnalysis, saveLocalDiscussHistory } from "@/lib/db/local";
 import { sbGetCachedAnalysis, sbGetCachedWord, sbGetDiscussHistory, sbSaveCachedAnalysis, sbSaveCachedWord, sbSaveDiscussHistory } from "@/lib/db/supabase";
-import { getFastWordCache, saveFastWordCache, type FastWordInfo } from "@/lib/ai/fastWord";
 
 declare global {
   interface Window {
@@ -92,7 +91,6 @@ export function VideoPlayerModal({
   const [panelSelection, setPanelSelection] = useState<{ cueIndex: number; text: string } | null>(null);
   const [panelAnalysis, setPanelAnalysis] = useState<AiAnalysis | null>(null);
   const [isPanelLoading, setIsPanelLoading] = useState(false);
-  const [hoveredWord, setHoveredWord] = useState<{ key: string; info: FastWordInfo | null; loading: boolean } | null>(null);
   const [isVideoFullscreen, setIsVideoFullscreen] = useState(false);
   const [overlayPortalTarget, setOverlayPortalTarget] = useState<HTMLElement | null>(
     () => (typeof document === "undefined" ? null : document.body),
@@ -508,48 +506,6 @@ export function VideoPlayerModal({
     [targetLanguage, nativeLanguage]
   );
 
-  const hoverWordRequests = useRef(new Set<string>());
-  const handleWordHover = useCallback(async (rawWord: string, contextSentence: string) => {
-    const cleanWord = rawWord.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
-    if (!cleanWord || cleanWord.length < 2) return;
-    const key = makeAiCacheKey("word", cleanWord, targetLanguage, nativeLanguage);
-    const cached = getFastWordCache(cleanWord, targetLanguage, nativeLanguage);
-    if (cached) {
-      setHoveredWord({ key, info: cached, loading: false });
-      return;
-    }
-    setHoveredWord({ key, info: null, loading: true });
-    if (hoverWordRequests.current.has(key)) return;
-    hoverWordRequests.current.add(key);
-    try {
-      const response = await fetch("/api/ai/fast-word", {
-        method: "POST",
-        headers: await getAiHeaders(),
-        body: JSON.stringify({
-          word: cleanWord,
-          sentence: contextSentence || cleanWord,
-          nativeLanguage,
-          targetLanguage,
-        }),
-      });
-      const info = await response.json() as FastWordInfo & { error?: string };
-      if (!response.ok) throw new Error(info.error || "Fast word lookup failed");
-      saveFastWordCache(cleanWord, targetLanguage, nativeLanguage, info);
-      setHoveredWord((current) => current?.key === key ? { key, info, loading: false } : current);
-    } finally {
-      hoverWordRequests.current.delete(key);
-    }
-  }, [nativeLanguage, targetLanguage]);
-
-  function formatHoveredWord(info: FastWordInfo) {
-    const headword = info.partOfSpeech === "noun" && info.article ? info.article + " " + info.word : info.word;
-    const forms = info.partOfSpeech === "verb" && info.verbForms?.length === 3
-      ? info.verbForms.join(" · ")
-      : info.partOfSpeech === "noun" && info.plural
-        ? "мн.ч.: " + info.plural
-        : info.baseForm;
-    return { headword, forms, shortInfo: info.shortInfo };
-  }
   // Jump to cue timestamp
   const handleSeekToCue = (startSec: number) => {
     if (playerRef.current && typeof playerRef.current.seekTo === "function") {
@@ -807,6 +763,8 @@ export function VideoPlayerModal({
           key={idx}
           type="button"
           className={`sub-interactive-word ${isDragged ? "is-drag-selected" : ""}`}
+          data-word-text={token}
+          data-word-context={text}
           data-video-cue-index={cueIndex}
           data-video-token-index={idx}
           onPointerDown={(event) => {
@@ -831,19 +789,9 @@ export function VideoPlayerModal({
             }
             void handleWordTap(token, text);
           }}
-          onMouseEnter={() => { void handleWordHover(token, text); }}
-          onMouseLeave={() => setHoveredWord(null)}
           aria-label={`Перевод и разбор слова: ${token}`}
         >
           {token}
-          {hoveredWord?.key === makeAiCacheKey("word", token.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, ""), targetLanguage, nativeLanguage) && (
-            <span className="sub-word-tooltip" role="status">
-              {hoveredWord.loading ? "Переводим…" : hoveredWord.info ? (() => {
-                const formatted = formatHoveredWord(hoveredWord.info);
-                return <>{formatted.headword}<br />{hoveredWord.info.translation}{formatted.forms && <><br /><small>{formatted.forms}</small></>}{formatted.shortInfo && <><br /><small>{formatted.shortInfo}</small></>}</>;
-              })() : "Перевод недоступен"}
-            </span>
-          )}
         </button>
       );
     });

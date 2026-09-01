@@ -830,10 +830,28 @@
   font-size: 13px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+  pointer-events: none;
 }
 
-.quick-word-preview strong { color: var(--accent); }
-.quick-word-preview small { display: block; opacity: 0.75; margin-top: 4px; }
+.quick-word-preview strong {
+  display: block;
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.quick-word-preview-translation {
+  margin-top: 2px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.quick-word-preview small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
 
 .discuss-learning-main {
   display: inline-flex;
