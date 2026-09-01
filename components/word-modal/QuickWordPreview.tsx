@@ -11,6 +11,7 @@ import {
 
 const WORD_SELECTOR = ".sub-interactive-word";
 const HOVER_DELAY_MS = 1000;
+const pendingLookups = new Map<string, Promise<FastWordInfo>>();
 
 type Preview = {
   word: string;
@@ -40,6 +41,35 @@ function previewHeadword(info: FastWordInfo) {
     : info.word;
 }
 
+async function lookupFastWord(params: {
+  word: string;
+  sentence: string;
+  nativeLanguage: string;
+  targetLanguage: string;
+}) {
+  const key = params.word.toLocaleLowerCase() + ":" + params.targetLanguage + ":" + params.nativeLanguage;
+  const existing = pendingLookups.get(key);
+  if (existing) return existing;
+
+  const request = (async () => {
+    const response = await fetch("/api/ai/fast-word", {
+      method: "POST",
+      headers: await getAiHeaders(),
+      body: JSON.stringify(params),
+    });
+    const info = await response.json() as FastWordInfo & { error?: string };
+    if (!response.ok) throw new Error(info.error || "Fast word lookup failed");
+    saveFastWordCache(params.word, params.targetLanguage, params.nativeLanguage, info);
+    return info;
+  })();
+  pendingLookups.set(key, request);
+  try {
+    return await request;
+  } finally {
+    pendingLookups.delete(key);
+  }
+}
+
 export function QuickWordPreview({
   nativeLanguage,
   targetLanguage,
@@ -55,17 +85,14 @@ export function QuickWordPreview({
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let anchor: HTMLElement | null = null;
-    let controller: AbortController | null = null;
 
-    const cancelPending = () => {
+    const cancelTimer = () => {
       clearTimeout(timer);
       timer = undefined;
-      controller?.abort();
-      controller = null;
     };
 
     const close = () => {
-      cancelPending();
+      cancelTimer();
       requestId.current++;
       anchor = null;
       setPreview(null);
@@ -90,30 +117,19 @@ export function QuickWordPreview({
       }
 
       const id = ++requestId.current;
-      const requestController = new AbortController();
-      controller = requestController;
       setPreview({ word, rect, loading: true });
 
       try {
-        const response = await fetch("/api/ai/fast-word", {
-          method: "POST",
-          headers: await getAiHeaders(),
-          body: JSON.stringify({
-            word,
-            sentence,
-            nativeLanguage,
-            targetLanguage: language,
-          }),
-          signal: requestController.signal,
+        const info = await lookupFastWord({
+          word,
+          sentence,
+          nativeLanguage,
+          targetLanguage: language,
         });
-        const info = await response.json() as FastWordInfo & { error?: string };
-        if (!response.ok) throw new Error(info.error || "Fast word lookup failed");
-        saveFastWordCache(word, language, nativeLanguage, info);
         if (id === requestId.current && element === anchor) {
           setPreview({ word, rect, loading: false, info });
         }
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return;
+      } catch {
         if (id === requestId.current && element === anchor) {
           setPreview({
             word,
@@ -122,8 +138,6 @@ export function QuickWordPreview({
             error: "Перевод недоступен",
           });
         }
-      } finally {
-        if (controller === requestController) controller = null;
       }
     };
 

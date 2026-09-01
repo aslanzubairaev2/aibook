@@ -13,12 +13,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Word and languages are required." }, { status: 400 });
   }
 
-  const cached = await sbGetFastWordCache(word, body.targetLanguage, body.nativeLanguage);
+  const cachedPromise = sbGetFastWordCache(word, body.targetLanguage, body.nativeLanguage);
+  const clientKey = req.headers.get("x-gemini-key")?.trim() || "";
+  const cached = await cachedPromise;
   if (cached) return NextResponse.json(cached, { headers: { "Cache-Control": "private, max-age=300" } });
 
   let apiKey: string;
   try {
-    apiKey = await getApiKeyForRequest(req);
+    apiKey = clientKey || await getApiKeyForRequest(req);
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Access Denied" }, { status: 403 });
   }
