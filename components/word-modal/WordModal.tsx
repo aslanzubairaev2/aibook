@@ -223,9 +223,10 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
               const translation = typeof exItem === "string" ? "" : exItem.translation;
               const tokens = splitIntoTokens(text);
               return (
-                <div key={i} className="example-item" style={{ flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
-                  <div style={{ display: "flex", gap: "8px", width: "100%", alignItems: "flex-start" }}>
-                    <span style={{ flex: 1 }}>
+                <div key={i} className="example-item">
+                  <div className="example-main">
+                    <div className="example-copy">
+                      <div className="example-text">
                       {tokens.map((token, tokIdx) => {
                         const norm = normalizeToken(token);
                         if (!norm) return <span key={tokIdx}>{token}</span>;
@@ -243,8 +244,10 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
                           </span>
                         );
                       })}
-                    </span>
-                    <SpeakButton text={text} lang={lang} size={20} />
+                      </div>
+                      {translation && <div className="example-translation">{translation}</div>}
+                    </div>
+                    <SpeakButton text={text} lang={lang} size={14} />
                     {onDiscuss && (
                       <button
                         type="button"
@@ -264,24 +267,11 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
                         aria-label="Добавить пример в карточки"
                         title="Добавить пример в карточки"
                         onClick={() => onAddExample(text, translation)}
-                        style={{ flexShrink: 0 }}
                       >
                         <Plus size={14} />
                       </button>
                     )}
                   </div>
-                  {translation && (
-                    <div style={{ 
-                      paddingLeft: "24px", 
-                      color: "rgba(240, 230, 211, 0.45)", 
-                      fontSize: "13px",
-                      fontStyle: "italic",
-                      marginTop: "-2px",
-                      lineHeight: 1.4
-                    }}>
-                      {translation}
-                    </div>
-                  )}
                 </div>
               );
             })}
