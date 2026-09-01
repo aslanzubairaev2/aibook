@@ -269,7 +269,6 @@ export function DiscussAiModal({
         learnerLevel: learnerLevel.summary,
         wordProfile,
         homeworkContext,
-<<<<<<< HEAD
         grammarContext: grammarContextRef.current,
         history: previousMessages,
         message: fullText,
@@ -280,16 +279,6 @@ export function DiscussAiModal({
       const nextMessages = [...history, response];
       latestMessagesRef.current = nextMessages;
       onMessagesChange(nextMessages);
-=======
-        grammarContext: grammarContextRef.current,
-        history: messages,
-        message: fullText,
-      });
-      if (response.grammarPatterns?.length) {
-        saveGrammarPatterns(targetLanguage, response.grammarPatterns);
-      }
-      onMessagesChange([...history, response]);
->>>>>>> dadf45a (feat(ai-discuss): improve structural explanations and track grammar context)
     } catch {
       const nextMessages: DiscussMessage[] = [
         ...history,
