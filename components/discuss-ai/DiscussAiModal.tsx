@@ -83,6 +83,10 @@ const ERROR_TEXT = "Не получилось связаться с AI. Попр
 const QUOTE_LABEL = "Цитировать";
 const FORMS_ACTION_LABEL = "Формы слова";
 
+// Google's published effective rate for Gemini 3.5 Transcribe Live is about
+// $0.009 per minute (audio input plus transcript output).
+const GEMINI_TRANSCRIBE_USD_PER_MINUTE = 0.009;
+
 export function DiscussAiModal({
   isOpen,
   mode,
@@ -511,14 +515,7 @@ export function DiscussAiModal({
             <Send size={17} />
           </button>
           <div className="discuss-dictation-status">
-            <span role="status">
-              {!dictation.supported ? "Диктовка недоступна в этом браузере." :
-                dictation.phase === "recording" ? `Запись ${dictation.seconds} / 60 с · нажмите стоп для распознавания` :
-                dictation.phase === "requesting" ? "Ожидаю доступ к микрофону…" :
-                dictation.phase === "transcribing" ? "Gemini распознаёт… Отмена не отменяет расход квоты." :
-                "Gemini · до 60 с · аудио отправляется Google"}
-              {!dictation.busy && dictation.submittedSeconds > 0 && ` · сегодня на устройстве: ${Math.ceil(dictation.submittedSeconds)} с`}
-            </span>
+            <span role="status">Gemini Transcribe {Math.ceil(dictation.phase === "recording" ? dictation.seconds : dictation.submittedSeconds)} с: ~${((Math.max(dictation.seconds, dictation.submittedSeconds) / 60) * GEMINI_TRANSCRIBE_USD_PER_MINUTE).toFixed(4)}</span>
             {dictation.busy && <button type="button" onClick={dictation.cancel}>Отмена</button>}
           </div>
           {dictation.error && <div className="discuss-dictation-error" role="alert">{dictation.error}</div>}
