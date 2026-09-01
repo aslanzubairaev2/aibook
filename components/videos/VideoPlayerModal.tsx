@@ -831,6 +831,8 @@ export function VideoPlayerModal({
             }
             void handleWordTap(token, text);
           }}
+          onMouseEnter={() => { void handleWordHover(token, text); }}
+          onMouseLeave={() => setHoveredWord(null)}
           aria-label={`Перевод и разбор слова: ${token}`}
         >
           {token}
