@@ -556,6 +556,7 @@ export async function sbUpsertLessonProgress(entry: DbUserLessonProgress): Promi
 // ─── AI Dictionary Cache ──────────────────────────────────────────────────────
 
 import type { AiAnalysis } from "../types";
+import type { FastWordInfo } from "../ai/fastWord";
 
 export async function sbGetCachedWord(
   word: string,
@@ -633,6 +634,46 @@ export async function sbSaveCachedAnalysis(cacheKey: string, selectionType: stri
 
   if (error) {
     console.error("sbSaveCachedAnalysis:", error.message);
+    return false;
+  }
+  return true;
+}
+
+export async function sbGetFastWordCache(
+  word: string,
+  targetLanguage: string,
+  nativeLanguage: string,
+): Promise<FastWordInfo | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("ai_fast_word_cache")
+    .select("response")
+    .eq("word_lower", word.toLowerCase().trim())
+    .eq("target_language", targetLanguage)
+    .eq("native_language", nativeLanguage)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data.response as FastWordInfo;
+}
+
+export async function sbSaveFastWordCache(
+  word: string,
+  targetLanguage: string,
+  nativeLanguage: string,
+  response: FastWordInfo,
+): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from("ai_fast_word_cache")
+    .upsert({
+      word_lower: word.toLowerCase().trim(),
+      target_language: targetLanguage,
+      native_language: nativeLanguage,
+      response,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "word_lower,target_language,native_language" });
+  if (error) {
+    console.error("sbSaveFastWordCache:", error.message);
     return false;
   }
   return true;
