@@ -276,6 +276,26 @@ export type AiAnalysis = {
 /** "homework" and "audiobook" are AI-discussion modes alongside the three selection types — neither is a selection kind, so kept separate from SelectionType rather than widening it. */
 export type AiMode = SelectionType | "homework" | "audiobook";
 
+/**
+ * A grammar pattern the AI identified in its explanation. Accumulated across
+ * discussions so the tutor can reference previously explained constructions.
+ */
+export type GrammarPattern = {
+  patternId: string;
+  patternLabel: string;
+};
+
+/**
+ * A grammar pattern the learner has already encountered in a past AI
+ * explanation, stored locally and passed back into the prompt so the tutor
+ * can say "remember, the verb always sits in second position?" instead of
+ * re-explaining from scratch.
+ */
+export type GrammarEncounter = GrammarPattern & {
+  firstSeenAt: string;
+  count: number;
+};
+
 export type DiscussContentPart = {
   type: "text" | "learning";
   text: string;
@@ -308,6 +328,11 @@ export type DiscussMessage = {
    */
   suggestions?: string[];
   actions?: DiscussAction[];
+  /**
+   * Grammar patterns the tutor identified in this explanation. Stored locally
+   * and fed back into later prompts as "patterns this learner has seen before".
+   */
+  grammarPatterns?: GrammarPattern[];
 };
 
 /**

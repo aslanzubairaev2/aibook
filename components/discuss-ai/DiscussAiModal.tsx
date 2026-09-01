@@ -6,6 +6,7 @@ import { useGeminiDictation } from "@/lib/audio/useGeminiDictation";
 import { discussWithAi } from "@/lib/ai/discuss";
 import { INITIAL_DISCUSS_REQUEST } from "@/lib/ai/buildDiscussPrompt";
 import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
+import { loadGrammarContext, saveGrammarPatterns } from "@/lib/ai/grammarContext";
 import { normalizeToken, splitIntoTokens } from "@/lib/selector/text";
 import { discussHotkey, isTypingTarget } from "@/lib/srs/trainerHotkeys";
 import { SpeakButton } from "@/components/ui/SpeakButton";
@@ -17,6 +18,7 @@ import type {
   DiscussContentPart,
   DiscussMessage,
   DiscussWordProfile,
+  GrammarEncounter,
   PosTag,
 } from "@/lib/types";
 
@@ -117,6 +119,7 @@ export function DiscussAiModal({
   // pitched at the right level instead of being generic.
   const [learnerLevel, setLearnerLevel] = useState<{ ready: boolean; summary?: string }>({ ready: false });
   const [grammarFor, setGrammarFor] = useState<{ word: string; posTag: PosTag } | null>(null);
+  const grammarContextRef = useRef<GrammarEncounter[]>([]);
   const initialSentRef = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
   const latestSelectionRef = useRef("");
@@ -144,6 +147,8 @@ export function DiscussAiModal({
         if (!cancelled) setLearnerLevel({ ready: true });
       }
     })();
+    // Load grammar context synchronously from localStorage.
+    grammarContextRef.current = loadGrammarContext(targetLanguage);
     return () => { cancelled = true; };
   }, [isOpen, targetLanguage]);
 
@@ -206,9 +211,13 @@ export function DiscussAiModal({
         learnerLevel: learnerLevel.summary,
         wordProfile,
         homeworkContext,
+        grammarContext: grammarContextRef.current,
         history: [],
         message: INITIAL_DISCUSS_REQUEST,
       });
+      if (response.grammarPatterns?.length) {
+        saveGrammarPatterns(targetLanguage, response.grammarPatterns);
+      }
       if (latestMessagesRef.current.length === 0) {
         latestMessagesRef.current = [response];
         onMessagesChange([response]);
@@ -260,12 +269,27 @@ export function DiscussAiModal({
         learnerLevel: learnerLevel.summary,
         wordProfile,
         homeworkContext,
+<<<<<<< HEAD
+        grammarContext: grammarContextRef.current,
         history: previousMessages,
         message: fullText,
       });
+      if (response.grammarPatterns?.length) {
+        saveGrammarPatterns(targetLanguage, response.grammarPatterns);
+      }
       const nextMessages = [...history, response];
       latestMessagesRef.current = nextMessages;
       onMessagesChange(nextMessages);
+=======
+        grammarContext: grammarContextRef.current,
+        history: messages,
+        message: fullText,
+      });
+      if (response.grammarPatterns?.length) {
+        saveGrammarPatterns(targetLanguage, response.grammarPatterns);
+      }
+      onMessagesChange([...history, response]);
+>>>>>>> dadf45a (feat(ai-discuss): improve structural explanations and track grammar context)
     } catch {
       const nextMessages: DiscussMessage[] = [
         ...history,

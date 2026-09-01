@@ -184,4 +184,55 @@ describe("reading the model's answer back", () => {
     const empty = parseDiscussReply({ contentParts: [] }, "");
     assert.match(empty.contentParts?.[0].text ?? "", /Спросите ещё раз/);
   });
+
+  test("grammar patterns are parsed and capped", () => {
+    const message = parseDiscussReply(
+      {
+        contentParts: [{ type: "text", text: "ok" }],
+        grammarPatterns: [
+          { patternId: "v2-word-order", patternLabel: "Глагол на 2-м месте" },
+          { patternId: "", patternLabel: "Пустой id" },
+          { patternId: "akkusativ-direct-object", patternLabel: "Винительный падеж (кого? что?)" },
+        ],
+      },
+      "",
+    );
+    assert.deepEqual(message.grammarPatterns, [
+      { patternId: "v2-word-order", patternLabel: "Глагол на 2-м месте" },
+      { patternId: "akkusativ-direct-object", patternLabel: "Винительный падеж (кого? что?)" },
+    ]);
+  });
 });
+
+describe("grammar context and structural breakdown in the prompt", () => {
+  test("grammar context lists previously encountered patterns", () => {
+    const prompt = buildDiscussSystemPrompt({
+      ...BASE,
+      grammarContext: [
+        { patternId: "v2-inversion", patternLabel: "Глагол на 2-м месте", firstSeenAt: "2026-01-01", count: 4 },
+        { patternId: "perfekt-past", patternLabel: "Прошедшее время Perfekt", firstSeenAt: "2026-01-02", count: 1 },
+      ],
+    });
+    assert.match(prompt, /Grammar patterns this learner has already encountered/);
+    assert.match(prompt, /"Глагол на 2-м месте" \(seen several times\)/);
+    assert.match(prompt, /"Прошедшее время Perfekt"/);
+    assert.match(prompt, /you may briefly reference the earlier explanation/);
+  });
+
+  test("sentence mode demands contrastive word order and anti-examples", () => {
+    const prompt = buildDiscussSystemPrompt({
+      ...BASE,
+      mode: "sentence",
+      selectedText: "Samstags treffe ich oft meine Freunde.",
+      sentence: "Samstags treffe ich oft meine Freunde.",
+    });
+    assert.match(prompt, /STRUCTURAL BREAKDOWN/);
+    assert.match(prompt, /Show two versions of the sentence/);
+    assert.match(prompt, /Break the sentence into chunks and for each chunk say IN PLAIN WORDS what role it plays/);
+    assert.match(prompt, /Show ONE anti-example/);
+    assert.match(prompt, /Concrete substitutions you MUST use/);
+    assert.match(prompt, /Instead of "Akkusativ"/);
+    assert.match(prompt, /Instead of "инверсия"/);
+  });
+});
+

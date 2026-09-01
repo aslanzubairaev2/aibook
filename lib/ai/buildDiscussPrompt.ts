@@ -25,6 +25,8 @@ import type {
   DiscussFamiliarity,
   DiscussMessage,
   DiscussWordProfile,
+  GrammarEncounter,
+  GrammarPattern,
 } from "@/lib/types";
 
 export type DiscussPromptInput = {
@@ -45,6 +47,11 @@ export type DiscussPromptInput = {
    * summary of it.
    */
   homeworkContext?: { instruction: string; items: string[] };
+  /**
+   * Grammar patterns the learner has encountered in previous AI discussions.
+   * Used to let the tutor reference earlier explanations.
+   */
+  grammarContext?: GrammarEncounter[];
 };
 
 /**
@@ -93,7 +100,31 @@ function describeLearner(input: DiscussPromptInput): string {
   // word, not about their own statistics.
   lines.push("Never mention the deck, the schedule, review counts, or how hard you think this is for them. Just adjust what you say.");
 
+  // Grammar context: patterns the learner has already encountered.
+  if (input.grammarContext && input.grammarContext.length > 0) {
+    lines.push(formatGrammarContext(input.grammarContext));
+  }
+
   return lines.join("\n");
+}
+
+const MAX_GRAMMAR_IN_PROMPT = 15;
+
+function formatGrammarContext(encounters: GrammarEncounter[]): string {
+  if (encounters.length === 0) return "";
+
+  const top = [...encounters]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, MAX_GRAMMAR_IN_PROMPT);
+
+  const items = top
+    .map((e) => `"${e.patternLabel}"${e.count >= 3 ? " (seen several times)" : ""}`)
+    .join(", ");
+
+  return (
+    `Grammar patterns this learner has already encountered in previous explanations: ${items}.\n` +
+    `When one of these patterns appears in the current item, you may briefly reference the earlier explanation ("you've seen this before: …") instead of explaining from scratch. But always include a fresh example — never just name the pattern.`
+  );
 }
 
 // ─── What a useful answer contains ───────────────────────────────────────────
@@ -112,8 +143,20 @@ For a FUNCTION word: three or four sentences showing the positions it takes.`;
 const MODE_FOCUS: Record<DiscussPromptInput["mode"], string> = {
   word: `They tapped a single word. Give the meaning in one plain line, then spend the rest of the answer on using it.
 ${WORD_PHRASES}`,
-  phrase: `They tapped a phrase. Say what it means as a whole and when a person would actually say it (situation, tone, who says it to whom). Show two or three variations of it they could use themselves, and one natural reply to it. Only take it apart word by word if a part is surprising.`,
-  sentence: `They tapped a whole sentence. Give a natural translation first, then show the pattern it is built on as something reusable: the same frame with two or three different fillings, so they can say their own version of it. Point out only what would actually trip them up.`,
+  phrase: `They tapped a phrase. Say what it means as a whole and when a person would actually say it (situation, tone, who says it to whom). Show two or three variations of it they could use themselves, and one natural reply to it. Only take it apart word by word if a part is surprising.
+Then break down the internal structure of the phrase in plain language:
+- Name the role of each piece WITHOUT grammar jargon: instead of "adverb" say "this word tells you WHEN / HOW / WHERE something happens"; instead of "accusative" say "this is the answer to 'whom?' or 'what?'".
+- If the phrase uses a word order that would confuse a speaker of the learner's native language, show the "normal" order side by side with the phrase's order and explain why the speaker chose this one (emphasis, habit, rule).`,
+  sentence: `They tapped a whole sentence. Give a natural translation first, then show the pattern it is built on as something reusable: the same frame with two or three different fillings, so they can say their own version of it.
+STRUCTURAL BREAKDOWN — do this for every sentence:
+1. Show two versions of the sentence — the one they tapped AND the "neutral" word order (if they differ), side by side, so the learner can see what moved and why.
+2. Break the sentence into chunks and for each chunk say IN PLAIN WORDS what role it plays. Never just name a grammar term; instead say what question the chunk answers:
+   - "кого? что?" → this chunk tells you WHOM or WHAT is affected (instead of saying "accusative").
+   - "когда? как часто?" → this chunk tells you WHEN or HOW OFTEN (instead of saying "adverb" or "temporal expression").
+   - "кто? что делает?" → this is WHO does the action and WHAT they do (instead of "subject" and "predicate").
+   If you DO mention a grammar term because it is genuinely useful for the learner to know, ALWAYS follow it with a one-sentence plain-language explanation in parentheses. For example: "Akkusativ (это падеж, который отвечает на вопрос «кого? что?» — он показывает, на кого направлено действие)".
+3. Show ONE anti-example: a sentence built the way a speaker of the learner's native language would instinctively say it, mark it with ✗, and briefly explain why it does not work. Then show the correct version with ✓.
+Point out only what would actually trip them up — skip anything obvious.`,
   homework: `They opened help on one exercise from their own paper homework, which they must complete themselves — you are a tutor talking them through the rule, not a solver. Explain in plain words what the exercise is asking for and which grammatical pattern it is testing, then demonstrate the pattern with ONE worked example built from words that do NOT appear anywhere in the exercise below. Do not go item by item through their exercise. If they ask a follow-up, answer it the same way: explain the rule further, never by completing one of their blanks.`,
   audiobook: `This is a chat about a whole audiobook, not a single word or sentence. Talk about the book itself: what it is about without spoiling the ending, what the narration is actually like (pace, accent, how hard the vocabulary is), and whether it suits their level. If they ask about a specific word or line, explain it briefly, but do not turn this into a vocabulary drill — it stays a conversation about the book and whether it is worth listening to.`,
 };
@@ -162,8 +205,16 @@ ${wantLine}
 
 HOW TO WRITE
 - Answer in ${nativeLanguage}, in short plain sentences, like a friend who speaks the language well. Never like a textbook.
-- Do NOT explain with grammar terminology. Words like "subject", "predicate", "accusative", "separable prefix", "auxiliary verb", "modal", "declension" mean nothing to this learner on their own. If a term is genuinely worth knowing, SHOW the thing with an example first, then name it in a four-word aside — never the other way round, and never more than one term per answer.
+- Do NOT explain with grammar terminology. Words like "subject", "predicate", "accusative", "separable prefix", "auxiliary verb", "modal", "declension" mean nothing to this learner on their own. If a term is genuinely worth knowing, SHOW the thing with an example first, then name it in a four-word aside AND immediately explain what this term means in one plain sentence in parentheses — never the other way round, and never more than one or two terms per answer.
+  Concrete substitutions you MUST use:
+    • Instead of "Akkusativ" → say "кого? что?" or "this form answers the question 'whom? what?'" — and if you do name "Akkusativ", add "(это падеж, который отвечает на вопрос «кого? что?»)".
+    • Instead of "наречие" → say "слово, которое говорит КОГДА / КАК / ГДЕ что-то происходит".
+    • Instead of "инверсия" → say "глагол и подлежащее меняются местами".
+    • Instead of "подлежащее" → say "тот, кто делает действие" or "кто?".
+    • Instead of "сказуемое" → say "действие" or "что делает?".
+    • Instead of just "Perfekt" → say "прошедшее время, которое используют в разговорной речи" and if you name "Perfekt", add "(так немцы говорят о прошлом в обычной жизни)".
 - Describe how a rule behaves in ordinary words ("вторая часть уходит в конец: 'ich räume mein Zimmer auf'") instead of naming it.
+- When a word-order rule is at play, ALWAYS show a contrastive pair: the "normal/neutral" order AND the order used in the tapped text, side by side, so the learner can see what moved and why.
 - Do not lecture about spelling, etymology, or exceptions nobody hits.
 - Be concrete and generous with examples; be brief with theory. Four to six example sentences is the right size for a normal answer, fewer if the learner is struggling with this item.
 - Every example must be a whole sentence a real person would say, and must carry a translation.
@@ -191,8 +242,10 @@ Return ONLY valid JSON, no markdown:
     { "type": "learning", "text": "sentence in ${targetLanguage}", "translation": "its translation in ${nativeLanguage}" }
   ],
   "suggestions": ["short question in ${nativeLanguage}", "...", "..."],
-  "actions": [{ "kind": "conjugation", "label": "Спряжение …", "word": "dictionary form" }]
+  "actions": [{ "kind": "conjugation", "label": "Спряжение …", "word": "dictionary form" }],
+  "grammarPatterns": [{ "patternId": "short-kebab-id", "patternLabel": "plain-language name of the pattern in ${nativeLanguage}" }]
 }
+"grammarPatterns": list the 1-3 grammar constructions you explained or relied on in this answer. Each has a stable short "patternId" (lowercase, kebab-case, language-agnostic, e.g. "v2-word-order", "perfekt-past", "separable-prefix") and a "patternLabel" in ${nativeLanguage} (e.g. "Глагол всегда на 2-м месте"). Return an empty list if no grammar concept was central to the answer.
 Every ${targetLanguage} word, phrase or sentence you show MUST be its own "learning" part with a filled-in "translation" — that is what makes it tappable and speakable in the app. Never put ${targetLanguage} examples inside a "text" part. Keep "text" parts short: they are the connective tissue between examples, not paragraphs.
 Do not suggest changing the learner's source text. No markdown, no bullet characters, no headings.`;
 }
@@ -261,10 +314,22 @@ export function parseDiscussReply(value: unknown, rawText: string): DiscussMessa
     .filter((action): action is DiscussAction => action !== null)
     .slice(0, MAX_ACTIONS);
 
+  const grammarPatterns = (Array.isArray(source.grammarPatterns) ? source.grammarPatterns : [])
+    .map((gp): GrammarPattern | null => {
+      const g = (gp ?? {}) as Record<string, unknown>;
+      const patternId = asString(g.patternId);
+      const patternLabel = asString(g.patternLabel);
+      if (!patternId || !patternLabel) return null;
+      return { patternId, patternLabel };
+    })
+    .filter((gp): gp is GrammarPattern => gp !== null)
+    .slice(0, 5);
+
   return {
     role: "model",
     contentParts,
     ...(suggestions.length > 0 ? { suggestions } : {}),
     ...(actions.length > 0 ? { actions } : {}),
+    ...(grammarPatterns.length > 0 ? { grammarPatterns } : {}),
   };
 }
