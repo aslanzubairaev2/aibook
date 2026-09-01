@@ -954,6 +954,18 @@
   opacity: 0.45;
 }
 
+.discuss-transcription-cost {
+  grid-column: 1 / -1;
+  justify-self: center;
+  margin-top: 1px;
+  color: rgba(240, 230, 211, 0.24);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  letter-spacing: 0.01em;
+}
+
 /* ─── Quote ──────────────────────────────────────────────────────────────── */
 .discuss-quote-bar {
   grid-column: 1 / -1;

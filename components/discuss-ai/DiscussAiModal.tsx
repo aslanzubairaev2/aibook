@@ -83,6 +83,10 @@ const ERROR_TEXT = "Не получилось связаться с AI. Попр
 const QUOTE_LABEL = "Цитировать";
 const FORMS_ACTION_LABEL = "Формы слова";
 
+// Google's published effective rate for Gemini 3.5 Transcribe Live is about
+// $0.009 per minute (audio input plus transcript output).
+const GEMINI_TRANSCRIBE_USD_PER_MINUTE = 0.009;
+
 export function DiscussAiModal({
   isOpen,
   mode,
@@ -105,6 +109,7 @@ export function DiscussAiModal({
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [transcriptionSeconds, setTranscriptionSeconds] = useState(0);
   const [quotedText, setQuotedText] = useState<string | null>(null);
   const [placeholderOverride, setPlaceholderOverride] = useState<string | null>(null);
   // Estimated from books read and deck size, locally — see lib/ai/userLevel.
@@ -118,6 +123,8 @@ export function DiscussAiModal({
   const interimRef = useRef("");
   const latestSelectionRef = useRef("");
   const placeholderTimerRef = useRef<any>(null);
+  const transcriptionStartedAtRef = useRef<number | null>(null);
+  const transcriptionTimerRef = useRef<number | null>(null);
   const latestMessagesRef = useRef(messages);
 
   useEffect(() => {
@@ -130,6 +137,10 @@ export function DiscussAiModal({
         clearTimeout(placeholderTimerRef.current);
       }
     };
+  }, []);
+
+  useEffect(() => () => {
+    if (transcriptionTimerRef.current !== null) window.clearInterval(transcriptionTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -202,10 +213,22 @@ export function DiscussAiModal({
     recognition.onstart = () => {
       setIsListening(true);
       interimRef.current = "";
+      transcriptionStartedAtRef.current = Date.now();
+      setTranscriptionSeconds(0);
+      transcriptionTimerRef.current = window.setInterval(() => {
+        const startedAt = transcriptionStartedAtRef.current;
+        if (startedAt !== null) setTranscriptionSeconds(Math.max(0, Math.ceil((Date.now() - startedAt) / 1000)));
+      }, 250);
     };
 
     recognition.onend = () => {
       setIsListening(false);
+      if (transcriptionTimerRef.current !== null) window.clearInterval(transcriptionTimerRef.current);
+      transcriptionTimerRef.current = null;
+      if (transcriptionStartedAtRef.current !== null) {
+        setTranscriptionSeconds(Math.max(0, Math.ceil((Date.now() - transcriptionStartedAtRef.current) / 1000)));
+      }
+      transcriptionStartedAtRef.current = null;
       const finalText = interimRef.current.trim();
       if (finalText) {
         void sendMessageRef.current(finalText);
@@ -601,6 +624,9 @@ export function DiscussAiModal({
           <button type="submit" disabled={!input.trim() || isSending} aria-label={SEND_LABEL}>
             <Send size={17} />
           </button>
+          <small className="discuss-transcription-cost" aria-label="Примерная стоимость транскрибации">
+            Gemini Transcribe {transcriptionSeconds} с: ~${((transcriptionSeconds / 60) * GEMINI_TRANSCRIBE_USD_PER_MINUTE).toFixed(4)}
+          </small>
         </form>
       </section>
 
