@@ -216,27 +216,30 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
               const translation = typeof exItem === "string" ? "" : exItem.translation;
               const tokens = splitIntoTokens(text);
               return (
-                <div key={i} className="example-item" style={{ flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
-                  <div style={{ display: "flex", gap: "8px", width: "100%", alignItems: "flex-start" }}>
+                <div key={i} className="example-item">
+                  <div className="example-main">
                     <span className="example-num">{i + 1}.</span>
-                    <span style={{ flex: 1 }}>
-                      {tokens.map((token, tokIdx) => {
-                        const norm = normalizeToken(token);
-                        if (!norm) return <span key={tokIdx}>{token}</span>;
-                        return (
-                          <span
-                            key={tokIdx}
-                            role="button"
-                            tabIndex={0}
-                            className="text-token"
-                            onClick={() => onWordTap?.(token, text)}
-                            onKeyDown={(e) => { if (e.key === "Enter") onWordTap?.(token, text); }}
-                          >
-                            {token}
-                          </span>
-                        );
-                      })}
-                    </span>
+                    <div className="example-copy">
+                      <div className="example-text">
+                        {tokens.map((token, tokIdx) => {
+                          const norm = normalizeToken(token);
+                          if (!norm) return <span key={tokIdx}>{token}</span>;
+                          return (
+                            <span
+                              key={tokIdx}
+                              role="button"
+                              tabIndex={0}
+                              className="text-token"
+                              onClick={() => onWordTap?.(token, text)}
+                              onKeyDown={(e) => { if (e.key === "Enter") onWordTap?.(token, text); }}
+                            >
+                              {token}
+                            </span>
+                          );
+                        })}
+                      </div>
+                      {translation && <div className="example-translation">{translation}</div>}
+                    </div>
                     <SpeakButton text={text} lang={lang} size={14} />
                     {onAddExample && translation && (
                       <button
@@ -245,24 +248,11 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
                         aria-label="Добавить пример в карточки"
                         title="Добавить пример в карточки"
                         onClick={() => onAddExample(text, translation)}
-                        style={{ flexShrink: 0 }}
                       >
                         <Plus size={14} />
                       </button>
                     )}
                   </div>
-                  {translation && (
-                    <div style={{ 
-                      paddingLeft: "24px", 
-                      color: "rgba(240, 230, 211, 0.45)", 
-                      fontSize: "13px",
-                      fontStyle: "italic",
-                      marginTop: "-2px",
-                      lineHeight: 1.4
-                    }}>
-                      {translation}
-                    </div>
-                  )}
                 </div>
               );
             })}
