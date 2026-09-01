@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { X, Loader2, AlertTriangle, Globe } from "lucide-react";
+import { X, AlertTriangle, Globe } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { fetchGrammar } from "@/lib/ai/grammar";
 import { makeGrammarCacheKey } from "@/lib/ai/cacheKeys";
@@ -110,6 +110,58 @@ function PetrovMatrix({ matrix, lang }: { matrix: GrammarMatrix; lang: string })
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function GrammarSkeleton({ detail, isVerb }: { detail: "brief" | "full"; isVerb: boolean }) {
+  if (detail === "full" && isVerb) {
+    return (
+      <div className="petrov-scroll grammar-skeleton-scroll">
+        <div className="grammar-skeleton grammar-skeleton-matrix" aria-hidden="true">
+          <div className="grammar-skeleton-matrix-head">
+            <span className="grammar-skeleton-block grammar-skeleton-corner" />
+            <span className="grammar-skeleton-block grammar-skeleton-heading" />
+            <span className="grammar-skeleton-block grammar-skeleton-heading" />
+            <span className="grammar-skeleton-block grammar-skeleton-heading" />
+          </div>
+          {Array.from({ length: 4 }, (_, row) => (
+            <div className="grammar-skeleton-matrix-row" key={row}>
+              <span className="grammar-skeleton-block grammar-skeleton-row-label" />
+              {Array.from({ length: 3 }, (_, cell) => (
+                <span className="grammar-skeleton-card" key={cell}>
+                  <span className="grammar-skeleton-block grammar-skeleton-line wide" />
+                  <span className="grammar-skeleton-block grammar-skeleton-line" />
+                  <span className="grammar-skeleton-block grammar-skeleton-line short" />
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const sectionCount = detail === "full" ? 3 : 2;
+  return (
+    <div className="grammar-skeleton" aria-hidden="true">
+      {Array.from({ length: sectionCount }, (_, section) => (
+        <div className="grammar-skeleton-section" key={section}>
+          <div className="grammar-skeleton-section-head">
+            <span className="grammar-skeleton-block grammar-skeleton-section-title" />
+            <span className="grammar-skeleton-block grammar-skeleton-section-caption" />
+          </div>
+          <div className="grammar-skeleton-list">
+            {Array.from({ length: detail === "full" ? 4 : 3 }, (_, row) => (
+              <div className="grammar-skeleton-list-row" key={row}>
+                <span className="grammar-skeleton-block grammar-skeleton-label" />
+                <span className="grammar-skeleton-block grammar-skeleton-form" />
+                <span className="grammar-skeleton-block grammar-skeleton-icon" />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -227,11 +279,12 @@ export function GrammarModal({ word, lemma, posTag, defaultLang, nativeLang, onC
           )}
 
           {loading && (
-            <div className="grammar-loading">
-              <Loader2 size={18} className="animate-spin" />
+            <div className="grammar-loading" role="status" aria-live="polite">
               <span>Строю таблицу…</span>
             </div>
           )}
+
+          {loading && <GrammarSkeleton detail={detail} isVerb={posTag === "verb"} />}
 
           {error && !loading && (
             <div className="grammar-error">
