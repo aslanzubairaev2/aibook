@@ -10,7 +10,7 @@
 import { GoogleGenAI, Type, type GenerateContentResponse } from "@google/genai";
 import { NextResponse } from "next/server";
 import { AI_CONFIG } from "@/lib/config";
-import type { AiMode, DiscussMessage, DiscussWordProfile } from "@/lib/types";
+import type { AiMode, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { parseModelJson } from "@/lib/ai/jsonResponse";
 import { buildDiscussSystemPrompt, parseDiscussReply } from "@/lib/ai/buildDiscussPrompt";
@@ -44,6 +44,17 @@ const RESPONSE_SCHEMA = {
           word: { type: Type.STRING },
         },
         required: ["kind", "label", "word"],
+      },
+    },
+    grammarPatterns: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          patternId: { type: Type.STRING },
+          patternLabel: { type: Type.STRING },
+        },
+        required: ["patternId", "patternLabel"],
       },
     },
   },
@@ -92,6 +103,7 @@ export async function POST(req: Request) {
     learnerLevel?: string;
     wordProfile?: DiscussWordProfile;
     homeworkContext?: { instruction: string; items: string[] };
+    grammarContext?: GrammarEncounter[];
     history: DiscussMessage[];
     message: string;
   };
@@ -107,6 +119,7 @@ export async function POST(req: Request) {
     learnerLevel: body.learnerLevel,
     wordProfile: body.wordProfile,
     homeworkContext: body.homeworkContext,
+    grammarContext: body.grammarContext,
   });
 
   const contents = [

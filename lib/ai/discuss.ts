@@ -1,4 +1,4 @@
-import type { AiMode, DiscussMessage, DiscussWordProfile } from "@/lib/types";
+import type { AiMode, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
 import { supabase } from "@/lib/db/supabase";
 import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
 
@@ -16,6 +16,8 @@ export type DiscussRequest = {
   wordProfile?: DiscussWordProfile;
   /** mode "homework" only: the exercise being discussed, blanks and all. */
   homeworkContext?: { instruction: string; items: string[] };
+  /** Grammar patterns previously encountered in AI discussions. */
+  grammarContext?: GrammarEncounter[];
   history: DiscussMessage[];
   message: string;
 };
