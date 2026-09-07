@@ -75,48 +75,78 @@ function buildFastQueue(verbs: DictionaryEntry[], modes: Set<QuizMode>): FastSte
   });
 }
 
+// Chrome's "continuous" recognition occasionally just goes quiet — no result,
+// no error, no `onend` — leaving the mic looking like it is still listening
+// while it has actually stopped delivering anything at all. Waiting this long
+// without any activity is treated as that silent death, not as the learner
+// simply not having spoken yet.
+const WATCHDOG_SILENCE_MS = 9000;
+const WATCHDOG_CHECK_MS = 3000;
+
 /**
- * Keeps a continuous recognizer alive for as long as the caller wants it —
- * the browser can end a "continuous" session on its own after a stretch of
- * silence well before every field has been said, so this restarts it behind
- * the scenes rather than leaving the mic looking like it stopped listening.
+ * Keeps a continuous recognizer alive for as long as the caller wants it:
+ * restarts it when the browser ends the "continuous" session on its own
+ * after a stretch of silence, and — separately — force-restarts it if it
+ * goes silent without even firing that end event, which happens often
+ * enough in practice that repeating a word louder never used to help.
  */
 function listenPersistently(lang: string, onFinal: (transcript: string) => void, onFatal: (message: string) => void) {
   let stopped = false;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let current: ReturnType<typeof startContinuousRecognition> = null;
+  let lastActivityAt = Date.now();
+
+  function touch() { lastActivityAt = Date.now(); }
+
+  function scheduleRestart(delay: number) {
+    if (restartTimer) return;
+    restartTimer = setTimeout(() => { restartTimer = null; if (!stopped) start(); }, delay);
+  }
 
   function start() {
     current = startContinuousRecognition(lang, {
-      onFinal,
+      onFinal: (t) => { touch(); onFinal(t); },
       onError: (message) => {
         if (stopped) return;
         if (message === "not-allowed" || message === "service-not-allowed") {
           stopped = true;
           onFatal("Доступ к микрофону запрещён — разрешите его в браузере.");
+          return;
         }
         // Other errors (network hiccups, "no-speech" already filtered out by
         // the recognizer itself) are left to onEnd's restart below.
+        touch();
       },
       onEnd: () => {
         if (stopped) return;
-        restartTimer = setTimeout(start, 150);
+        scheduleRestart(150);
       },
     });
-    if (!current) { stopped = true; onFatal("Голосовой ввод не поддерживается в этом браузере."); }
+    if (!current) { stopped = true; onFatal("Голосовой ввод не поддерживается в этом браузере."); return; }
+    touch();
   }
   start();
+
+  const watchdog = setInterval(() => {
+    if (stopped) return;
+    if (Date.now() - lastActivityAt > WATCHDOG_SILENCE_MS) {
+      // The session has gone quiet without telling us — force it back to
+      // life instead of leaving the mic looking like it's listening.
+      touch();
+      current?.stop();
+      scheduleRestart(300);
+    }
+  }, WATCHDOG_CHECK_MS);
 
   return {
     stop: () => {
       stopped = true;
+      clearInterval(watchdog);
       if (restartTimer) clearTimeout(restartTimer);
       current?.stop();
     },
   };
 }
-
-const CORRECT_FLASH_MS = 550;
 
 type PendingRecord = { stepKey: string; entryId: string; correct: boolean };
 
@@ -129,11 +159,11 @@ type PendingRecord = { stepKey: string; entryId: string; correct: boolean };
  * from field to field and word to word happens without the learner touching
  * anything.
  *
- * A correct step flashes green and moves on by itself — nothing to read, no
- * reason to wait. A wrong one shows the correct answer and *waits*: the
- * learner picks "Повторить" (try this word again) or "Далее" (accept it and
- * move on), or "Не знаю" at any point while still listening to reveal the
- * answer immediately instead of hunting for the right words.
+ * Nothing advances on its own — correct or wrong, the card waits. The
+ * learner reads it, then picks one of the same three round controls the
+ * rest of the app already uses: "Повторить" (try this word again),
+ * "Не знаю" (reveal the answer instead of hunting for words that were never
+ * coming), or, once there is a verdict, "Далее" (move on).
  */
 export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, onExit, onRecord }: Props) {
   const activeModes = useMemo(() => new Set(FAST_MODES.filter((m) => modes.has(m))), [modes]);
@@ -149,10 +179,10 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
   // start fresh for the very same step, without moving to the next one.
   const [restartNonce, setRestartNonce] = useState(0);
 
-  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // A wrong verdict is recorded only once the learner actually moves past it
-  // (advance()) — "Повторить" just discards this instead, so a retried-and-
-  // corrected word never double-counts as a mistake.
+  // A verdict is recorded only once the learner actually moves past it via
+  // "Далее" — "Повторить" discards it instead, so a retried-and-corrected
+  // word never double-counts, and nothing is written to progress before the
+  // learner has actually seen and accepted the result.
   const pendingRecordRef = useRef<PendingRecord | null>(null);
   // Published by the listening effect so the render's buttons can reach into
   // whichever recognizer session is currently live, without lifting all of
@@ -168,7 +198,8 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
     pendingRecordRef.current = null;
     if (pending) {
       onRecord?.(pending.entryId, pending.correct);
-      if (!pending.correct) setMistakes((m) => [...m, step]);
+      if (pending.correct) setCorrectCount((c) => c + 1);
+      else setMistakes((m) => [...m, step]);
     }
     setVerdict(null);
     setLiveResults([]);
@@ -234,15 +265,9 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
       setListening(false);
       setVerdict(pass ? "correct" : "wrong");
       setLiveResults(all);
-      if (pass) {
-        onRecord?.(step.entry.id, true);
-        setCorrectCount((c) => c + 1);
-        advanceTimerRef.current = setTimeout(advance, CORRECT_FLASH_MS);
-      } else {
-        // Recorded only once the learner actually moves past this card —
-        // "Повторить" discards it instead of committing a mistake.
-        pendingRecordRef.current = { stepKey: step.key, entryId: step.entry.id, correct: false };
-      }
+      // Recorded only once the learner actually moves past this card via
+      // "Далее" — see the pendingRecordRef comment above.
+      pendingRecordRef.current = { stepKey: step.key, entryId: step.entry.id, correct: pass };
     }
 
     function startGerman(translationResult: FastFieldResult | null) {
@@ -291,8 +316,8 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
       restart: () => {
         // Not gated on `cancelled` — grade() already set that the moment a
         // verdict was reached (correct *or* wrong), but "Повторить" must still
-        // work after a wrong grade. controllerRef itself is the real guard:
-        // it goes null the moment this effect instance actually tears down.
+        // work after one. controllerRef itself is the real guard: it goes
+        // null the moment this effect instance actually tears down.
         cancelled = true;
         handle?.stop();
         pendingRecordRef.current = null;
@@ -305,7 +330,7 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
       skip: () => {
         // Only ever invoked while still listening (the button that calls
         // this is hidden once a verdict exists), so `cancelled` is still
-        // false here — unlike restart(), no need to look past it.
+        // false here.
         cancelled = true;
         handle?.stop();
         const germanFilled = germanFields.map((f, i) => lastGermanResults[i] ?? emptyResult(f));
@@ -325,7 +350,6 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
       cancelled = true;
       handle?.stop();
       controllerRef.current = null;
-      if (advanceTimerRef.current) { clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step?.key, step && allFieldsOf(step)?.length, done, restartNonce]);
@@ -468,18 +492,38 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
           ) : null}
         </div>
 
-        {fields !== null && verdict !== "correct" && (
+        {/* Same round-icon-button language the rest of the app already uses
+            (reset progress, eye/camera FABs) — not a new button style. */}
+        {fields !== null && (
           <div className="fast-quiz-actions">
-            <button type="button" className="secondary-btn fast-quiz-action-btn" onClick={() => controllerRef.current?.restart()}>
-              <RotateCcw size={15} /> Повторить
+            <button
+              type="button"
+              className="fast-quiz-round-btn"
+              onClick={() => controllerRef.current?.restart()}
+              aria-label="Повторить это слово заново"
+              title="Повторить это слово заново"
+            >
+              <RotateCcw size={18} />
             </button>
-            {verdict === "wrong" ? (
-              <button type="button" className="primary-btn fast-quiz-action-btn" onClick={advance}>
-                Далее <ArrowRight size={15} />
+            {verdict === null ? (
+              <button
+                type="button"
+                className="fast-quiz-round-btn"
+                onClick={() => controllerRef.current?.skip()}
+                aria-label="Не знаю — показать ответ"
+                title="Не знаю — показать ответ"
+              >
+                <HelpCircle size={18} />
               </button>
             ) : (
-              <button type="button" className="secondary-btn fast-quiz-action-btn" onClick={() => controllerRef.current?.skip()}>
-                <HelpCircle size={15} /> Не знаю
+              <button
+                type="button"
+                className="fast-quiz-round-btn primary"
+                onClick={advance}
+                aria-label="Далее"
+                title="Далее"
+              >
+                <ArrowRight size={18} />
               </button>
             )}
           </div>

@@ -2477,10 +2477,24 @@ textarea,
    misheard or incomplete word explains itself right away. */
 .fast-quiz-field-correct { font-size: 12px; color: var(--text-muted); margin-top: -2px; }
 
-/* “Повторить” / “Не знаю” while listening, “Повторить” / “Далее” once a wrong answer is
-   revealed — a correct one never shows this row, it just flashes and moves on. */
-.fast-quiz-actions { display: flex; gap: 8px; margin-top: 2px; }
-.fast-quiz-action-btn { flex: 1 1 auto; height: 38px; padding: 0 12px; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+/* “Повторить” / “Не знаю” while listening, “Повторить” / “Далее” once there is
+   a verdict — nothing here ever advances on its own, so this row is always
+   the only way forward. Same round-icon-button language as .verbs-fab
+   (reset progress, eye/camera) rather than a one-off pill style. */
+.fast-quiz-actions { display: flex; justify-content: center; gap: 14px; margin-top: 2px; }
+.fast-quiz-round-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.fast-quiz-round-btn:active { transform: scale(0.94); }
+.fast-quiz-round-btn.primary { border-color: var(--accent); color: var(--accent); background: rgba(212, 168, 71, 0.16); }
 
 @keyframes fast-quiz-pulse {
   0%, 100% { opacity: 0.45; transform: scale(0.92); }
