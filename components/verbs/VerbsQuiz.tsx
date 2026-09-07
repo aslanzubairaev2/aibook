@@ -4,14 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Eye, EyeOff, Loader2, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
-import { fetchGrammar } from "@/lib/ai/grammar";
 import { fetchVerbPhrase } from "@/lib/ai/verbPhrase";
-import { makeGrammarCacheKey, makeVerbPhraseCacheKey } from "@/lib/ai/cacheKeys";
-import { getLocalGrammar, getLocalVerbPhrase, saveLocalGrammar, saveLocalVerbPhrase } from "@/lib/db/local";
+import { makeVerbPhraseCacheKey } from "@/lib/ai/cacheKeys";
+import { getLocalVerbPhrase, saveLocalVerbPhrase } from "@/lib/db/local";
 import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
-import { toRows } from "@/components/word-modal/GrammarModal";
+import { fetchConjugationFields } from "@/lib/verbs/conjugationFields";
 
 type Props = {
   verbs: DictionaryEntry[];
@@ -26,26 +25,6 @@ type Props = {
 
 type QuizField = { key: string; label: string; expected: string };
 type FieldResult = { verdict: AnswerVerdict; expected: string };
-
-// 1sg, 2sg, 3sg, 1pl, 2pl, 3pl — the fixed person order the grammar prompt
-// always uses, so the full matrix's rows (which give a whole phrase, not a
-// separate pronoun field like the brief table does) can still be labelled.
-const CONJUGATION_PRONOUNS = ["ich", "du", "er/sie/es", "wir", "ihr", "sie/Sie"];
-// Row index of each tense in the full grammar matrix: Präteritum, Perfekt,
-// Präsens, Future, in that fixed order.
-const CONJUGATION_TENSE_ROW: Record<ConjugationTense, number> = { preteritum: 0, perfekt: 1, present: 2, future: 3 };
-const AFFIRMATION_COLUMN = 1;
-
-// The full matrix writes each cell as a complete sentence starting with its
-// subject ("ich habe gesungen") — but the field's own label already says
-// "ich", so repeating it in the answer would just be retyping the label.
-// The person is always the sentence's first word in an affirmative statement,
-// so dropping it is a plain "cut the first token" rather than needing to know
-// which exact pronoun the model chose for 3rd person (er/sie/es).
-function stripLeadingPronoun(phrase: string): string {
-  const parts = phrase.trim().split(/\s+/);
-  return parts.slice(1).join(" ");
-}
 
 type QuizStep = {
   /** `${entry.id}:${mode}[:tense]` — stable across reshuffles, so React keys and refs track the right step. */
@@ -174,65 +153,8 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
     (async () => {
       if (step.mode === "conjugation") {
         const tense = step.tense ?? "present";
-        let fields: QuizField[];
-
-        if (tense === "present") {
-          // The original drill: a bare conjugated word ("singe"), from the
-          // same cheap "brief" table the grammar modal's "Кратко" tab already
-          // fills and caches — unchanged from before tenses existed.
-          const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "brief", targetLanguage, nativeLanguage);
-          let table = getLocalGrammar(cacheKey);
-          if (!table) {
-            try {
-              table = await fetchGrammar({
-                word: entry.headword,
-                lemma: entry.lemma,
-                posTag: "verb",
-                targetLanguage,
-                nativeLanguage,
-                detail: "brief",
-              });
-              saveLocalGrammar(cacheKey, table);
-            } catch {
-              table = null;
-            }
-          }
-          if (cancelled) return;
-          const cells = table?.sections?.[0]?.cells ?? [];
-          fields = cells
-            .filter((c) => c.pronoun?.trim() && c.form.trim())
-            .map((c) => ({ key: c.pronoun!, label: c.pronoun!, expected: c.form }));
-        } else {
-          // Präteritum, Perfekt and future have no dedicated "brief" shape —
-          // pull them from the same 4×3 matrix the "Полная" grammar view uses
-          // and caches, one row of it. Each cell there is a complete sentence
-          // ("ich habe gesungen"); the leading pronoun is stripped since the
-          // field's own label already says it — what is actually being tested
-          // is the rest ("habe gesungen"), auxiliary included.
-          const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "full", targetLanguage, nativeLanguage);
-          let table = getLocalGrammar(cacheKey);
-          if (!table) {
-            try {
-              table = await fetchGrammar({
-                word: entry.headword,
-                lemma: entry.lemma,
-                posTag: "verb",
-                targetLanguage,
-                nativeLanguage,
-                detail: "full",
-              });
-              saveLocalGrammar(cacheKey, table);
-            } catch {
-              table = null;
-            }
-          }
-          if (cancelled) return;
-          const rowIndex = CONJUGATION_TENSE_ROW[tense];
-          const cell = table?.matrix?.cells?.[rowIndex]?.[AFFIRMATION_COLUMN];
-          fields = toRows(cell)
-            .map((p, i) => ({ key: `${tense}-${i}`, label: CONJUGATION_PRONOUNS[i] ?? p.form, expected: stripLeadingPronoun(p.form) }))
-            .filter((f) => f.expected);
-        }
+        const fields: QuizField[] = await fetchConjugationFields(entry.lemma, entry.headword, tense, targetLanguage, nativeLanguage);
+        if (cancelled) return;
 
         if (fields.length === 0) {
           // No cached table and the AI call failed or returned nothing usable

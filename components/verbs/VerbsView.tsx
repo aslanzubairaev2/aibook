@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, ListChecks, Loader2, Repeat, RotateCcw, Search, SlidersHorizontal, Wand2, X } from "lucide-react";
+import { ArrowLeft, Camera, ChevronDown, Clock, Dumbbell, Eye, EyeOff, ListChecks, Loader2, Repeat, RotateCcw, Search, SlidersHorizontal, Wand2, X } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { GrammarModal } from "@/components/word-modal/GrammarModal";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { VerbsQuiz } from "@/components/verbs/VerbsQuiz";
+import { FastVerbsQuiz } from "@/components/verbs/FastVerbsQuiz";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
 import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/search/multiTerm";
@@ -82,6 +83,9 @@ export function VerbsView({ profile, onBack }: Props) {
 
   const [conjugateEntry, setConjugateEntry] = useState<DictionaryEntry | null>(null);
   const [quizVerbs, setQuizVerbs] = useState<DictionaryEntry[] | null>(null);
+  // Whether the session in progress is the voice-only fast drill — set by
+  // which half of the split train button was tapped.
+  const [quizFast, setQuizFast] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -314,14 +318,33 @@ export function VerbsView({ profile, onBack }: Props) {
 
   const activeFilterCount = verbType !== "all" ? 1 : 0;
 
+  // The fast drill is voice-only and doesn't (yet) generate example
+  // sentences, so a session made only of "Фразы" has nothing for it to ask.
+  const fastModesAvailable = quizModes.has("translation") || quizModes.has("forms") || quizModes.has("conjugation");
+
   /** Starts a session on one pack — stamps it, then hands the words to the quiz. */
-  function trainPack(packKey: string, packVerbs: DictionaryEntry[]) {
+  function trainPack(packKey: string, packVerbs: DictionaryEntry[], fast = false) {
+    if (fast && !fastModesAvailable) {
+      setToast("Быстрый режим пока не поддерживает «Фразы» — включите Перевод, Формы или Спряжения.");
+      return;
+    }
     startSession(packKey);
+    setQuizFast(fast);
     setQuizVerbs(packVerbs);
   }
 
   if (quizVerbs) {
-    return (
+    return quizFast ? (
+      <FastVerbsQuiz
+        verbs={quizVerbs}
+        targetLanguage={profile.targetLanguage}
+        nativeLanguage={profile.nativeLanguage}
+        modes={quizModes}
+        conjugationTenses={conjugationTenses}
+        onExit={() => setQuizVerbs(null)}
+        onRecord={record}
+      />
+    ) : (
       <VerbsQuiz
         verbs={quizVerbs}
         targetLanguage={profile.targetLanguage}
@@ -443,9 +466,20 @@ export function VerbsView({ profile, onBack }: Props) {
               </button>
             )}
             {verbs.length > 0 && (
-              <button type="button" className="dict-train-btn verbs-train-all-btn" onClick={() => trainPack("__all__", verbs)}>
-                <Dumbbell size={14} /> Тренировать всё
-              </button>
+              <div className="dict-train-split verbs-train-all-btn">
+                <button type="button" className="dict-train-btn dict-train-split-main" onClick={() => trainPack("__all__", verbs)}>
+                  <Dumbbell size={14} /> Тренировать всё
+                </button>
+                <button
+                  type="button"
+                  className="dict-train-fast-btn"
+                  onClick={() => trainPack("__all__", verbs, true)}
+                  aria-label="Быстрая тренировка голосом"
+                  title="Быстрая тренировка — голосом, без пауз"
+                >
+                  <Clock size={15} />
+                </button>
+              </div>
             )}
           </div>
 
@@ -534,10 +568,21 @@ export function VerbsView({ profile, onBack }: Props) {
                     <PackBar coverage={coverage} />
 
                     <div className="dict-batch-actions">
-                      <button type="button" className="dict-train-btn" onClick={() => trainPack(group.key, group.verbs)}>
-                        <Dumbbell size={14} />
-                        {coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
-                      </button>
+                      <div className="dict-train-split">
+                        <button type="button" className="dict-train-btn dict-train-split-main" onClick={() => trainPack(group.key, group.verbs)}>
+                          <Dumbbell size={14} />
+                          {coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
+                        </button>
+                        <button
+                          type="button"
+                          className="dict-train-fast-btn"
+                          onClick={() => trainPack(group.key, group.verbs, true)}
+                          aria-label="Быстрая тренировка голосом"
+                          title="Быстрая тренировка — голосом, без пауз"
+                        >
+                          <Clock size={15} />
+                        </button>
+                      </div>
                       {coverage.percent < 100 && coverage.learned + coverage.seen > 0 && (
                         <button
                           type="button"

@@ -165,25 +165,50 @@ export type AnswerCheck = {
 };
 
 /**
- * Grades a typed answer against the expected form.
- *
- * "almost" exists so the learner is never told they are wrong over a typo, a
- * missing umlaut or a dropped article — those cases explain themselves and let
- * the learner decide whether it counts.
+ * A stored translation is one field but often carries several meanings —
+ * "fehlen" is saved as "отсутствовать, не хватать". Any one of them is a
+ * complete correct answer, so they are graded as alternatives rather than as
+ * one long string the learner would have to reproduce in full.
  */
-export function checkTypedAnswer(input: string, expected: string): AnswerCheck {
-  const given = normalizeAnswer(input);
-  const want = normalizeAnswer(expected);
-  if (!given) return { verdict: "wrong" };
+function splitAnswerAlternatives(expected: string): string[] {
+  const parts = expected.split(/[,;/]| или /i).map((p) => p.trim()).filter(Boolean);
+  return parts.length ? parts : [expected];
+}
+
+// A handful of common Russian verb endings — infinitive and the present-tense
+// person forms. Stripped from both sides before a last-resort comparison so a
+// grammatical slip ("не хватает" for the stored "не хватать") reads as the
+// same word, not a different one. Longest first, so "ается" is tried before
+// its own suffix "ется" matches a shorter, wrong tail.
+const RU_VERB_ENDINGS = [
+  "аться", "яться", "еться", "иться", "ается", "яется",
+  "ать", "ять", "еть", "ить", "оть", "уть", "чь",
+  "ает", "яет", "еет", "ит", "ят", "ют", "ешь", "ишь", "ем", "им", "ете", "ите",
+  "ала", "яла", "ели", "или", "ала", "ало", "али",
+].sort((a, b) => b.length - a.length);
+
+function isCyrillic(text: string): boolean {
+  return /[а-яё]/i.test(text);
+}
+
+function ruStem(word: string): string {
+  for (const ending of RU_VERB_ENDINGS) {
+    if (word.length > ending.length + 2 && word.endsWith(ending)) return word.slice(0, -ending.length);
+  }
+  return word;
+}
+
+/** Grades against exactly one candidate answer — what `checkTypedAnswer` used to be before multi-meaning fields existed. */
+function checkSingleAnswer(given: string, want: string, expectedDisplay: string): AnswerCheck {
   if (given === want) return { verdict: "correct" };
 
   const givenFolded = foldDiacritics(given);
   const wantFolded = foldDiacritics(want);
   if (givenFolded === wantFolded) {
-    return { verdict: "correct", hint: `Обратите внимание на написание: ${expected.trim()}` };
+    return { verdict: "correct", hint: `Обратите внимание на написание: ${expectedDisplay}` };
   }
 
-  const wantArticle = words(want).length > 1 && ARTICLES.has(words(want)[0]) ? words(expected.trim())[0] : null;
+  const wantArticle = words(want).length > 1 && ARTICLES.has(words(want)[0]) ? words(expectedDisplay)[0] : null;
   const givenBare = stripArticle(givenFolded);
   const wantBare = stripArticle(wantFolded);
   if (givenBare === wantBare) {
@@ -198,7 +223,41 @@ export function checkTypedAnswer(input: string, expected: string): AnswerCheck {
     return { verdict: "almost", hint: "Похоже на опечатку" };
   }
 
+  // Only for Russian text (translations): a different grammatical form of the
+  // same root — wrong tense/person, not a wrong word — still counts as
+  // knowing the meaning.
+  if (isCyrillic(wantBare) && isCyrillic(givenBare)) {
+    const wantStem = words(wantBare).map(ruStem).join(" ");
+    const givenStem = words(givenBare).map(ruStem).join(" ");
+    if (wantStem && wantStem === givenStem) {
+      return { verdict: "almost", hint: "Другая грамматическая форма, но смысл верный" };
+    }
+  }
+
   return { verdict: "wrong" };
+}
+
+/**
+ * Grades a typed answer against the expected form.
+ *
+ * "almost" exists so the learner is never told they are wrong over a typo, a
+ * missing umlaut or a dropped article — those cases explain themselves and let
+ * the learner decide whether it counts. When the stored answer lists several
+ * meanings ("отсутствовать, не хватать"), matching any one of them is enough
+ * — the best verdict among the alternatives wins.
+ */
+export function checkTypedAnswer(input: string, expected: string): AnswerCheck {
+  const given = normalizeAnswer(input);
+  if (!given) return { verdict: "wrong" };
+
+  const alternatives = splitAnswerAlternatives(expected);
+  let best: AnswerCheck = { verdict: "wrong" };
+  for (const alt of alternatives) {
+    const check = checkSingleAnswer(given, normalizeAnswer(alt), alt.trim());
+    if (check.verdict === "correct") return check;
+    if (check.verdict === "almost" && best.verdict === "wrong") best = check;
+  }
+  return best;
 }
 
 export type DiffSegment = { text: string; changed: boolean };

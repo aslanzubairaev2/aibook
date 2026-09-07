@@ -60,3 +60,55 @@ export function startRecognition(lang: string, cb: RecognizerCallbacks): Recogni
 
   return { stop: () => { try { recognition.stop(); } catch { /* ignore */ } } };
 }
+
+export type ContinuousCallbacks = {
+  /** Fires once per finalized chunk of speech, in the order spoken — a pause
+   * inside the segment does not end the session, unlike the one-shot form above. */
+  onFinal: (transcript: string) => void;
+  onError?: (message: string) => void;
+  onEnd?: () => void;
+};
+
+export type ContinuousRecognizer = { stop: () => void };
+
+/**
+ * Continuous recognition: keeps listening across pauses in the same language
+ * instead of stopping after the first utterance, reporting each finalized
+ * chunk as it comes in. Used by the verb fast-trainer to keep the microphone
+ * always on rather than a tap-to-record button per field.
+ */
+export function startContinuousRecognition(lang: string, cb: ContinuousCallbacks): ContinuousRecognizer | null {
+  const Ctor = getCtor();
+  if (!Ctor) return null;
+
+  const recognition = new Ctor();
+  recognition.lang = LANG_TAGS[lang] ?? lang;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.continuous = true;
+
+  recognition.onresult = (event: any) => {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const result = event.results[i];
+      if (!result.isFinal) continue;
+      const transcript = (result[0]?.transcript ?? "").trim();
+      if (transcript) cb.onFinal(transcript);
+    }
+  };
+  recognition.onerror = (event: any) => {
+    // "no-speech" fires routinely while the mic just sits there listening for
+    // the next word — not a real error, so it stays silent rather than
+    // surfacing as one.
+    if (event?.error === "no-speech" || event?.error === "aborted") return;
+    cb.onError?.(event?.error ?? "speech-error");
+  };
+  recognition.onend = () => { cb.onEnd?.(); };
+
+  try {
+    recognition.start();
+  } catch {
+    return null;
+  }
+
+  return { stop: () => { try { recognition.stop(); } catch { /* ignore */ } } };
+}
