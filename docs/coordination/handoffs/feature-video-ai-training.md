@@ -43,7 +43,7 @@
 
 ## Preview
 
-- URL: https://aibook-2mhad344o-azamats-projects-799bf3a6.vercel.app
+- URL: https://aibook-hnocx8blp-azamats-projects-799bf3a6.vercel.app
 - Ветка отправлена в GitHub с явного согласия владельца. Использованы существующие настройки Vercel Preview; production-переменные не копировались.
 
 ## Риски и продолжение
