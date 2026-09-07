@@ -1,0 +1,8 @@
+.claude
+.codex
+.agents
+output
+.env*
+*.log
+dictation-mobile.png
+discuss-mobile-fixed.png

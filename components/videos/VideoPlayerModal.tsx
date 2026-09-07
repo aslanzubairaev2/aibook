@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
 import { X, Subtitles, ListMusic, Loader2, Eye, EyeOff, MessageCircle, Plus, Repeat2, Maximize2, Minimize2, Play, Pause } from "lucide-react";
 import type { VideoItem } from "@/lib/videos/types";
 import type { SubtitleCue } from "@/lib/videos/youtubeTranscript";
@@ -16,6 +17,8 @@ import { analyzeSelection, getAiHeaders } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, getLocalDiscussHistory, saveLocalAiAnalysis, saveLocalDiscussHistory } from "@/lib/db/local";
 import { sbGetCachedAnalysis, sbGetCachedWord, sbGetDiscussHistory, sbSaveCachedAnalysis, sbSaveCachedWord, sbSaveDiscussHistory } from "@/lib/db/supabase";
+
+const VideoTrainingModal = dynamic(() => import("./VideoTrainingModal"));
 
 declare global {
   interface Window {
@@ -67,6 +70,8 @@ export function VideoPlayerModal({
   const [subtitleRetry, setSubtitleRetry] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
+  const [showTraining, setShowTraining] = useState(false);
+  const trainingCues = useMemo(() => cues.map(cue => cue.text).filter(text => text.trim()), [cues]);
   const [showLiveTranslation, setShowLiveTranslation] = useState(false);
   const [revealedTranslations, setRevealedTranslations] = useState<Set<number>>(new Set());
   const [translations, setTranslations] = useState<Record<number, string>>({});
@@ -301,13 +306,13 @@ export function VideoPlayerModal({
   // Keyboard close
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && !isWordModalOpen) {
+      if (e.key === "Escape" && !isWordModalOpen && !showTraining) {
         handleClose();
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleClose, isWordModalOpen]);
+  }, [handleClose, isWordModalOpen, showTraining]);
 
   // ── 3. Find Active Subtitle Cue ────────────────────────────────────────────
   const activeCueIndex = useMemo(() => {
@@ -848,6 +853,12 @@ export function VideoPlayerModal({
             </button>
           </header>
 
+          <button type="button" className="video-transcript-toggle-btn" disabled={isLoadingCues || trainingCues.length === 0}
+            onClick={() => { playerRef.current?.pauseVideo?.(); setShowTraining(true); }}
+            title={trainingCues.length ? "Тренировать перевод всех реплик видео" : "Для тренировки нужен текст видео"}>
+            <MessageCircle size={16} /> Тренироваться с ИИ
+          </button>
+
           {/* Card added toast */}
           {cardAddedNotice && (
             <div className="video-card-toast" role="alert">
@@ -1025,6 +1036,8 @@ export function VideoPlayerModal({
       </div>
 
       {overlayPortalTarget && createPortal(<>
+        {showTraining && <VideoTrainingModal cues={trainingCues} videoId={video.youtubeId} title={video.title}
+          nativeLanguage={nativeLanguage} targetLanguage={targetLanguage} userId={userId} onClose={() => setShowTraining(false)} />}
         {/* ── Interactive WordModal for Tap-To-Translate & Cards ───────────── */}
         {isWordModalOpen && <div className="video-word-modal-layer">
           <WordModal
