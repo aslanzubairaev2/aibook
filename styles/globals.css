@@ -2174,6 +2174,30 @@ textarea,
   cursor: pointer; transition: all 0.2s;
 }
 .dict-train-btn:hover { background: rgba(212, 168, 71, 0.22); }
+
+/* Two-part train button: the usual typed/voice drill on the left, an
+   always-listening voice-only fast drill behind a narrow clock strip on the
+   right — one pill, two destinations, so the fast drill is always one tap
+   away from wherever "тренировать" already was. */
+.dict-train-split {
+  display: flex; align-items: stretch; flex: 1 1 auto; min-width: 0;
+  border: 1px solid rgba(212, 168, 71, 0.4); border-radius: 999px;
+  background: rgba(212, 168, 71, 0.13); overflow: hidden;
+}
+.dict-train-split .dict-train-split-main {
+  flex: 1 1 auto; min-width: 0;
+  border: none; border-radius: 0; background: transparent;
+}
+.dict-train-split .dict-train-split-main:hover { background: rgba(212, 168, 71, 0.22); }
+.dict-train-fast-btn {
+  flex: 0 0 auto; width: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-left: 1px solid rgba(212, 168, 71, 0.4);
+  background: transparent; color: var(--accent);
+  cursor: pointer; transition: background 0.2s;
+}
+.dict-train-fast-btn:hover { background: rgba(212, 168, 71, 0.28); }
+.dict-train-fast-btn:active { transform: scale(0.94); }
 /* Circles beside a pill: one row, one shape. They are also smaller than the
    app-wide 42px, so a row of three does not outweigh the button it follows. */
 .dict-batch-actions .icon-btn {
@@ -2290,7 +2314,8 @@ textarea,
    phone in one row — wrap instead of letting the camera button run off the
    screen edge. */
 .verbs-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px; }
-.verbs-train-all-btn { flex: 1 1 auto; min-width: 0; padding: 0 16px; }
+.verbs-train-all-btn { flex: 1 1 auto; min-width: 0; }
+.verbs-train-all-btn .dict-train-split-main { padding: 0 16px; }
 
 /* Pack rows reuse .dict-batch/.dict-batch-head/… — the same shelf design as
    the Словарь screen's word packs, right down to the persistent «тренировать»
@@ -2419,6 +2444,38 @@ textarea,
    reading as a long vertical list of near-identical one-word fields. */
 .verb-quiz-conjugation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 10px; }
 @media (max-width: 460px) { .verb-quiz-conjugation-grid { grid-template-columns: 1fr; } }
+
+/* Voice-only fast drill: no inputs, no buttons — the card itself is the only
+   feedback, flashing green/red around its own border the instant an answer
+   lands, then moving on by itself. */
+.fast-quiz-card { position: relative; transition: border-color 0.15s, box-shadow 0.15s; }
+.fast-quiz-card.verdict-correct { border-color: var(--green); box-shadow: 0 0 0 2px rgba(122, 171, 106, 0.35); }
+.fast-quiz-card.verdict-wrong { border-color: var(--red); box-shadow: 0 0 0 2px rgba(196, 106, 106, 0.35); }
+
+.fast-quiz-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 460px) { .fast-quiz-fields { grid-template-columns: 1fr; } }
+.fast-quiz-field-box { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.fast-quiz-field-box label { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.fast-quiz-field-value {
+  min-height: 20px; font-size: 15px; color: var(--text-primary);
+  padding: 2px 0; border-bottom: 1px solid var(--border); transition: color 0.15s, border-color 0.15s;
+}
+.fast-quiz-field-value.correct { color: var(--green); border-color: var(--green); }
+.fast-quiz-field-value.almost { color: var(--accent); border-color: var(--accent); }
+.fast-quiz-field-value.wrong { color: var(--red); border-color: var(--red); }
+
+.fast-quiz-status { display: flex; align-items: center; justify-content: center; min-height: 26px; }
+.fast-quiz-listening { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }
+.fast-quiz-mic-pulse { animation: fast-quiz-pulse 1.4s ease-in-out infinite; color: var(--accent); }
+.fast-quiz-verdict-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; }
+.fast-quiz-verdict-icon.correct { color: var(--green); background: rgba(122, 171, 106, 0.15); }
+.fast-quiz-verdict-icon.wrong { color: var(--red); background: rgba(196, 106, 106, 0.15); }
+.fast-quiz-mic-error { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--red); text-align: center; }
+
+@keyframes fast-quiz-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
 
 .verb-quiz-summary {
   display: flex; flex-direction: column; align-items: center; gap: 14px;

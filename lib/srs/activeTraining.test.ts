@@ -123,6 +123,21 @@ test("a typo is 'almost' rather than a failure, but a different word is wrong", 
   assert.equal(checkTypedAnswer("", "der Hof").verdict, "wrong");
 });
 
+test("a stored answer with several meanings accepts any one of them", () => {
+  assert.equal(checkTypedAnswer("отсутствовать", "отсутствовать, не хватать").verdict, "correct");
+  assert.equal(checkTypedAnswer("не хватать", "отсутствовать, не хватать").verdict, "correct");
+  assert.equal(checkTypedAnswer("опаздывать", "отсутствовать, не хватать").verdict, "wrong");
+});
+
+test("a typo inside one meaning of several is still 'almost', not wrong", () => {
+  assert.equal(checkTypedAnswer("отсуствовать", "отсутствовать, не хватать").verdict, "almost");
+});
+
+test("a different grammatical form of the right Russian word is 'almost'", () => {
+  const check = checkTypedAnswer("не хватает", "отсутствовать, не хватать");
+  assert.equal(check.verdict, "almost");
+});
+
 test("grade buttons can say when the word comes back", () => {
   const fresh = progress({ repetitions: 0, intervalDays: 0, status: "new" });
   assert.equal(previewIntervalDays(1, fresh), 1);
