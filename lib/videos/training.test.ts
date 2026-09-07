@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isExactTrainingAnswer, trainingInstruction, validateTrainingRequest, type TrainingRequest } from "./training.ts";
+import { findMissingGermanArticles, isExactTrainingAnswer, trainingInstruction, validateTrainingRequest, type TrainingRequest } from "./training.ts";
 
 const valid: TrainingRequest = { cues: ["Hallo!", "Wie geht es dir?"], index: 0, nativeLanguage: "ru", targetLanguage: "de", action: "prepare", answer: "", prompt: "" };
 test("training validates the full transcript without accepting an invalid cursor or silently truncating it", () => {
@@ -17,6 +17,11 @@ test("exact answers save AI calls without ignoring grammatical spelling distinct
   assert.equal(isExactTrainingAnswer("schon", "schön"), false);
   assert.equal(isExactTrainingAnswer("sie", "Sie"), false);
   assert.equal(isExactTrainingAnswer("Hallo", "Hallo!"), false);
+});
+test("missing German articles are treated as a real error", () => {
+  assert.deepEqual(findMissingGermanArticles("Die zwei Töchter sind nicht zufrieden.", "Zwei Töchter sind nicht zufrieden."), ["die"]);
+  assert.deepEqual(findMissingGermanArticles("Die zwei Töchter sind nicht zufrieden.", "Die zwei Töchter sind nicht zufrieden."), []);
+  assert.deepEqual(findMissingGermanArticles("Ein Mann sieht eine Frau.", "Ein Mann sieht eine Frau."), []);
 });
 test("tutor is anchored to all saved cues and accepts equivalent translations", () => {
   const prompt = trainingInstruction({ ...valid, index: 1 });
