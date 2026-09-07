@@ -1037,7 +1037,11 @@ export function VideoPlayerModal({
 
       {overlayPortalTarget && createPortal(<>
         {showTraining && <VideoTrainingModal cues={trainingCues} videoId={video.youtubeId} title={video.title}
-          nativeLanguage={nativeLanguage} targetLanguage={targetLanguage} userId={userId} onClose={() => setShowTraining(false)} />}
+          nativeLanguage={nativeLanguage} targetLanguage={targetLanguage} userId={userId} onClose={() => setShowTraining(false)}
+          onDiscuss={(cueIndex) => {
+            setShowTraining(false);
+            void handleDiscussCue(cueIndex, cues[cueIndex]?.text);
+          }} />}
         {/* ── Interactive WordModal for Tap-To-Translate & Cards ───────────── */}
         {isWordModalOpen && <div className="video-word-modal-layer">
           <WordModal
