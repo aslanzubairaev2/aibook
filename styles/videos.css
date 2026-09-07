@@ -719,6 +719,20 @@
   transition: all var(--transition-fast, 0.2s);
 }
 
+.video-training-launch-btn {
+  min-height: 44px;
+  align-self: flex-start;
+  margin: 8px 16px;
+  padding: 10px 16px;
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.video-training-launch-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .video-transcript-toggle-btn:hover,
 .video-transcript-toggle-btn.active {
   background: rgba(212, 168, 71, 0.15);

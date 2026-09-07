@@ -853,7 +853,7 @@ export function VideoPlayerModal({
             </button>
           </header>
 
-          <button type="button" className="video-transcript-toggle-btn" disabled={isLoadingCues || trainingCues.length === 0}
+          <button type="button" className="video-transcript-toggle-btn video-training-launch-btn" disabled={isLoadingCues || trainingCues.length === 0}
             onClick={() => { playerRef.current?.pauseVideo?.(); setShowTraining(true); }}
             title={trainingCues.length ? "Тренировать перевод всех реплик видео" : "Для тренировки нужен текст видео"}>
             <MessageCircle size={16} /> Тренироваться с ИИ
