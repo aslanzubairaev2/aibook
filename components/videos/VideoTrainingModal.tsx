@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Loader2, GraduationCap } from "lucide-react";
+import { X, Loader2, GraduationCap, Mic, MicOff } from "lucide-react";
 import { getAiHeaders } from "@/lib/ai/analyze";
 import { isExactTrainingAnswer, type TrainingReply } from "@/lib/videos/training";
+import { isSpeechRecognitionSupported, startRecognition, type Recognizer } from "@/lib/speech/recognition";
 import styles from "./VideoTrainingModal.module.css";
 
 type Props = {
@@ -15,6 +16,8 @@ const emptySession = (): Session => ({ index: 0, prompts: {}, answer: "", feedba
 
 export default function VideoTrainingModal({ cues, videoId, title, nativeLanguage, targetLanguage, userId, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const answerRef = useRef<HTMLTextAreaElement>(null);
+  const recognizerRef = useRef<Recognizer | null>(null);
   const controller = useRef<AbortController | null>(null);
   const busyRef = useRef(false);
   const [session, setSession] = useState<Session>(emptySession);
@@ -22,6 +25,9 @@ export default function VideoTrainingModal({ cues, videoId, title, nativeLanguag
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [storageWarning, setStorageWarning] = useState(false);
+  const [readyForNext, setReadyForNext] = useState(false);
+  const [isDictating, setIsDictating] = useState(false);
+  const [dictationError, setDictationError] = useState("");
   const complete = session.index >= cues.length;
   const prompt = session.prompts[session.index];
 
@@ -29,7 +35,7 @@ export default function VideoTrainingModal({ cues, videoId, title, nativeLanguag
     const element = dialog.current;
     const previous = document.activeElement as HTMLElement | null;
     element?.showModal();
-    return () => { controller.current?.abort(); element?.close(); previous?.focus(); };
+    return () => { controller.current?.abort(); recognizerRef.current?.stop(); element?.close(); previous?.focus(); };
   }, []);
 
   useEffect(() => {
@@ -85,7 +91,10 @@ export default function VideoTrainingModal({ cues, videoId, title, nativeLanguag
       }
       if (abort.signal.aborted) return;
       if (action === "prepare") setSession(s => ({ ...s, prompts: { ...s.prompts, [s.index]: reply.prompt } }));
-      else if (action === "check" && reply.correct) setSession(s => ({ ...s, index: s.index + 1, answer: "", feedback: `✓ Реплика ${s.index + 1}: ${reply.feedback}` }));
+      else if (action === "check" && reply.correct) {
+        setSession(s => ({ ...s, feedback: `✓ Реплика ${s.index + 1}: ${reply.feedback}` }));
+        setReadyForNext(true);
+      }
       else setSession(s => ({ ...s, feedback: reply.feedback }));
     } catch (err) {
       if (!abort.signal.aborted) setError(err instanceof Error ? err.message : "Ошибка связи с ИИ.");
@@ -104,6 +113,49 @@ export default function VideoTrainingModal({ cues, videoId, title, nativeLanguag
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey, session.index]);
 
+  function advanceToNextCue() {
+    if (!readyForNext || busy) return;
+    setReadyForNext(false);
+    setSession(s => ({ ...s, index: s.index + 1, answer: "", feedback: "" }));
+  }
+
+  function insertText(text: string) {
+    const element = answerRef.current;
+    if (!element) return;
+    const start = element.selectionStart ?? session.answer.length;
+    const end = element.selectionEnd ?? start;
+    const next = `${session.answer.slice(0, start)}${text}${session.answer.slice(end)}`;
+    setSession(s => ({ ...s, answer: next }));
+    requestAnimationFrame(() => {
+      element.focus();
+      element.setSelectionRange(start + text.length, start + text.length);
+    });
+  }
+
+  function toggleDictation() {
+    if (isDictating) {
+      recognizerRef.current?.stop();
+      setIsDictating(false);
+      return;
+    }
+    if (!isSpeechRecognitionSupported()) {
+      setDictationError("Диктовка не поддерживается этим браузером. Попробуйте Chrome или Edge.");
+      return;
+    }
+    setDictationError("");
+    const recognizer = startRecognition(targetLanguage, {
+      onResult: (transcript) => setSession(s => ({ ...s, answer: `${s.answer}${s.answer.trim() ? " " : ""}${transcript}` })),
+      onError: () => { setDictationError("Не удалось услышать речь. Разрешите микрофон и попробуйте ещё раз."); setIsDictating(false); },
+      onEnd: () => { setIsDictating(false); recognizerRef.current = null; },
+    });
+    if (!recognizer) {
+      setDictationError("Не удалось запустить микрофон. Проверьте разрешение браузера.");
+      return;
+    }
+    recognizerRef.current = recognizer;
+    setIsDictating(true);
+  }
+
   return <dialog ref={dialog} className={styles.dialog} aria-labelledby="video-training-title"
     onCancel={e => { e.preventDefault(); onClose(); }}>
     <header className={styles.header}>
@@ -117,16 +169,34 @@ export default function VideoTrainingModal({ cues, videoId, title, nativeLanguag
     <p className={styles.note}>Тренировка по всему сохранённому тексту видео. Новые задания и подсказки используют платные запросы к ИИ.</p>
     {storageWarning && <p role="status">Хранилище недоступно: прогресс сохранится только до закрытия окна.</p>}
     {session.feedback && <div className={styles.feedback} role="status">{session.feedback}</div>}
+    {readyForNext && !complete && <button type="button" className={styles.nextButton} onClick={advanceToNextCue}>
+      Следующая реплика <span aria-hidden="true">→</span>
+    </button>}
     {complete ? <section className={styles.exercise}><h3>Все реплики пройдены!</h3><p>Вы перевели весь текст этого видео.</p>
-      <button type="button" onClick={() => { setSession(s => ({ ...emptySession(), prompts: s.prompts })); setError(""); }}>Повторить тренировку</button></section>
+      <button type="button" onClick={() => { setReadyForNext(false); setSession(s => ({ ...emptySession(), prompts: s.prompts })); setError(""); }}>Повторить тренировку</button></section>
       : <form onSubmit={e => { e.preventDefault(); if (prompt && session.answer.trim()) void request("check"); }}>
         <section className={styles.exercise} aria-busy={busy}>
           <span className={styles.eyebrow}>Переведите на {targetLanguage.toUpperCase()}</span>
           <p className={styles.prompt}>{prompt || (busy ? "Готовим реплику…" : "Задание ещё не загружено")}</p>
+          <p className={styles.instruction}>Напишите или продиктуйте перевод этой фразы. После проверки нажмите «Следующая реплика».</p>
         </section>
         <label className={styles.label} htmlFor="video-training-answer">Ваш перевод или вопрос к ИИ</label>
-        <textarea id="video-training-answer" value={session.answer} maxLength={4000} rows={3} disabled={busy || !prompt}
-          placeholder="Напишите перевод…" onChange={e => setSession(s => ({ ...s, answer: e.target.value }))} />
+        <textarea ref={answerRef} id="video-training-answer" value={session.answer} maxLength={4000} rows={3} disabled={busy || !prompt}
+          placeholder="Напишите перевод…" onChange={e => setSession(s => ({ ...s, answer: e.target.value }))}
+          onKeyDown={event => {
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              if (prompt && session.answer.trim()) void request("check");
+            }
+          }} />
+        <div className={styles.inputTools}>
+          <span className={styles.toolLabel}>Немецкие буквы:</span>
+          {['ä', 'ö', 'ü', 'ß'].map(letter => <button type="button" className={styles.characterButton} key={letter} disabled={busy || !prompt} onClick={() => insertText(letter)}>{letter}</button>)}
+          <button type="button" className={`${styles.micButton} ${isDictating ? styles.recording : ""}`} disabled={busy || !prompt} onClick={toggleDictation} aria-pressed={isDictating} title={isDictating ? "Остановить диктовку" : `Диктовать на ${targetLanguage}`}>
+            {isDictating ? <MicOff size={17} /> : <Mic size={17} />} {isDictating ? "Слушаю…" : "Диктовать"}
+          </button>
+        </div>
+        {dictationError && <p className={styles.error} role="alert">{dictationError}</p>}
         <div className={styles.actions}>
           <button type="submit" disabled={busy || !prompt || !session.answer.trim()}>Проверить перевод</button>
           <button type="button" disabled={busy || !prompt} onClick={() => void request("hint")}> {session.answer.trim() ? "Спросить ИИ" : "Подсказка"}</button>
@@ -134,6 +204,6 @@ export default function VideoTrainingModal({ cues, videoId, title, nativeLanguag
       </form>}
     {busy && <p className={styles.loading} role="status"><Loader2 size={18} className="spin" /> ИИ думает…</p>}
     {error && <div className={styles.error} role="alert"><p>{error}</p>{!prompt && !complete && <button type="button" disabled={busy} onClick={() => void request("prepare")}>Повторить загрузку</button>}</div>}
-    <p className={styles.note}>Правильный ответ открывает следующую реплику. При ошибке попробуйте ещё раз или задайте вопрос через «Спросить ИИ».</p>
+    <p className={styles.note}>Правильный ответ откроет кнопку «Следующая реплика». При ошибке попробуйте ещё раз или задайте вопрос через «Спросить ИИ».</p>
   </dialog>;
 }

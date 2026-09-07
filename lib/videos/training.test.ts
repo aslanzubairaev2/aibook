@@ -13,6 +13,7 @@ test("training validates the full transcript without accepting an invalid cursor
 test("exact answers save AI calls without ignoring grammatical spelling distinctions", () => {
   assert.equal(isExactTrainingAnswer("  Hallo!  ", "Hallo!"), true);
   assert.equal(isExactTrainingAnswer("Wie  geht es dir?", "Wie geht es dir?"), true);
+  assert.equal(isExactTrainingAnswer("Schoene", "Schöne"), true);
   assert.equal(isExactTrainingAnswer("schon", "schön"), false);
   assert.equal(isExactTrainingAnswer("sie", "Sie"), false);
   assert.equal(isExactTrainingAnswer("Hallo", "Hallo!"), false);

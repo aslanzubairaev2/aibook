@@ -24,9 +24,9 @@ export function validateTrainingRequest(value: unknown): value is TrainingReques
     && typeof v.prompt === "string" && v.prompt.length <= 10000;
 }
 
-// Keep case, accents and punctuation: only a truly identical answer bypasses AI.
+// Keyboard-friendly spellings such as Schoene are equivalent to Schöne.
 export function isExactTrainingAnswer(answer: string, source: string): boolean {
-  const normalize = (text: string) => text.normalize("NFC").trim().replace(/\s+/gu, " ");
+  const normalize = (text: string) => text.normalize("NFC").trim().replace(/ä/gu, "ae").replace(/ö/gu, "oe").replace(/ü/gu, "ue").replace(/ß/gu, "ss").replace(/\s+/gu, " ");
   return normalize(answer) === normalize(source);
 }
 
