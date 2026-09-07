@@ -6,6 +6,7 @@
 - Commit реализации: `5254f8e`
 - Финальная правка размера кнопки: `281f265`
 - Клавиатура и диктовка: `1c11bd8`
+- Разбор русских слов через WordModal и строгий язык задания: `9ea47db`
 - Статус: ready-for-review
 
 ## Границы задачи
@@ -43,7 +44,7 @@
 
 ## Preview
 
-- URL: https://aibook-hnocx8blp-azamats-projects-799bf3a6.vercel.app
+- URL: https://aibook-l5mfjqz4t-azamats-projects-799bf3a6.vercel.app
 - Ветка отправлена в GitHub с явного согласия владельца. Использованы существующие настройки Vercel Preview; production-переменные не копировались.
 
 ## Риски и продолжение
