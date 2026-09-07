@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, Loader2, Mic, MicOff, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, HelpCircle, Loader2, Mic, MicOff, RotateCcw, X } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, diffExpected } from "@/lib/srs/activeTraining";
 import { fetchConjugationFields } from "@/lib/verbs/conjugationFields";
@@ -117,17 +117,23 @@ function listenPersistently(lang: string, onFinal: (transcript: string) => void,
 }
 
 const CORRECT_FLASH_MS = 550;
-const WRONG_FLASH_MS = 1600;
+
+type PendingRecord = { stepKey: string; entryId: string; correct: boolean };
 
 /**
  * The voice-only fast drill: one card per verb, every selected mode (minus
- * Фразы) asked in one breath, graded and advanced automatically — no taps,
- * no per-field microphone buttons. The microphone segment switches language
- * on its own between the Russian translation and the German forms/
- * conjugation, since the Web Speech API can only recognise one language per
- * segment; that switch is the one unavoidable pause; everything else about
- * moving from field to field and word to word happens without the learner
- * touching anything.
+ * Фразы) asked in one breath. The microphone segment switches language on
+ * its own between the Russian translation and the German forms/conjugation,
+ * since the Web Speech API can only recognise one language per segment —
+ * that switch is the one unavoidable pause; everything else about moving
+ * from field to field and word to word happens without the learner touching
+ * anything.
+ *
+ * A correct step flashes green and moves on by itself — nothing to read, no
+ * reason to wait. A wrong one shows the correct answer and *waits*: the
+ * learner picks "Повторить" (try this word again) or "Далее" (accept it and
+ * move on), or "Не знаю" at any point while still listening to reveal the
+ * answer immediately instead of hunting for the right words.
  */
 export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, onExit, onRecord }: Props) {
   const activeModes = useMemo(() => new Set(FAST_MODES.filter((m) => modes.has(m))), [modes]);
@@ -139,14 +145,31 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
   const [liveResults, setLiveResults] = useState<(FastFieldResult | null)[]>([]);
   const [listening, setListening] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  // Bumped by "Повторить" to force the listening effect to tear down and
+  // start fresh for the very same step, without moving to the next one.
+  const [restartNonce, setRestartNonce] = useState(0);
 
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A wrong verdict is recorded only once the learner actually moves past it
+  // (advance()) — "Повторить" just discards this instead, so a retried-and-
+  // corrected word never double-counts as a mistake.
+  const pendingRecordRef = useRef<PendingRecord | null>(null);
+  // Published by the listening effect so the render's buttons can reach into
+  // whichever recognizer session is currently live, without lifting all of
+  // its local state (cancelled flag, accumulated tokens, …) out of it.
+  const controllerRef = useRef<{ skip: () => void; restart: () => void } | null>(null);
   const supported = useMemo(() => isSpeechRecognitionSupported(), []);
 
   const step = queue[index];
   const done = index >= queue.length;
 
   function advance() {
+    const pending = pendingRecordRef.current;
+    pendingRecordRef.current = null;
+    if (pending) {
+      onRecord?.(pending.entryId, pending.correct);
+      if (!pending.correct) setMistakes((m) => [...m, step]);
+    }
     setVerdict(null);
     setLiveResults([]);
     setIndex((i) => i + 1);
@@ -192,6 +215,15 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
     let handle: { stop: () => void } | null = null;
     const germanFields = germanFieldsOf(step) ?? [];
     const germanTokens: string[] = [];
+    // Mirrors the latest liveResults so skip() can fill in whatever hasn't
+    // resolved yet without waiting for a state read that isn't available
+    // inside this closure.
+    let lastTranslationResult: FastFieldResult | null = null;
+    let lastGermanResults: (FastFieldResult | null)[] = germanFields.map(() => null);
+
+    function emptyResult(field: FastField): FastFieldResult {
+      return { key: field.key, label: field.label, expected: field.expected, given: "", verdict: "wrong" };
+    }
 
     function grade(translationResult: FastFieldResult | null, germanResults: FastFieldResult[]) {
       if (cancelled) return;
@@ -201,15 +233,21 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
       const pass = allFieldsPass(all);
       setListening(false);
       setVerdict(pass ? "correct" : "wrong");
-      setLiveResults(pass ? [] : all);
-      onRecord?.(step.entry.id, pass);
-      if (pass) setCorrectCount((c) => c + 1);
-      else setMistakes((m) => [...m, step]);
-      advanceTimerRef.current = setTimeout(advance, pass ? CORRECT_FLASH_MS : WRONG_FLASH_MS);
+      setLiveResults(all);
+      if (pass) {
+        onRecord?.(step.entry.id, true);
+        setCorrectCount((c) => c + 1);
+        advanceTimerRef.current = setTimeout(advance, CORRECT_FLASH_MS);
+      } else {
+        // Recorded only once the learner actually moves past this card —
+        // "Повторить" discards it instead of committing a mistake.
+        pendingRecordRef.current = { stepKey: step.key, entryId: step.entry.id, correct: false };
+      }
     }
 
     function startGerman(translationResult: FastFieldResult | null) {
       if (cancelled) return;
+      lastTranslationResult = translationResult;
       if (germanFields.length === 0) {
         grade(translationResult, []);
         return;
@@ -223,6 +261,7 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
           if (cancelled) return;
           germanTokens.push(...stripPronouns(tokenize(chunk)));
           const matched = matchFastFields(germanTokens, germanFields);
+          lastGermanResults = matched;
           setLiveResults(translationResult ? [translationResult, ...matched] : matched);
           if (isFullyMatched(matched)) grade(translationResult, matched);
         },
@@ -248,16 +287,48 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
       );
     }
 
+    controllerRef.current = {
+      restart: () => {
+        // Not gated on `cancelled` — grade() already set that the moment a
+        // verdict was reached (correct *or* wrong), but "Повторить" must still
+        // work after a wrong grade. controllerRef itself is the real guard:
+        // it goes null the moment this effect instance actually tears down.
+        cancelled = true;
+        handle?.stop();
+        pendingRecordRef.current = null;
+        setListening(false);
+        setVerdict(null);
+        setLiveResults([]);
+        setMicError(null);
+        setRestartNonce((n) => n + 1);
+      },
+      skip: () => {
+        // Only ever invoked while still listening (the button that calls
+        // this is hidden once a verdict exists), so `cancelled` is still
+        // false here — unlike restart(), no need to look past it.
+        cancelled = true;
+        handle?.stop();
+        const germanFilled = germanFields.map((f, i) => lastGermanResults[i] ?? emptyResult(f));
+        const translationFilled = step.translationField ? (lastTranslationResult ?? emptyResult(step.translationField)) : null;
+        const all = translationFilled ? [translationFilled, ...germanFilled] : germanFilled;
+        setListening(false);
+        setVerdict("wrong");
+        setLiveResults(all);
+        pendingRecordRef.current = { stepKey: step.key, entryId: step.entry.id, correct: false };
+      },
+    };
+
     if (step.translationField) startTranslation();
     else startGerman(null);
 
     return () => {
       cancelled = true;
       handle?.stop();
+      controllerRef.current = null;
       if (advanceTimerRef.current) { clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step?.key, step && allFieldsOf(step)?.length, done]);
+  }, [step?.key, step && allFieldsOf(step)?.length, done, restartNonce]);
 
   function retryMistakes() {
     setQueue(shuffle(mistakes));
@@ -361,18 +432,24 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
           <div className="fast-quiz-fields">
             {fields.map((field, i) => {
               const result = liveResults[i];
+              // Shown the moment a field's own verdict is anything but
+              // correct — not only once the whole card is graded — so a
+              // misheard word explains itself right away instead of just
+              // turning red with no indication of what it should have been.
+              const showCorrection = result && result.verdict !== "correct";
               return (
                 <div key={field.key} className="fast-quiz-field-box">
                   <label>{field.label}</label>
                   <div className={`fast-quiz-field-value${result ? ` ${result.verdict}` : ""}`}>
-                    {verdict === "wrong" && result && result.verdict !== "correct" ? (
-                      diffExpected(result.given, result.expected).map((seg, si) => (
-                        <span key={si} className={seg.changed ? "verb-quiz-diff" : undefined}>{seg.text}</span>
-                      ))
-                    ) : (
-                      result?.given || " "
-                    )}
+                    {result?.given || (result ? "" : " ")}
                   </div>
+                  {showCorrection && (
+                    <div className="fast-quiz-field-correct">
+                      {diffExpected(result.given, result.expected).map((seg, si) => (
+                        <span key={si} className={seg.changed ? "verb-quiz-diff" : undefined}>{seg.text}</span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -390,6 +467,23 @@ export function FastVerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, co
             <span className="fast-quiz-listening"><Mic size={14} className="fast-quiz-mic-pulse" /> Слушаю...</span>
           ) : null}
         </div>
+
+        {fields !== null && verdict !== "correct" && (
+          <div className="fast-quiz-actions">
+            <button type="button" className="secondary-btn fast-quiz-action-btn" onClick={() => controllerRef.current?.restart()}>
+              <RotateCcw size={15} /> Повторить
+            </button>
+            {verdict === "wrong" ? (
+              <button type="button" className="primary-btn fast-quiz-action-btn" onClick={advance}>
+                Далее <ArrowRight size={15} />
+              </button>
+            ) : (
+              <button type="button" className="secondary-btn fast-quiz-action-btn" onClick={() => controllerRef.current?.skip()}>
+                <HelpCircle size={15} /> Не знаю
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

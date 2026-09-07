@@ -61,6 +61,30 @@ test("pronouns spoken alongside the conjugation are filtered before matching", (
   assert.ok(bareResults.every((r) => r!.verdict === "correct"));
 });
 
+test("a separable verb's two-word Präteritum does not swallow the next field's word", () => {
+  // mitbringen: stored Präteritum is "brachte mit" (two words), but the
+  // learner just says "brachte" then moves straight on to "mitgebracht" for
+  // Partizip II — the reported bug had both words land in the first field
+  // and leave the second stuck empty forever.
+  const fields = [
+    { key: "praeteritum", label: "Präteritum", expected: "brachte mit" },
+    { key: "partizip2", label: "Partizip II", expected: "mitgebracht" },
+  ];
+  const results = matchFastFields(tokenize("brachte mitgebracht"), fields);
+  assert.ok(isFullyMatched(results));
+  assert.equal(results[0]!.given, "brachte");
+  assert.equal(results[0]!.verdict, "wrong"); // "mit" was never said — honestly wrong, not stuck
+  assert.equal(results[1]!.given, "mitgebracht");
+  assert.equal(results[1]!.verdict, "correct");
+});
+
+test("a multi-word field still escalates to two words when that's what was said", () => {
+  const fields = [{ key: "praeteritum", label: "Präteritum", expected: "brachte mit" }];
+  const results = matchFastFields(tokenize("brachte mit"), fields);
+  assert.equal(results[0]!.given, "brachte mit");
+  assert.equal(results[0]!.verdict, "correct");
+});
+
 test("allFieldsPass fails the step on one wrong field but tolerates an almost", () => {
   assert.equal(allFieldsPass([
     { key: "a", label: "a", expected: "ging", given: "ging", verdict: "correct" },

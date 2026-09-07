@@ -25,20 +25,43 @@ export function stripPronouns(tokens: string[]): string[] {
 
 /**
  * Matches a continuous transcript against an ordered list of fields, one at a
- * time: each field consumes as many words from the front of the remaining
- * stream as its own expected answer has, in the order the learner was asked
- * to say them ("ging gegangen" for Präteritum → Partizip II). A field whose
- * words have not arrived yet comes back null — the caller keeps listening
- * until every field has one.
+ * time, in the order the learner was asked to say them. Each field defaults
+ * to consuming a single word — the common case for every field except a
+ * separable-verb form ("brachte mit") or an auxiliary+participle tense
+ * ("habe gegangen"). Only when that single word plainly fails to match AND
+ * the field's own stored answer has more than one word does it try consuming
+ * two (then three, …) words instead, up to its own word count — and only
+ * commits to the wider window if that actually produces a better verdict.
+ *
+ * This bounded, "escalate only if it helps" rule is what stops one field
+ * from swallowing a neighbour's word: a field never eats more than it
+ * demonstrably needs, so a separable verb's missing "mit" is graded wrong on
+ * its own field instead of dragging the next field's word into this one and
+ * leaving that next field stuck waiting forever. A field whose words have
+ * not arrived yet comes back null — the caller keeps listening until every
+ * field has one.
  */
 export function matchFastFields(transcriptTokens: string[], fields: FastField[]): (FastFieldResult | null)[] {
   let cursor = 0;
   return fields.map((field) => {
-    const wordCount = Math.max(1, field.expected.trim().split(/\s+/).length);
-    if (cursor + wordCount > transcriptTokens.length) return null;
-    const given = transcriptTokens.slice(cursor, cursor + wordCount).join(" ");
-    cursor += wordCount;
-    const check = checkTypedAnswer(given, field.expected);
+    const available = transcriptTokens.length - cursor;
+    if (available <= 0) return null;
+
+    const expectedWordCount = Math.max(1, field.expected.trim().split(/\s+/).length);
+    let window = 1;
+    let check = checkTypedAnswer(transcriptTokens.slice(cursor, cursor + 1).join(" "), field.expected);
+
+    if (check.verdict === "wrong" && expectedWordCount > 1) {
+      const maxTry = Math.min(expectedWordCount, available);
+      for (let w = 2; w <= maxTry; w++) {
+        const candidate = transcriptTokens.slice(cursor, cursor + w).join(" ");
+        const candidateCheck = checkTypedAnswer(candidate, field.expected);
+        if (candidateCheck.verdict !== "wrong") { window = w; check = candidateCheck; break; }
+      }
+    }
+
+    const given = transcriptTokens.slice(cursor, cursor + window).join(" ");
+    cursor += window;
     return { key: field.key, label: field.label, expected: field.expected, given, verdict: check.verdict };
   });
 }
