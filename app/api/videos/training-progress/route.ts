@@ -21,10 +21,17 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const key = readKey(request);
   if (!key) return NextResponse.json({ error: "Некорректный ключ прогресса" }, { status: 400 });
-  const { data, error } = await supabaseAdmin.from("video_training_progress").select("session,updated_at")
+  const { data: exact, error } = await supabaseAdmin.from("video_training_progress").select("session,updated_at")
     .eq("user_id", user.id).match({ youtube_id: key.youtubeId, native_language: key.nativeLanguage, target_language: key.targetLanguage, transcript_hash: key.transcriptHash }).maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ progress: data ?? null });
+  if (exact) return NextResponse.json({ progress: exact });
+  const { data: fallback, error: fallbackError } = await supabaseAdmin.from("video_training_progress")
+    .select("session,updated_at,transcript_hash")
+    .eq("user_id", user.id).eq("youtube_id", key.youtubeId)
+    .eq("native_language", key.nativeLanguage).eq("target_language", key.targetLanguage)
+    .order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  if (fallbackError) return NextResponse.json({ error: fallbackError.message }, { status: 500 });
+  return NextResponse.json({ progress: fallback ?? null });
 }
 
 export async function POST(request: NextRequest) {
