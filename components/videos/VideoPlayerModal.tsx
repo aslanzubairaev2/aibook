@@ -83,6 +83,8 @@ export function VideoPlayerModal({
   // Word modal state for live translation & flashcard adding
   const [wordModalSelection, setWordModalSelection] = useState("");
   const [wordModalAnalysis, setWordModalAnalysis] = useState<AiAnalysis | null>(null);
+  const [wordModalLanguage, setWordModalLanguage] = useState("");
+  const [wordModalNativeLanguage, setWordModalNativeLanguage] = useState("");
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
   const [isWordModalLoading, setIsWordModalLoading] = useState(false);
   const [cardAddedNotice, setCardAddedNotice] = useState<string | null>(null);
@@ -460,10 +462,10 @@ export function VideoPlayerModal({
 
   // ── 4. Word Tap → Pause & Word Analysis ───────────────────────────────────
   const handleWordTap = useCallback(
-    async (rawWord: string, contextSentence: string) => {
+    async (rawWord: string, contextSentence: string, wordLanguage: string = targetLanguage, explanationLanguage: string = nativeLanguage) => {
       const cleanWord = rawWord.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
       if (!cleanWord || cleanWord.length < 2) return;
-      const lookupWord = inferSeparableVerb(cleanWord, contextSentence) || cleanWord;
+      const lookupWord = wordLanguage === targetLanguage ? (inferSeparableVerb(cleanWord, contextSentence) || cleanWord) : cleanWord;
 
       // 1. Pause video playback immediately
       if (playerRef.current && typeof playerRef.current.pauseVideo === "function") {
@@ -474,15 +476,17 @@ export function VideoPlayerModal({
 
       // 2. Open WordModal
       setWordModalSelection(lookupWord);
+      setWordModalLanguage(wordLanguage);
+      setWordModalNativeLanguage(explanationLanguage);
       setIsWordModalOpen(true);
       setIsWordModalLoading(true);
       setWordModalAnalysis(null);
 
-      const cacheKey = makeAiCacheKey("word", lookupWord, targetLanguage, nativeLanguage);
+      const cacheKey = makeAiCacheKey("word", lookupWord, wordLanguage, explanationLanguage);
       try {
         let full = getLocalAiAnalysis(cacheKey);
         if (!full?.word) {
-          full = await sbGetCachedWord(lookupWord, targetLanguage, nativeLanguage);
+          full = await sbGetCachedWord(lookupWord, wordLanguage, explanationLanguage);
           if (full?.word) saveLocalAiAnalysis(cacheKey, full);
         }
         if (!full?.word) {
@@ -493,12 +497,12 @@ export function VideoPlayerModal({
             sentence: contextSentence || cleanWord,
             sentenceBefore: "",
             sentenceAfter: "",
-            nativeLanguage,
-            targetLanguage,
+            nativeLanguage: explanationLanguage,
+            targetLanguage: wordLanguage,
           });
           if (full?.word) {
             saveLocalAiAnalysis(cacheKey, full);
-            void sbSaveCachedWord(lookupWord, targetLanguage, nativeLanguage, full);
+            void sbSaveCachedWord(lookupWord, wordLanguage, explanationLanguage, full);
           }
         }
         setWordModalAnalysis(full?.word ? full : null);
@@ -1041,6 +1045,10 @@ export function VideoPlayerModal({
           onDiscuss={(cueIndex) => {
             setShowTraining(false);
             void handleDiscussCue(cueIndex, cues[cueIndex]?.text);
+          }}
+          onWordTap={(word, contextSentence) => {
+            setShowTraining(false);
+            void handleWordTap(word, contextSentence, nativeLanguage, targetLanguage);
           }} />}
         {/* ── Interactive WordModal for Tap-To-Translate & Cards ───────────── */}
         {isWordModalOpen && <div className="video-word-modal-layer">
@@ -1048,8 +1056,8 @@ export function VideoPlayerModal({
             analysis={wordModalAnalysis}
             isOpen={isWordModalOpen}
             isLoading={isWordModalLoading}
-            lang={targetLanguage}
-            nativeLang={nativeLanguage}
+            lang={wordModalLanguage || targetLanguage}
+            nativeLang={wordModalNativeLanguage || nativeLanguage}
             selectedWord={wordModalSelection}
             onClose={() => {
               setIsWordModalOpen(false);

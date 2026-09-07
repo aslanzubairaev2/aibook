@@ -3,18 +3,19 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Loader2, Mic, MicOff } from "lucide-react";
 import { getAiHeaders } from "@/lib/ai/analyze";
-import { isExactTrainingAnswer, type TrainingReply } from "@/lib/videos/training";
+import type { TrainingReply } from "@/lib/videos/training";
 import { isSpeechRecognitionSupported, startRecognition, type Recognizer } from "@/lib/speech/recognition";
 import styles from "./VideoTrainingModal.module.css";
 
 type Props = {
   cues: string[]; videoId: string; title: string; nativeLanguage: string;
   targetLanguage: string; userId?: string | null; onClose: () => void; onDiscuss?: (cueIndex: number) => void;
+  onWordTap?: (word: string, contextSentence: string) => void;
 };
 type Session = { index: number; prompts: Record<number, string>; answer: string; feedback: string };
 const emptySession = (): Session => ({ index: 0, prompts: {}, answer: "", feedback: "" });
 
-export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targetLanguage, userId, onClose, onDiscuss }: Props) {
+export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targetLanguage, userId, onClose, onDiscuss, onWordTap }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const answerRef = useRef<HTMLTextAreaElement>(null);
   const recognizerRef = useRef<Recognizer | null>(null);
@@ -29,6 +30,7 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
   const [isDictating, setIsDictating] = useState(false);
   const [dictationError, setDictationError] = useState("");
   const [revealedAnswer, setRevealedAnswer] = useState("");
+  const [correctFeedback, setCorrectFeedback] = useState(false);
   const complete = session.index >= cues.length;
   const prompt = session.prompts[session.index];
 
@@ -72,13 +74,12 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
     if (busyRef.current || complete) return;
     busyRef.current = true;
     setBusy(true); setError("");
+    if (action === "check") setCorrectFeedback(false);
     const abort = new AbortController();
     controller.current = abort;
     try {
       let reply: TrainingReply;
-      if (action === "check" && isExactTrainingAnswer(session.answer, cues[session.index])) {
-        reply = { correct: true, feedback: "Правильно! Ответ совпадает с репликой видео.", prompt: "" };
-      } else {
+      {
         const response = await fetch("/api/videos/train", {
           method: "POST", headers: await getAiHeaders(),
           signal: AbortSignal.any([abort.signal, AbortSignal.timeout(110000)]),
@@ -93,7 +94,8 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
       if (abort.signal.aborted) return;
       if (action === "prepare") setSession(s => ({ ...s, prompts: { ...s.prompts, [s.index]: reply.prompt } }));
       else if (action === "check" && reply.correct) {
-        setSession(s => ({ ...s, feedback: `✓ Реплика ${s.index + 1}: ${reply.feedback}` }));
+        setSession(s => ({ ...s, feedback: reply.feedback }));
+        setCorrectFeedback(true);
         setReadyForNext(true);
       }
       else setSession(s => ({ ...s, feedback: reply.feedback }));
@@ -118,12 +120,14 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
     if (!readyForNext || busy) return;
     setReadyForNext(false);
     setRevealedAnswer("");
+    setCorrectFeedback(false);
     setSession(s => ({ ...s, index: s.index + 1, answer: "", feedback: "" }));
   }
 
   function revealAnswer() {
     if (busy || complete || !prompt) return;
     setRevealedAnswer(cues[session.index]);
+    setCorrectFeedback(false);
     setSession(s => ({ ...s, feedback: "Вот правильная фраза из видео. Можно разобрать её с ИИ шаг за шагом." }));
     setReadyForNext(true);
   }
@@ -165,6 +169,21 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
     setIsDictating(true);
   }
 
+  function renderPromptWords(text: string) {
+    if (!onWordTap) return text;
+    return text.split(/(\s+)/u).map((part, index) => {
+      if (!/\p{L}/u.test(part)) return <span key={`${part}-${index}`}>{part}</span>;
+      const word = part.replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
+      if (!word) return <span key={`${part}-${index}`}>{part}</span>;
+      const start = part.indexOf(word);
+      return <span key={`${part}-${index}`}>
+        {part.slice(0, start)}
+        <button type="button" className={styles.promptWord} onClick={() => onWordTap(word, text)} aria-label={`Разобрать слово ${word}`}>{word}</button>
+        {part.slice(start + word.length)}
+      </span>;
+    });
+  }
+
   return <dialog ref={dialog} className={styles.dialog} aria-labelledby="video-training-title"
     onCancel={e => { e.preventDefault(); onClose(); }}>
     <header className={styles.header}>
@@ -173,12 +192,12 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
     </header>
     <progress className={styles.progress} value={session.index} max={cues.length} aria-label="Пройденные реплики" />
     {storageWarning && <p role="status">Хранилище недоступно: прогресс сохранится только до закрытия окна.</p>}
-    {session.feedback && <div className={styles.feedback} role="status">{session.feedback}</div>}
+    {session.feedback && <div className={`${styles.feedback} ${correctFeedback ? styles.correctFeedback : ""}`} role="status">{session.feedback}</div>}
     {revealedAnswer && <div className={styles.revealedAnswer}>
       <span>Правильная фраза</span><strong>{revealedAnswer}</strong>
       {onDiscuss && <button type="button" onClick={() => onDiscuss(session.index)}>Разобрать фразу с ИИ</button>}
     </div>}
-    {readyForNext && !complete && <button type="button" className={styles.nextButton} onClick={advanceToNextCue}>
+    {readyForNext && !complete && <button type="button" className={`${styles.nextButton} ${correctFeedback ? styles.nextCorrect : ""}`} onClick={advanceToNextCue}>
       Следующая реплика <span aria-hidden="true">→</span>
     </button>}
     {complete ? <section className={styles.exercise}><h3>Все реплики пройдены!</h3><p>Вы перевели весь текст этого видео.</p>
@@ -186,7 +205,7 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
       : <form onSubmit={e => { e.preventDefault(); if (prompt && session.answer.trim()) void request("check"); }}>
         <section className={styles.exercise} aria-busy={busy}>
           <span className={styles.eyebrow}>Переведите на {targetLanguage.toUpperCase()}</span>
-          <p className={styles.prompt}>{prompt || (busy ? "Готовим реплику…" : "Задание ещё не загружено")}</p>
+          <p className={styles.prompt}>{prompt ? renderPromptWords(prompt) : (busy ? "Готовим реплику…" : "Задание ещё не загружено")}</p>
         </section>
         <label className={styles.label} htmlFor="video-training-answer">Ваш перевод или вопрос к ИИ</label>
         <textarea ref={answerRef} id="video-training-answer" value={session.answer} maxLength={4000} rows={3} disabled={busy || !prompt}
