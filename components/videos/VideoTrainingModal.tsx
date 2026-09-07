@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Loader2, Mic, MicOff } from "lucide-react";
 import { getAiHeaders } from "@/lib/ai/analyze";
+import { sbAuthHeaders } from "@/lib/db/supabase";
 import type { TrainingReply } from "@/lib/videos/training";
 import { isSpeechRecognitionSupported, startRecognition, type Recognizer } from "@/lib/speech/recognition";
 import styles from "./VideoTrainingModal.module.css";
@@ -23,6 +24,8 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
   const busyRef = useRef(false);
   const [session, setSession] = useState<Session>(emptySession);
   const [storageKey, setStorageKey] = useState("");
+  const [transcriptHash, setTranscriptHash] = useState("");
+  const [remoteReady, setRemoteReady] = useState(!userId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [storageWarning, setStorageWarning] = useState(false);
@@ -44,10 +47,11 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
   useEffect(() => {
     let disposed = false;
     // Content-addressed cache: changed transcripts never reuse stale exercises.
-    void crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(cues))).then(hash => {
+    void crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(cues))).then(async hash => {
       if (disposed) return;
       const digest = Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, "0")).join("");
       const key = `aibook_video_training_v1:${userId || "guest"}:${videoId}:${targetLanguage}:${nativeLanguage}:${digest}`;
+      setTranscriptHash(digest);
       try {
         const saved = JSON.parse(localStorage.getItem(key) || "null");
         if (saved && Number.isInteger(saved.index) && saved.index >= 0 && saved.index <= cues.length
@@ -56,19 +60,46 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
           && typeof saved.answer === "string" && typeof saved.feedback === "string") setSession(saved);
       } catch { setStorageWarning(true); }
       setStorageKey(key);
+      if (!userId) return;
+      try {
+        const response = await fetch(`/api/videos/training-progress?video_id=${encodeURIComponent(videoId)}&native_language=${encodeURIComponent(nativeLanguage)}&target_language=${encodeURIComponent(targetLanguage)}&transcript_hash=${digest}`, { headers: await sbAuthHeaders() });
+        if (response.ok) {
+          const data = await response.json() as { progress?: { session?: unknown } | null };
+          const remote = data.progress?.session;
+          if (remote && typeof remote === "object") {
+            const value = remote as Partial<Session>;
+            if (Number.isInteger(value.index) && (value.index ?? -1) >= 0 && (value.index ?? Infinity) <= cues.length
+              && value.prompts && typeof value.prompts === "object" && !Array.isArray(value.prompts)
+              && Object.values(value.prompts).every(p => typeof p === "string")
+              && typeof value.answer === "string" && typeof value.feedback === "string") setSession(value as Session);
+          }
+        }
+      } catch { setStorageWarning(true); }
+      if (!disposed) setRemoteReady(true);
     }).catch(() => { if (!disposed) { setStorageWarning(true); setStorageKey("memory"); } });
     return () => { disposed = true; };
   }, [cues, videoId, userId, targetLanguage, nativeLanguage]);
 
   useEffect(() => {
-    if (!storageKey || storageKey === "memory") return;
+    if (!storageKey || storageKey === "memory" || !remoteReady) return;
     try { localStorage.setItem(storageKey, JSON.stringify(session)); }
     catch {
       // Synchronize the UI with failure of the external browser storage.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setStorageWarning(true);
     }
-  }, [session, storageKey]);
+  }, [session, storageKey, remoteReady]);
+
+  useEffect(() => {
+    if (!userId || !transcriptHash || !remoteReady) return;
+    const timer = window.setTimeout(() => {
+      void sbAuthHeaders().then(headers => fetch("/api/videos/training-progress", {
+        method: "POST", headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ video_id: videoId, native_language: nativeLanguage, target_language: targetLanguage, transcript_hash: transcriptHash, session }),
+      })).catch(() => setStorageWarning(true));
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [session, userId, videoId, nativeLanguage, targetLanguage, transcriptHash, remoteReady]);
 
   async function request(action: "prepare" | "check" | "hint") {
     if (busyRef.current || complete) return;
