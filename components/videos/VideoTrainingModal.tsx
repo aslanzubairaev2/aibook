@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Loader2, GraduationCap, Mic, MicOff } from "lucide-react";
+import { X, Loader2, Mic, MicOff } from "lucide-react";
 import { getAiHeaders } from "@/lib/ai/analyze";
 import { isExactTrainingAnswer, type TrainingReply } from "@/lib/videos/training";
 import { isSpeechRecognitionSupported, startRecognition, type Recognizer } from "@/lib/speech/recognition";
@@ -14,7 +14,7 @@ type Props = {
 type Session = { index: number; prompts: Record<number, string>; answer: string; feedback: string };
 const emptySession = (): Session => ({ index: 0, prompts: {}, answer: "", feedback: "" });
 
-export default function VideoTrainingModal({ cues, videoId, title, nativeLanguage, targetLanguage, userId, onClose }: Props) {
+export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targetLanguage, userId, onClose }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const answerRef = useRef<HTMLTextAreaElement>(null);
   const recognizerRef = useRef<Recognizer | null>(null);
@@ -159,14 +159,10 @@ export default function VideoTrainingModal({ cues, videoId, title, nativeLanguag
   return <dialog ref={dialog} className={styles.dialog} aria-labelledby="video-training-title"
     onCancel={e => { e.preventDefault(); onClose(); }}>
     <header className={styles.header}>
-      <div><span className={styles.eyebrow}><GraduationCap size={17} /> Практика по видео</span>
-        <h2 id="video-training-title">Переведи реплику</h2></div>
+      <h2 id="video-training-title" className={styles.visuallyHidden}>Тренировка перевода</h2>
       <button type="button" className={styles.icon} aria-label="Закрыть тренировку" onClick={onClose}><X size={22} /></button>
     </header>
-    <p className={styles.title}>{title}</p>
-    <p className={styles.meta}>Перевод: {nativeLanguage.toUpperCase()} → {targetLanguage.toUpperCase()} · {Math.min(session.index + 1, cues.length)} / {cues.length}</p>
     <progress className={styles.progress} value={session.index} max={cues.length} aria-label="Пройденные реплики" />
-    <p className={styles.note}>Тренировка по всему сохранённому тексту видео. Новые задания и подсказки используют платные запросы к ИИ.</p>
     {storageWarning && <p role="status">Хранилище недоступно: прогресс сохранится только до закрытия окна.</p>}
     {session.feedback && <div className={styles.feedback} role="status">{session.feedback}</div>}
     {readyForNext && !complete && <button type="button" className={styles.nextButton} onClick={advanceToNextCue}>
@@ -178,7 +174,6 @@ export default function VideoTrainingModal({ cues, videoId, title, nativeLanguag
         <section className={styles.exercise} aria-busy={busy}>
           <span className={styles.eyebrow}>Переведите на {targetLanguage.toUpperCase()}</span>
           <p className={styles.prompt}>{prompt || (busy ? "Готовим реплику…" : "Задание ещё не загружено")}</p>
-          <p className={styles.instruction}>Напишите или продиктуйте перевод этой фразы. После проверки нажмите «Следующая реплика».</p>
         </section>
         <label className={styles.label} htmlFor="video-training-answer">Ваш перевод или вопрос к ИИ</label>
         <textarea ref={answerRef} id="video-training-answer" value={session.answer} maxLength={4000} rows={3} disabled={busy || !prompt}
@@ -204,6 +199,5 @@ export default function VideoTrainingModal({ cues, videoId, title, nativeLanguag
       </form>}
     {busy && <p className={styles.loading} role="status"><Loader2 size={18} className="spin" /> ИИ думает…</p>}
     {error && <div className={styles.error} role="alert"><p>{error}</p>{!prompt && !complete && <button type="button" disabled={busy} onClick={() => void request("prepare")}>Повторить загрузку</button>}</div>}
-    <p className={styles.note}>Правильный ответ откроет кнопку «Следующая реплика». При ошибке попробуйте ещё раз или задайте вопрос через «Спросить ИИ».</p>
   </dialog>;
 }
