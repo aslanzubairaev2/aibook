@@ -1111,15 +1111,17 @@ export function VideoPlayerModal({
           />
         </div>}
 
-        {isReverseWordModalOpen && <ReverseWordModal
-          isOpen
-          isLoading={isReverseWordModalLoading}
-          word={reverseWordSelection}
-          analysis={reverseWordAnalysis}
-          lang={targetLanguage}
-          onClose={() => { setIsReverseWordModalOpen(false); setReverseWordAnalysis(null); setReverseWordSelection(""); }}
-          onAddCard={(front, back) => { handleAddCard(front, back); setIsReverseWordModalOpen(false); }}
-        />}
+        {isReverseWordModalOpen && <div className="video-word-modal-layer">
+          <ReverseWordModal
+            isOpen
+            isLoading={isReverseWordModalLoading}
+            word={reverseWordSelection}
+            analysis={reverseWordAnalysis}
+            lang={targetLanguage}
+            onClose={() => { setIsReverseWordModalOpen(false); setReverseWordAnalysis(null); setReverseWordSelection(""); }}
+            onAddCard={(front, back) => { handleAddCard(front, back); setIsReverseWordModalOpen(false); }}
+          />
+        </div>}
 
         {panelSelection && <div className="video-ai-panel-layer">
           <AiPanel
