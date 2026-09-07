@@ -140,10 +140,10 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
   useEffect(() => {
     // This effect synchronizes the current cursor with an external AI request.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (storageKey && !complete && !prompt) void request("prepare");
+    if (storageKey && remoteReady && !complete && !prompt) void request("prepare");
     // Request is intentionally triggered by cursor changes, never by typing or errors.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey, session.index]);
+  }, [storageKey, remoteReady, session.index]);
 
   useEffect(() => {
     if (!complete && prompt && !busy) {
