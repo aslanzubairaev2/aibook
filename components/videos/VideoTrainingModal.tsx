@@ -11,7 +11,7 @@ import styles from "./VideoTrainingModal.module.css";
 type Props = {
   cues: string[]; videoId: string; title: string; nativeLanguage: string;
   targetLanguage: string; userId?: string | null; onClose: () => void; onDiscuss?: (cueIndex: number) => void;
-  onWordTap?: (word: string, contextSentence: string) => void;
+  onWordTap?: (word: string, contextSentence: string, targetSentence: string) => void;
 };
 type Session = { index: number; prompts: Record<number, string>; answer: string; feedback: string };
 const emptySession = (): Session => ({ index: 0, prompts: {}, answer: "", feedback: "" });
@@ -33,7 +33,6 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
   const [isDictating, setIsDictating] = useState(false);
   const [dictationError, setDictationError] = useState("");
   const [revealedAnswer, setRevealedAnswer] = useState("");
-  const [correctFeedback, setCorrectFeedback] = useState(false);
   const complete = session.index >= cues.length;
   const prompt = session.prompts[session.index];
 
@@ -105,7 +104,6 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
     if (busyRef.current || complete) return;
     busyRef.current = true;
     setBusy(true); setError("");
-    if (action === "check") setCorrectFeedback(false);
     const abort = new AbortController();
     controller.current = abort;
     try {
@@ -125,9 +123,9 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
       if (abort.signal.aborted) return;
       if (action === "prepare") setSession(s => ({ ...s, prompts: { ...s.prompts, [s.index]: reply.prompt } }));
       else if (action === "check" && reply.correct) {
-        setSession(s => ({ ...s, feedback: reply.feedback }));
-        setCorrectFeedback(true);
-        setReadyForNext(true);
+        setReadyForNext(false);
+        setRevealedAnswer("");
+        setSession(s => ({ ...s, index: s.index + 1, answer: "", feedback: "" }));
       }
       else setSession(s => ({ ...s, feedback: reply.feedback }));
     } catch (err) {
@@ -147,18 +145,22 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey, session.index]);
 
+  useEffect(() => {
+    if (!complete && prompt && !busy) {
+      requestAnimationFrame(() => answerRef.current?.focus());
+    }
+  }, [complete, prompt, session.index, busy]);
+
   function advanceToNextCue() {
     if (!readyForNext || busy) return;
     setReadyForNext(false);
     setRevealedAnswer("");
-    setCorrectFeedback(false);
     setSession(s => ({ ...s, index: s.index + 1, answer: "", feedback: "" }));
   }
 
   function revealAnswer() {
     if (busy || complete || !prompt) return;
     setRevealedAnswer(cues[session.index]);
-    setCorrectFeedback(false);
     setSession(s => ({ ...s, feedback: "Вот правильная фраза из видео. Можно разобрать её с ИИ шаг за шагом." }));
     setReadyForNext(true);
   }
@@ -209,7 +211,7 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
       const start = part.indexOf(word);
       return <span key={`${part}-${index}`}>
         {part.slice(0, start)}
-        <button type="button" className={styles.promptWord} onClick={() => onWordTap(word, text)} aria-label={`Разобрать слово ${word}`}>{word}</button>
+        <button type="button" className={styles.promptWord} onClick={() => onWordTap(word, text, cues[session.index])} aria-label={`Разобрать слово ${word}`}>{word}</button>
         {part.slice(start + word.length)}
       </span>;
     });
@@ -223,12 +225,12 @@ export default function VideoTrainingModal({ cues, videoId, nativeLanguage, targ
     </header>
     <progress className={styles.progress} value={session.index} max={cues.length} aria-label="Пройденные реплики" />
     {storageWarning && <p role="status">Хранилище недоступно: прогресс сохранится только до закрытия окна.</p>}
-    {session.feedback && <div className={`${styles.feedback} ${correctFeedback ? styles.correctFeedback : ""}`} role="status">{session.feedback}</div>}
+    {session.feedback && <div className={styles.feedback} role="status">{session.feedback}</div>}
     {revealedAnswer && <div className={styles.revealedAnswer}>
       <span>Правильная фраза</span><strong>{revealedAnswer}</strong>
       {onDiscuss && <button type="button" onClick={() => onDiscuss(session.index)}>Разобрать фразу с ИИ</button>}
     </div>}
-    {readyForNext && !complete && <button type="button" className={`${styles.nextButton} ${correctFeedback ? styles.nextCorrect : ""}`} onClick={advanceToNextCue}>
+    {readyForNext && !complete && <button type="button" className={styles.nextButton} onClick={advanceToNextCue}>
       Следующая реплика <span aria-hidden="true">→</span>
     </button>}
     {complete ? <section className={styles.exercise}><h3>Все реплики пройдены!</h3><p>Вы перевели весь текст этого видео.</p>

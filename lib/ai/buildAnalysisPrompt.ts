@@ -17,6 +17,7 @@ interface AnalysisPromptParams {
   sentence: string;
   sentenceBefore: string;
   sentenceAfter: string;
+  targetSentence?: string;
   nativeLanguage: string;
   targetLanguage: string;
 }
@@ -151,9 +152,11 @@ The student is looking at a sentence in their OWN language and wants to know how
 
 Word in ${p.nativeLanguage}: "${p.word}"
 The ${p.nativeLanguage} sentence it appears in, for choosing the right sense only: "${p.sentence}"
+The exact ${p.targetLanguage} sentence being produced, for choosing the required form: "${p.targetSentence || ""}"
 
 Give the ways to say it in ${p.targetLanguage}, most usual first, at most 4.
 - Pick the sense the sentence actually uses; do not list senses that do not fit it.
+- The first entry MUST be the exact word/form needed in the target sentence, including its article, case, number, gender, or verb form. Do not replace it with a random synonym. If the target sentence is provided, use it as the authority for the required form.
 - Give every word the grammar it cannot be used without: the article and plural for a noun, the principal parts for an irregular verb.
 - Add a distinguishing note only where two options are genuinely used differently.
 

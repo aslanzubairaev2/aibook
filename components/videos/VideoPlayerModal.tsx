@@ -7,8 +7,9 @@ import { X, Subtitles, ListMusic, Loader2, Eye, EyeOff, MessageCircle, Plus, Rep
 import type { VideoItem } from "@/lib/videos/types";
 import type { SubtitleCue } from "@/lib/videos/youtubeTranscript";
 import { loadTranscript } from "@/lib/videos/loadTranscript";
-import type { UserProfile, Flashcard, AiAnalysis, DiscussMessage, AiMode } from "@/lib/types";
+import type { UserProfile, Flashcard, AiAnalysis, DiscussMessage, AiMode, ReverseWordAnalysis } from "@/lib/types";
 import { WordModal } from "@/components/word-modal/WordModal";
+import { ReverseWordModal } from "@/components/word-modal/ReverseWordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { SpeakButton } from "@/components/ui/SpeakButton";
@@ -87,6 +88,10 @@ export function VideoPlayerModal({
   const [wordModalNativeLanguage, setWordModalNativeLanguage] = useState("");
   const [isWordModalOpen, setIsWordModalOpen] = useState(false);
   const [isWordModalLoading, setIsWordModalLoading] = useState(false);
+  const [reverseWordSelection, setReverseWordSelection] = useState("");
+  const [reverseWordAnalysis, setReverseWordAnalysis] = useState<ReverseWordAnalysis | null>(null);
+  const [isReverseWordModalOpen, setIsReverseWordModalOpen] = useState(false);
+  const [isReverseWordModalLoading, setIsReverseWordModalLoading] = useState(false);
   const [cardAddedNotice, setCardAddedNotice] = useState<string | null>(null);
   const [cueCardLoading, setCueCardLoading] = useState<number | null>(null);
   const [discussCue, setDiscussCue] = useState<{ index: number; text: string; mode: AiMode; sentence: string } | null>(null);
@@ -462,10 +467,33 @@ export function VideoPlayerModal({
 
   // ── 4. Word Tap → Pause & Word Analysis ───────────────────────────────────
   const handleWordTap = useCallback(
-    async (rawWord: string, contextSentence: string, wordLanguage: string = targetLanguage, explanationLanguage: string = nativeLanguage) => {
+    async (rawWord: string, contextSentence: string, wordLanguage: string = targetLanguage, explanationLanguage: string = nativeLanguage, targetSentence = "") => {
       const cleanWord = rawWord.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
       if (!cleanWord || cleanWord.length < 2) return;
       const lookupWord = wordLanguage === targetLanguage ? (inferSeparableVerb(cleanWord, contextSentence) || cleanWord) : cleanWord;
+
+      if (wordLanguage === nativeLanguage && targetSentence) {
+        if (playerRef.current && typeof playerRef.current.pauseVideo === "function") {
+          try { playerRef.current.pauseVideo(); } catch {}
+        }
+        setReverseWordSelection(cleanWord);
+        setReverseWordAnalysis(null);
+        setIsReverseWordModalOpen(true);
+        setIsReverseWordModalLoading(true);
+        const cacheKey = makeAiCacheKey("reverse-word", `${cleanWord}|${contextSentence}|${targetSentence}`, wordLanguage, explanationLanguage);
+        try {
+          let full = getLocalAiAnalysis(cacheKey);
+          if (!full?.reverse) {
+            full = await analyzeSelection({ mode: "word", direction: "native-to-target", word: cleanWord, text: cleanWord,
+              sentence: contextSentence, targetSentence, sentenceBefore: "", sentenceAfter: "",
+              nativeLanguage: wordLanguage, targetLanguage: explanationLanguage });
+            if (full?.reverse) saveLocalAiAnalysis(cacheKey, full);
+          }
+          setReverseWordAnalysis(full?.reverse ?? null);
+        } catch { setReverseWordAnalysis(null); }
+        finally { setIsReverseWordModalLoading(false); }
+        return;
+      }
 
       // 1. Pause video playback immediately
       if (playerRef.current && typeof playerRef.current.pauseVideo === "function") {
@@ -1046,9 +1074,9 @@ export function VideoPlayerModal({
             setShowTraining(false);
             void handleDiscussCue(cueIndex, cues[cueIndex]?.text);
           }}
-          onWordTap={(word, contextSentence) => {
+          onWordTap={(word, contextSentence, targetSentence) => {
             setShowTraining(false);
-            void handleWordTap(word, contextSentence, nativeLanguage, targetLanguage);
+            void handleWordTap(word, contextSentence, nativeLanguage, targetLanguage, targetSentence);
           }} />}
         {/* ── Interactive WordModal for Tap-To-Translate & Cards ───────────── */}
         {isWordModalOpen && <div className="video-word-modal-layer">
@@ -1082,6 +1110,16 @@ export function VideoPlayerModal({
             onDiscuss={handleDiscussWord}
           />
         </div>}
+
+        {isReverseWordModalOpen && <ReverseWordModal
+          isOpen
+          isLoading={isReverseWordModalLoading}
+          word={reverseWordSelection}
+          analysis={reverseWordAnalysis}
+          lang={targetLanguage}
+          onClose={() => { setIsReverseWordModalOpen(false); setReverseWordAnalysis(null); setReverseWordSelection(""); }}
+          onAddCard={(front, back) => { handleAddCard(front, back); setIsReverseWordModalOpen(false); }}
+        />}
 
         {panelSelection && <div className="video-ai-panel-layer">
           <AiPanel

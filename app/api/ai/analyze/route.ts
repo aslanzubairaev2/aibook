@@ -35,6 +35,7 @@ export async function POST(req: Request) {
     sentence: string;
     sentenceBefore: string;
     sentenceAfter: string;
+    targetSentence?: string;
     nativeLanguage: string;
     targetLanguage: string;
     skipWord?: boolean;

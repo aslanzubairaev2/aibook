@@ -22,8 +22,6 @@
 .actions button:first-child { background: var(--accent, #d4a847); color: #17130d; border-color: transparent; }
 .feedback { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; border-left: 3px solid var(--accent, #d4a847); background: #d4a8470d; line-height: 1.6; }
 .nextButton { width: 100%; margin: 12px 0 4px; background: var(--accent, #d4a847) !important; color: #17130d !important; border-color: transparent !important; font-weight: 700; }
-.correctFeedback { border-left-color: #5fd28a; background: rgba(95, 210, 138, 0.12); color: #dff8e7; }
-.nextCorrect { background: #5fca82 !important; color: #102519 !important; }
 .revealedAnswer { display: grid; gap: 8px; margin: 12px 0 4px; padding: 14px 16px; border-left: 3px solid var(--accent, #d4a847); background: #d4a8470d; }
 .revealedAnswer span { color: var(--text-secondary, #b8b1a4); font-size: 12px; }
 .revealedAnswer strong { font-size: 18px; line-height: 1.45; overflow-wrap: anywhere; }

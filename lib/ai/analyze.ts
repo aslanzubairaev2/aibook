@@ -12,6 +12,7 @@ interface AnalyzeParams {
   sentence: string;
   sentenceBefore: string;
   sentenceAfter: string;
+  targetSentence?: string;
   nativeLanguage: string;
   targetLanguage: string;
   skipWord?: boolean;
