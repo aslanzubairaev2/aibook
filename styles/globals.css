@@ -2306,15 +2306,29 @@ textarea,
   letter-spacing: 0.03em; color: var(--text-muted);
   padding: 8px 14px; border-bottom: 1px solid var(--border);
 }
-/* Left border echoes the teacher's own pen: gold for weak/schwach, red for
-   strong/stark — the distinction the whole table exists to drill. */
+/* Left border echoes the teacher's own pen and makes the learning groups
+   visible even when the compact type filter is closed. */
 .verb-row { cursor: pointer; border-left: 3px solid transparent; transition: background 0.15s; }
 .verb-row:hover { background: rgba(212, 168, 71, 0.06); }
 .verb-row td { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 14px; color: var(--text-primary); }
 .verb-row:last-child td { border-bottom: none; }
-.verb-row-regular { border-left-color: var(--accent); }
-.verb-row-irregular { border-left-color: var(--red); }
+.verb-row-weak { border-left-color: var(--accent); }
+.verb-row-strong { border-left-color: var(--red); }
+.verb-row-mixed { border-left-color: #d98d52; }
+.verb-row-special { border-left-color: #bf7bd1; }
+.verb-row-impersonal { border-left-color: #6da8d8; }
 .verb-row-difficult { background: rgba(196, 106, 106, 0.045); }
+.verb-type-chip { text-transform: none; }
+.verb-type-chip.active { box-shadow: 0 0 0 1px currentColor inset; }
+.verb-type-badge {
+  display: inline-flex; align-items: center; margin-left: 7px; padding: 2px 6px;
+  border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted);
+  font-size: 9px; font-weight: 800; letter-spacing: 0.02em; vertical-align: middle;
+}
+.verb-type-badge.verb-type-strong { color: var(--red); border-color: rgba(196, 106, 106, 0.5); }
+.verb-type-badge.verb-type-mixed { color: #d98d52; border-color: rgba(217, 141, 82, 0.5); }
+.verb-type-badge.verb-type-special { color: #bf7bd1; border-color: rgba(191, 123, 209, 0.5); }
+.verb-type-badge.verb-type-impersonal { color: #6da8d8; border-color: rgba(109, 168, 216, 0.5); }
 .training-difficulty-badge {
   display: inline-flex; align-items: center; margin-left: 7px; padding: 2px 6px;
   border: 1px solid rgba(196, 106, 106, 0.45); border-radius: 999px;

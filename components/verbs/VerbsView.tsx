@@ -7,7 +7,7 @@ import { GrammarModal } from "@/components/word-modal/GrammarModal";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { VerbsQuiz } from "@/components/verbs/VerbsQuiz";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
-import { isIrregularGermanVerb, normalizePos } from "@/lib/verbForms";
+import { classifyGermanVerb, GERMAN_VERB_CLASS_HINT, GERMAN_VERB_CLASS_LABEL, normalizePos, type GermanVerbClass } from "@/lib/verbForms";
 import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/search/multiTerm";
 import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -26,7 +26,9 @@ type Props = {
   onBack: () => void;
 };
 
-type VerbType = "all" | "regular" | "irregular";
+type VerbType = "all" | GermanVerbClass;
+
+const VERB_TYPE_ORDER: GermanVerbClass[] = ["weak", "strong", "mixed", "special", "impersonal"];
 
 type VerbGroup = {
   key: string;
@@ -174,10 +176,7 @@ export function VerbsView({ profile, onBack }: Props) {
     // every verb starting with either fragment, from just a couple of letters.
     const terms = parseSearchTerms(query);
     return allVerbs.filter((e) => {
-      if (verbType !== "all") {
-        const irregular = isIrregularGermanVerb(e.lemma, e.headword, e.forms);
-        if (verbType === "irregular" ? !irregular : irregular) return false;
-      }
+      if (verbType !== "all" && classifyGermanVerb(e.lemma, e.headword, e.forms) !== verbType) return false;
       return matchesSearchTerms([e.headword, e.lemma, e.translation], terms);
     });
   }, [allVerbs, verbType, query]);
@@ -484,12 +483,22 @@ export function VerbsView({ profile, onBack }: Props) {
           {filtersOpen && allVerbs.length > 0 && (
             <div className="all-filter-panel">
               <div className="filter-group">
-                <div className="filter-group-label">Тип глаголов</div>
+                <div className="filter-group-label">Тип спряжения</div>
                 <div className="filter-chips">
                   <button type="button" className={`filter-chip ${verbType === "all" ? "active" : ""}`} onClick={() => setVerbType("all")}>Все</button>
-                  <button type="button" className={`filter-chip ${verbType === "regular" ? "active" : ""}`} onClick={() => setVerbType("regular")}>Слабые</button>
-                  <button type="button" className={`filter-chip ${verbType === "irregular" ? "active" : ""}`} onClick={() => setVerbType("irregular")}>Сильные</button>
+                  {VERB_TYPE_ORDER.map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      className={`filter-chip verb-type-chip verb-type-${type} ${verbType === type ? "active" : ""}`}
+                      onClick={() => setVerbType(type)}
+                      title={GERMAN_VERB_CLASS_HINT[type]}
+                    >
+                      {GERMAN_VERB_CLASS_LABEL[type]}
+                    </button>
+                  ))}
                 </div>
+                <p className="verb-modes-hint">Для ежедневной тренировки обычно выбирайте «сильный», «смешанный» и «особый». «Слабые» идут по стандарту, а безличные используются с es.</p>
               </div>
             </div>
           )}
@@ -554,7 +563,7 @@ export function VerbsView({ profile, onBack }: Props) {
             <div className="verbs-groups">
               {groups.map((group) => {
                 const open = isNarrowed || openGroups.has(group.key);
-                const irregularCount = group.verbs.filter((v) => isIrregularGermanVerb(v.lemma, v.headword, v.forms)).length;
+                const nonStandardCount = group.verbs.filter((v) => classifyGermanVerb(v.lemma, v.headword, v.forms) !== "weak").length;
                 const coverage = packCoverage(progress, group.key, group.verbs.map((v) => v.id));
                 const trainedAt = formatTrainedAt(coverage.lastTrainedAt);
                 const unfamiliar = group.verbs.filter((entry) => isUnfamiliarWord(progress.words[entry.id]));
@@ -567,7 +576,7 @@ export function VerbsView({ profile, onBack }: Props) {
                         <strong className="dict-batch-title">{group.title}</strong>
                         <span className="dict-batch-meta">
                           {group.verbs.length} {verbNoun(group.verbs.length)}
-                          {irregularCount > 0 && ` · ${irregularCount} неправильных`}
+                          {nonStandardCount > 0 && ` · ${nonStandardCount} нестандартных`}
                           {trainedAt ? ` · тренировка ${trainedAt}` : " · ещё не тренировали"}
                         </span>
                       </div>
@@ -616,19 +625,24 @@ export function VerbsView({ profile, onBack }: Props) {
                             </thead>
                             <tbody>
                               {group.verbs.map((entry) => {
-                                const irregular = isIrregularGermanVerb(entry.lemma, entry.headword, entry.forms);
+                                const verbClass = classifyGermanVerb(entry.lemma, entry.headword, entry.forms);
                                 const state = progress.words[entry.id];
                                 const difficult = isDifficultWord(state);
                                 const errors = trainingErrors(state);
                                 return (
                                   <tr
                                     key={entry.id}
-                                    className={`verb-row ${irregular ? "verb-row-irregular" : "verb-row-regular"}${difficult ? " verb-row-difficult" : ""}`}
+                                    className={`verb-row verb-row-${verbClass}${difficult ? " verb-row-difficult" : ""}`}
+                                    title={GERMAN_VERB_CLASS_HINT[verbClass]}
                                     onClick={() => openEntry(entry)}
                                   >
                                     <td className="verb-cell-infinitive">
                                       <span className="verb-form-row">
-                                      <span className="verb-infinitive">{entry.headword}{difficult && <span className="training-difficulty-badge" title={`Ошибок: ${errors}`}>сложно</span>}</span>
+                                      <span className="verb-infinitive">
+                                        {entry.headword}
+                                        <span className={`verb-type-badge verb-type-${verbClass}`} title={GERMAN_VERB_CLASS_HINT[verbClass]}>{GERMAN_VERB_CLASS_LABEL[verbClass]}</span>
+                                        {difficult && <span className="training-difficulty-badge" title={`Ошибок: ${errors}`}>сложно</span>}
+                                      </span>
                                         <SpeakButton text={entry.headword} lang={profile.targetLanguage} size={13} />
                                       </span>
                                       {entry.translation && (

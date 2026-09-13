@@ -21,6 +21,25 @@ export function normalizePos(pos: string): string {
   return pos.trim().toLowerCase();
 }
 
+/** The learning-oriented groups shown in the verb trainer. */
+export type GermanVerbClass = "weak" | "strong" | "mixed" | "special" | "impersonal";
+
+export const GERMAN_VERB_CLASS_LABEL: Record<GermanVerbClass, string> = {
+  weak: "слабый",
+  strong: "сильный",
+  mixed: "смешанный",
+  special: "особый",
+  impersonal: "безличный",
+};
+
+export const GERMAN_VERB_CLASS_HINT: Record<GermanVerbClass, string> = {
+  weak: "Стандартное спряжение: основу обычно не нужно заучивать отдельно.",
+  strong: "Меняет корневую гласную или имеет сильные формы Präteritum/Partizip II — лучше учить формы отдельно.",
+  mixed: "Сочетает признаки слабых и сильных глаголов: формы нужно запомнить.",
+  special: "Особый или вспомогательный глагол с нестандартной системой форм.",
+  impersonal: "В обычной речи используется с es: es regnet, es schneit и т. п.",
+};
+
 const GERMAN_IRREGULAR_VERB_STEMS = new Set([
   "sein", "haben", "werden", "können", "müssen", "wollen", "sollen", "dürfen", "mögen", "wissen", "tun",
   "backen", "befehlen", "beginnen", "beißen", "bergen", "bersten", "bewegen", "biegen", "bieten", "binden",
@@ -44,19 +63,55 @@ const GERMAN_IRREGULAR_VERB_STEMS = new Set([
   "ziehen", "zwingen", "fernsehen"
 ]);
 
-export function isIrregularGermanVerb(lemma: string, headword: string, forms: Record<string, string> = {}): boolean {
-  const norm = (lemma || headword || "").toLowerCase().trim();
-  if (!norm) return false;
+// These are useful to separate from ordinary strong verbs: they are the
+// forms learners most often have to memorise as a complete mini-paradigm.
+const GERMAN_SPECIAL_VERB_STEMS = new Set([
+  "sein", "haben", "werden", "wissen", "tun",
+  "können", "müssen", "wollen", "sollen", "dürfen", "mögen",
+]);
 
-  for (const stem of GERMAN_IRREGULAR_VERB_STEMS) {
+const GERMAN_MIXED_VERB_STEMS = new Set([
+  "bringen", "denken", "kennen", "nennen", "rennen", "brennen",
+  "senden", "wenden",
+]);
+
+const GERMAN_IMPERSONAL_VERBS = new Set([
+  "regnen", "schneien", "hageln", "donnern", "blitzen", "nieseln", "graupeln",
+]);
+
+function hasGermanStem(norm: string, stems: Set<string>): boolean {
+  for (const stem of stems) {
     if (norm === stem || norm.endsWith(stem)) return true;
   }
+  return false;
+}
+
+/**
+ * Classifies a German verb for practice, not for a linguistic dissertation.
+ * The stored principal parts are used as a fallback, so newly imported verbs
+ * are still classified even when they are not in the curated stem list.
+ */
+export function classifyGermanVerb(
+  lemma: string,
+  headword: string,
+  forms: Record<string, string> = {},
+): GermanVerbClass {
+  const norm = (lemma || headword || "").toLowerCase().trim();
+  if (!norm) return "weak";
+
+  if (hasGermanStem(norm, GERMAN_IMPERSONAL_VERBS)) return "impersonal";
+  if (hasGermanStem(norm, GERMAN_SPECIAL_VERB_STEMS)) return "special";
+  if (hasGermanStem(norm, GERMAN_MIXED_VERB_STEMS)) return "mixed";
+  if (hasGermanStem(norm, GERMAN_IRREGULAR_VERB_STEMS)) return "strong";
 
   const p2 = (forms.partizip2 || "").toLowerCase().trim();
   const pr = (forms.praeteritum || "").toLowerCase().trim();
+  if (p2.endsWith("en") && !p2.endsWith("ten")) return "strong";
+  if (pr && !pr.endsWith("te") && !pr.endsWith("ten")) return "strong";
 
-  if (p2.endsWith("en") && !p2.endsWith("ten")) return true;
-  if (pr && !pr.endsWith("te") && !pr.endsWith("ten")) return true;
+  return "weak";
+}
 
-  return false;
+export function isIrregularGermanVerb(lemma: string, headword: string, forms: Record<string, string> = {}): boolean {
+  return classifyGermanVerb(lemma, headword, forms) !== "weak";
 }
