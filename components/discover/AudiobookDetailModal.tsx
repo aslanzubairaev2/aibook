@@ -21,6 +21,7 @@ import {
 import type { Audiobook, AudiobookChapter, CefrConfidence, CefrLevel, DiscussMessage, AiAnalysis } from "@/lib/types";
 import {
   fetchAudiobookDetails,
+  fetchRemoteAudiobookProgress,
   formatAudioDuration,
   getAudiobookProgress,
   saveAudiobookProgress,
@@ -210,8 +211,13 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
         const full = await fetchAudiobookDetails(audiobook.id, controller.signal);
         if (active) {
           setDetails(full);
-          // Restore saved progress if available
-          const saved = getAudiobookProgress(audiobook.id);
+          // Prefer whichever local/remote resume point was saved later. The
+          // remote row lets Android and the browser resume the same chapter.
+          const localSaved = getAudiobookProgress(audiobook.id);
+          const remoteSaved = await fetchRemoteAudiobookProgress(audiobook.id, controller.signal);
+          const saved = remoteSaved && (!localSaved || Date.parse(remoteSaved.updatedAt) > Date.parse(localSaved.updatedAt))
+            ? remoteSaved
+            : localSaved;
           if (saved && saved.chapterIndex < (full.chapters?.length || 0)) {
             setCurrentChapterIndex(saved.chapterIndex);
             setCurrentTime(saved.currentTimeSeconds);

@@ -1,4 +1,5 @@
 import type { Audiobook, AudiobookChapter, AudiobookProgress, CefrConfidence, CefrLevel } from "@/lib/types";
+import { sbAuthHeaders } from "@/lib/db/supabase";
 
 export type AudiobookLanguageKey = "de" | "en" | "fr" | "es" | "ru" | "it" | "all";
 
@@ -526,8 +527,75 @@ export function saveAudiobookProgress(progress: AudiobookProgress): void {
     // Same payload doubles as the "last played" pointer — one write, no
     // separate plumbing for the home screen to keep in sync.
     localStorage.setItem(LAST_PLAYED_AUDIOBOOK_KEY, JSON.stringify(progress));
+    queueRemoteAudiobookProgress(progress);
   } catch {
     // Ignore storage quota errors
+  }
+}
+
+/** Reads the account-scoped resume point shared by web, Android and desktop. */
+export async function fetchRemoteAudiobookProgress(
+  audiobookId: string,
+  signal?: AbortSignal
+): Promise<AudiobookProgress | null> {
+  const headers = await sbAuthHeaders();
+  if (!headers.Authorization) return null;
+  try {
+    const response = await fetch(`/api/audiobooks/progress?audiobook_id=${encodeURIComponent(audiobookId)}`, {
+      headers,
+      signal,
+    });
+    if (!response.ok) return null;
+    const payload = await response.json() as { progress?: Array<Record<string, unknown>> };
+    const row = payload.progress?.[0];
+    if (!row || typeof row.audiobook_id !== "string" || typeof row.updated_at !== "string") return null;
+    return {
+      audiobookId: row.audiobook_id,
+      chapterIndex: typeof row.chapter_index === "number" ? row.chapter_index : 0,
+      currentTimeSeconds: typeof row.current_time_seconds === "number" ? row.current_time_seconds : 0,
+      durationSeconds: typeof row.duration_seconds === "number" ? row.duration_seconds : 0,
+      updatedAt: row.updated_at,
+    };
+  } catch {
+    // Remote progress is an enhancement; local resume must still work offline.
+    return null;
+  }
+}
+
+let remoteSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingRemoteProgress: AudiobookProgress | null = null;
+
+/** Coalesces the 60fps local progress stream into one authenticated write every few seconds. */
+function queueRemoteAudiobookProgress(progress: AudiobookProgress): void {
+  pendingRemoteProgress = progress;
+  if (remoteSaveTimer) return;
+  remoteSaveTimer = setTimeout(() => {
+    remoteSaveTimer = null;
+    const next = pendingRemoteProgress;
+    pendingRemoteProgress = null;
+    if (!next) return;
+    void sendRemoteAudiobookProgress(next);
+  }, 4_000);
+}
+
+async function sendRemoteAudiobookProgress(progress: AudiobookProgress): Promise<void> {
+  const headers = await sbAuthHeaders();
+  if (!headers.Authorization) return;
+  try {
+    await fetch("/api/audiobooks/progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({
+        audiobook_id: progress.audiobookId,
+        chapter_index: progress.chapterIndex,
+        current_time_seconds: progress.currentTimeSeconds,
+        duration_seconds: progress.durationSeconds,
+        updated_at: progress.updatedAt,
+      }),
+      keepalive: true,
+    });
+  } catch {
+    // The local write remains authoritative until the next online progress tick.
   }
 }
 
