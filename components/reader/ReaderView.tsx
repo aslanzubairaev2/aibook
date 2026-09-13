@@ -10,7 +10,7 @@ import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { analyzeSelection, checkServerAiAccess } from "@/lib/ai/analyze";
-import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
+import { makeAiCacheKey, makeDiscussCacheKey, makeWordContextCacheKey } from "@/lib/ai/cacheKeys";
 import { splitIntoTokens, normalizeToken, splitSentencesWithRanges, findPhraseOffsets } from "@/lib/selector/text";
 import {
   getLocalAiAnalysis,
@@ -202,6 +202,7 @@ export function ReaderView({
   const contentRef = useRef<HTMLDivElement>(null);
   const lastAutoScrollRef = useRef(0);
   const dragMovedRef = useRef(false);
+  const wordModalRequestIdRef = useRef(0);
   const restoredProgressKeyRef = useRef<string | null>(null);
   const pages = useMemo(() => buildReaderPages(book.paragraphs), [book.paragraphs]);
   const initialParaIndex = initialProgress?.selectionState?.paraIndex ?? initialProgress?.paragraphIndex ?? book.paragraphIndex;
@@ -464,7 +465,16 @@ export function ReaderView({
     const restoredText = savedSelection.mode === "word" ? restoredActive.token
       : savedSelection.mode === "phrase" ? restoredActive.phraseText
       : restoredActive.sentence;
-    const restoredCacheKey = makeAiCacheKey(savedSelection.mode, restoredText, book.language, profile.nativeLanguage);
+    const restoredCacheKey = savedSelection.mode === "word"
+      ? makeWordContextCacheKey(
+        restoredActive.token,
+        restoredActive.sentence,
+        restoredActive.sentenceBefore,
+        restoredActive.sentenceAfter,
+        book.language,
+        profile.nativeLanguage,
+      )
+      : makeAiCacheKey(savedSelection.mode, restoredText, book.language, profile.nativeLanguage);
     const cachedAnalysis = getLocalAiAnalysis(restoredCacheKey);
     setAnalysis(cachedAnalysis ?? {});
 
@@ -680,7 +690,16 @@ export function ReaderView({
 
   async function loadAnalysisForMode(token: ActiveToken, mode: SelectionType) {
     const selectedText = getTextForMode(token, mode);
-    const cacheKey = makeAiCacheKey(mode, selectedText, book.language, profile.nativeLanguage);
+    const cacheKey = mode === "word"
+      ? makeWordContextCacheKey(
+        token.token,
+        token.sentence,
+        token.sentenceBefore,
+        token.sentenceAfter,
+        book.language,
+        profile.nativeLanguage,
+      )
+      : makeAiCacheKey(mode, selectedText, book.language, profile.nativeLanguage);
 
     const localCached = getLocalAiAnalysis(cacheKey);
     if (localCached) {
@@ -727,6 +746,7 @@ export function ReaderView({
 
   async function loadWordModalAnalysis(word: string, contextSentence?: string) {
     if (!active) return;
+    const requestId = ++wordModalRequestIdRef.current;
     const proxyActive: ActiveToken = {
       ...active,
       token: word,
@@ -734,7 +754,14 @@ export function ReaderView({
       sentenceBefore: contextSentence ? "" : active.sentenceBefore,
       sentenceAfter: contextSentence ? "" : active.sentenceAfter,
     };
-    const cacheKey = makeAiCacheKey("word", word, book.language, profile.nativeLanguage);
+    const cacheKey = makeWordContextCacheKey(
+      word,
+      proxyActive.sentence,
+      proxyActive.sentenceBefore,
+      proxyActive.sentenceAfter,
+      book.language,
+      profile.nativeLanguage,
+    );
 
     setIsWordModalLoading(true);
     setWordModalAnalysis(null);
@@ -742,7 +769,7 @@ export function ReaderView({
     try {
       const localCached = getLocalAiAnalysis(cacheKey);
       if (localCached?.word) {
-        setWordModalAnalysis(localCached);
+        if (wordModalRequestIdRef.current === requestId) setWordModalAnalysis(localCached);
         return;
       }
 
@@ -753,7 +780,7 @@ export function ReaderView({
       const remoteCached = await sbGetCachedAnalysis(cacheKey);
       if (remoteCached?.word) {
         saveLocalAiAnalysis(cacheKey, remoteCached);
-        setWordModalAnalysis(remoteCached);
+        if (wordModalRequestIdRef.current === requestId) setWordModalAnalysis(remoteCached);
         return;
       }
 
@@ -770,12 +797,14 @@ export function ReaderView({
 
       saveLocalAiAnalysis(cacheKey, result);
       void sbSaveCachedAnalysis(cacheKey, "word", result);
-      setWordModalAnalysis(result);
-      setAnalysis((prev) => mergeAnalysis(prev, result));
+      if (wordModalRequestIdRef.current === requestId) {
+        setWordModalAnalysis(result);
+        setAnalysis((prev) => mergeAnalysis(prev, result));
+      }
     } catch (err) {
       console.error("Word modal analysis failed:", err);
     } finally {
-      setIsWordModalLoading(false);
+      if (wordModalRequestIdRef.current === requestId) setIsWordModalLoading(false);
     }
   }
 

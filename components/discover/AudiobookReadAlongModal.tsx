@@ -31,7 +31,7 @@ import {
 } from "@/lib/audio/transcribe";
 import { splitIntoTokens, normalizeToken, findPhraseOffsets } from "@/lib/selector/text";
 import { analyzeSelection } from "@/lib/ai/analyze";
-import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
+import { makeAiCacheKey, makeWordContextCacheKey } from "@/lib/ai/cacheKeys";
 import {
   getLocalAiAnalysis,
   saveLocalAiAnalysis,
@@ -291,7 +291,7 @@ export function AudiobookReadAlongModal({
     setAnalysis(null);
     setIsLoadingAnalysis(false);
 
-    const cacheKey = makeAiCacheKey("word", norm, lang, nativeLang);
+    const cacheKey = makeWordContextCacheKey(norm, sentence, sentenceBefore, sentenceAfter, lang, nativeLang);
     const localCached = getLocalAiAnalysis(cacheKey);
     if (localCached) {
       if (analysisRequestIdRef.current === requestId) setAnalysis(localCached);
@@ -323,7 +323,16 @@ export function AudiobookReadAlongModal({
     if (!selection) return;
     const targetText = tab === "phrase" ? selection.phraseText : tab === "sentence" ? selection.sentence : normalizeToken(selection.token);
     if (!targetText) return;
-    const cacheKey = makeAiCacheKey(tab === "sentence" ? "sentence" : tab === "phrase" ? "phrase" : "word", targetText, lang, nativeLang);
+    const cacheKey = tab === "word"
+      ? makeWordContextCacheKey(
+        targetText,
+        selection.sentence,
+        selection.sentenceBefore,
+        selection.sentenceAfter,
+        lang,
+        nativeLang,
+      )
+      : makeAiCacheKey(tab === "sentence" ? "sentence" : "phrase", targetText, lang, nativeLang);
     const localCached = getLocalAiAnalysis(cacheKey);
     if (localCached) {
       setAnalysis((prev) => ({ ...prev, ...localCached }));

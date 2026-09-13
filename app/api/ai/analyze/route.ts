@@ -16,6 +16,41 @@ function parseJsonObject(text: string) {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Keep the new separability contract predictable even when Gemini varies casing or language. */
+function normalizeWordSeparability(value: unknown): "yes" | "no" | "unknown" | "" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["yes", "да", "ja", "true", "1"].includes(normalized)) return "yes";
+  if (["no", "нет", "nein", "false", "0"].includes(normalized)) return "no";
+  if (["unknown", "неизвестно", "не уверен", "uncertain"].includes(normalized)) return "unknown";
+  return "";
+}
+
+function normalizeAnalysisSeparability(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.word) || !isRecord(value.word.verbDetails)) return value;
+
+  const details = value.word.verbDetails;
+  if (details.separability === undefined) return value;
+
+  const separability = normalizeWordSeparability(details.separability);
+  if (!separability) return value;
+
+  return {
+    ...value,
+    word: {
+      ...value.word,
+      verbDetails: {
+        ...details,
+        separability,
+        ...(separability === "yes" ? {} : { separablePrefix: "" }),
+      },
+    },
+  };
+}
+
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
@@ -58,7 +93,7 @@ export async function POST(req: Request) {
     const result = await model.generateContent(prompt, { timeout: 110_000, signal: req.signal });
     const text = result.response.text();
     const parsed = parseJsonObject(text);
-    return NextResponse.json(parsed);
+    return NextResponse.json(normalizeAnalysisSeparability(parsed));
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });
