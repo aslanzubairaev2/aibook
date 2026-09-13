@@ -9,6 +9,10 @@ export const dynamic = "force-dynamic";
 /** Issues a single-use, short-lived token for the browser's direct Live API socket. */
 export async function GET(req: Request) {
   try {
+    const requestedLanguage = new URL(req.url).searchParams.get("targetLanguage")?.trim() || "ru";
+    const targetLanguageCode = /^[a-z]{2,8}(?:-[a-z]{2,8})?$/i.test(requestedLanguage)
+      ? requestedLanguage.toLowerCase()
+      : "ru";
     const apiKey = await getApiKeyForRequest(req);
     const client = new GoogleGenAI({ apiKey });
     const token = await client.authTokens.create({
@@ -22,7 +26,7 @@ export async function GET(req: Request) {
             responseModalities: [Modality.AUDIO],
             inputAudioTranscription: {},
             outputAudioTranscription: {},
-            translationConfig: { targetLanguageCode: "ru", echoTargetLanguage: true },
+            translationConfig: { targetLanguageCode, echoTargetLanguage: true },
             realtimeInputConfig: LIVE_TRANSLATE_REALTIME_INPUT,
           },
         },
