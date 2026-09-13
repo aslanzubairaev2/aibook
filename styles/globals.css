@@ -2409,7 +2409,8 @@ textarea,
 .quiz-translation-hidden { filter: blur(5px); user-select: none; cursor: help; transition: filter 0.15s; }
 .quiz-translation-hidden:hover { filter: none; }
 .verb-quiz-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.verb-quiz-field label { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.verb-quiz-field label { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.verb-quiz-field-note { color: var(--green); font-size: 10px; font-weight: 600; opacity: 0.85; }
 .verb-quiz-input-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .verb-quiz-input-row .verb-quiz-input { flex: 1; min-width: 0; }
 .verb-quiz-input {
@@ -2418,6 +2419,8 @@ textarea,
   background: var(--bg-elevated); color: var(--text-primary);
 }
 .verb-quiz-input:focus { outline: none; border-color: var(--accent); }
+.verb-quiz-input:disabled { opacity: 1; cursor: default; }
+.verb-quiz-input.locked { border-color: rgba(122, 171, 106, 0.5); background: rgba(122, 171, 106, 0.1); color: var(--text-primary); }
 .verb-quiz-input.correct { border-color: var(--green); background: rgba(122, 171, 106, 0.12); }
 .verb-quiz-input.almost { border-color: var(--accent); background: rgba(212, 168, 71, 0.12); }
 .verb-quiz-input.wrong { border-color: var(--red); background: rgba(196, 106, 106, 0.12); }

@@ -12,6 +12,7 @@ import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_LABEL, QUIZ
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
 import { toRows } from "@/components/word-modal/GrammarModal";
+import { isPresentPluralInfinitive } from "@/lib/verbForms";
 
 type Props = {
   verbs: DictionaryEntry[];
@@ -24,7 +25,7 @@ type Props = {
   onRecord?: (entryId: string, correct: boolean) => void;
 };
 
-type QuizField = { key: string; label: string; expected: string };
+type QuizField = { key: string; label: string; expected: string; locked?: boolean };
 type FieldResult = { verdict: AnswerVerdict; expected: string };
 
 // 1sg, 2sg, 3sg, 1pl, 2pl, 3pl — the fixed person order the grammar prompt
@@ -204,7 +205,12 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
           const cells = table?.sections?.[0]?.cells ?? [];
           fields = cells
             .filter((c) => c.pronoun?.trim() && c.form.trim())
-            .map((c) => ({ key: c.pronoun!, label: c.pronoun!, expected: c.form }));
+            .map((c) => ({
+              key: c.pronoun!,
+              label: c.pronoun!,
+              expected: c.form,
+              locked: isPresentPluralInfinitive(c.pronoun!, c.form, entry.lemma || entry.headword),
+            }));
         } else {
           // Präteritum, Perfekt and future have no dedicated "brief" shape —
           // pull them from the same 4×3 matrix the "Полная" grammar view uses
@@ -273,6 +279,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
     const next: Record<string, FieldResult> = {};
     let allGood = true;
     for (const field of step.fields) {
+      if (field.locked) continue;
       const check = checkTypedAnswer(inputs[field.key] ?? "", field.expected);
       next[field.key] = { verdict: check.verdict, expected: field.expected };
       if (check.verdict === "wrong") allGood = false;
@@ -427,14 +434,17 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
               const result = results[field.key];
               return (
                 <div key={field.key} className="verb-quiz-field">
-                  <label htmlFor={`verb-quiz-${field.key}`}>{field.label}</label>
+                  <label htmlFor={`verb-quiz-${field.key}`}>
+                    <span>{field.label}</span>
+                    {field.locked && <span className="verb-quiz-field-note">как инфинитив</span>}
+                  </label>
                   <div className="verb-quiz-input-row">
                     <input
                       id={`verb-quiz-${field.key}`}
                       ref={(el) => { inputRefs.current[i] = el; }}
                       type="text"
-                      value={inputs[field.key] ?? ""}
-                      disabled={revealed}
+                      value={inputs[field.key] ?? (field.locked ? field.expected : "")}
+                      disabled={revealed || field.locked}
                       onChange={(e) => setInputs((prev) => ({ ...prev, [field.key]: e.target.value }))}
                       onKeyDown={(e) => {
                         if (e.ctrlKey && e.code === "Space") {
@@ -444,27 +454,27 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
                         }
                         if (e.key !== "Enter") return;
                         e.preventDefault();
-                        const isLast = i === step.fields!.length - 1;
-                        if (isLast) submit();
-                        else inputRefs.current[i + 1]?.focus();
+                        const nextIndex = step.fields!.findIndex((candidate, candidateIndex) => candidateIndex > i && !candidate.locked);
+                        if (nextIndex === -1) submit();
+                        else inputRefs.current[nextIndex]?.focus();
                       }}
                       autoComplete="off"
                       autoCorrect="off"
                       autoCapitalize="off"
                       spellCheck={false}
-                      className={`verb-quiz-input${revealed && result ? ` ${result.verdict}` : ""}`}
+                      className={`verb-quiz-input${field.locked ? " locked" : ""}${revealed && result ? ` ${result.verdict}` : ""}`}
                     />
                     <DictateButton
                       ref={(el) => { dictateRefs.current[i] = el; }}
                       lang={isPhrase || isConjugation || step.mode === "forms" ? targetLanguage : nativeLanguage}
                       title="Сказать голосом (или Ctrl+Space в поле)"
-                      disabled={revealed}
+                      disabled={revealed || field.locked}
                       onText={(text) => setInputs((prev) => ({ ...prev, [field.key]: text }))}
                     />
                     <button
                       type="button"
                       className={`dictate-btn${peeked.has(field.key) ? " peek-active" : ""}`}
-                      disabled={revealed}
+                      disabled={revealed || field.locked}
                       onClick={() => setPeeked((prev) => {
                         const next = new Set(prev);
                         if (next.has(field.key)) next.delete(field.key);

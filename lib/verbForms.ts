@@ -21,6 +21,19 @@ export function normalizePos(pos: string): string {
   return pos.trim().toLowerCase();
 }
 
+/**
+ * In Präsens, the wir and sie/Sie forms normally repeat the infinitive.
+ * Keep this deliberately strict: forms from another tense or a complete
+ * sentence must not be treated as an automatically supplied answer.
+ */
+export function isPresentPluralInfinitive(pronoun: string, form: string, infinitive: string): boolean {
+  const normalizedPronoun = pronoun.trim().toLocaleLowerCase("de-DE").replace(/\s+/g, "");
+  if (normalizedPronoun !== "wir" && normalizedPronoun !== "sie/sie") return false;
+
+  const normalizeForm = (value: string) => value.trim().toLocaleLowerCase("de-DE").replace(/\s+/g, " ");
+  return normalizeForm(form) === normalizeForm(infinitive);
+}
+
 /** The learning-oriented groups shown in the verb trainer. */
 export type GermanVerbClass = "weak" | "strong" | "mixed" | "special" | "impersonal";
 

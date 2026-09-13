@@ -6,6 +6,7 @@ import {
   GERMAN_VERB_CLASS_HINT,
   GERMAN_VERB_CLASS_LABEL,
   isIrregularGermanVerb,
+  isPresentPluralInfinitive,
 } from "./verbForms";
 
 test("ordinary verbs stay in the weak/standard group", () => {
@@ -33,4 +34,12 @@ test("every learning group has a label and an explanation", () => {
     assert.ok(GERMAN_VERB_CLASS_LABEL[type]);
     assert.ok(GERMAN_VERB_CLASS_HINT[type]);
   }
+});
+
+test("present plural forms can be supplied when they exactly repeat the infinitive", () => {
+  assert.equal(isPresentPluralInfinitive("wir", "kosten", "kosten"), true);
+  assert.equal(isPresentPluralInfinitive("sie/Sie", "fahren", "fahren"), true);
+  assert.equal(isPresentPluralInfinitive("wir", "sind", "sein"), false);
+  assert.equal(isPresentPluralInfinitive("ihr", "fahrt", "fahren"), false);
+  assert.equal(isPresentPluralInfinitive("wir", "fuhren", "fahren"), false);
 });
