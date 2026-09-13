@@ -25,7 +25,7 @@
     "epubjs": "^0.3.93",
     "franc-min": "^6.2.0",
     "lucide-react": "^1.16.0",
-    "next": "^16.3.0",
+    "next": "^16.3.5",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
@@ -41,7 +41,7 @@
     "ws": "^8.21.3"
   },
   "overrides": {
-    "@xmldom/xmldom": "0.9.11",
+    "@xmldom/xmldom": "0.9.12",
     "serialize-javascript": "7.0.5"
   }
 }
