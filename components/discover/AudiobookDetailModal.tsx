@@ -34,7 +34,7 @@ import {
 } from "@/lib/audio/mediaSession";
 import { fetchAudiobookOverview } from "@/lib/ai/audiobookOverview";
 import { analyzeSelection } from "@/lib/ai/analyze";
-import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
+import { makeWordContextCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { WordModal } from "@/components/word-modal/WordModal";
@@ -498,7 +498,7 @@ export function AudiobookDetailModal({ audiobook, nativeLanguage, onClose, onAdd
     setIsWordModalLoading(true);
     setWordModalAnalysis(null);
 
-    const cacheKey = makeAiCacheKey("word", word, targetLanguage, nativeLanguage);
+    const cacheKey = makeWordContextCacheKey(word, contextSentence || word, "", "", targetLanguage, nativeLanguage);
     try {
       let full = getLocalAiAnalysis(cacheKey);
       if (!full?.word) {

@@ -16,7 +16,7 @@ import {
   type LiveSuggestion,
 } from "@/lib/ai/liveChatExtras";
 import { analyzeSelection } from "@/lib/ai/analyze";
-import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
+import { makeWordContextCacheKey } from "@/lib/ai/cacheKeys";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { useAuth } from "@/lib/auth/useAuth";
 import { findDuplicateCard } from "@/lib/cards";
@@ -642,7 +642,7 @@ export function LiveChatModal({ isOpen, nativeLanguage, targetLanguage, textCont
 
   const loadWordModalAnalysis = useCallback(
     async (word: string, contextSentence: string) => {
-      const cacheKey = makeAiCacheKey("word", word, targetLanguage, nativeLanguage);
+      const cacheKey = makeWordContextCacheKey(word, contextSentence, "", "", targetLanguage, nativeLanguage);
       setWmLoading(true);
       setWmAnalysis(null);
       try {

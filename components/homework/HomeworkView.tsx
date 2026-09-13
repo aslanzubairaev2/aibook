@@ -5,7 +5,7 @@ import { ArrowLeft, MessageCircle, Printer } from "lucide-react";
 import type { HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
 import { sbAuthHeaders, sbGetCachedAnalysis, sbSaveCachedAnalysis } from "@/lib/db/supabase";
 import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
-import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
+import { makeWordContextCacheKey } from "@/lib/ai/cacheKeys";
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { findDuplicateCard } from "@/lib/cards";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
@@ -131,7 +131,14 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
   // the remote cache, only then a real model call) — a word tapped twice
   // should not pay for the analysis twice.
   async function loadWordModalAnalysis(word: string, contextSentence: string) {
-    const cacheKey = makeAiCacheKey("word", word, book.targetLanguage, book.nativeLanguage);
+    const cacheKey = makeWordContextCacheKey(
+      word,
+      contextSentence,
+      "",
+      "",
+      book.targetLanguage,
+      book.nativeLanguage,
+    );
     setIsWordModalLoading(true);
     setWordModalAnalysis(null);
     try {

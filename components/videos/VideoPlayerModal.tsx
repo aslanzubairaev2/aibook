@@ -15,9 +15,9 @@ import { AiPanel } from "@/components/ai-panel/AiPanel";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { speak } from "@/lib/tts";
 import { analyzeSelection, getAiHeaders } from "@/lib/ai/analyze";
-import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
+import { makeAiCacheKey, makeDiscussCacheKey, makeWordContextCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, getLocalDiscussHistory, saveLocalAiAnalysis, saveLocalDiscussHistory } from "@/lib/db/local";
-import { sbGetCachedAnalysis, sbGetCachedWord, sbGetDiscussHistory, sbSaveCachedAnalysis, sbSaveCachedWord, sbSaveDiscussHistory } from "@/lib/db/supabase";
+import { sbGetCachedAnalysis, sbGetDiscussHistory, sbSaveCachedAnalysis, sbSaveDiscussHistory } from "@/lib/db/supabase";
 
 const VideoTrainingModal = dynamic(() => import("./VideoTrainingModal"));
 
@@ -39,21 +39,6 @@ type Props = {
 };
 
 const TRANSLATION_PREFETCH_CUES = 4;
-const SEPARABLE_PARTICLES = new Set(["ab", "an", "auf", "aus", "ein", "mit", "nach", "vor", "weg", "zu", "zurück", "zusammen"]);
-
-function inferSeparableVerb(rawWord: string, sentence: string): string | null {
-  const word = rawWord.toLowerCase();
-  if (new Set(["bin", "bist", "ist", "sind", "war", "waren", "hat", "haben"]).has(word)) return null;
-  const tokens = sentence.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-  const wordIndex = tokens.indexOf(word);
-  if (wordIndex < 0) return null;
-  const particle = tokens.slice(wordIndex + 1, Math.min(tokens.length, wordIndex + 6)).find((token) => SEPARABLE_PARTICLES.has(token));
-  if (!particle || !/[a-zäöüß]/u.test(word)) return null;
-  let stem = word;
-  if (/(?:st|t|en|e)$/u.test(stem)) stem = stem.replace(/(?:st|t|en|e)$/u, "");
-  if (stem.length < 2) return null;
-  return `${particle}${stem}en`;
-}
 
 export function VideoPlayerModal({
   video,
@@ -123,6 +108,7 @@ export function VideoPlayerModal({
   const hasRestoredPositionRef = useRef(false);
   const dragSelectionRef = useRef<typeof dragSelection>(null);
   const suppressWordClickRef = useRef(false);
+  const wordModalRequestIdRef = useRef(0);
   repeatCueIndexRef.current = repeatCueIndex;
   onProgressRef.current = onProgress;
 
@@ -467,10 +453,18 @@ export function VideoPlayerModal({
 
   // ── 4. Word Tap → Pause & Word Analysis ───────────────────────────────────
   const handleWordTap = useCallback(
-    async (rawWord: string, contextSentence: string, wordLanguage: string = targetLanguage, explanationLanguage: string = nativeLanguage, targetSentence = "") => {
+    async (
+      rawWord: string,
+      contextSentence: string,
+      wordLanguage: string = targetLanguage,
+      explanationLanguage: string = nativeLanguage,
+      targetSentence = "",
+      sentenceBefore = "",
+      sentenceAfter = "",
+    ) => {
       const cleanWord = rawWord.trim().replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, "");
       if (!cleanWord || cleanWord.length < 2) return;
-      const lookupWord = wordLanguage === targetLanguage ? (inferSeparableVerb(cleanWord, contextSentence) || cleanWord) : cleanWord;
+      const requestId = ++wordModalRequestIdRef.current;
 
       if (wordLanguage === nativeLanguage && targetSentence) {
         if (playerRef.current && typeof playerRef.current.pauseVideo === "function") {
@@ -489,9 +483,12 @@ export function VideoPlayerModal({
               nativeLanguage: wordLanguage, targetLanguage: explanationLanguage });
             if (full?.reverse) saveLocalAiAnalysis(cacheKey, full);
           }
-          setReverseWordAnalysis(full?.reverse ?? null);
-        } catch { setReverseWordAnalysis(null); }
-        finally { setIsReverseWordModalLoading(false); }
+          if (wordModalRequestIdRef.current === requestId) setReverseWordAnalysis(full?.reverse ?? null);
+        } catch {
+          if (wordModalRequestIdRef.current === requestId) setReverseWordAnalysis(null);
+        } finally {
+          if (wordModalRequestIdRef.current === requestId) setIsReverseWordModalLoading(false);
+        }
         return;
       }
 
@@ -503,41 +500,48 @@ export function VideoPlayerModal({
       }
 
       // 2. Open WordModal
-      setWordModalSelection(lookupWord);
+      setWordModalSelection(cleanWord);
       setWordModalLanguage(wordLanguage);
       setWordModalNativeLanguage(explanationLanguage);
       setIsWordModalOpen(true);
       setIsWordModalLoading(true);
       setWordModalAnalysis(null);
 
-      const cacheKey = makeAiCacheKey("word", lookupWord, wordLanguage, explanationLanguage);
+      const cacheKey = makeWordContextCacheKey(
+        cleanWord,
+        contextSentence || cleanWord,
+        sentenceBefore,
+        sentenceAfter,
+        wordLanguage,
+        explanationLanguage,
+      );
       try {
         let full = getLocalAiAnalysis(cacheKey);
         if (!full?.word) {
-          full = await sbGetCachedWord(lookupWord, wordLanguage, explanationLanguage);
+          full = await sbGetCachedAnalysis(cacheKey);
           if (full?.word) saveLocalAiAnalysis(cacheKey, full);
         }
         if (!full?.word) {
           full = await analyzeSelection({
             mode: "word",
-            word: lookupWord,
-            text: lookupWord,
+            word: cleanWord,
+            text: cleanWord,
             sentence: contextSentence || cleanWord,
-            sentenceBefore: "",
-            sentenceAfter: "",
+            sentenceBefore,
+            sentenceAfter,
             nativeLanguage: explanationLanguage,
             targetLanguage: wordLanguage,
           });
           if (full?.word) {
             saveLocalAiAnalysis(cacheKey, full);
-            void sbSaveCachedWord(lookupWord, wordLanguage, explanationLanguage, full);
+            void sbSaveCachedAnalysis(cacheKey, "word", full);
           }
         }
-        setWordModalAnalysis(full?.word ? full : null);
+        if (wordModalRequestIdRef.current === requestId) setWordModalAnalysis(full?.word ? full : null);
       } catch {
-        setWordModalAnalysis(null);
+        if (wordModalRequestIdRef.current === requestId) setWordModalAnalysis(null);
       } finally {
-        setIsWordModalLoading(false);
+        if (wordModalRequestIdRef.current === requestId) setIsWordModalLoading(false);
       }
     },
     [targetLanguage, nativeLanguage]
@@ -824,7 +828,7 @@ export function VideoPlayerModal({
               suppressWordClickRef.current = false;
               return;
             }
-            void handleWordTap(token, text);
+            void handleWordTap(token, text, targetLanguage, nativeLanguage, "", cues[cueIndex - 1]?.text || "", cues[cueIndex + 1]?.text || "");
           }}
           aria-label={`Перевод и разбор слова: ${token}`}
         >
@@ -1105,7 +1109,15 @@ export function VideoPlayerModal({
               setIsWordModalOpen(false);
             }}
             onWordTap={(word) => {
-              void handleWordTap(word, activeCue?.text || "");
+              void handleWordTap(
+                word,
+                activeCue?.text || "",
+                targetLanguage,
+                nativeLanguage,
+                "",
+                activeCueIndex > 0 ? cues[activeCueIndex - 1]?.text || "" : "",
+                activeCueIndex >= 0 ? cues[activeCueIndex + 1]?.text || "" : "",
+              );
             }}
             onDiscuss={handleDiscussWord}
           />
@@ -1141,7 +1153,15 @@ export function VideoPlayerModal({
               void handleDiscussCue(selected.cueIndex, selected.text);
             }}
             onAddCard={() => handleAddCard(panelSelection.text, panelAnalysis?.sentence?.translation || "", "sentence", panelSelection.text)}
-            onWordTap={(word) => void handleWordTap(word, panelSelection.text)}
+            onWordTap={(word) => void handleWordTap(
+              word,
+              panelSelection.text,
+              targetLanguage,
+              nativeLanguage,
+              "",
+              cues[panelSelection.cueIndex - 1]?.text || "",
+              cues[panelSelection.cueIndex + 1]?.text || "",
+            )}
             onTabChange={() => {}}
             onTtsProviderChange={() => {}}
           />

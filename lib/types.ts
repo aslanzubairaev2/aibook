@@ -178,6 +178,10 @@ export type WordAnalysis = {
     partizip2?: string;
     tense?: string;
     person?: string;
+    /** Whether this occurrence uses a separable verb reading. */
+    separability?: "yes" | "no" | "unknown" | "";
+    /** The detached prefix, only when the context supports that reading. */
+    separablePrefix?: string;
   };
 };
 

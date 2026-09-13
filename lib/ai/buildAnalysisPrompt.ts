@@ -48,6 +48,8 @@ export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
         partizip2: "bare past participle WITHOUT auxiliary or pronoun, e.g. gesessen (NOT hat gesessen); empty for non-verbs",
         tense: "tense/person context if obvious, otherwise empty string",
         person: "person/number if obvious, otherwise empty string",
+        separability: "for a German verb occurrence: exactly yes, no, or unknown; otherwise empty string",
+        separablePrefix: "detached German prefix only when separability is yes; otherwise empty string",
       },
     },
     examples: [
@@ -75,10 +77,22 @@ export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
   if (p.mode === "word") {
     return `You are an expert language teacher. The student's native language is "${p.nativeLanguage}" and they are studying "${p.targetLanguage}".
 
-Analyze this single word as a clean dictionary entry, not as a sentence translation.
+Analyze the exact clicked token in its sentence as a dictionary entry with
+context-sensitive form information. First identify its part of speech. Do not
+assume that a nearby particle belongs to this token.
 
 Word: "${p.word}"
-Current sentence for form detection only: "${p.sentence}"
+Previous sentence for context: "${p.sentenceBefore}"
+Current sentence: "${p.sentence}"
+Next sentence for context: "${p.sentenceAfter}"
+
+For German separable verbs, return 'separability: "yes"' and the prefix only
+when the clicked token is a verb form and the sentence syntax shows that the
+detached particle belongs to that verb. A preposition, adverb, particle of a
+different verb, or a particle that is merely nearby is not evidence. Return
+"no" for a clearly non-separable verb and "unknown" when the context is
+insufficient. When the answer is no or unknown, never combine the clicked word
+with a nearby particle to invent an infinitive.
 
 Return ONLY a valid JSON object with this exact structure:
 ${JSON.stringify(wordShape, null, 2)}

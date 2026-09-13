@@ -16,6 +16,25 @@ export function makeAiCacheKey(
   return `v2:${mode}:${normalizeAiCacheText(text)}:${targetLanguage}:${nativeLanguage}`;
 }
 
+/**
+ * A word's sense, tense and separable-prefix reading can change with the
+ * sentence around it. Keep that occurrence-level analysis out of the
+ * dictionary cache, whose key intentionally contains only the spelling.
+ */
+export function makeWordContextCacheKey(
+  word: string,
+  sentence: string,
+  sentenceBefore: string,
+  sentenceAfter: string,
+  targetLanguage: string,
+  nativeLanguage: string,
+) {
+  const context = [word, sentenceBefore, sentence, sentenceAfter]
+    .map(normalizeAiCacheText)
+    .join("|");
+  return `v3:word-context:${context}:${targetLanguage}:${nativeLanguage}`;
+}
+
 export function makeDiscussCacheKey(mode: AiMode, text: string, targetLanguage: string, nativeLanguage: string) {
   return `v2:discuss:${mode}:${normalizeAiCacheText(text)}:${targetLanguage}:${nativeLanguage}`;
 }
