@@ -2,6 +2,8 @@
 .codex
 .agents
 output
+android-app
+supabase/.temp
 .env*
 *.log
 dictation-mobile.png
