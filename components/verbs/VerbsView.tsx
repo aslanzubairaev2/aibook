@@ -16,7 +16,7 @@ import { freshFetch } from "@/lib/net/freshFetch";
 import { getLocalConjugationTenses, getLocalTrainingFilter, getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, saveLocalConjugationTenses, saveLocalTrainingFilter, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes } from "@/lib/db/local";
 import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_HINT, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { usePackProgress } from "@/lib/srs/usePackProgress";
-import { formatTrainedAt, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
+import { formatTrainedAt, isCompletedToday, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
 import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
@@ -94,7 +94,7 @@ export function VerbsView({ profile, onBack }: Props) {
 
   // How far each pack has been worked through — the same bookkeeping the noun
   // trainer keeps, under its own module key.
-  const { progress, startSession, record, reset, resetAll } = usePackProgress("verbs");
+  const { progress, startSession, record, completeWord, reset, resetAll } = usePackProgress("verbs");
 
   const loadDictionary = useCallback(async () => {
     if (!userId) { setEntries([]); setBatches([]); setIsLoading(false); return; }
@@ -182,15 +182,15 @@ export function VerbsView({ profile, onBack }: Props) {
   }, [allVerbs, verbTypes, query]);
 
   const trainingVerbs = useMemo(
-    () => verbs.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
+    () => verbs.filter((entry) => !isCompletedToday(progress.words[entry.id]) && matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
     [verbs, progress.words, trainingFilter],
   );
   const unfamiliarCount = useMemo(
-    () => allVerbs.filter((entry) => isUnfamiliarWord(progress.words[entry.id])).length,
+    () => allVerbs.filter((entry) => !isCompletedToday(progress.words[entry.id]) && isUnfamiliarWord(progress.words[entry.id])).length,
     [allVerbs, progress.words],
   );
   const difficultCount = useMemo(
-    () => allVerbs.filter((entry) => isDifficultWord(progress.words[entry.id])).length,
+    () => allVerbs.filter((entry) => !isCompletedToday(progress.words[entry.id]) && isDifficultWord(progress.words[entry.id])).length,
     [allVerbs, progress.words],
   );
 
@@ -360,6 +360,7 @@ export function VerbsView({ profile, onBack }: Props) {
         conjugationTenses={conjugationTenses}
         onExit={() => setQuizVerbs(null)}
         onRecord={record}
+        onComplete={completeWord}
       />
     );
   }
@@ -517,7 +518,7 @@ export function VerbsView({ profile, onBack }: Props) {
                   <button type="button" className={`filter-chip ${trainingFilter === "unfamiliar" ? "active" : ""}`} onClick={() => chooseTrainingFilter("unfamiliar")}>Незнакомые ({unfamiliarCount})</button>
                   <button type="button" className={`filter-chip ${trainingFilter === "difficult" ? "active" : ""}`} onClick={() => chooseTrainingFilter("difficult")}>Сложные ({difficultCount})</button>
                 </div>
-                <p className="verb-modes-hint">«Незнакомые» — последняя попытка с ошибкой. «Сложные» — слова с повторными ошибками, рассчитанные по вашей локальной истории.</p>
+                <p className="verb-modes-hint">«Незнакомые» — последняя попытка с ошибкой. «Сложные» — слова с повторными ошибками, рассчитанные по вашей локальной истории. Слово, полностью пройденное сегодня, до завтра больше не показывается.</p>
               </div>
               <div className="filter-group">
                 <div className="filter-group-label">Что тренировать</div>
@@ -572,8 +573,8 @@ export function VerbsView({ profile, onBack }: Props) {
                 const coverage = packCoverage(progress, group.key, group.verbs.map((v) => v.id));
                 const trainedAt = formatTrainedAt(coverage.lastTrainedAt);
                 const unfamiliar = group.verbs.filter((entry) => isUnfamiliarWord(progress.words[entry.id]));
-                const trainable = group.verbs.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter));
-                const sessionVerbs = trainingFilter === "all" ? group.verbs : trainable;
+                const trainable = group.verbs.filter((entry) => !isCompletedToday(progress.words[entry.id]) && matchesTrainingFilter(progress.words[entry.id], trainingFilter));
+                const sessionVerbs = trainable;
                 return (
                   <section key={group.key} className="dict-batch">
                     <button type="button" className="dict-batch-head" onClick={() => toggleGroup(group.key)}>
@@ -592,9 +593,9 @@ export function VerbsView({ profile, onBack }: Props) {
                     <PackBar coverage={coverage} />
 
                     <div className="dict-batch-actions">
-                      <button type="button" className="dict-train-btn" disabled={sessionVerbs.length === 0} onClick={() => trainPack(group.key, sessionVerbs)}>
+                      <button type="button" className="dict-train-btn" disabled={sessionVerbs.length === 0} onClick={() => trainPack(group.key, sessionVerbs)} title={sessionVerbs.length === 0 ? "Все слова этой пачки уже пройдены сегодня" : undefined}>
                         <Dumbbell size={14} />
-                        {trainingFilter !== "all" ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${trainable.length})` : coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
+                        {sessionVerbs.length === 0 && trainingFilter === "all" ? "Сегодня всё пройдено" : trainingFilter !== "all" ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${trainable.length})` : coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
                       </button>
                       {unfamiliar.length > 0 && (
                         <button

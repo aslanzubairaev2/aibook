@@ -5,6 +5,7 @@ import {
   classifyGermanVerb,
   GERMAN_VERB_CLASS_HINT,
   GERMAN_VERB_CLASS_LABEL,
+  getPresentSeparableSuffix,
   isIrregularGermanVerb,
   isPresentPluralInfinitive,
   toggleGermanVerbClassSelection,
@@ -43,6 +44,15 @@ test("present plural forms can be supplied when they exactly repeat the infiniti
   assert.equal(isPresentPluralInfinitive("wir", "sind", "sein"), false);
   assert.equal(isPresentPluralInfinitive("ihr", "fahrt", "fahren"), false);
   assert.equal(isPresentPluralInfinitive("wir", "fuhren", "fahren"), false);
+});
+
+test("separable present forms keep the detachable prefix out of the answer", () => {
+  assert.equal(getPresentSeparableSuffix("kaufe ein", "einkaufen", "да"), "ein");
+  assert.equal(getPresentSeparableSuffix("kaufen ein", "einkaufen", "да"), "ein");
+  assert.equal(isPresentPluralInfinitive("wir", "kaufen ein", "einkaufen", "да"), true);
+  assert.equal(isPresentPluralInfinitive("sie/Sie", "kaufen ein", "einkaufen", "да"), true);
+  assert.equal(isPresentPluralInfinitive("ich", "kaufe ein", "einkaufen", "да"), false);
+  assert.equal(getPresentSeparableSuffix("beschreibe", "beschreiben", "нет"), null);
 });
 
 test("verb type filters combine compatible groups and replace weak/strong", () => {

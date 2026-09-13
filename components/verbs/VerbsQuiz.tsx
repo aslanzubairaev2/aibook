@@ -12,7 +12,7 @@ import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_LABEL, QUIZ
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
 import { toRows } from "@/components/word-modal/GrammarModal";
-import { isPresentPluralInfinitive } from "@/lib/verbForms";
+import { getPresentSeparableSuffix, isPresentPluralInfinitive } from "@/lib/verbForms";
 
 type Props = {
   verbs: DictionaryEntry[];
@@ -23,9 +23,11 @@ type Props = {
   onExit: () => void;
   /** Reports one answered step so the pack's coverage bar can move. */
   onRecord?: (entryId: string, correct: boolean) => void;
+  /** Marks a word complete for the current local day after all its steps pass. */
+  onComplete?: (entryId: string) => void;
 };
 
-type QuizField = { key: string; label: string; expected: string; locked?: boolean };
+type QuizField = { key: string; label: string; expected: string; locked?: boolean; suffix?: string };
 type FieldResult = { verdict: AnswerVerdict; expected: string };
 
 // 1sg, 2sg, 3sg, 1pl, 2pl, 3pl — the fixed person order the grammar prompt
@@ -46,6 +48,24 @@ const AFFIRMATION_COLUMN = 1;
 function stripLeadingPronoun(phrase: string): string {
   const parts = phrase.trim().split(/\s+/);
   return parts.slice(1).join(" ");
+}
+
+function stripSeparableSuffix(value: string, suffix?: string): string {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (!suffix || words.length < 2 || words.at(-1)?.toLocaleLowerCase("de-DE") !== suffix.toLocaleLowerCase("de-DE")) {
+    return value;
+  }
+  return words.slice(0, -1).join(" ");
+}
+
+function appendSeparableSuffix(value: string, suffix?: string): string {
+  const clean = value.trim();
+  if (!suffix || !clean) return clean;
+  return `${stripSeparableSuffix(clean, suffix)} ${suffix}`;
+}
+
+function fieldAnswer(field: QuizField, value: string): string {
+  return appendSeparableSuffix(value, field.suffix);
 }
 
 type QuizStep = {
@@ -120,7 +140,7 @@ function buildQueue(verbs: DictionaryEntry[], modes: Set<QuizMode>, conjugationT
  * flashcard schedule — this is a drill on top of the dictionary the learner
  * already has, not a second spaced-repetition track for the same words.
  */
-export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, onExit, onRecord }: Props) {
+export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, onExit, onRecord, onComplete }: Props) {
   const [queue, setQueue] = useState<QuizStep[]>(() => buildQueue(verbs, modes, conjugationTenses));
   const [index, setIndex] = useState(0);
   const [inputs, setInputs] = useState<Record<string, string>>({});
@@ -205,12 +225,16 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
           const cells = table?.sections?.[0]?.cells ?? [];
           fields = cells
             .filter((c) => c.pronoun?.trim() && c.form.trim())
-            .map((c) => ({
-              key: c.pronoun!,
-              label: c.pronoun!,
-              expected: c.form,
-              locked: isPresentPluralInfinitive(c.pronoun!, c.form, entry.lemma || entry.headword),
-            }));
+            .map((c) => {
+              const suffix = getPresentSeparableSuffix(c.form, entry.lemma || entry.headword, entry.forms?.trennbar);
+              return {
+                key: c.pronoun!,
+                label: c.pronoun!,
+                expected: c.form,
+                locked: isPresentPluralInfinitive(c.pronoun!, c.form, entry.lemma || entry.headword, entry.forms?.trennbar),
+                suffix: suffix ?? undefined,
+              };
+            });
         } else {
           // Präteritum, Perfekt and future have no dedicated "brief" shape —
           // pull them from the same 4×3 matrix the "Полная" grammar view uses
@@ -280,13 +304,16 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
     let allGood = true;
     for (const field of step.fields) {
       if (field.locked) continue;
-      const check = checkTypedAnswer(inputs[field.key] ?? "", field.expected);
+      const check = checkTypedAnswer(fieldAnswer(field, inputs[field.key] ?? ""), field.expected);
       next[field.key] = { verdict: check.verdict, expected: field.expected };
       if (check.verdict === "wrong") allGood = false;
     }
     onRecord?.(step.entry.id, allGood);
     if (allGood) {
       setCorrectCount((c) => c + 1);
+      const hasLaterStepForEntry = queue.some((candidate, candidateIndex) => candidateIndex > index && candidate.entry.id === step.entry.id);
+      const hasUnresolvedMistakeForEntry = mistakes.some((mistake) => mistake.entry.id === step.entry.id);
+      if (!hasLaterStepForEntry && !hasUnresolvedMistakeForEntry) onComplete?.(step.entry.id);
       // Keep correct answers moving without an extra tap. Mistakes still
       // reveal their correction and wait for «Далее».
       nextItem();
@@ -314,6 +341,10 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
     setInputs({});
     setResults({});
     setPeeked(new Set());
+  }
+
+  function updateFieldInput(field: QuizField, value: string) {
+    setInputs((prev) => ({ ...prev, [field.key]: stripSeparableSuffix(value, field.suffix) }));
   }
 
   if (queue.length === 0) {
@@ -443,9 +474,9 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
                       id={`verb-quiz-${field.key}`}
                       ref={(el) => { inputRefs.current[i] = el; }}
                       type="text"
-                      value={inputs[field.key] ?? (field.locked ? field.expected : "")}
+                      value={inputs[field.key] ?? (field.locked ? stripSeparableSuffix(field.expected, field.suffix) : "")}
                       disabled={revealed || field.locked}
-                      onChange={(e) => setInputs((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                      onChange={(e) => updateFieldInput(field, e.target.value)}
                       onKeyDown={(e) => {
                         if (e.ctrlKey && e.code === "Space") {
                           e.preventDefault();
@@ -462,14 +493,20 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
                       autoCorrect="off"
                       autoCapitalize="off"
                       spellCheck={false}
-                      className={`verb-quiz-input${field.locked ? " locked" : ""}${revealed && result ? ` ${result.verdict}` : ""}`}
+                      className={`verb-quiz-input${field.locked ? " locked" : ""}${field.suffix ? " has-suffix" : ""}${revealed && result ? ` ${result.verdict}` : ""}`}
+                      aria-describedby={field.suffix ? `verb-quiz-suffix-${field.key}` : undefined}
                     />
+                    {field.suffix && (
+                      <span id={`verb-quiz-suffix-${field.key}`} className={`verb-quiz-input-suffix${field.locked ? " locked" : ""}`} aria-label={`Приставка ${field.suffix} добавляется автоматически`}>
+                        {field.suffix}
+                      </span>
+                    )}
                     <DictateButton
                       ref={(el) => { dictateRefs.current[i] = el; }}
                       lang={isPhrase || isConjugation || step.mode === "forms" ? targetLanguage : nativeLanguage}
                       title="Сказать голосом (или Ctrl+Space в поле)"
                       disabled={revealed || field.locked}
-                      onText={(text) => setInputs((prev) => ({ ...prev, [field.key]: text }))}
+                      onText={(text) => updateFieldInput(field, text)}
                     />
                     <button
                       type="button"
@@ -489,7 +526,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
                   </div>
                   {revealed && result && result.verdict !== "correct" ? (
                     <span className={`verb-quiz-expected ${result.verdict}`}>
-                      {diffExpected(inputs[field.key] ?? "", result.expected).map((seg, si) => (
+                      {diffExpected(fieldAnswer(field, inputs[field.key] ?? ""), result.expected).map((seg, si) => (
                         <span key={si} className={seg.changed ? "verb-quiz-diff" : undefined}>{seg.text}</span>
                       ))}
                     </span>

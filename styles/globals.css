@@ -2422,6 +2422,9 @@ textarea,
 .verb-quiz-input:focus { outline: none; border-color: var(--accent); }
 .verb-quiz-input:disabled { opacity: 1; cursor: default; }
 .verb-quiz-input.locked { border-color: rgba(122, 171, 106, 0.5); background: rgba(122, 171, 106, 0.1); color: var(--text-primary); }
+.verb-quiz-input.has-suffix { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.verb-quiz-input-suffix { display: inline-flex; align-items: center; height: 42px; margin-left: -8px; padding: 0 11px; border: 1px solid var(--accent); border-left: 0; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: rgba(212, 168, 71, 0.12); color: var(--accent-bright); font-size: 15px; font-weight: 800; }
+.verb-quiz-input-suffix.locked { border-color: rgba(122, 171, 106, 0.5); background: rgba(122, 171, 106, 0.1); color: var(--green); }
 .verb-quiz-input.correct { border-color: var(--green); background: rgba(122, 171, 106, 0.12); }
 .verb-quiz-input.almost { border-color: var(--accent); background: rgba(212, 168, 71, 0.12); }
 .verb-quiz-input.wrong { border-color: var(--red); background: rgba(196, 106, 106, 0.12); }

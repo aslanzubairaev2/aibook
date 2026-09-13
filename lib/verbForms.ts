@@ -21,17 +21,62 @@ export function normalizePos(pos: string): string {
   return pos.trim().toLowerCase();
 }
 
+const GERMAN_SEPARABLE_PREFIXES = new Set([
+  "ab", "an", "auf", "aus", "bei", "ein", "fest", "her", "hin", "los", "mit", "nach", "vor", "weg", "zu",
+  "zurück", "zusammen", "dabei", "daran", "darauf", "davon", "dazu", "empor", "entgegen", "heim", "hinterher",
+  "heraus", "herbei", "herein", "herum", "hinauf", "hinaus", "hinein", "hinweg", "voran", "vorbei", "voraus",
+]);
+
+function normalizeGermanForm(value: string): string {
+  return value.trim().toLocaleLowerCase("de-DE").replace(/\s+/g, " ");
+}
+
+function isMarkedSeparable(value: string | undefined): boolean {
+  return /^(1|true|ja|yes|да)$/iu.test((value ?? "").trim());
+}
+
+/**
+ * Finds the detachable part in a present-tense form such as
+ * `kaufe ein` → `ein` for `einkaufen`. The explicit `trennbar` marker is
+ * required so prefixes that can also be inseparable are never guessed.
+ */
+export function getPresentSeparableSuffix(
+  form: string,
+  infinitive: string,
+  trennbar?: string,
+): string | null {
+  if (!isMarkedSeparable(trennbar)) return null;
+
+  const words = normalizeGermanForm(form).split(" ");
+  const suffix = words.at(-1) ?? "";
+  const normalizedInfinitive = normalizeGermanForm(infinitive).replace(/\s+/g, "");
+  if (words.length < 2 || !GERMAN_SEPARABLE_PREFIXES.has(suffix) || !normalizedInfinitive.startsWith(suffix)) return null;
+  return suffix;
+}
+
 /**
  * In Präsens, the wir and sie/Sie forms normally repeat the infinitive.
- * Keep this deliberately strict: forms from another tense or a complete
- * sentence must not be treated as an automatically supplied answer.
+ * Separable verbs are compared against their base (`einkaufen` → `kaufen`),
+ * while the detachable suffix remains part of the expected full answer.
  */
-export function isPresentPluralInfinitive(pronoun: string, form: string, infinitive: string): boolean {
+export function isPresentPluralInfinitive(
+  pronoun: string,
+  form: string,
+  infinitive: string,
+  trennbar?: string,
+): boolean {
   const normalizedPronoun = pronoun.trim().toLocaleLowerCase("de-DE").replace(/\s+/g, "");
   if (normalizedPronoun !== "wir" && normalizedPronoun !== "sie/sie") return false;
 
-  const normalizeForm = (value: string) => value.trim().toLocaleLowerCase("de-DE").replace(/\s+/g, " ");
-  return normalizeForm(form) === normalizeForm(infinitive);
+  const normalizedForm = normalizeGermanForm(form);
+  const normalizedInfinitive = normalizeGermanForm(infinitive);
+  if (normalizedForm === normalizedInfinitive) return true;
+
+  const suffix = getPresentSeparableSuffix(form, infinitive, trennbar);
+  if (!suffix) return false;
+  const base = normalizedInfinitive.slice(suffix.length);
+  const words = normalizedForm.split(" ");
+  return words.length === 2 && words[0] === base && words[1] === suffix;
 }
 
 /** The learning-oriented groups shown in the verb trainer. */

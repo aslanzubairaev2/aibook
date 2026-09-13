@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { getLocalPackProgress, saveLocalPackProgress } from "@/lib/db/local";
-import { recordAnswer, recordSession, resetAllProgress, resetWords, type ModuleProgress, type PackModule } from "@/lib/srs/packProgress";
+import { markWordCompleted, recordAnswer, recordSession, resetAllProgress, resetWords, type ModuleProgress, type PackModule } from "@/lib/srs/packProgress";
 
 /**
  * The pack-coverage state for one trainer module, read once and written
@@ -45,6 +45,14 @@ export function usePackProgress(module: PackModule) {
     });
   }, [module]);
 
+  const completeWord = useCallback((entryId: string) => {
+    setProgress((prev) => {
+      const next = markWordCompleted(prev, entryId, Date.now());
+      saveLocalPackProgress(module, next);
+      return next;
+    });
+  }, [module]);
+
   const resetAll = useCallback(() => {
     setProgress(() => {
       const next = resetAllProgress();
@@ -53,5 +61,5 @@ export function usePackProgress(module: PackModule) {
     });
   }, [module]);
 
-  return { progress, startSession, record, reset, resetAll };
+  return { progress, startSession, record, completeWord, reset, resetAll };
 }

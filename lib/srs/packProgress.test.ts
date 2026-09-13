@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   emptyModuleProgress,
+  isCompletedToday,
+  markWordCompleted,
   packCoverage,
   recordAnswer,
   recordSession,
@@ -111,6 +113,16 @@ test("resetting a pack forgets its words and its session count, and nothing else
   // The pack that was not reset is untouched.
   assert.equal(packCoverage(after, "other", ["z"]).percent, 100);
   assert.equal(packCoverage(after, "other", ["z"]).sessions, 1);
+});
+
+test("a completed word stays out for the rest of the local day, not the next one", () => {
+  const answered = session(emptyModuleProgress(), [["a", true]]);
+  const completed = markWordCompleted(answered, "a", NOW);
+
+  assert.equal(isCompletedToday(completed.words.a, NOW + 60 * 60 * 1000), true);
+  assert.equal(isCompletedToday(completed.words.a, NOW + 86_400_000), false);
+  assert.equal(completed.words.a.at, NOW);
+  assert.equal(completed.words.a.correct, 1);
 });
 
 test("resetAllProgress forgets every word and every pack", () => {

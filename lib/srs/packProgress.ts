@@ -26,6 +26,8 @@ export type WordTrainingState = {
   correct: number;
   /** When it was last answered, ms since epoch. */
   at: number;
+  /** Local calendar day on which every selected drill for this word was completed. */
+  completedDay?: string;
 };
 
 /** Everything one module remembers: per-word state plus per-pack session meta. */
@@ -142,6 +144,31 @@ export function resetWords(progress: ModuleProgress, entryIds: string[], packKey
   const packs = { ...progress.packs };
   if (packKey) delete packs[packKey];
   return { words, packs };
+}
+
+/** Stable local-calendar key used for the rule «once completed today, skip it today». */
+export function localDayKey(now: number): string {
+  const date = new Date(now);
+  return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((part, index) => index === 0 ? String(part) : String(part).padStart(2, "0"))
+    .join("-");
+}
+
+export function isCompletedToday(state: WordTrainingState | undefined, now: number = Date.now()): boolean {
+  return state?.completedDay === localDayKey(now);
+}
+
+/** Marks only the finished word; attempts and error history remain intact. */
+export function markWordCompleted(progress: ModuleProgress, entryId: string, now: number): ModuleProgress {
+  const prev = progress.words[entryId];
+  if (!prev) return progress;
+  return {
+    ...progress,
+    words: {
+      ...progress.words,
+      [entryId]: { ...prev, completedDay: localDayKey(now) },
+    },
+  };
 }
 
 /** Forgets every word and every pack in one trainer module. */
