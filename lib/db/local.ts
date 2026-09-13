@@ -316,6 +316,13 @@ export function deleteLocalCard(id: string): void {
   saveLocalCards(getLocalCards().filter((c) => c.id !== id));
 }
 
+/** Remove several cards in one localStorage write. */
+export function deleteLocalCards(ids: Iterable<string>): void {
+  const idsToDelete = new Set(ids);
+  if (idsToDelete.size === 0) return;
+  saveLocalCards(getLocalCards().filter((c) => !idsToDelete.has(c.id)));
+}
+
 
 // --- Profile ---
 

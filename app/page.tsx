@@ -22,10 +22,10 @@ import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import {
   sbGetBooks, sbGetChapters, sbGetFlashcards, sbGetSettings, sbGetProgress,
   sbGetCardVariantProgress, sbUpsertCardVariantProgress,
-  sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbUpsertFlashcard, sbDeleteFlashcard, sbAuthHeaders, supabase,
+  sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbUpsertFlashcard, sbDeleteFlashcard, sbDeleteFlashcards, sbAuthHeaders, supabase,
   type DbBook, type DbReadingProgress, type DbUserSettings, type DbFlashcard,
 } from "@/lib/db/supabase";
-import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalCards, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
+import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, deleteLocalCards, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalCards, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { parseBook } from "@/lib/parser/index";
 import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress, type TrainBatch } from "@/lib/cards";
@@ -745,14 +745,15 @@ function AppInner() {
    */
   function handleDeleteCards(ids: string[]) {
     if (ids.length === 0) return;
-    for (const id of ids) deleteLocalCard(id);
-    setCards((prev) => prev.filter((c) => !ids.includes(c.id)));
+    deleteLocalCards(ids);
+    const idsToDelete = new Set(ids);
+    setCards((prev) => prev.filter((c) => !idsToDelete.has(c.id)));
     const newCount = Math.max(0, profile.savedItems - ids.length);
     const updatedProfile = { ...profile, savedItems: newCount };
     saveLocalProfile(updatedProfile);
     setProfile(updatedProfile);
     if (user) {
-      for (const id of ids) void sbDeleteFlashcard(id);
+      void sbDeleteFlashcards(ids);
     }
   }
 
@@ -1143,6 +1144,7 @@ function AppInner() {
           onAddCard={handleAddCard}
           onUpdateCard={handleUpdateCard}
           onDeleteCard={handleDeleteCard}
+          onDeleteCards={handleDeleteCards}
           onFindVideos={handleFindVideos}
         />
       )}

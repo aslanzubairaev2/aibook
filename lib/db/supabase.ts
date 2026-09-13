@@ -355,6 +355,12 @@ export async function sbDeleteFlashcard(cardId: string): Promise<void> {
   if (error) console.error("sbDeleteFlashcard:", error.message);
 }
 
+export async function sbDeleteFlashcards(cardIds: string[]): Promise<void> {
+  if (!supabase || cardIds.length === 0) return;
+  const { error } = await supabase.from("flashcards").delete().in("id", cardIds);
+  if (error) console.error("sbDeleteFlashcards:", error.message);
+}
+
 export async function sbGetCardVariantProgress(userId: string): Promise<DbCardVariantProgress[] | null> {
   if (!supabase) return null;
   const { data, error } = await supabase

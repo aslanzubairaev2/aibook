@@ -69,6 +69,7 @@ type Props = {
   onAddCard: (card: Flashcard) => void;
   onUpdateCard: (card: Flashcard) => void;
   onDeleteCard: (id: string) => void;
+  onDeleteCards: (ids: string[]) => void;
   onFindVideos?: (word: string, lang?: string) => void;
 };
 
@@ -489,7 +490,7 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
   );
 });
 
-export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, onAddCard, onUpdateCard, onDeleteCard, onFindVideos }: Props) {
+export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, onAddCard, onUpdateCard, onDeleteCard, onDeleteCards, onFindVideos }: Props) {
   const { user } = useAuth();
   const [profile, setProfile] = useState(getLocalProfile);
   const targetLanguage = profile.targetLanguage;
@@ -1356,6 +1357,20 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const hasMoreRows = activeTab === "today"
     ? visibleCount < dueCards.length
     : visibleCount < filteredAllCards.length;
+
+  const deleteFilteredCards = useCallback(() => {
+    if (activeFilterCount === 0 || filteredAllCards.length === 0) return;
+    const count = filteredAllCards.length;
+    const scope = searchQuery.trim()
+      ? "по текущему фильтру и поиску"
+      : "по текущему фильтру";
+    if (!confirm(`Удалить все ${count} ${cardNoun(count)} ${scope}? Это действие нельзя отменить.`)) return;
+    onDeleteCards(filteredAllCards.map((card) => card.id));
+    setShowFilterPanel(false);
+    setVisibleCount(50);
+    setToast(`Удалено ${count} ${cardNoun(count)}`);
+    window.setTimeout(() => setToast(null), 2500);
+  }, [activeFilterCount, filteredAllCards, onDeleteCards, searchQuery]);
 
   // --- Infinite scroll for the long lists (Today and All Cards) ---
   // Re-attached whenever the sentinel could have been unmounted, so a list that
@@ -2685,9 +2700,21 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               </div>
 
               {activeFilterCount > 0 && (
-                <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); setFilterLevel("all"); setFilterPos("all"); persistCardFilters({ filterStatus: "all", filterType: "all", filterBook: "all", filterLevel: "all", filterPos: "all" }); setVisibleCount(50); }} type="button">
-                  Сбросить фильтры
-                </button>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+                  <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); setFilterLevel("all"); setFilterPos("all"); persistCardFilters({ filterStatus: "all", filterType: "all", filterBook: "all", filterLevel: "all", filterPos: "all" }); setVisibleCount(50); }} type="button">
+                    Сбросить фильтры
+                  </button>
+                  {filteredAllCards.length > 0 && (
+                    <button
+                      className="filter-reset-btn"
+                      onClick={deleteFilteredCards}
+                      type="button"
+                      style={{ color: "#e08888", borderColor: "rgba(224, 136, 136, 0.35)" }}
+                    >
+                      <Trash2 size={14} /> Удалить все {filteredAllCards.length} {cardNoun(filteredAllCards.length)} по фильтру
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           )}
