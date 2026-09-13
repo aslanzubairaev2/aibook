@@ -868,20 +868,24 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // to build its own full queue on every render, which is what made opening the
   // filter panel — or changing anything at all — take tens of seconds.
   const trainCounts = useMemo(
-    () => countTrainCandidates(
-      filterByPos(cards, trainPos),
-      { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded },
-      variantProgress,
-      todayEndTime,
-    ),
-    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
+    () => activeTab === "train"
+      ? countTrainCandidates(
+        filterByPos(cards, trainPos),
+        { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded },
+        variantProgress,
+        todayEndTime,
+      )
+      : { byStatus: { all: 0, new: 0, learning: 0, review: 0, relearning: 0, hard: 0 }, byType: { all: 0, word: 0, phrase: 0, sentence: 0 } },
+    [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
   );
 
   // The productive trainer keeps its own schedule but must obey the same
   // narrowing: "train this batch" means this batch in either mode.
   const trainCards = useMemo(
-    () => filterCardsByTrainingSource(filterByPos(cards, trainPos), trainBook, trainSourceId, trainExcluded),
-    [cards, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos],
+    () => activeTab === "train"
+      ? filterCardsByTrainingSource(filterByPos(cards, trainPos), trainBook, trainSourceId, trainExcluded)
+      : [],
+    [activeTab, cards, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos],
   );
 
   // Every source the deck draws from, with its size — the list the exclusion
@@ -892,13 +896,15 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // What «пройти заново» would actually serve. Shown on the empty state so the
   // offer is a number rather than a promise.
   const drillCandidates = useMemo(
-    () => countTrainCandidates(
-      filterByPos(cards, trainPos),
-      { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, ignoreSchedule: true },
-      variantProgress,
-      todayEndTime,
-    ).byType.all,
-    [cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
+    () => activeTab === "train"
+      ? countTrainCandidates(
+        filterByPos(cards, trainPos),
+        { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, ignoreSchedule: true },
+        variantProgress,
+        todayEndTime,
+      ).byType.all
+      : 0,
+    [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
   );
 
   function startTrainingSession(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { franc } from "franc-min";
 import { QuickWordPreview } from "@/components/word-modal/QuickWordPreview";
 import { AppShell } from "@/components/ui/AppShell";
@@ -747,11 +747,13 @@ function AppInner() {
     if (ids.length === 0) return;
     deleteLocalCards(ids);
     const idsToDelete = new Set(ids);
-    setCards((prev) => prev.filter((c) => !idsToDelete.has(c.id)));
     const newCount = Math.max(0, profile.savedItems - ids.length);
     const updatedProfile = { ...profile, savedItems: newCount };
     saveLocalProfile(updatedProfile);
-    setProfile(updatedProfile);
+    startTransition(() => {
+      setCards((prev) => prev.filter((c) => !idsToDelete.has(c.id)));
+      setProfile(updatedProfile);
+    });
     if (user) {
       void sbDeleteFlashcards(ids);
     }
