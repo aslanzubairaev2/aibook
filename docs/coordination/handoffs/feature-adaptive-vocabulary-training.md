@@ -2,7 +2,7 @@
 
 - Агент: Codex
 - Ветка: `feature/adaptive-vocabulary-training`
-- Commit: `a7cdf00`
+- Commit: `51bec0c` (основной коммит функции)
 - Статус: ready-for-review
 
 ## Сделано
