@@ -7,7 +7,7 @@ import { GrammarModal } from "@/components/word-modal/GrammarModal";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { VerbsQuiz } from "@/components/verbs/VerbsQuiz";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
-import { classifyGermanVerb, GERMAN_VERB_CLASS_HINT, GERMAN_VERB_CLASS_LABEL, normalizePos, type GermanVerbClass } from "@/lib/verbForms";
+import { classifyGermanVerb, GERMAN_VERB_CLASS_HINT, GERMAN_VERB_CLASS_LABEL, normalizePos, toggleGermanVerbClassSelection, type GermanVerbClass } from "@/lib/verbForms";
 import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/search/multiTerm";
 import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -25,8 +25,6 @@ type Props = {
   profile: UserProfile;
   onBack: () => void;
 };
-
-type VerbType = "all" | GermanVerbClass;
 
 const VERB_TYPE_ORDER: GermanVerbClass[] = ["weak", "strong", "mixed", "special", "impersonal"];
 
@@ -65,7 +63,9 @@ export function VerbsView({ profile, onBack }: Props) {
   const [error, setError] = useState<string | null>(null);
   const hasDataRef = useRef(!!cachedDict && (cachedDict.entries.length > 0 || cachedDict.batches.length > 0));
 
-  const [verbType, setVerbType] = useState<VerbType>("all");
+  // Empty means «Все». Compatible learning groups can be selected together;
+  // weak and strong are switched as one base-conjugation choice.
+  const [verbTypes, setVerbTypes] = useState<Set<GermanVerbClass>>(new Set());
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -176,10 +176,10 @@ export function VerbsView({ profile, onBack }: Props) {
     // every verb starting with either fragment, from just a couple of letters.
     const terms = parseSearchTerms(query);
     return allVerbs.filter((e) => {
-      if (verbType !== "all" && classifyGermanVerb(e.lemma, e.headword, e.forms) !== verbType) return false;
+      if (verbTypes.size > 0 && !verbTypes.has(classifyGermanVerb(e.lemma, e.headword, e.forms))) return false;
       return matchesSearchTerms([e.headword, e.lemma, e.translation], terms);
     });
-  }, [allVerbs, verbType, query]);
+  }, [allVerbs, verbTypes, query]);
 
   const trainingVerbs = useMemo(
     () => verbs.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
@@ -197,7 +197,7 @@ export function VerbsView({ profile, onBack }: Props) {
   // A search or type filter narrows the table — the matching packs should be
   // visible right away, not stuck behind the "closed by default" rule that
   // exists for browsing, not for looking something specific up.
-  const isNarrowed = query.trim().length > 0 || verbType !== "all";
+  const isNarrowed = query.trim().length > 0 || verbTypes.size > 0;
 
   const groups = useMemo<VerbGroup[]>(() => {
     const byBatch = new Map<string, DictionaryEntry[]>();
@@ -236,6 +236,10 @@ export function VerbsView({ profile, onBack }: Props) {
       saveLocalVerbsQuizModes(safe);
       return safe;
     });
+  }
+
+  function toggleVerbType(type: GermanVerbClass) {
+    setVerbTypes((prev) => toggleGermanVerbClassSelection(prev, type));
   }
 
   function chooseTrainingFilter(filter: TrainingFilter) {
@@ -331,7 +335,7 @@ export function VerbsView({ profile, onBack }: Props) {
     );
   }
 
-  const activeFilterCount = verbType !== "all" ? 1 : 0;
+  const activeFilterCount = verbTypes.size;
 
   /** Starts a session on one pack — stamps it, then hands the words to the quiz. */
   function trainPack(packKey: string, packVerbs: DictionaryEntry[]) {
@@ -485,20 +489,21 @@ export function VerbsView({ profile, onBack }: Props) {
               <div className="filter-group">
                 <div className="filter-group-label">Тип спряжения</div>
                 <div className="filter-chips">
-                  <button type="button" className={`filter-chip ${verbType === "all" ? "active" : ""}`} onClick={() => setVerbType("all")}>Все</button>
+                  <button type="button" className={`filter-chip ${verbTypes.size === 0 ? "active" : ""}`} onClick={() => setVerbTypes(new Set())} aria-pressed={verbTypes.size === 0}>Все</button>
                   {VERB_TYPE_ORDER.map((type) => (
                     <button
                       key={type}
                       type="button"
-                      className={`filter-chip verb-type-chip verb-type-${type} ${verbType === type ? "active" : ""}`}
-                      onClick={() => setVerbType(type)}
+                      className={`filter-chip verb-type-chip verb-type-${type} ${verbTypes.has(type) ? "active" : ""}`}
+                      onClick={() => toggleVerbType(type)}
                       title={GERMAN_VERB_CLASS_HINT[type]}
+                      aria-pressed={verbTypes.has(type)}
                     >
                       {GERMAN_VERB_CLASS_LABEL[type]}
                     </button>
                   ))}
                 </div>
-                <p className="verb-modes-hint">Для ежедневной тренировки обычно выбирайте «сильный», «смешанный» и «особый». «Слабые» идут по стандарту, а безличные используются с es.</p>
+                <p className="verb-modes-hint">Можно выбрать несколько типов: «сильный», «смешанный», «особый» и «безличный» объединяются. «Слабый» и «сильный» — взаимоисключающие базовые группы.</p>
               </div>
             </div>
           )}

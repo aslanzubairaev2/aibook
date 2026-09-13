@@ -2278,6 +2278,7 @@ textarea,
 .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .filter-chip { padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-muted); transition: all 0.2s; white-space: nowrap; }
 .filter-chip.active { background: rgba(212, 168, 71, 0.15); border-color: var(--accent); color: var(--accent); }
+.filter-chip[aria-pressed="true"] { box-shadow: inset 0 0 0 1px rgba(212, 168, 71, 0.14); }
 .filter-reset-btn { align-self: flex-start; font-size: 12px; font-weight: 700; color: var(--text-muted); background: transparent; border: none; cursor: pointer; padding: 4px 0; text-decoration: underline; }
 .filter-reset-btn:hover { color: var(--accent); }
 .verb-modes-hint { font-size: 11px; color: var(--text-muted); margin: 2px 0 0; }

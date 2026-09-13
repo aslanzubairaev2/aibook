@@ -7,6 +7,7 @@ import {
   GERMAN_VERB_CLASS_LABEL,
   isIrregularGermanVerb,
   isPresentPluralInfinitive,
+  toggleGermanVerbClassSelection,
 } from "./verbForms";
 
 test("ordinary verbs stay in the weak/standard group", () => {
@@ -42,4 +43,22 @@ test("present plural forms can be supplied when they exactly repeat the infiniti
   assert.equal(isPresentPluralInfinitive("wir", "sind", "sein"), false);
   assert.equal(isPresentPluralInfinitive("ihr", "fahrt", "fahren"), false);
   assert.equal(isPresentPluralInfinitive("wir", "fuhren", "fahren"), false);
+});
+
+test("verb type filters combine compatible groups and replace weak/strong", () => {
+  let selected = new Set<"weak" | "strong" | "mixed" | "special" | "impersonal">();
+  selected = toggleGermanVerbClassSelection(selected, "strong");
+  selected = toggleGermanVerbClassSelection(selected, "mixed");
+  selected = toggleGermanVerbClassSelection(selected, "special");
+  selected = toggleGermanVerbClassSelection(selected, "impersonal");
+  assert.deepEqual([...selected], ["strong", "mixed", "special", "impersonal"]);
+
+  selected = toggleGermanVerbClassSelection(selected, "weak");
+  assert.deepEqual([...selected], ["mixed", "special", "impersonal", "weak"]);
+
+  selected = toggleGermanVerbClassSelection(selected, "strong");
+  assert.deepEqual([...selected], ["mixed", "special", "impersonal", "strong"]);
+
+  selected = toggleGermanVerbClassSelection(selected, "mixed");
+  assert.deepEqual([...selected], ["special", "impersonal", "strong"]);
 });

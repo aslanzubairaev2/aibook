@@ -37,6 +37,27 @@ export function isPresentPluralInfinitive(pronoun: string, form: string, infinit
 /** The learning-oriented groups shown in the verb trainer. */
 export type GermanVerbClass = "weak" | "strong" | "mixed" | "special" | "impersonal";
 
+/**
+ * Applies the trainer's type-filter rules. Weak and strong describe the same
+ * base conjugation choice, so selecting one replaces the other. The remaining
+ * learning groups can be combined with either base choice.
+ */
+export function toggleGermanVerbClassSelection(
+  selected: ReadonlySet<GermanVerbClass>,
+  type: GermanVerbClass,
+): Set<GermanVerbClass> {
+  const next = new Set(selected);
+  if (next.has(type)) {
+    next.delete(type);
+    return next;
+  }
+
+  if (type === "weak") next.delete("strong");
+  if (type === "strong") next.delete("weak");
+  next.add(type);
+  return next;
+}
+
 export const GERMAN_VERB_CLASS_LABEL: Record<GermanVerbClass, string> = {
   weak: "слабый",
   strong: "сильный",
