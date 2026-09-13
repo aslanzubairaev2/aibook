@@ -14,6 +14,9 @@
 
 export type PackModule = "verbs" | "nouns";
 
+/** Which subset the next training session should use. */
+export type TrainingFilter = "all" | "unfamiliar" | "difficult";
+
 export type WordTrainingState = {
   /** Whether the most recent answer for this word was fully correct. */
   ok: boolean;
@@ -139,6 +142,11 @@ export function resetWords(progress: ModuleProgress, entryIds: string[], packKey
   const packs = { ...progress.packs };
   if (packKey) delete packs[packKey];
   return { words, packs };
+}
+
+/** Forgets every word and every pack in one trainer module. */
+export function resetAllProgress(): ModuleProgress {
+  return emptyModuleProgress();
 }
 
 /** «сегодня» / «27 августа» — how the pack head dates its last session. */

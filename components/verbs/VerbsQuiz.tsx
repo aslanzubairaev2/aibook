@@ -125,6 +125,9 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState(false);
   const [results, setResults] = useState<Record<string, FieldResult>>({});
+  // The translation is an optional hint. Keep this toggle across questions so
+  // a learner who wants pure recall does not repeat the same tap each time.
+  const [translationVisible, setTranslationVisible] = useState(true);
   // Fields peeked at before submitting — a look, not a graded answer, so it
   // does not touch `results` or count against the verdict.
   const [peeked, setPeeked] = useState<Set<string>>(new Set());
@@ -274,11 +277,17 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
       next[field.key] = { verdict: check.verdict, expected: field.expected };
       if (check.verdict === "wrong") allGood = false;
     }
-    setResults(next);
-    setRevealed(true);
     onRecord?.(step.entry.id, allGood);
-    if (allGood) setCorrectCount((c) => c + 1);
-    else setMistakes((m) => [...m, step]);
+    if (allGood) {
+      setCorrectCount((c) => c + 1);
+      // Keep correct answers moving without an extra tap. Mistakes still
+      // reveal their correction and wait for «Далее».
+      nextItem();
+    } else {
+      setResults(next);
+      setRevealed(true);
+      setMistakes((m) => [...m, step]);
+    }
   }
 
   function nextItem() {
@@ -389,7 +398,20 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
               <span>{entry.headword}</span>
               <SpeakButton text={entry.headword} lang={targetLanguage} size={16} />
             </div>
-            {showTranslation && <p className="verb-quiz-translation">{entry.translation}</p>}
+            {showTranslation && (
+              <div className="verb-quiz-translation-row">
+                <p className={`verb-quiz-translation${translationVisible ? "" : " quiz-translation-hidden"}`}>{entry.translation}</p>
+                <button
+                  type="button"
+                  className="quiz-translation-toggle"
+                  onClick={() => setTranslationVisible((visible) => !visible)}
+                  aria-label={translationVisible ? "Скрыть перевод" : "Показать перевод"}
+                  title={translationVisible ? "Скрыть перевод" : "Показать перевод"}
+                >
+                  {translationVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            )}
           </>
         )}
 

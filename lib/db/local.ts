@@ -2,7 +2,7 @@ import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { CONJUGATION_TENSE_ORDER, DEFAULT_CONJUGATION_TENSES, DEFAULT_QUIZ_MODES, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { DEFAULT_NOUN_QUIZ_MODES, NOUN_QUIZ_MODE_ORDER, type NounQuizMode } from "@/lib/nounsQuizModes";
-import { emptyModuleProgress, type ModuleProgress, type PackModule } from "@/lib/srs/packProgress";
+import { emptyModuleProgress, type ModuleProgress, type PackModule, type TrainingFilter } from "@/lib/srs/packProgress";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 
 const BOOKS_KEY = "aibook_books";
@@ -28,6 +28,7 @@ const NOUNS_HIDE_FORMS_KEY = "aibook_nouns_hide_forms";
 const NOUNS_HIDE_ARTICLES_KEY = "aibook_nouns_hide_articles";
 const NOUNS_QUIZ_MODES_KEY = "aibook_nouns_quiz_modes";
 const PACK_PROGRESS_KEY = "aibook_pack_progress";
+const TRAINING_FILTER_KEY = "aibook_training_filter";
 const GENDER_RULE_STATS_KEY = "aibook_gender_rule_stats";
 
 let activeNamespace = "guest";
@@ -1031,6 +1032,24 @@ export function getLocalPackProgress(module: PackModule): ModuleProgress {
 export function saveLocalPackProgress(module: PackModule, progress: ModuleProgress): void {
   try {
     localStorage.setItem(getNsKey(`${PACK_PROGRESS_KEY}_${module}`), JSON.stringify(progress));
+  } catch {
+    // silently fail
+  }
+}
+
+export function getLocalTrainingFilter(module: PackModule): TrainingFilter {
+  if (typeof window === "undefined") return "all";
+  try {
+    const value = localStorage.getItem(getNsKey(`${TRAINING_FILTER_KEY}_${module}`));
+    return value === "unfamiliar" || value === "difficult" ? value : "all";
+  } catch {
+    return "all";
+  }
+}
+
+export function saveLocalTrainingFilter(module: PackModule, filter: TrainingFilter): void {
+  try {
+    localStorage.setItem(getNsKey(`${TRAINING_FILTER_KEY}_${module}`), filter);
   } catch {
     // silently fail
   }

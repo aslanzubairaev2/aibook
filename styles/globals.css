@@ -2174,6 +2174,8 @@ textarea,
   cursor: pointer; transition: all 0.2s;
 }
 .dict-train-btn:hover { background: rgba(212, 168, 71, 0.22); }
+.dict-train-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.training-reset-all-btn { color: var(--accent); }
 /* Circles beside a pill: one row, one shape. They are also smaller than the
    app-wide 42px, so a row of three does not outweigh the button it follows. */
 .dict-batch-actions .icon-btn {
@@ -2312,6 +2314,13 @@ textarea,
 .verb-row:last-child td { border-bottom: none; }
 .verb-row-regular { border-left-color: var(--accent); }
 .verb-row-irregular { border-left-color: var(--red); }
+.verb-row-difficult { background: rgba(196, 106, 106, 0.045); }
+.training-difficulty-badge {
+  display: inline-flex; align-items: center; margin-left: 7px; padding: 2px 6px;
+  border: 1px solid rgba(196, 106, 106, 0.45); border-radius: 999px;
+  color: var(--red); font-size: 9px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: 0.04em; vertical-align: middle;
+}
 
 .verb-cell-infinitive { display: flex; flex-direction: column; gap: 1px; }
 .verb-infinitive { font-weight: 700; }
@@ -2376,6 +2385,15 @@ textarea,
 }
 .verb-quiz-infinitive { display: flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 800; color: var(--text-primary); }
 .verb-quiz-translation { font-size: 13px; color: var(--text-muted); margin-top: -10px; }
+.verb-quiz-translation-row { display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: -10px; }
+.verb-quiz-translation-row .verb-quiz-translation { flex: 1; min-width: 0; margin-top: 0; }
+.quiz-translation-toggle {
+  flex: 0 0 auto; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 50%; background: var(--bg-elevated); color: var(--text-muted); cursor: pointer;
+}
+.quiz-translation-toggle:hover, .quiz-translation-toggle:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+.quiz-translation-hidden { filter: blur(5px); user-select: none; cursor: help; transition: filter 0.15s; }
+.quiz-translation-hidden:hover { filter: none; }
 .verb-quiz-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .verb-quiz-field label { font-size: 12px; font-weight: 700; color: var(--text-muted); }
 .verb-quiz-input-row { display: flex; align-items: center; gap: 8px; min-width: 0; }

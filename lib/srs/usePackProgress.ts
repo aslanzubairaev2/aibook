@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { getLocalPackProgress, saveLocalPackProgress } from "@/lib/db/local";
-import { recordAnswer, recordSession, resetWords, type ModuleProgress, type PackModule } from "@/lib/srs/packProgress";
+import { recordAnswer, recordSession, resetAllProgress, resetWords, type ModuleProgress, type PackModule } from "@/lib/srs/packProgress";
 
 /**
  * The pack-coverage state for one trainer module, read once and written
@@ -45,5 +45,13 @@ export function usePackProgress(module: PackModule) {
     });
   }, [module]);
 
-  return { progress, startSession, record, reset };
+  const resetAll = useCallback(() => {
+    setProgress(() => {
+      const next = resetAllProgress();
+      saveLocalPackProgress(module, next);
+      return next;
+    });
+  }, [module]);
+
+  return { progress, startSession, record, reset, resetAll };
 }

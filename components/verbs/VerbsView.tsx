@@ -13,10 +13,11 @@ import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
 import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
-import { getLocalConjugationTenses, getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, saveLocalConjugationTenses, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes } from "@/lib/db/local";
+import { getLocalConjugationTenses, getLocalTrainingFilter, getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, saveLocalConjugationTenses, saveLocalTrainingFilter, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes } from "@/lib/db/local";
 import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_HINT, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { usePackProgress } from "@/lib/srs/usePackProgress";
-import { formatTrainedAt, packCoverage } from "@/lib/srs/packProgress";
+import { formatTrainedAt, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
+import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
 
@@ -70,6 +71,7 @@ export function VerbsView({ profile, onBack }: Props) {
   // original forms drill so nobody who never opens this gets a bigger session.
   const [quizModes, setQuizModes] = useState<Set<QuizMode>>(() => getLocalVerbsQuizModes());
   const [modesOpen, setModesOpen] = useState(false);
+  const [trainingFilter, setTrainingFilter] = useState<TrainingFilter>(() => getLocalTrainingFilter("verbs"));
   // Which tense(s) the conjugation drill covers — only meaningful once
   // "Спряжения" is one of the active modes above.
   const [conjugationTenses, setConjugationTenses] = useState<Set<ConjugationTense>>(() => getLocalConjugationTenses());
@@ -90,7 +92,7 @@ export function VerbsView({ profile, onBack }: Props) {
 
   // How far each pack has been worked through — the same bookkeeping the noun
   // trainer keeps, under its own module key.
-  const { progress, startSession, record, reset } = usePackProgress("verbs");
+  const { progress, startSession, record, reset, resetAll } = usePackProgress("verbs");
 
   const loadDictionary = useCallback(async () => {
     if (!userId) { setEntries([]); setBatches([]); setIsLoading(false); return; }
@@ -180,6 +182,19 @@ export function VerbsView({ profile, onBack }: Props) {
     });
   }, [allVerbs, verbType, query]);
 
+  const trainingVerbs = useMemo(
+    () => verbs.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
+    [verbs, progress.words, trainingFilter],
+  );
+  const unfamiliarCount = useMemo(
+    () => allVerbs.filter((entry) => isUnfamiliarWord(progress.words[entry.id])).length,
+    [allVerbs, progress.words],
+  );
+  const difficultCount = useMemo(
+    () => allVerbs.filter((entry) => isDifficultWord(progress.words[entry.id])).length,
+    [allVerbs, progress.words],
+  );
+
   // A search or type filter narrows the table — the matching packs should be
   // visible right away, not stuck behind the "closed by default" rule that
   // exists for browsing, not for looking something specific up.
@@ -222,6 +237,11 @@ export function VerbsView({ profile, onBack }: Props) {
       saveLocalVerbsQuizModes(safe);
       return safe;
     });
+  }
+
+  function chooseTrainingFilter(filter: TrainingFilter) {
+    setTrainingFilter(filter);
+    saveLocalTrainingFilter("verbs", filter);
   }
 
   function toggleConjugationTense(tense: ConjugationTense) {
@@ -316,8 +336,15 @@ export function VerbsView({ profile, onBack }: Props) {
 
   /** Starts a session on one pack — stamps it, then hands the words to the quiz. */
   function trainPack(packKey: string, packVerbs: DictionaryEntry[]) {
+    if (packVerbs.length === 0) return;
     startSession(packKey);
     setQuizVerbs(packVerbs);
+  }
+
+  function resetAllTrainingProgress() {
+    if (typeof window !== "undefined" && !window.confirm("Сбросить прогресс всех пачек глаголов?")) return;
+    resetAll();
+    setToast("Прогресс всех пачек сброшен");
   }
 
   if (quizVerbs) {
@@ -434,17 +461,22 @@ export function VerbsView({ profile, onBack }: Props) {
             {allVerbs.length > 0 && (
               <button
                 type="button"
-                className={`all-filter-toggle dict-filter-toggle ${modesOpen ? "active" : ""}`}
+                className={`all-filter-toggle dict-filter-toggle ${modesOpen || trainingFilter !== "all" ? "active" : ""}`}
                 onClick={() => setModesOpen((v) => !v)}
               >
                 <ListChecks size={15} /> Режимы
-                <span className="all-filter-count">{quizModes.size}</span>
+                <span className="all-filter-count">{quizModes.size + (trainingFilter !== "all" ? 1 : 0)}</span>
                 <ChevronDown size={12} />
               </button>
             )}
             {verbs.length > 0 && (
-              <button type="button" className="dict-train-btn verbs-train-all-btn" onClick={() => trainPack("__all__", verbs)}>
-                <Dumbbell size={14} /> Тренировать всё
+              <button type="button" className="dict-train-btn verbs-train-all-btn" disabled={trainingVerbs.length === 0} onClick={() => trainPack("__all__", trainingVerbs)} title={trainingVerbs.length === 0 ? "Для этого фильтра пока нет слов" : undefined}>
+                <Dumbbell size={14} /> {trainingFilter === "all" ? "Тренировать всё" : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"}`}
+              </button>
+            )}
+            {Object.keys(progress.words).length > 0 && (
+              <button type="button" className="icon-btn training-reset-all-btn" onClick={resetAllTrainingProgress} aria-label="Сбросить прогресс всех пачек" title="Сбросить прогресс всех пачек">
+                <RotateCcw size={15} />
               </button>
             )}
           </div>
@@ -464,6 +496,15 @@ export function VerbsView({ profile, onBack }: Props) {
 
           {modesOpen && allVerbs.length > 0 && (
             <div className="all-filter-panel">
+              <div className="filter-group">
+                <div className="filter-group-label">Фильтр слов для тренировки</div>
+                <div className="filter-chips">
+                  <button type="button" className={`filter-chip ${trainingFilter === "all" ? "active" : ""}`} onClick={() => chooseTrainingFilter("all")}>Все</button>
+                  <button type="button" className={`filter-chip ${trainingFilter === "unfamiliar" ? "active" : ""}`} onClick={() => chooseTrainingFilter("unfamiliar")}>Незнакомые ({unfamiliarCount})</button>
+                  <button type="button" className={`filter-chip ${trainingFilter === "difficult" ? "active" : ""}`} onClick={() => chooseTrainingFilter("difficult")}>Сложные ({difficultCount})</button>
+                </div>
+                <p className="verb-modes-hint">«Незнакомые» — последняя попытка с ошибкой. «Сложные» — слова с повторными ошибками, рассчитанные по вашей локальной истории.</p>
+              </div>
               <div className="filter-group">
                 <div className="filter-group-label">Что тренировать</div>
                 <div className="filter-chips">
@@ -516,6 +557,9 @@ export function VerbsView({ profile, onBack }: Props) {
                 const irregularCount = group.verbs.filter((v) => isIrregularGermanVerb(v.lemma, v.headword, v.forms)).length;
                 const coverage = packCoverage(progress, group.key, group.verbs.map((v) => v.id));
                 const trainedAt = formatTrainedAt(coverage.lastTrainedAt);
+                const unfamiliar = group.verbs.filter((entry) => isUnfamiliarWord(progress.words[entry.id]));
+                const trainable = group.verbs.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter));
+                const sessionVerbs = trainingFilter === "all" ? group.verbs : trainable;
                 return (
                   <section key={group.key} className="dict-batch">
                     <button type="button" className="dict-batch-head" onClick={() => toggleGroup(group.key)}>
@@ -534,17 +578,17 @@ export function VerbsView({ profile, onBack }: Props) {
                     <PackBar coverage={coverage} />
 
                     <div className="dict-batch-actions">
-                      <button type="button" className="dict-train-btn" onClick={() => trainPack(group.key, group.verbs)}>
+                      <button type="button" className="dict-train-btn" disabled={sessionVerbs.length === 0} onClick={() => trainPack(group.key, sessionVerbs)}>
                         <Dumbbell size={14} />
-                        {coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
+                        {trainingFilter !== "all" ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${trainable.length})` : coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
                       </button>
-                      {coverage.percent < 100 && coverage.learned + coverage.seen > 0 && (
+                      {unfamiliar.length > 0 && (
                         <button
                           type="button"
                           className="dict-train-btn"
-                          onClick={() => trainPack(group.key, group.verbs.filter((v) => !progress.words[v.id]?.ok))}
+                          onClick={() => trainPack(group.key, unfamiliar)}
                         >
-                          Незнакомые ({group.verbs.length - coverage.learned})
+                          Незнакомые ({unfamiliar.length})
                         </button>
                       )}
                       {coverage.learned + coverage.seen > 0 && (
@@ -573,15 +617,18 @@ export function VerbsView({ profile, onBack }: Props) {
                             <tbody>
                               {group.verbs.map((entry) => {
                                 const irregular = isIrregularGermanVerb(entry.lemma, entry.headword, entry.forms);
+                                const state = progress.words[entry.id];
+                                const difficult = isDifficultWord(state);
+                                const errors = trainingErrors(state);
                                 return (
                                   <tr
                                     key={entry.id}
-                                    className={`verb-row ${irregular ? "verb-row-irregular" : "verb-row-regular"}`}
+                                    className={`verb-row ${irregular ? "verb-row-irregular" : "verb-row-regular"}${difficult ? " verb-row-difficult" : ""}`}
                                     onClick={() => openEntry(entry)}
                                   >
                                     <td className="verb-cell-infinitive">
                                       <span className="verb-form-row">
-                                        <span className="verb-infinitive">{entry.headword}</span>
+                                      <span className="verb-infinitive">{entry.headword}{difficult && <span className="training-difficulty-badge" title={`Ошибок: ${errors}`}>сложно</span>}</span>
                                         <SpeakButton text={entry.headword} lang={profile.targetLanguage} size={13} />
                                       </span>
                                       {entry.translation && (

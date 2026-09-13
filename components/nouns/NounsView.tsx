@@ -15,12 +15,13 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
 import {
-  getLocalNounsDict, getLocalNounsHideArticles, getLocalNounsHideForms, getLocalNounsOpenGroups, getLocalNounsQuizModes,
-  saveLocalNounsDict, saveLocalNounsHideArticles, saveLocalNounsHideForms, saveLocalNounsOpenGroups, saveLocalNounsQuizModes,
+  getLocalNounsDict, getLocalNounsHideArticles, getLocalNounsHideForms, getLocalNounsOpenGroups, getLocalNounsQuizModes, getLocalTrainingFilter,
+  saveLocalNounsDict, saveLocalNounsHideArticles, saveLocalNounsHideForms, saveLocalNounsOpenGroups, saveLocalNounsQuizModes, saveLocalTrainingFilter,
 } from "@/lib/db/local";
 import { NOUN_QUIZ_MODE_HINT, NOUN_QUIZ_MODE_LABEL, NOUN_QUIZ_MODE_ORDER, type NounQuizMode } from "@/lib/nounsQuizModes";
 import { usePackProgress } from "@/lib/srs/usePackProgress";
-import { formatTrainedAt, packCoverage } from "@/lib/srs/packProgress";
+import { formatTrainedAt, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
+import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
 
@@ -70,6 +71,7 @@ export function NounsView({ profile, onBack }: Props) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [quizModes, setQuizModes] = useState<Set<NounQuizMode>>(() => getLocalNounsQuizModes());
   const [modesOpen, setModesOpen] = useState(false);
+  const [trainingFilter, setTrainingFilter] = useState<TrainingFilter>(() => getLocalTrainingFilter("nouns"));
   // Covers the translation and the plural so the table becomes a self-test —
   // the singular with its article stays visible to ask from.
   const [hideForms, setHideForms] = useState(() => getLocalNounsHideForms());
@@ -86,7 +88,7 @@ export function NounsView({ profile, onBack }: Props) {
   const [fillingIds, setFillingIds] = useState<Set<string>>(new Set());
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
-  const { progress, startSession, record, reset } = usePackProgress("nouns");
+  const { progress, startSession, record, reset, resetAll } = usePackProgress("nouns");
 
   const loadDictionary = useCallback(async () => {
     if (!userId) { setEntries([]); setBatches([]); setIsLoading(false); return; }
@@ -162,6 +164,19 @@ export function NounsView({ profile, onBack }: Props) {
     });
   }, [allNouns, genderFilter, query]);
 
+  const trainingNouns = useMemo(
+    () => nouns.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
+    [nouns, progress.words, trainingFilter],
+  );
+  const unfamiliarCount = useMemo(
+    () => allNouns.filter((entry) => isUnfamiliarWord(progress.words[entry.id])).length,
+    [allNouns, progress.words],
+  );
+  const difficultCount = useMemo(
+    () => allNouns.filter((entry) => isDifficultWord(progress.words[entry.id])).length,
+    [allNouns, progress.words],
+  );
+
   // A search or a gender filter narrows the table — matching packs should be
   // open right away, not stuck behind the «closed by default» browsing rule.
   const isNarrowed = query.trim().length > 0 || genderFilter !== "all";
@@ -205,6 +220,11 @@ export function NounsView({ profile, onBack }: Props) {
     });
   }
 
+  function chooseTrainingFilter(filter: TrainingFilter) {
+    setTrainingFilter(filter);
+    saveLocalTrainingFilter("nouns", filter);
+  }
+
   const toggleGroup = (key: string) =>
     setOpenGroups((prev) => {
       const next = new Set(prev);
@@ -216,8 +236,15 @@ export function NounsView({ profile, onBack }: Props) {
 
   /** Starts a session on one pack — stamps it, then hands the words to the quiz. */
   function trainPack(packKey: string, packNouns: DictionaryEntry[]) {
+    if (packNouns.length === 0) return;
     startSession(packKey);
     setQuizNouns(packNouns);
+  }
+
+  function resetAllTrainingProgress() {
+    if (typeof window !== "undefined" && !window.confirm("Сбросить прогресс всех пачек существительных?")) return;
+    resetAll();
+    setToast("Прогресс всех пачек сброшен");
   }
 
   /** Asks the AI for one noun's gender/article/plural and saves what came back. */
@@ -411,17 +438,28 @@ export function NounsView({ profile, onBack }: Props) {
             {allNouns.length > 0 && (
               <button
                 type="button"
-                className={`all-filter-toggle dict-filter-toggle ${modesOpen ? "active" : ""}`}
+                className={`all-filter-toggle dict-filter-toggle ${modesOpen || trainingFilter !== "all" ? "active" : ""}`}
                 onClick={() => setModesOpen((v) => !v)}
               >
                 <ListChecks size={15} /> Режимы
-                <span className="all-filter-count">{quizModes.size}</span>
+                <span className="all-filter-count">{quizModes.size + (trainingFilter !== "all" ? 1 : 0)}</span>
                 <ChevronDown size={12} />
               </button>
             )}
             {nouns.length > 0 && (
-              <button type="button" className="dict-train-btn verbs-train-all-btn" onClick={() => trainPack("__all__", nouns)}>
-                <Dumbbell size={14} /> Тренировать всё
+              <button
+                type="button"
+                className="dict-train-btn verbs-train-all-btn"
+                disabled={trainingNouns.length === 0}
+                onClick={() => trainPack("__all__", trainingNouns)}
+                title={trainingNouns.length === 0 ? "Для этого фильтра пока нет слов" : undefined}
+              >
+                <Dumbbell size={14} /> {trainingFilter === "all" ? "Тренировать всё" : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"}`}
+              </button>
+            )}
+            {Object.keys(progress.words).length > 0 && (
+              <button type="button" className="icon-btn training-reset-all-btn" onClick={resetAllTrainingProgress} aria-label="Сбросить прогресс всех пачек" title="Сбросить прогресс всех пачек">
+                <RotateCcw size={15} />
               </button>
             )}
           </div>
@@ -449,6 +487,15 @@ export function NounsView({ profile, onBack }: Props) {
 
           {modesOpen && allNouns.length > 0 && (
             <div className="all-filter-panel">
+              <div className="filter-group">
+                <div className="filter-group-label">Фильтр слов для тренировки</div>
+                <div className="filter-chips">
+                  <button type="button" className={`filter-chip ${trainingFilter === "all" ? "active" : ""}`} onClick={() => chooseTrainingFilter("all")}>Все</button>
+                  <button type="button" className={`filter-chip ${trainingFilter === "unfamiliar" ? "active" : ""}`} onClick={() => chooseTrainingFilter("unfamiliar")}>Незнакомые ({unfamiliarCount})</button>
+                  <button type="button" className={`filter-chip ${trainingFilter === "difficult" ? "active" : ""}`} onClick={() => chooseTrainingFilter("difficult")}>Сложные ({difficultCount})</button>
+                </div>
+                <p className="verb-modes-hint">«Незнакомые» — последняя попытка с ошибкой. «Сложные» — слова с повторными ошибками, рассчитанные по вашей локальной истории.</p>
+              </div>
               <div className="filter-group">
                 <div className="filter-group-label">Что тренировать</div>
                 <div className="filter-chips">
@@ -480,6 +527,9 @@ export function NounsView({ profile, onBack }: Props) {
                 const open = isNarrowed || openGroups.has(group.key);
                 const coverage = packCoverage(progress, group.key, group.nouns.map((n) => n.id));
                 const trainedAt = formatTrainedAt(coverage.lastTrainedAt);
+                const unfamiliar = group.nouns.filter((entry) => isUnfamiliarWord(progress.words[entry.id]));
+                const trainable = group.nouns.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter));
+                const sessionNouns = trainingFilter === "all" ? group.nouns : trainable;
                 return (
                   <section key={group.key} className="dict-batch">
                     <button type="button" className="dict-batch-head" onClick={() => toggleGroup(group.key)}>
@@ -497,17 +547,17 @@ export function NounsView({ profile, onBack }: Props) {
                     <PackBar coverage={coverage} />
 
                     <div className="dict-batch-actions">
-                      <button type="button" className="dict-train-btn" onClick={() => trainPack(group.key, group.nouns)}>
+                      <button type="button" className="dict-train-btn" disabled={sessionNouns.length === 0} onClick={() => trainPack(group.key, sessionNouns)}>
                         <Dumbbell size={14} />
-                        {coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
+                        {trainingFilter !== "all" ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${trainable.length})` : coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
                       </button>
-                      {coverage.percent < 100 && coverage.learned + coverage.seen > 0 && (
+                      {unfamiliar.length > 0 && (
                         <button
                           type="button"
                           className="dict-train-btn"
-                          onClick={() => trainPack(group.key, group.nouns.filter((n) => !progress.words[n.id]?.ok))}
+                          onClick={() => trainPack(group.key, unfamiliar)}
                         >
-                          Незнакомые ({group.nouns.length - coverage.learned})
+                          Незнакомые ({unfamiliar.length})
                         </button>
                       )}
                       {coverage.learned + coverage.seen > 0 && (
@@ -533,14 +583,16 @@ export function NounsView({ profile, onBack }: Props) {
                             </tr>
                           </thead>
                           <tbody>
-                            {group.nouns.map((entry) => {
-                              const gender = nounGender(entry) ?? "none";
-                              const article = nounArticle(entry);
-                              const state = progress.words[entry.id];
-                              return (
-                                <tr
-                                  key={entry.id}
-                                  className={`verb-row noun-row gender-row-${gender}${state?.ok ? " noun-row-learned" : ""}${hideArticles ? " noun-row-blind" : ""}`}
+                              {group.nouns.map((entry) => {
+                                const gender = nounGender(entry) ?? "none";
+                                const article = nounArticle(entry);
+                                const state = progress.words[entry.id];
+                                const difficult = isDifficultWord(state);
+                                const errors = trainingErrors(state);
+                                return (
+                                  <tr
+                                    key={entry.id}
+                                    className={`verb-row noun-row gender-row-${gender}${state?.ok ? " noun-row-learned" : ""}${difficult ? " noun-row-difficult" : ""}${hideArticles ? " noun-row-blind" : ""}`}
                                   onClick={() => setGrammarEntry(entry)}
                                 >
                                   <td className="verb-cell-infinitive">
@@ -555,6 +607,7 @@ export function NounsView({ profile, onBack }: Props) {
                                           </span>
                                         )}
                                         <span className={`gender-${gender}`}>{bareNoun(entry)}</span>
+                                        {difficult && <span className="training-difficulty-badge" title={`Ошибок: ${errors}`}>сложно</span>}
                                       </span>
                                       <SpeakButton text={entry.headword} lang={profile.targetLanguage} size={13} />
                                     </span>

@@ -6,6 +6,7 @@ import {
   packCoverage,
   recordAnswer,
   recordSession,
+  resetAllProgress,
   resetWords,
   type ModuleProgress,
 } from "./packProgress.ts";
@@ -110,4 +111,12 @@ test("resetting a pack forgets its words and its session count, and nothing else
   // The pack that was not reset is untouched.
   assert.equal(packCoverage(after, "other", ["z"]).percent, 100);
   assert.equal(packCoverage(after, "other", ["z"]).sessions, 1);
+});
+
+test("resetAllProgress forgets every word and every pack", () => {
+  let progress = session(emptyModuleProgress(), [["a", true], ["b", false]]);
+  progress = recordSession(progress, "pack-a", NOW);
+  progress = recordSession(progress, "pack-b", NOW);
+  assert.deepEqual(resetAllProgress(), { words: {}, packs: {} });
+  assert.notDeepEqual(progress, resetAllProgress());
 });
