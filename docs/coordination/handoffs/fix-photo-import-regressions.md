@@ -1,9 +1,9 @@
 # Handoff: восстановление фотоимпорта и проверки критических функций
 
 - Агент: Codex
-- Ветка: `fix/photo-import-regressions`
-- Commit реализации: `52c0a22`
-- Статус: ready-for-review (локально; публикация и обновление базы ожидают разрешения)
+- Ветка: `fix/photo-import-production`
+- Commit реализации: `3aa152c`
+- Статус: ready-for-review
 
 ## Сделано
 
@@ -40,40 +40,35 @@
 
 ## Проверки
 
-- `npm test` — passed, 408/408 в общей рабочей папке (с сохранёнными чужими изменениями).
+- `npm test` — passed, 407/407 в чистой ветке от `origin/main`.
 - `npm run test:critical` — passed до последнего добавленного теста ошибки карточек;
   после него полный набор прошёл снова.
 - `npx tsc --noEmit` — passed; итоговая сборка также проверила TypeScript.
-- `npm run build` — passed, включая автоматический prebuild с полным набором тестов.
+- `npm run build` — passed в чистой ветке, включая автоматический prebuild с полным набором тестов.
 - ESLint изменённых исходников — passed, 0 errors, 2 существующих warnings.
 - `npm run lint` — failed: 75 существующих errors, 39 warnings в приложении.
   Они не подавлены; CI lint останется красным до отдельного исправления.
 - `git diff --check` — passed.
 - Негативный контроль на исходном dictionaryStore: current-schema сценарий passed;
   legacy и stale-write-cache сценарии failed с ожидаемыми ошибками.
-- `npm run check:schema` — failed на подключённой базе: отсутствуют
-  `dictionary_entries.content_type`, `dictionary_batches.training`.
-  Таблицы flashcards/shared_books/shared_book_chapters прошли проверку выбранных колонок.
+- `npm run check:schema` — passed после миграций; все пять проверяемых таблиц OK.
+- Supabase Security Advisor после повторного анализа — 0 errors.
+- Production UI: словарь загрузился, 549 слов и существующие пачки отображаются.
 - UI на телефоне, реальная камера и реальное OCR не проверялись; интерфейс не менялся.
 
 ## Preview
 
-- URL: не создан.
-- Push в `origin` (`https://github.com/aslanzubairaev2/aibook.git`) отклонён
-  автоматической проверкой: требуется явное подтверждение remote и публикации ветки.
-- Вход в Supabase через GitHub также отклонён автоматической проверкой:
-  требуется подтверждение аккаунта и способа входа. Пользователю задан вопрос.
-- Production-код и база не изменены. PR не создан, merge не выполнялся.
+- URL: будет создан после push чистой ветки.
+- Production-база обновлена; production-код пока не изменён. Merge не выполнялся.
 
 ## Риски и продолжение
 
-- После подтверждения войти в Supabase, проверить схему и текущие значения типов,
-  применить нужные существующие миграции, затем повторить `npm run check:schema`.
-  Список миграций и предостережение об их нормализации типов — в `docs/critical-checks.md`.
-- После разрешения опубликовать ветку и подготовить Preview/PR. Ветка основана на
-  исходной `feature/dictionary-content-types` (`84fed6d`). Относительно origin/main
-  в основании уже были четыре чужих/предыдущих коммита: `488884d`, `5e0a26d`,
-  `a2e45e0`, `84fed6d`. Их интеграцию нельзя незаметно включать в merge исправления.
+- В production применены и записаны в `supabase_migrations.schema_migrations`
+  версии `20260817120000`, `20260818120000`, `20260914000000`; Data API видит
+  новые колонки. До миграции было 594 карточки типа word и 1 типа sentence,
+  поэтому нормализация не меняла неподдерживаемые значения.
+- Чистая ветка создана от актуального `origin/main`; два посторонних локальных
+  коммита из первой опубликованной ветки сюда не входят.
 - Branch protection и обязательность GitHub checks не менялись. Прямой вызов
   `next build` обходит npm prebuild; команда выпуска должна быть `npm run build`.
 - check:schema не проверяет SQL constraints/RLS и автоматически не мигрирует базу.
