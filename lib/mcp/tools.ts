@@ -25,11 +25,11 @@ import {
   saveDictionaryEntries,
 } from "@/lib/db/dictionaryStore";
 import { describePackTraining, normalizePackTraining } from "@/lib/cards";
-import { applyNounFieldRules, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
+import { applyNounFieldRules, normalizeLearningItemType, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import { estimateLevel } from "@/lib/text/readability";
 import { buildKnownWordSet, buildWordCounts, computeCoverage } from "@/lib/text/vocab";
 import type { GeneratedLesson } from "@/lib/ai/buildLessonPrompt";
-import type { CefrLevel } from "@/lib/types";
+import { LEARNING_ITEM_TYPES, type CefrLevel } from "@/lib/types";
 import { AGENT_LIMITS, AGENT_TIPS, CAPABILITY_AREAS } from "@/lib/mcp/capabilities";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -48,7 +48,7 @@ function packDetails(args: Args): { description: string; instruction: string } {
     instruction: String(args.instruction ?? "").trim().slice(0, PACK_INSTRUCTION_LIMIT),
   };
 }
-const CARD_TYPES = ["word", "phrase", "sentence"] as const;
+const CARD_TYPES = LEARNING_ITEM_TYPES;
 
 // How many catalogue texts may be word-counted inside one call when their
 // stored frequency data is missing. Enough to fill a page of suggestions,
@@ -455,7 +455,7 @@ async function getOverview(ctx: Ctx): Promise<unknown> {
         cards: cardsOfBatch(cards, b.id, b.title).length,
         training_summary: describePackTraining(normalizePackTraining(b.training)) || null,
       })),
-      note: "A pack («пачка») is one unit of study — a photographed coursebook page, or a themed set of words, phrases or sentences. list_word_batches shows them all with progress and with the training setup each one carries.",
+      note: "A pack («пачка») is one unit of study — a photographed coursebook page, or a themed set of words, phrases, sentences or fixed expressions. list_word_batches shows them all with progress and with the training setup each one carries.",
     },
     my_lessons: {
       total: lessonCount.count ?? (lessons.data ?? []).length,
@@ -1224,14 +1224,14 @@ async function listBatches(ctx: Ctx): Promise<unknown> {
 
   return {
     explanation:
-      "A pack («пачка») is one set of material the learner studies as a unit — a photographed coursebook page, or a themed set of words, phrases or sentences you built with them. In the app it has its own progress bar and its own «тренировать» button. Progress is measured from the flashcards in it.",
+      "A pack («пачка») is one set of material the learner studies as a unit — a photographed coursebook page, or a themed set of words, phrases, sentences or fixed expressions you built with them. In the app it has its own progress bar and its own «тренировать» button. Progress is measured from the flashcards in it.",
     training_note:
       "Each pack may carry its own training setup (direction, card type, status, trainer mode). Where it says nothing, the learner's own trainer filters apply. Set it with update_batch_training.",
     description_note:
       "'description' says what a pack is; 'instruction' is the brief it was built to — the criteria its material had to meet («винительный падеж, только мужской род, одно прилагательное или без него, единственное число»). Read 'instruction' before adding anything to an existing pack: material that breaks the brief is what makes a pack stop being usable. Set both with update_pack_details.",
     batches: listed,
     card_groups_without_a_pack: unregistered,
-    next: "list_batch_words shows one pack's dictionary words; add_words_to_batch adds to it; add_word_batch starts a new one; add_flashcards with 'batch_title' builds a pack of phrases or sentences.",
+    next: "list_batch_words shows one pack's dictionary words and expressions; add_words_to_batch adds to it; add_word_batch starts a new one; add_flashcards with 'batch_title' builds a pack of phrases, sentences or expressions without dictionary fields.",
   };
 }
 
@@ -1240,11 +1240,12 @@ async function searchDictionary(ctx: Ctx, args: Args): Promise<unknown> {
   const batchId = String(args.batch_id ?? "").trim();
   const level = String(args.level ?? "").trim().toUpperCase();
   const pos = sanitizeSearch(String(args.part_of_speech ?? ""));
+  const contentType = String(args.content_type ?? "").trim().toLowerCase();
   const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 300);
 
   let request = ctx.admin
     .from("dictionary_entries")
-    .select("id, batch_id, headword, lemma, translation, part_of_speech, gender, plural, forms, cefr, note, example, example_translation")
+    .select("id, batch_id, headword, lemma, content_type, translation, part_of_speech, gender, plural, forms, cefr, note, example, example_translation")
     .eq("user_id", ctx.userId)
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -1257,6 +1258,7 @@ async function searchDictionary(ctx: Ctx, args: Args): Promise<unknown> {
   if (batchId) request = request.eq("batch_id", batchId);
   if (LEVELS.includes(level as CefrLevel)) request = request.eq("cefr", level);
   if (pos) request = request.ilike("part_of_speech", `%${pos}%`);
+  if ((LEARNING_ITEM_TYPES as readonly string[]).includes(contentType)) request = request.eq("content_type", contentType);
 
   const { data, error } = await request;
   if (error) throw new Error(`dictionary search failed: ${error.message}`);
@@ -1274,7 +1276,7 @@ async function listBatchWords(ctx: Ctx, args: Args): Promise<unknown> {
 
   const { data, error } = await ctx.admin
     .from("dictionary_entries")
-    .select("headword, lemma, translation, part_of_speech, cefr, plural, forms, example")
+    .select("headword, lemma, content_type, translation, part_of_speech, cefr, plural, forms, example")
     .eq("user_id", ctx.userId)
     .eq("batch_id", batchId)
     .limit(500);
@@ -1306,6 +1308,7 @@ function parseWordDrafts(raw: unknown): DictionaryEntryDraft[] {
         lemma,
         translation: String(w.translation ?? "").trim().slice(0, 400),
         partOfSpeech: String(w.part_of_speech ?? "").trim().slice(0, 60),
+        contentType: normalizeLearningItemType(w.content_type ?? w.type),
         gender: String(w.gender ?? "").trim().toLowerCase().slice(0, 4),
         article: String(w.article ?? "").trim().slice(0, 20),
         plural: String(w.plural ?? "").trim().slice(0, 120),
@@ -1720,7 +1723,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "list_flashcards",
     title: "Карточки",
     description:
-      "List the learner's flashcards with their scheduling state and ids. Filter by 'due', 'learned', 'new' or 'struggling', narrow to one dictionary batch or one card 'type', or search the text of the cards. Each card says which of its three trainings are waiting today ('due_directions'). The ids are what update_flashcard and delete_flashcards take. Use 'type': 'sentence' to find full-sentence cards mixed into what should be a pack of words or set phrases.",
+      "List the learner's flashcards with their scheduling state and ids. Filter by 'due', 'learned', 'new' or 'struggling', narrow to one dictionary batch or one card 'type', or search the text of the cards. Each card says which of its three trainings are waiting today ('due_directions'). The ids are what update_flashcard and delete_flashcards take. Use 'type': 'word', 'phrase', 'sentence' or 'expression' to keep the material kinds separate in the same way as the app's practice filters.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1731,8 +1734,8 @@ export const MCP_TOOLS: McpToolDef[] = [
         },
         type: {
           type: "string",
-          enum: ["word", "phrase", "sentence"],
-          description: "Only cards of this kind — 'word' a single word, 'phrase' a short fixed expression (e.g. Sicher ist sicher), 'sentence' a full clause. Set when the card was added; older cards default to 'word'.",
+          enum: ["word", "phrase", "sentence", "expression"],
+          description: "Only cards of this kind — 'word' a single lexical item, 'phrase' a free multi-word phrase, 'sentence' a full clause, 'expression' a fixed expression/idiom/collocation. Set when the card was added; older cards default to 'word'.",
         },
         search: { type: "string", description: "Substring of the front or back text" },
         batch_id: { type: "string", description: "Only cards from this dictionary batch (see list_word_batches)" },
@@ -1774,6 +1777,7 @@ export const MCP_TOOLS: McpToolDef[] = [
         batch_id: { type: "string", description: "Only this batch" },
         level: { type: "string", enum: ["A1", "A2", "B1", "B2", "C1", "C2"] },
         part_of_speech: { type: "string", description: "As written in the learner's language, e.g. «глагол»" },
+        content_type: { type: "string", enum: ["word", "phrase", "sentence", "expression"], description: "Filter by material kind: word, phrase, sentence, or fixed expression/idiom/collocation" },
         limit: { type: "number", description: "Default 50, max 300" },
       },
       additionalProperties: false,
@@ -1829,7 +1833,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "add_flashcards",
     title: "Добавить карточки",
     description:
-      "Add flashcards to the learner's spaced-repetition deck. 'front' is the word/phrase/sentence in the language being learned, 'back' is the translation into the learner's native language. Duplicates (same front) are skipped automatically. Pass 'batch_title' whenever these cards belong together — a set of phrases for one grammar topic, sentences from one lesson: that makes them a pack («пачка») on the learner's Словарь screen, with its own progress bar and its own «тренировать» button, and lets you give it a training setup. Without it the cards are loose and reachable only through a filter. Use add_word_batch instead when the material is dictionary words (article, plural, verb forms) rather than phrases or sentences.",
+      "Add flashcards to the learner's spaced-repetition deck. 'front' is the learning item in the target language and 'back' is its translation into the learner's native language. Duplicates (same front) are skipped automatically. Pass 'type' explicitly: 'word' for one lexical item, 'phrase' for a free phrase, 'sentence' for a complete sentence, or 'expression' for a fixed expression/idiom/collocation/formula such as 'Auf Wiederhören!'. Pass 'batch_title' whenever these cards belong together — that makes the set a pack («пачка») on the learner's Словарь screen, with its own progress bar and its own «тренировать» button. Without it the cards are loose and reachable only through a filter. Use add_word_batch instead when the material is dictionary reference entries with article, plural or verb forms.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1841,7 +1845,7 @@ export const MCP_TOOLS: McpToolDef[] = [
             properties: {
               front: { type: "string", description: "Target-language word/phrase, e.g. 'die Verabredung'" },
               back: { type: "string", description: "Translation in the learner's native language" },
-              type: { type: "string", enum: ["word", "phrase", "sentence"], description: "Default 'word'" },
+              type: { type: "string", enum: ["word", "phrase", "sentence", "expression"], description: "Use 'word' for one lexical item, 'phrase' for a free phrase, 'sentence' for a complete sentence, and 'expression' for a fixed expression/idiom/collocation. Default 'word'." },
             },
             required: ["front", "back"],
           },
@@ -1866,7 +1870,7 @@ export const MCP_TOOLS: McpToolDef[] = [
           description: "How this pack should be trained, when it is created. Same fields as update_batch_training.",
           properties: {
             variants: { type: "array", items: { type: "string", enum: ["forward", "reverse", "audio"] } },
-            type: { type: "string", enum: ["all", "word", "phrase", "sentence"] },
+            type: { type: "string", enum: ["all", "word", "phrase", "sentence", "expression"] },
             status: { type: "string", enum: ["all", "new", "learning", "review", "relearning", "hard"] },
             mode: { type: "string", enum: ["recognize", "active"] },
             note: { type: "string" },
@@ -1894,7 +1898,7 @@ export const MCP_TOOLS: McpToolDef[] = [
           items: { type: "string", enum: ["forward", "reverse", "audio"] },
           description: "Prompt directions this pack is drilled in; omit for every direction",
         },
-        type: { type: "string", enum: ["all", "word", "phrase", "sentence"], description: "Only cards of this type" },
+        type: { type: "string", enum: ["all", "word", "phrase", "sentence", "expression"], description: "Only cards of this type" },
         status: {
           type: "string",
           enum: ["all", "new", "learning", "review", "relearning", "hard"],
@@ -1935,7 +1939,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     name: "add_word_batch",
     title: "Новая пачка слов",
     description:
-      "Create a new vocabulary batch — the right tool when a lesson with the learner produced a set of words that belong together (\"сохрани слова по сегодняшней теме\"). It appears in their Словарь as one page with its own progress and a «тренировать» button, and every word becomes a flashcard immediately. Fill in as much of each word as you know (article, plural, verb forms, example): that is what the learner sees when they open the entry. Use add_flashcards instead for a few loose words that are not a themed set.",
+      "Create a new vocabulary batch — the right tool when a lesson with the learner produced a set of learning items that belong together (\"сохрани слова по сегодняшней теме\"). It appears in their Словарь as one page with its own progress and a «тренировать» button, and every item becomes a flashcard immediately. For each item set content_type explicitly: 'word' for one word, 'phrase' for a free phrase, 'sentence' for a full sentence, or 'expression' for a fixed expression/idiom/collocation. Fill in article, plural, verb forms and examples where relevant; those become the dictionary entry. Use add_flashcards instead for cards that do not need dictionary fields.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1956,7 +1960,7 @@ export const MCP_TOOLS: McpToolDef[] = [
           description: "How this pack should be trained. Same fields as update_batch_training; omit to leave the learner's own filters in charge.",
           properties: {
             variants: { type: "array", items: { type: "string", enum: ["forward", "reverse", "audio"] } },
-            type: { type: "string", enum: ["all", "word", "phrase", "sentence"] },
+            type: { type: "string", enum: ["all", "word", "phrase", "sentence", "expression"] },
             status: { type: "string", enum: ["all", "new", "learning", "review", "relearning", "hard"] },
             mode: { type: "string", enum: ["recognize", "active"] },
             note: { type: "string" },
@@ -1971,7 +1975,8 @@ export const MCP_TOOLS: McpToolDef[] = [
               headword: { type: "string", description: "As a dictionary prints it — nouns with their article: «die Haltestelle»" },
               lemma: { type: "string", description: "Base form without the article" },
               translation: { type: "string", description: "Into the learner's native language" },
-              part_of_speech: { type: "string", description: "In the learner's language: «существительное», «глагол», …" },
+              part_of_speech: { type: "string", description: "In the learner's language: «существительное», «глагол», «устойчивое выражение», …" },
+              content_type: { type: "string", enum: ["word", "phrase", "sentence", "expression"], description: "Required classification for filters: word, phrase, sentence, or expression (fixed expression/idiom/collocation). Defaults to 'word' only for legacy calls." },
               gender: { type: "string", description: "m / f / n / pl for nouns" },
               article: { type: "string" },
               plural: { type: "string", description: "Written out in full: «die Haltestellen»" },
@@ -2009,6 +2014,7 @@ export const MCP_TOOLS: McpToolDef[] = [
               lemma: { type: "string" },
               translation: { type: "string" },
               part_of_speech: { type: "string" },
+              content_type: { type: "string", enum: ["word", "phrase", "sentence", "expression"] },
               gender: { type: "string" },
               article: { type: "string" },
               plural: { type: "string" },

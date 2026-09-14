@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard, EyeOff } from "lucide-react";
-import type { AiAnalysis, CardFilters, CardSkillState, DiscussMessage, Flashcard, ReverseWordAnalysis, TrainVariant, TtsProvider } from "@/lib/types";
+import { LEARNING_ITEM_TYPES, type AiAnalysis, type CardFilters, type CardSkillState, type DiscussMessage, type Flashcard, type LearningItemType, type ReverseWordAnalysis, type TrainVariant, type TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
 import {
   ALL_TRAIN_VARIANTS,
@@ -99,10 +99,20 @@ function guessPos(front: string): string {
 }
 
 type FilterStatus = "all" | "new" | "learning" | "review" | "relearning";
-type FilterType = "all" | "word" | "phrase" | "sentence";
+type FilterType = "all" | LearningItemType;
 type SortOrder = "added" | "due" | "ease";
 
-const TYPE_LABELS = { word: "Слово", phrase: "Фраза", sentence: "Предложение" } as const;
+const TYPE_LABELS: Record<LearningItemType, string> = {
+  word: "Слово",
+  phrase: "Фраза",
+  sentence: "Предложение",
+  expression: "Устойчивое выражение",
+};
+
+/** Expressions use the phrase analysis/chat mode; their deck type stays explicit. */
+function discussionModeForCard(type: LearningItemType): "word" | "phrase" | "sentence" {
+  return type === "expression" ? "phrase" : type;
+}
 
 const TRAIN_STATUS_LABELS: Record<Exclude<TrainStatus, "all">, string> = {
   new: "Новые",
@@ -875,7 +885,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         variantProgress,
         todayEndTime,
       )
-      : { byStatus: { all: 0, new: 0, learning: 0, review: 0, relearning: 0, hard: 0 }, byType: { all: 0, word: 0, phrase: 0, sentence: 0 } },
+      : { byStatus: { all: 0, new: 0, learning: 0, review: 0, relearning: 0, hard: 0 }, byType: { all: 0, word: 0, phrase: 0, sentence: 0, expression: 0 } },
     [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
   );
 
@@ -1129,7 +1139,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
 
   // --- Discuss with AI about a card ---
   async function openDiscussForCard(card: Flashcard) {
-    const cacheKey = makeDiscussCacheKey(card.type, card.front, targetLanguage, nativeLanguage);
+    const cacheKey = makeDiscussCacheKey(discussionModeForCard(card.type), card.front, targetLanguage, nativeLanguage);
     const history = getLocalDiscussHistory(cacheKey);
     setDiscuss({ open: true, card, cacheKey, messages: history, historyLoading: Boolean(user) });
 
@@ -1863,7 +1873,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         <DiscussAiModal
           isOpen={discuss.open}
           isHistoryLoading={discuss.historyLoading}
-          mode={discuss.card.type}
+          mode={discussionModeForCard(discuss.card.type)}
           selectedText={discuss.card.front}
           sentence={discuss.card.front}
           nativeLanguage={nativeLanguage}
@@ -2121,7 +2131,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               <div className="filter-group">
                 <div className="filter-group-label">Тип</div>
                 <div className="filter-chips">
-                  {(["all", "word", "phrase", "sentence"] as FilterType[]).map((t) => (
+                  {(["all", ...LEARNING_ITEM_TYPES] as FilterType[]).map((t) => (
                     <button
                       key={t}
                       className={`filter-chip ${trainFilter === t ? "active" : ""}`}
@@ -2650,7 +2660,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
               <div className="filter-group">
                 <div className="filter-group-label">Тип</div>
                 <div className="filter-chips">
-                  {(["all", "word", "phrase", "sentence"] as FilterType[]).map((t) => (
+                  {(["all", ...LEARNING_ITEM_TYPES] as FilterType[]).map((t) => (
                     <button key={t} className={`filter-chip ${filterType === t ? "active" : ""}`} onClick={() => { setFilterType(t); persistCardFilters({ filterType: t }); setVisibleCount(50); }} type="button">
                       {t === "all" ? "Все типы" : TYPE_LABELS[t]}
                     </button>

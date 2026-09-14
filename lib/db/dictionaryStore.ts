@@ -7,7 +7,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { applyNounFieldRules, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
-import type { PackTraining } from "@/lib/types";
+import type { LearningItemType, PackTraining } from "@/lib/types";
 
 export type DictionaryBatch = {
   id: string;
@@ -74,6 +74,7 @@ export type DictionaryEntry = {
   headword: string;
   lemma: string;
   language: string;
+  content_type?: LearningItemType;
   translation: string;
   part_of_speech: string;
   gender: string;
@@ -89,7 +90,7 @@ export type DictionaryEntry = {
 };
 
 export const DICTIONARY_COLUMNS =
-  "id, batch_id, headword, lemma, language, translation, part_of_speech, gender, article, plural, forms, cefr, note, example, example_translation, source, created_at";
+  "id, batch_id, headword, lemma, language, content_type, translation, part_of_speech, gender, article, plural, forms, cefr, note, example, example_translation, source, created_at";
 
 export type SaveEntriesResult =
   | { ok: true; added: number; updated: number }
@@ -134,7 +135,7 @@ export async function saveDictionaryEntries(
 
   const { data: existingRows, error: readError } = await admin
     .from("dictionary_entries")
-    .select("id, lemma, headword, plural, forms, example, example_translation, note, cefr, translation")
+    .select("id, lemma, headword, content_type, plural, forms, example, example_translation, note, cefr, translation")
     .eq("user_id", userId)
     .eq("language", language);
 
@@ -185,6 +186,7 @@ export async function saveDictionaryEntries(
       // row id in an upsert resolved by this different natural key: doing so can
       // move another row's primary key onto the conflicting row.
       lemma: prior ? String(prior.lemma) : lemmaKey,
+      content_type: d.contentType ?? (String(prior?.content_type ?? "word") as LearningItemType),
       translation: keep(d.translation, prior?.translation),
       part_of_speech: d.partOfSpeech,
       gender: merged.gender,
@@ -277,7 +279,7 @@ export async function createCardsForEntries(
         back: cardBack(e),
         source_book_title: batchTitle,
         source_book_id: batchId,
-        selection_type: "word",
+        selection_type: e.contentType ?? "word",
         repetitions: 0,
         lapses: 0,
         easiness_factor: 2.5,

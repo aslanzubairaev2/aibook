@@ -46,7 +46,8 @@ export const GENDER_CHIP: Record<NounGender, string> = {
  * `part_of_speech` — invisible to a strict `.includes("существительное")`
  * check even though the entry has everything the noun trainer needs.
  */
-export function isNounEntry(entry: { part_of_speech: string; gender?: string; article?: string; headword?: string }): boolean {
+export function isNounEntry(entry: { part_of_speech: string; content_type?: string; gender?: string; article?: string; headword?: string }): boolean {
+  if (entry.content_type && entry.content_type !== "word") return false;
   const pos = normalizePos(entry.part_of_speech);
   if (pos.includes("существительное")) return true;
   if (pos) return false; // an explicit different part of speech overrides the fallback

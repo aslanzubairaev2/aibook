@@ -5,6 +5,9 @@ export type AppSection =
   | "settings" | "auth" | "live-translate";
 
 export type SelectionType = "word" | "phrase" | "sentence";
+/** A saved learning item may also be a fixed expression/idiom. */
+export const LEARNING_ITEM_TYPES = ["word", "phrase", "sentence", "expression"] as const;
+export type LearningItemType = (typeof LEARNING_ITEM_TYPES)[number];
 export type TtsProvider =
   | "local" | "gemini" | "deepgram" | "speechify" | "inworld" | "openai" | "cartesia" | "elevenlabs";
 
@@ -67,14 +70,14 @@ export type TrainVariant = "forward" | "reverse" | "audio";
 /** Persisted flashcard filter/sort selections from CardsView, kept in sync via UserProfile so they survive reloads and follow the user across devices. */
 export type CardFilters = {
   filterStatus?: "all" | "new" | "learning" | "review" | "relearning";
-  filterType?: "all" | "word" | "phrase" | "sentence";
+  filterType?: "all" | LearningItemType;
   filterBook?: string;
   /** CEFR level of the word on the card ("all" or A1…C2). */
   filterLevel?: string;
   /** Part of speech of the word on the card — normalized, e.g. "глагол", or "all". */
   filterPos?: string;
   sortOrder?: "added" | "due" | "ease";
-  trainFilter?: "all" | "word" | "phrase" | "sentence";
+  trainFilter?: "all" | LearningItemType;
   trainStatus?: "all" | "new" | "learning" | "review" | "relearning" | "hard";
   /** Narrows a training session to one part of speech — "all" for every one. */
   trainPos?: string;
@@ -111,7 +114,7 @@ export type PackTraining = {
   /** Which prompt directions this pack is drilled in. Empty/absent = every direction. */
   variants?: TrainVariant[];
   /** Narrow to one card type — a pack of sentences need not offer «слово». */
-  type?: "all" | "word" | "phrase" | "sentence";
+  type?: "all" | LearningItemType;
   status?: "all" | "new" | "learning" | "review" | "relearning" | "hard";
   mode?: "recognize" | "active";
   /** One line, in the learner's language, on why it is set up this way. */
@@ -400,7 +403,7 @@ export type CardStatus = "new" | "learning" | "review" | "relearning";
 
 export type Flashcard = {
   id: string;
-  type: SelectionType;
+  type: LearningItemType;
   front: string;
   back: string;
   source: string;

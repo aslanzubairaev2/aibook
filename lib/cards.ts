@@ -1,10 +1,10 @@
-import type { CardFilters, CardVariantState, Flashcard, PackSort, PackTraining, SkillProgress, TrainVariant } from "@/lib/types";
+import type { CardFilters, CardVariantState, Flashcard, LearningItemType, PackSort, PackTraining, SkillProgress, TrainVariant } from "@/lib/types";
 
 export const ALL_TRAIN_VARIANTS: TrainVariant[] = ["forward", "reverse", "audio"];
 
 export type CardStatus = Flashcard["status"];
 export type TrainStatus = CardStatus | "all" | "hard";
-export type CardType = Flashcard["type"];
+export type CardType = LearningItemType;
 export type TrainTypeFilter = CardType | "all";
 export type VariantProgressMap = Record<string, CardVariantState>;
 export type TrainQueueItem = { card: Flashcard; variant: TrainVariant };
@@ -188,7 +188,7 @@ export type TrainBatch = {
   pos?: string;
 };
 
-const TRAIN_TYPES: NonNullable<PackTraining["type"]>[] = ["all", "word", "phrase", "sentence"];
+const TRAIN_TYPES: NonNullable<PackTraining["type"]>[] = ["all", "word", "phrase", "sentence", "expression"];
 const TRAIN_STATUSES: NonNullable<PackTraining["status"]>[] =
   ["all", "new", "learning", "review", "relearning", "hard"];
 
@@ -290,6 +290,7 @@ const PACK_TYPE_LABELS: Record<string, string> = {
   word: "только слова",
   phrase: "только фразы",
   sentence: "только предложения",
+  expression: "только устойчивые выражения",
 };
 
 const PACK_STATUS_LABELS: Record<string, string> = {
@@ -528,7 +529,7 @@ export function countTrainCandidates(
 ): TrainCounts {
   const counts: TrainCounts = {
     byStatus: { all: 0, new: 0, learning: 0, review: 0, relearning: 0, hard: 0 },
-    byType: { all: 0, word: 0, phrase: 0, sentence: 0 },
+    byType: { all: 0, word: 0, phrase: 0, sentence: 0, expression: 0 },
   };
   const scoped = filterCardsByTrainingSource(cards, selection.book ?? "all", selection.sourceId ?? null, selection.excluded);
 

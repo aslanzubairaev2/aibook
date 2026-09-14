@@ -10,7 +10,7 @@
 -- has no preference of its own.
 --
 -- Shape (all keys optional):
---   { "variants": ["forward"|"reverse"|"audio"], "type": "all|word|phrase|sentence",
+--   { "variants": ["forward"|"reverse"|"audio"], "type": "all|word|phrase|sentence|expression",
 --     "status": "all|new|learning|review|relearning|hard",
 --     "mode": "recognize|active", "note": "…" }
 --

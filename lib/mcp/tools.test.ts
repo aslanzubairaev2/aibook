@@ -73,6 +73,23 @@ test("a themed set of cards can be filed as a pack, not left loose", () => {
   assert.ok(properties.training, "a pack made this way must be able to carry its training setup");
 });
 
+test("the MCP surface names fixed expressions as a separate material type", () => {
+  const listCards = MCP_TOOLS.find((t) => t.name === "list_flashcards");
+  const cardType = ((listCards?.inputSchema.properties as Record<string, unknown>).type as { enum?: string[] });
+  assert.ok(cardType.enum?.includes("expression"));
+
+  const addCards = MCP_TOOLS.find((t) => t.name === "add_flashcards");
+  const addCardType = ((((addCards?.inputSchema.properties as Record<string, unknown>).cards as { items?: { properties?: Record<string, unknown> } }).items?.properties?.type) as { enum?: string[] });
+  assert.ok(addCardType.enum?.includes("expression"));
+
+  const addWords = MCP_TOOLS.find((t) => t.name === "add_word_batch");
+  const contentType = ((((addWords?.inputSchema.properties as Record<string, unknown>).words as { items?: { properties?: Record<string, unknown> } }).items?.properties?.content_type) as { enum?: string[] });
+  assert.deepEqual(contentType.enum, ["word", "phrase", "sentence", "expression"]);
+
+  const search = MCP_TOOLS.find((t) => t.name === "search_dictionary");
+  assert.ok((search?.inputSchema.properties as Record<string, unknown>).content_type);
+});
+
 test("a pack's training setup covers every direction the trainer has", () => {
   const tool = MCP_TOOLS.find((t) => t.name === "update_batch_training");
   assert.ok(tool, "packs must be configurable over MCP");

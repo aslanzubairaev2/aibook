@@ -17,11 +17,15 @@
 // level — the "cheat sheet" a learner needs to use the word correctly rather
 // than merely recognise it.
 
+import { LEARNING_ITEM_TYPES, type LearningItemType } from "@/lib/types";
+
 export type DictionaryEntryDraft = {
   headword: string;
   lemma: string;
   translation: string;
   partOfSpeech: string;
+  /** What is being learned: a word, phrase, sentence, or fixed expression. */
+  contentType?: LearningItemType;
   gender: string;
   article: string;
   plural: string;
@@ -71,6 +75,11 @@ For EVERY entry provide:
   first and the others after a comma — briefly.
 - "partOfSpeech": in ${native} — "существительное", "глагол", "прилагательное", "наречие",
   "предлог", "союз", "местоимение", "числительное", "выражение".
+- "contentType": exactly one of "word", "phrase", "sentence", "expression". Use "word" for
+  one lexical item, "phrase" for a free multi-word phrase, "sentence" for a complete
+  sentence, and "expression" for a fixed expression, idiom, collocation or formula such
+  as "Auf Wiederhören!". This label is used by the learner's dictionary and flashcard
+  filters, so do not leave it ambiguous.
 - "gender": for nouns only — "m", "f", "n", or "pl" for plural-only words. Empty otherwise.
 - "article": for nouns only — the definite article ("der", "die", "das"). Empty otherwise.
 - "plural": for nouns — the full plural form, written out: for "der Ball, ¨e" that is
@@ -116,7 +125,7 @@ Return ONLY valid JSON:
   "topic": "…",
   "pageLabel": "…",
   "isVocabularyList": true,
-  "entries": [ { "headword": "…", "lemma": "…", "translation": "…", "partOfSpeech": "…",
+  "entries": [ { "headword": "…", "lemma": "…", "translation": "…", "partOfSpeech": "…", "contentType": "word",
                  "gender": "…", "article": "…", "plural": "…", "forms": {},
                  "cefr": "A1", "note": "", "example": "…", "exampleTranslation": "…" } ]
 }`;
@@ -124,6 +133,13 @@ Return ONLY valid JSON:
 
 const CEFR_VALUES = new Set(["A1", "A2", "B1", "B2", "C1", "C2"]);
 const GENDERS = new Set(["m", "f", "n", "pl"]);
+
+export function normalizeLearningItemType(value: unknown): LearningItemType {
+  const type = String(value ?? "").trim().toLowerCase();
+  return (LEARNING_ITEM_TYPES as readonly string[]).includes(type)
+    ? type as LearningItemType
+    : "word";
+}
 
 // Noun-only fields, and how to tell when the model has put one on a word that
 // cannot have it.
@@ -140,6 +156,7 @@ const NOUN_POS = /существ|noun|substantiv/i;
 const LEADING_ARTICLE = /^(der|die|das)\s+/i;
 
 function isNoun(entry: DictionaryEntryDraft): boolean {
+  if (entry.contentType && entry.contentType !== "word") return false;
   // A word the model gave verb forms to is a verb, whatever else it said.
   if (VERB_FORM_KEYS.some((key) => entry.forms?.[key])) return false;
   if (NOUN_POS.test(entry.partOfSpeech)) return true;
@@ -223,6 +240,7 @@ export function parseDictionaryEntries(raw: unknown): {
       lemma,
       translation: String(e.translation ?? "").trim().slice(0, 400),
       partOfSpeech: String(e.partOfSpeech ?? "").trim().slice(0, 60),
+      contentType: normalizeLearningItemType(e.contentType ?? e.type),
       gender: GENDERS.has(gender) ? gender : "",
       article: String(e.article ?? "").trim().slice(0, 20),
       plural: String(e.plural ?? "").trim().slice(0, 120),
