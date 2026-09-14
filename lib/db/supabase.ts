@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { ReaderSelectionSnapshot, DiscussMessage, CardFilters, SkillProgress, TrainVariant } from "@/lib/types";
+import type { ReaderSelectionSnapshot, DiscussMessage, CardFilters, LearningItemType, SkillProgress, TrainVariant } from "@/lib/types";
 import type { VideoItem } from "@/lib/videos/types";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -79,7 +79,7 @@ export type DbFlashcard = {
   front: string;
   back: string;
   source_book_title: string | null;
-  selection_type: "word" | "phrase" | "sentence";
+  selection_type: LearningItemType;
   repetitions: number;
   lapses: number;
   easiness_factor: number;

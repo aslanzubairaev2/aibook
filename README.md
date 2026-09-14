@@ -48,7 +48,7 @@ An intelligent application for learning foreign languages through reading. Open 
 - **Interactive Examples**: 5 usage examples for every word. Tap any word within the examples to explore further!
 
 ### Flashcards (SRS Ready)
-- Save words, phrases, or sentences with one click.
+- Save words, phrases, sentences, or fixed expressions with one click.
 - Automatic back-side generation using AI analysis.
 - Status tracking: `new`, `due`, `learning`.
 

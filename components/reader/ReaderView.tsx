@@ -1123,12 +1123,13 @@ export function ReaderView({
 
   async function handleAddCard(type: Flashcard["type"]) {
     if (!analysis || !active) return;
-    const map = {
+    const selectionType: SelectionType = type === "expression" ? "phrase" : type;
+    const map: Record<SelectionType, { front: string; back: string }> = {
       word:     { front: active.token,         back: analysis.word?.translation ?? "" },
       phrase:   { front: active.phraseText,    back: analysis.phrase?.translation ?? "" },
       sentence: { front: active.sentence,      back: analysis.sentence?.translation ?? "" },
     };
-    await addFlashcard(map[type].front, map[type].back, type);
+    await addFlashcard(map[selectionType].front, map[selectionType].back, selectionType);
   }
 
   function showToast(msg: string) {

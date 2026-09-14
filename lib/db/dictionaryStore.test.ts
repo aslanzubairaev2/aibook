@@ -278,6 +278,25 @@ test("createCardsForEntries re-links existing cards without creating duplicate c
   assert.equal(mockDb.flashcards[0].repetitions, 5);
 });
 
+test("createCardsForEntries preserves a fixed-expression type on its card", async () => {
+  const mockDb = createMockSupabase();
+  const drafts: DictionaryEntryDraft[] = [{
+    headword: "Auf Wiederhören!",
+    lemma: "Auf Wiederhören!",
+    translation: "До свидания по телефону!",
+    partOfSpeech: "устойчивое выражение",
+    contentType: "expression",
+    gender: "",
+    article: "",
+    plural: "",
+    cefr: "A1",
+  }];
+
+  const result = await createCardsForEntries(mockDb as never, "user-1", drafts, "batch-expression", "Связь по телефону");
+  assert.deepEqual(result, { ok: true, created: 1, relinked: 0 });
+  assert.equal(mockDb.flashcards[0].selection_type, "expression");
+});
+
 // ─── Packs ──────────────────────────────────────────────────────────────────
 //
 // A pack is no longer only a photographed page of words: a set of phrases an

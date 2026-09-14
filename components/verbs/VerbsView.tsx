@@ -126,6 +126,21 @@ export function VerbsView({ profile, onBack }: Props) {
 
   useEffect(() => { void loadDictionary(); }, [loadDictionary]);
 
+  // The connected tutor may add a pack while this tab is open. Refresh when
+  // the learner returns to the app so the verb practice remains a live view of
+  // the same dictionary rather than a snapshot from the first render.
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadDictionary();
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loadDictionary]);
+
   useEffect(() => {
     hasDataRef.current = entries.length > 0 || batches.length > 0;
   }, [entries, batches]);
@@ -152,7 +167,7 @@ export function VerbsView({ profile, onBack }: Props) {
   // Every "глагол" entry in the dictionary, whether or not it has forms yet —
   // used to split into the real table below and the "Без форм" backlog.
   const allGlagolEntries = useMemo(
-    () => entries.filter((e) => normalizePos(e.part_of_speech).includes("глагол")),
+    () => entries.filter((e) => (e.content_type ?? "word") === "word" && normalizePos(e.part_of_speech).includes("глагол")),
     [entries],
   );
 

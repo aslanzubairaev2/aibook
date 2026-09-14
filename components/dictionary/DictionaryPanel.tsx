@@ -11,9 +11,15 @@ import { FORM_LABEL, isIrregularGermanVerb, normalizePos } from "@/lib/verbForms
 import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/search/multiTerm";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
-import type { AiAnalysis, CefrLevel, Flashcard, PackSort, PosTag } from "@/lib/types";
+import { LEARNING_ITEM_TYPES, type AiAnalysis, type CefrLevel, type Flashcard, type LearningItemType, type PackSort, type PosTag } from "@/lib/types";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
+const CONTENT_TYPE_LABELS: Record<LearningItemType, string> = {
+  word: "Слово",
+  phrase: "Фраза",
+  sentence: "Предложение",
+  expression: "Устойчивое выражение",
+};
 
 // The row has little width to spare; the chip carries the familiar
 // dictionary-style abbreviation, and the full label lives in the word modal.
@@ -118,6 +124,7 @@ export function DictionaryPanel({
   const [searchOpen, setSearchOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [level, setLevel] = useState<string>("all");
+  const [contentType, setContentType] = useState<LearningItemType | "all">("all");
   const [pos, setPos] = useState<string>("all");
   const [verbType, setVerbType] = useState<"all" | "regular" | "irregular">("all");
   // The order is remembered per device, read the same way the profile is.
@@ -170,7 +177,7 @@ export function DictionaryPanel({
     [entries],
   );
 
-  const activeFilterCount = (level !== "all" ? 1 : 0) + (pos !== "all" ? 1 : 0) + (pos === "глагол" && verbType !== "all" ? 1 : 0);
+  const activeFilterCount = (level !== "all" ? 1 : 0) + (contentType !== "all" ? 1 : 0) + (pos !== "all" ? 1 : 0) + (pos === "глагол" && verbType !== "all" ? 1 : 0);
   const isNarrowed = activeFilterCount > 0 || query.trim().length > 0;
 
   // Comma-separated terms match independently (OR), so "regn, sala, boul" finds
@@ -180,6 +187,7 @@ export function DictionaryPanel({
 
   const matches = (e: DictionaryEntry): boolean => {
     if (level !== "all" && e.cefr !== level) return false;
+    if (contentType !== "all" && (e.content_type ?? "word") !== contentType) return false;
     if (pos !== "all" && normalizePos(e.part_of_speech) !== pos) return false;
     if (pos === "глагол" && verbType !== "all") {
       const irr = isIrregularGermanVerb(e.lemma, e.headword, e.forms);
@@ -190,7 +198,8 @@ export function DictionaryPanel({
   };
 
   /** A card matches a text search on either side; the word filters are about dictionary entries, not cards. */
-  const cardMatches = (card: Flashcard): boolean => matchesSearchTerms([card.front, card.back], searchTerms);
+  const cardMatches = (card: Flashcard): boolean =>
+    (contentType === "all" || card.type === contentType) && matchesSearchTerms([card.front, card.back], searchTerms);
 
   /**
    * Packs that hold cards and no dictionary words at all — a set of phrases or
@@ -269,7 +278,7 @@ export function DictionaryPanel({
     }
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, batches, cards, query, level, pos, verbType]);
+  }, [entries, batches, cards, query, level, contentType, pos, verbType]);
 
   /**
    * The packs in the order the learner asked for.
@@ -466,6 +475,24 @@ export function DictionaryPanel({
 
         {filtersOpen && (
           <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="filter-group">
+              <div className="filter-group-label">Тип материала</div>
+              <div className="filter-chips">
+                <button type="button" className={`filter-chip ${contentType === "all" ? "active" : ""}`} onClick={() => setContentType("all")}>
+                  Все типы
+                </button>
+                {LEARNING_ITEM_TYPES.map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    className={`filter-chip ${contentType === type ? "active" : ""}`}
+                    onClick={() => setContentType(contentType === type ? "all" : type)}
+                  >
+                    {CONTENT_TYPE_LABELS[type]}
+                  </button>
+                ))}
+              </div>
+            </div>
             {levelOptions.length > 0 && (
               <div className="filter-group">
                 <div className="filter-group-label">Уровень</div>
@@ -518,7 +545,7 @@ export function DictionaryPanel({
               </div>
             )}
             {activeFilterCount > 0 && (
-              <button type="button" className="filter-reset-btn" onClick={() => { setLevel("all"); setPos("all"); setVerbType("all"); }}>
+              <button type="button" className="filter-reset-btn" onClick={() => { setLevel("all"); setContentType("all"); setPos("all"); setVerbType("all"); }}>
                 Сбросить фильтры
               </button>
             )}
@@ -708,6 +735,9 @@ export function DictionaryPanel({
                           <span className="dict-word">{card.front}</span>
                           <span className="dict-translation">{card.back}</span>
                         </div>
+                        <div className="dict-row-meta">
+                          <span className="dict-chip pos">{CONTENT_TYPE_LABELS[card.type]}</span>
+                        </div>
                       </div>
                       <span className="dict-row-side" onClick={(e) => e.stopPropagation()}>
                         <SpeakButton text={card.front} lang={language} size={15} />
@@ -730,6 +760,7 @@ export function DictionaryPanel({
                           </span>
                         </div>
                         <div className="dict-row-meta">
+                          <span className="dict-chip pos">{CONTENT_TYPE_LABELS[entry.content_type ?? "word"]}</span>
                           {shortPos(entry.part_of_speech) && <span className="dict-chip pos">{shortPos(entry.part_of_speech)}</span>}
                           {entry.plural && <span className="dict-chip">{entry.plural}</span>}
                           {entry.cefr && <span className="dict-chip level">{entry.cefr}</span>}

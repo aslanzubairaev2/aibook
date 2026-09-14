@@ -24,21 +24,32 @@ export async function GET(req: NextRequest) {
   if (!supabaseAdmin) {
     return NextResponse.json({ entries: [] });
   }
+  const admin = supabaseAdmin;
 
   const language = req.nextUrl.searchParams.get("language");
 
-  let query = supabaseAdmin
+  const runEntries = (columns: string) => {
+    let next = admin
     .from("dictionary_entries")
-    .select(DICTIONARY_COLUMNS)
+    .select(columns)
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(2000);
-  if (language) query = query.eq("language", language);
+    if (language) next = next.eq("language", language);
+    return next;
+  };
 
-  const [{ data, error }, { batches }] = await Promise.all([
-    query,
-    readBatches(supabaseAdmin, user.id, { language }),
+  const [entriesResult, batchesResult] = await Promise.all([
+    runEntries(DICTIONARY_COLUMNS),
+    readBatches(admin, user.id, { language }),
   ]);
+  let { data, error } = entriesResult;
+  const { batches } = batchesResult;
+  // Deployments that have not run the material-type migration can still show
+  // their existing dictionary. Legacy rows are treated as words by the UI.
+  if (error && /content_type/.test(error.message)) {
+    ({ data, error } = await runEntries(DICTIONARY_COLUMNS.replace(", content_type", "")));
+  }
   if (error) {
     // The table is added by a migration; say so plainly instead of showing an
     // empty dictionary as if there were nothing in it.

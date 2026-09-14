@@ -367,10 +367,11 @@ export function AudiobookReadAlongModal({
   };
 
   const handleAddCard = async (type: Flashcard["type"]) => {
+    const tab: Tab = type === "expression" ? "phrase" : type;
     if (!selection || !onAddWordCard) return;
-    const frontText = type === "word" ? analysis?.word?.lemma || selection.token : type === "phrase" ? analysis?.phrase?.text || selection.phraseText : analysis?.sentence?.text || selection.sentence;
-    const backText = type === "word" ? analysis?.word?.translation || "" : type === "phrase" ? analysis?.phrase?.translation || "" : analysis?.sentence?.translation || "";
-    onAddWordCard(frontText, backText, type === "sentence" ? "phrase" : type);
+    const frontText = tab === "word" ? analysis?.word?.lemma || selection.token : tab === "phrase" ? analysis?.phrase?.text || selection.phraseText : analysis?.sentence?.text || selection.sentence;
+    const backText = tab === "word" ? analysis?.word?.translation || "" : tab === "phrase" ? analysis?.phrase?.translation || "" : analysis?.sentence?.translation || "";
+    onAddWordCard(frontText, backText, tab === "sentence" ? "phrase" : tab);
   };
 
   return (

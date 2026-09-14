@@ -1230,7 +1230,7 @@ export default function Page() {
 function dbCardToFlashcard(c: DbFlashcard): Flashcard {
   return {
     id: c.id,
-    type: c.selection_type,
+    type: c.selection_type || "word",
     front: c.front,
     back: c.back,
     source: c.source_book_title ?? "",

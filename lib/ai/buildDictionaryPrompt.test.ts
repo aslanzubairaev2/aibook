@@ -57,6 +57,26 @@ describe("reading a vocabulary page into entries", () => {
     assert.equal(einladen.forms?.trennbar, "да");
   });
 
+  test("fixed expressions keep their material type and no noun-only fields", () => {
+    const { entries } = parseDictionaryEntries({
+      entries: [{
+        headword: "Auf Wiederhören!",
+        lemma: "Auf Wiederhören!",
+        translation: "До свидания по телефону!",
+        partOfSpeech: "устойчивое выражение",
+        contentType: "expression",
+        gender: "f",
+        article: "die",
+        plural: "die Wiederhörens",
+      }],
+    });
+
+    assert.equal(entries[0].contentType, "expression");
+    assert.equal(entries[0].gender, "");
+    assert.equal(entries[0].article, "");
+    assert.equal(entries[0].plural, "");
+  });
+
   test("the same word twice becomes one entry", () => {
     const { entries } = parseDictionaryEntries({
       entries: [

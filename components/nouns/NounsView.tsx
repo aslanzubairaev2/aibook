@@ -116,6 +116,21 @@ export function NounsView({ profile, onBack }: Props) {
 
   useEffect(() => { void loadDictionary(); }, [loadDictionary]);
 
+  // MCP-connected tutors can add dictionary packs while this screen is open.
+  // Re-read on return to the app so article practice always reflects the
+  // current shared dictionary instead of the first snapshot from this mount.
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadDictionary();
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loadDictionary]);
+
   useEffect(() => {
     hasDataRef.current = entries.length > 0 || batches.length > 0;
   }, [entries, batches]);

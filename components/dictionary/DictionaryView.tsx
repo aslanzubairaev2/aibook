@@ -84,6 +84,21 @@ export function DictionaryView({
 
   useEffect(() => { void loadDictionary(); }, [loadDictionary]);
 
+  // A connected tutor can write to the same dictionary from another tab or
+  // client. Refresh when the learner returns so the pack and type filters are
+  // immediately in step with the server state.
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadDictionary();
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loadDictionary]);
+
   // Which words are already flashcards, so adding one says so instead of
   // silently making a duplicate.
   const cardFronts = useMemo(
@@ -101,7 +116,7 @@ export function DictionaryView({
     const srs = createDefaultSrsFields(null, "Словарь");
     const card: Flashcard = {
       id: `card-${Date.now()}`,
-      type: "word",
+      type: entry.content_type ?? "word",
       source: "Словарь",
       addedAt: new Date().toISOString(),
       ...srs,
@@ -117,7 +132,7 @@ export function DictionaryView({
         front: card.front,
         back: card.back,
         source_book_title: "Словарь",
-        selection_type: "word",
+        selection_type: card.type,
         repetitions: srs.repetitions,
         lapses: srs.lapses,
         easiness_factor: srs.easeFactor,
