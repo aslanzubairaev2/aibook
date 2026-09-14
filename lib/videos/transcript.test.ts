@@ -165,8 +165,15 @@ test("closing player cancels waiting without creating another job", async t => {
 
 test("search fallback does not request transcripts from Supadata", async t => {
   const oldKey = process.env.YOUTUBE_API_KEY;
+  const oldGcpKey = process.env.GCP_YOUTUBE_API_KEY;
   delete process.env.YOUTUBE_API_KEY;
-  t.after(() => { if (oldKey) process.env.YOUTUBE_API_KEY = oldKey; });
+  delete process.env.GCP_YOUTUBE_API_KEY;
+  t.after(() => {
+    if (oldKey === undefined) delete process.env.YOUTUBE_API_KEY;
+    else process.env.YOUTUBE_API_KEY = oldKey;
+    if (oldGcpKey === undefined) delete process.env.GCP_YOUTUBE_API_KEY;
+    else process.env.GCP_YOUTUBE_API_KEY = oldGcpKey;
+  });
   const video = { videoId: "searchtest1", title: { runs: [{ text: "Deutsch Test" }] }, lengthText: { simpleText: "3:00" } };
   const data = { contents: { twoColumnSearchResultsRenderer: { primaryContents: { sectionListRenderer: { contents: [{ itemSectionRenderer: { contents: [{ videoRenderer: video }] } }] } } } } };
   t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
