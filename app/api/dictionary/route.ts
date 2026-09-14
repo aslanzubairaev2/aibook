@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
+import { readDictionaryWithFallback } from "@/lib/db/dictionarySchema";
 import {
   adoptCardsIntoPack,
   DICTIONARY_COLUMNS,
@@ -40,16 +41,12 @@ export async function GET(req: NextRequest) {
   };
 
   const [entriesResult, batchesResult] = await Promise.all([
-    runEntries(DICTIONARY_COLUMNS),
+    readDictionaryWithFallback((hasContentType) => runEntries(hasContentType
+      ? DICTIONARY_COLUMNS : DICTIONARY_COLUMNS.replace(", content_type", ""))),
     readBatches(admin, user.id, { language }),
   ]);
-  let { data, error } = entriesResult;
+  const { data, error } = entriesResult;
   const { batches } = batchesResult;
-  // Deployments that have not run the material-type migration can still show
-  // their existing dictionary. Legacy rows are treated as words by the UI.
-  if (error && /content_type/.test(error.message)) {
-    ({ data, error } = await runEntries(DICTIONARY_COLUMNS.replace(", content_type", "")));
-  }
   if (error) {
     // The table is added by a migration; say so plainly instead of showing an
     // empty dictionary as if there were nothing in it.
