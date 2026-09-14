@@ -10,6 +10,7 @@
 // reads English schemas best; the data inside is whatever language it is.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readDictionaryWithFallback } from "@/lib/db/dictionarySchema";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
 import { normalizeCardText } from "@/lib/cards";
 import { saveGeneratedLesson } from "@/lib/db/lessonStore";
@@ -1243,29 +1244,38 @@ async function searchDictionary(ctx: Ctx, args: Args): Promise<unknown> {
   const contentType = String(args.content_type ?? "").trim().toLowerCase();
   const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 300);
 
-  let request = ctx.admin
-    .from("dictionary_entries")
-    .select("id, batch_id, headword, lemma, content_type, translation, part_of_speech, gender, plural, forms, cefr, note, example, example_translation")
-    .eq("user_id", ctx.userId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  let legacyTypeMismatch = false;
+  const run = (hasContentType: boolean) => {
+    let request = ctx.admin
+      .from("dictionary_entries")
+      .select(`id, batch_id, headword, lemma, ${hasContentType ? "content_type, " : ""}translation, part_of_speech, gender, plural, forms, cefr, note, example, example_translation`)
+      .eq("user_id", ctx.userId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
-  if (query) {
-    request = request.or(
-      `headword.ilike.%${query}%,lemma.ilike.%${query}%,translation.ilike.%${query}%,example.ilike.%${query}%`,
-    );
-  }
-  if (batchId) request = request.eq("batch_id", batchId);
-  if (LEVELS.includes(level as CefrLevel)) request = request.eq("cefr", level);
-  if (pos) request = request.ilike("part_of_speech", `%${pos}%`);
-  if ((LEARNING_ITEM_TYPES as readonly string[]).includes(contentType)) request = request.eq("content_type", contentType);
+    if (query) {
+      request = request.or(
+        `headword.ilike.%${query}%,lemma.ilike.%${query}%,translation.ilike.%${query}%,example.ilike.%${query}%`,
+      );
+    }
+    if (batchId) request = request.eq("batch_id", batchId);
+    if (LEVELS.includes(level as CefrLevel)) request = request.eq("cefr", level);
+    if (pos) request = request.ilike("part_of_speech", `%${pos}%`);
+    if (hasContentType && (LEARNING_ITEM_TYPES as readonly string[]).includes(contentType)) request = request.eq("content_type", contentType);
+    // Before the migration every entry is a word; other type filters match none.
+    if (!hasContentType && (LEARNING_ITEM_TYPES as readonly string[]).includes(contentType) && contentType !== "word") {
+      legacyTypeMismatch = true;
+    }
+    return request;
+  };
 
-  const { data, error } = await request;
+  const { data, error } = await readDictionaryWithFallback(run);
   if (error) throw new Error(`dictionary search failed: ${error.message}`);
+  const words = legacyTypeMismatch ? [] : data ?? [];
 
   return {
-    found: (data ?? []).length,
-    words: data ?? [],
+    found: words.length,
+    words,
     note: "The dictionary is reference material: the full entry as a dictionary would print it. Whether the learner is actually learning a word is in the flashcards (list_flashcards, get_progress).",
   };
 }
@@ -1274,12 +1284,12 @@ async function listBatchWords(ctx: Ctx, args: Args): Promise<unknown> {
   const batchId = String(args.batch_id ?? "").trim();
   if (!batchId) throw new Error("Pass 'batch_id' from list_word_batches.");
 
-  const { data, error } = await ctx.admin
+  const { data, error } = await readDictionaryWithFallback((hasContentType) => ctx.admin
     .from("dictionary_entries")
-    .select("headword, lemma, content_type, translation, part_of_speech, cefr, plural, forms, example")
+    .select(`headword, lemma, ${hasContentType ? "content_type, " : ""}translation, part_of_speech, cefr, plural, forms, example`)
     .eq("user_id", ctx.userId)
     .eq("batch_id", batchId)
-    .limit(500);
+    .limit(500));
   if (error) throw new Error(`batch words read failed: ${error.message}`);
 
   return { words: data ?? [] };

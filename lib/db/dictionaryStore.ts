@@ -8,6 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { applyNounFieldRules, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import type { LearningItemType, PackTraining } from "@/lib/types";
+import { CONTENT_TYPE_MIGRATION_ERROR, isMissingContentType } from "./dictionarySchema";
 
 export type DictionaryBatch = {
   id: string;
@@ -133,17 +134,26 @@ export async function saveDictionaryEntries(
 
   const uniqueDrafts = dedupeDictionaryDrafts(drafts);
 
-  const { data: existingRows, error: readError } = await admin
+  const readExisting = (hasContentType: boolean) => admin
     .from("dictionary_entries")
-    .select("id, lemma, headword, content_type, plural, forms, example, example_translation, note, cefr, translation")
+    .select(hasContentType
+      ? "id, lemma, headword, content_type, plural, forms, example, example_translation, note, cefr, translation"
+      : "id, lemma, headword, plural, forms, example, example_translation, note, cefr, translation")
     .eq("user_id", userId)
     .eq("language", language);
 
+  let hasContentType = true;
+  let { data: existingRows, error: readError } = await readExisting(true);
+  if (isMissingContentType(readError)) {
+    hasContentType = false;
+    ({ data: existingRows, error: readError } = await readExisting(false));
+  }
   if (readError) return { ok: false, error: `Не удалось прочитать словарь: ${readError.message}` };
 
   const existingByLemma = new Map<string, Record<string, unknown>>();
   const existingByHeadword = new Map<string, Record<string, unknown>>();
-  for (const row of existingRows ?? []) {
+  // Supabase's type-level SELECT parser cannot infer conditional projections.
+  for (const row of (existingRows ?? []) as unknown as Record<string, unknown>[]) {
     const lemmaKey = normalizeDictionaryKey(String(row.lemma ?? ""));
     const headwordKey = normalizeDictionaryKey(String(row.headword ?? ""));
     if (lemmaKey) existingByLemma.set(lemmaKey, row);
@@ -202,9 +212,22 @@ export async function saveDictionaryEntries(
     };
   });
 
-  const { error } = await admin
+  // Do not silently turn phrases/expressions into words on an old database.
+  const needsContentType = rows.some((row) => row.content_type !== "word");
+  if (!hasContentType && needsContentType) return { ok: false, error: CONTENT_TYPE_MIGRATION_ERROR };
+  const write = (withContentType: boolean) => admin
     .from("dictionary_entries")
-    .upsert(rows, { onConflict: "user_id,lemma,language" });
+    .upsert(withContentType ? rows : rows.map((row) => {
+      const legacy: Record<string, unknown> = { ...row };
+      delete legacy.content_type;
+      return legacy;
+    }), { onConflict: "user_id,lemma,language" });
+  let { error } = await write(hasContentType);
+  // PostgREST's write schema cache can lag behind SELECT after a migration.
+  if (hasContentType && isMissingContentType(error)) {
+    if (needsContentType) return { ok: false, error: CONTENT_TYPE_MIGRATION_ERROR };
+    ({ error } = await write(false));
+  }
 
   if (error) return { ok: false, error: `Не удалось сохранить слова: ${error.message}` };
 
