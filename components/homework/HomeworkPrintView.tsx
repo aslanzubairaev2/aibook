@@ -1,7 +1,7 @@
 "use client";
 
 import { Printer, X } from "lucide-react";
-import type { HomeworkExercise, HomeworkItem } from "@/lib/ai/buildHomeworkPrompt";
+import type { HomeworkExercise, HomeworkItem, HomeworkResponseField } from "@/lib/ai/buildHomeworkPrompt";
 import { CONJUGATION_PRONOUNS, itemKey, verbKey, type HomeworkAnswers } from "./homeworkAnswers";
 
 type Props = {
@@ -14,6 +14,10 @@ type Props = {
 };
 
 const BLANK_RE = /\{\{\d+\}\}/g;
+
+function formationFields(exercise: HomeworkExercise, item: HomeworkItem): HomeworkResponseField[] {
+  return item.fields ?? exercise.fields ?? [{ key: "answer", label: "Ответ" }];
+}
 
 /** The item's own text with each "{{n}}" swapped for the learner's answer, or a visible gap when it was left empty. */
 function clozeLine(exercise: HomeworkExercise, item: HomeworkItem, answers: HomeworkAnswers): (string | { answer: string })[] {
@@ -87,6 +91,23 @@ export function HomeworkPrintView({ title, sourceKind, homeworkDate, exercises, 
               </div>
             )}
 
+            {exercise.widget === "formation" && (exercise.items ?? []).map((item) => {
+              const value = answers.items[itemKey(exercise.number, item.number)];
+              const values = Array.isArray(value) ? value : value ? [value] : [];
+              return (
+                <div key={item.number} className="hw-print-item hw-print-formation-item">
+                  <strong>{item.number}. {item.text}</strong>
+                  <div className="hw-print-formation-fields">
+                    {formationFields(exercise, item).map((field, index) => (
+                      <span key={`${field.key}-${index}`}>
+                        {field.label}: <span className="hw-print-answer">{values[index] || "…"}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
             {exercise.widget === "cloze" && (exercise.items ?? []).map((item) => (
               <p key={item.number} className="hw-print-item">
                 {item.number}.{" "}
@@ -144,6 +165,8 @@ const PRINT_STYLES = `
   .hw-print-exercise { margin-bottom: 14px; }
   .hw-print-exercise h2 { font-size: 14.5px; font-weight: 700; margin-bottom: 4px; }
   .hw-print-item { font-size: 14px; line-height: 1.3; margin-bottom: 1px; }
+  .hw-print-formation-item { margin-bottom: 7px; }
+  .hw-print-formation-fields { display: flex; flex-wrap: wrap; gap: 4px 18px; padding-left: 18px; }
   .hw-print-verb { margin-bottom: 4px; font-size: 14px; line-height: 1.25; }
   .hw-print-verb ul { list-style: none; margin: 2px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
 

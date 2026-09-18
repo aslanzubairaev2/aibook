@@ -20,6 +20,7 @@ import { ClozeExercise } from "./ClozeExercise";
 import { ComposeExercise } from "./ComposeExercise";
 import { OpenResponseExercise } from "./OpenResponseExercise";
 import { ConjugationExercise } from "./ConjugationExercise";
+import { FormationExercise } from "./FormationExercise";
 import { HomeworkPrintView } from "./HomeworkPrintView";
 
 export type HomeworkBook = {
@@ -125,6 +126,10 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
 
   const onFormsChange = (exerciseNumber: number, verb: string, forms: string[]) => {
     setAnswers((prev) => ({ ...prev, conjugations: { ...prev.conjugations, [verbKey(exerciseNumber, verb)]: forms } }));
+  };
+
+  const onFieldsChange = (exerciseNumber: number, itemNumber: number, fields: string[]) => {
+    setAnswers((prev) => ({ ...prev, items: { ...prev.items, [itemKey(exerciseNumber, itemNumber)]: fields } }));
   };
 
   // Same cache chain as the reader's own word tap (local IndexedDB first, then
@@ -252,6 +257,10 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
             {exercise.widget === "conjugation" && (
               <ConjugationExercise exercise={exercise} answers={answers}
                 onFormsChange={(verb, forms) => onFormsChange(exercise.number, verb, forms)} />
+            )}
+            {exercise.widget === "formation" && (
+              <FormationExercise exercise={exercise} answers={answers}
+                onFieldsChange={(itemNumber, fields) => onFieldsChange(exercise.number, itemNumber, fields)} />
             )}
             {exercise.widget === "text" && (
               <p className="hw-text-note">См. текст, указанный в задании — на этом снимке его нет.</p>
@@ -392,6 +401,18 @@ const STYLES = `
   .hw-verb-chip.done { border-color: var(--accent); color: var(--accent); }
   .hw-verb-count { font-size: 11px; color: var(--text-muted); font-weight: 500; }
 
+  .hw-formation-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .hw-form-chip {
+    display: flex; align-items: center; gap: 7px;
+    min-height: 48px; padding: 8px 13px; border: 1px solid var(--border); border-radius: 11px;
+    background: rgba(240,230,211,0.04); color: var(--text-primary); font-size: 14px; font-weight: 600;
+    text-align: left;
+  }
+  .hw-form-chip.done { border-color: var(--accent); color: var(--accent); }
+  .hw-form-number { color: var(--text-muted); font-size: 12px; font-weight: 500; }
+  .hw-form-source { letter-spacing: 0.01em; }
+  .hw-form-count { color: var(--text-muted); font-size: 11px; font-weight: 500; }
+
   .hw-popup-backdrop { position: fixed; inset: 0; z-index: 140; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,0.5); }
   /* .verb-quiz-card supplies the look (same card the Глаголы trainer's own
      conjugation drill uses); this only adds what a bottom-sheet popup needs
@@ -401,6 +422,20 @@ const STYLES = `
     width: 100%; max-width: 420px; max-height: 78vh; overflow-y: auto;
     border-radius: 16px 16px 0 0;
     padding-bottom: max(20px, env(safe-area-inset-bottom));
+  }
+  .hw-formation-popup {
+    width: 100%; max-width: 420px; max-height: 78vh; overflow-y: auto;
+    border-radius: 16px 16px 0 0; padding: 18px 16px max(20px, env(safe-area-inset-bottom));
+    background: var(--bg-secondary, #24201b); color: var(--text-primary);
+  }
+  .hw-formation-kicker { display: block; color: var(--text-muted); font-size: 11px; margin-bottom: 3px; }
+  .hw-formation-source { margin: 0; font-size: 20px; line-height: 1.2; }
+  .hw-formation-fields { display: grid; gap: 12px; margin: 18px 0; }
+  .hw-formation-field { display: grid; gap: 6px; }
+  .hw-formation-label { color: var(--text-muted); font-size: 12px; font-weight: 600; }
+  .hw-form-input {
+    width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px;
+    background: rgba(240,230,211,0.04); color: var(--text-primary); font-size: 15px; font-family: inherit;
   }
   .hw-popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
   .hw-popup-close { border: 0; background: transparent; color: var(--text-muted); }

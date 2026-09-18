@@ -326,6 +326,17 @@ const HOMEWORK_SCHEMA = {
                   },
                 },
                 bank: { type: Type.ARRAY, items: { type: Type.STRING } },
+                fields: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      key: { type: Type.STRING },
+                      label: { type: Type.STRING },
+                    },
+                    required: ["key", "label"],
+                  },
+                },
               },
               required: ["number", "text"],
             },
@@ -333,6 +344,17 @@ const HOMEWORK_SCHEMA = {
           bank: { type: Type.ARRAY, items: { type: Type.STRING } },
           verbs: { type: Type.ARRAY, items: { type: Type.STRING } },
           pronouns: { type: Type.ARRAY, items: { type: Type.STRING } },
+          fields: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                key: { type: Type.STRING },
+                label: { type: Type.STRING },
+              },
+              required: ["key", "label"],
+            },
+          },
         },
         required: ["number", "instruction", "widget"],
       },
