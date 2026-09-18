@@ -32,6 +32,11 @@ export function verbKey(exerciseNumber: number, verb: string): string {
  */
 export const CONJUGATION_PRONOUNS = ["ich", "du", "er/sie/es", "wir", "ihr", "sie/Sie"];
 
+function formationFieldCount(exercise: HomeworkExercise, itemNumber: number): number {
+  const item = exercise.items?.find((candidate) => candidate.number === itemNumber);
+  return item?.fields?.length ?? exercise.fields?.length ?? 1;
+}
+
 function isFilled(v: string | undefined): boolean {
   return (v ?? "").trim().length > 0;
 }
@@ -47,6 +52,16 @@ export function computeHomeworkProgress(exercises: HomeworkExercise[], answers: 
         total += CONJUGATION_PRONOUNS.length;
         const forms = answers.conjugations[verbKey(exercise.number, verb)] ?? [];
         filled += forms.filter(isFilled).length;
+      }
+      continue;
+    }
+    if (exercise.widget === "formation") {
+      for (const item of exercise.items ?? []) {
+        const fieldCount = formationFieldCount(exercise, item.number);
+        total += fieldCount;
+        const value = answers.items[itemKey(exercise.number, item.number)];
+        const values = Array.isArray(value) ? value : value ? [value] : [];
+        filled += values.slice(0, fieldCount).filter(isFilled).length;
       }
       continue;
     }

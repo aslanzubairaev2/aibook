@@ -7,7 +7,7 @@
 // model's job stops at recovering the exercise structure; it must never invent
 // or fill in an answer, only describe where the learner's answer goes.
 //
-// Four interaction shapes cover almost any grammar drill:
+// Five interaction shapes cover almost any grammar drill:
 //   - "cloze"        a numbered sentence with one or more blanks inside it.
 //                     A blank is free text, or a dropdown when the exercise
 //                     (or just this item) gives a fixed word bank to choose
@@ -21,20 +21,27 @@
 //                     a model — the learner just writes the whole thing.
 //   - "conjugation"  not a list of sentences but a verb (or word) list, each
 //                     opening a small pronoun × form grid.
+//   - "formation"    a list of source words that must be transformed into
+//                     one or more AI-described answer fields (word formation,
+//                     translation, plural, feminine form, etc.).
 //
-// The model is NOT asked to pick a label from this list — that would be the
-// "why bother with AI" trap the whole design tries to avoid. It is asked to
-// describe the page: the instruction line, where each numbered item starts,
-// where a blank sits inside it, whether a word bank exists and which items it
-// belongs to. "widget" is just how that description routes to one of the four
-// renderers below, and all four are written once, by hand — the model never
-// generates UI, only this JSON.
+// The model describes the page: the instruction line, where each numbered item
+// starts, where a blank sits inside it, whether a word bank exists and which
+// answer fields a transformation exercise actually asks for. The renderer is
+// generic; the model never generates executable UI, only this JSON contract.
 
 // ─── Shape ────────────────────────────────────────────────────────────────
 
 export type HomeworkBlank = {
   /** true → a dropdown built from the item's/exercise's bank. false → free text. */
   select: boolean;
+};
+
+export type HomeworkResponseField = {
+  /** Stable key used only for metadata and future answer checking. */
+  key: string;
+  /** Short label shown next to the learner's input. */
+  label: string;
 };
 
 export type HomeworkItem = {
@@ -49,13 +56,15 @@ export type HomeworkItem = {
   blanks?: HomeworkBlank[];
   /** Overrides the exercise-level bank for just this item — see упр. 10, where each of 3 questions has its own word list. */
   bank?: string[];
+  /** Overrides the exercise-level answer fields for a transformation item. */
+  fields?: HomeworkResponseField[];
 };
 
 export type HomeworkExercise = {
   number: number;
   /** The instruction line exactly as printed, e.g. "Вставьте правильные окончания." */
   instruction: string;
-  widget: "cloze" | "compose" | "open" | "conjugation" | "text";
+  widget: "cloze" | "compose" | "open" | "conjugation" | "formation" | "text";
   /** cloze / compose / open. */
   items?: HomeworkItem[];
   /** Shared word bank for items in this exercise that don't carry their own. */
@@ -64,6 +73,8 @@ export type HomeworkExercise = {
   verbs?: string[];
   /** conjugation widget only: the pronoun/person labels implied by the exercise (e.g. ["ich","du","er/sie/es","wir","ihr","sie/Sie"]). */
   pronouns?: string[];
+  /** formation widget: fields the learner must fill for each source item. */
+  fields?: HomeworkResponseField[];
 };
 
 export type HomeworkLesson = {
@@ -93,6 +104,7 @@ Rules, in order of importance:
   - "compose": the instruction says to build the answer out of words given elsewhere ("употребите слова, данные справа/ниже"). Each item is the prompt/question; its own word choices go in "bank" (per-item, since each prompt can have a different list — see a "Was ist das? / Wer ist das?" style exercise where each question has its own column of words).
   - "open": the item needs a whole sentence or phrase written with no gap to key off — translation, answering a question, forming a word from an example. Put the full prompt (including any given example) in "text", no "{{n}}" markers.
   - "conjugation": the instruction says to conjugate/decline a list of words. List them in "verbs", and put the pronoun or grammatical-person labels the exercise implies in "pronouns" (infer the standard set for the language if the page doesn't spell it out).
+  - "formation": the instruction asks to derive, transform, or form a new word from each source word (for example, form person-denoting nouns from verbs). Put each source word in an item "text" exactly as printed. Describe the requested answer columns in an exercise-level "fields" array. Each field has a stable English "key" (use "word", "article_word", "feminine", "plural", "translation", or "other") and a short Russian "label". Include only what the instruction asks for. For "Образуйте от глаголов существительные, обозначающие лица, переведите их на русский язык" use exactly [{"key":"word","label":"Существительное"},{"key":"translation","label":"Перевод"}]. Do not route a word-formation task to "conjugation" just because its source list contains verbs.
   - "text": the instruction references something outside this photo (e.g. "прочтите текст «Wir lernen Fremdsprachen»" when that text isn't on the page) or is otherwise not something to fill in here. No items.
 - A word bank that is visually attached to a whole exercise (a column of adjectives, a list of nouns) but is meant to fill every gap in it belongs on the exercise's "bank", not repeated per item.
 - If a page is cropped and an exercise is cut off mid-item, include only the items you can read in full.
@@ -106,11 +118,12 @@ Return ONLY valid JSON with this exact shape:
     {
       "number": 1,
       "instruction": "instruction line as printed",
-      "widget": "cloze" | "compose" | "open" | "conjugation" | "text",
+      "widget": "cloze" | "compose" | "open" | "conjugation" | "formation" | "text",
       "items": [ { "number": 1, "text": "...", "blanks": [ { "select": false } ], "bank": [] } ],
       "bank": [],
       "verbs": [],
-      "pronouns": []
+      "pronouns": [],
+      "fields": [ { "key": "word", "label": "Существительное" }, { "key": "translation", "label": "Перевод" } ]
     }
   ]
 }
@@ -125,7 +138,43 @@ No markdown, no commentary, nothing outside the JSON object.`;
 // @google/genai import so client components can pull HomeworkLesson etc.
 // straight from it.
 
-const WIDGETS = new Set(["cloze", "compose", "open", "conjugation", "text"]);
+const WIDGETS = new Set(["cloze", "compose", "open", "conjugation", "formation", "text"]);
+
+function parseField(raw: unknown): HomeworkResponseField | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const obj = raw as Record<string, unknown>;
+  const key = typeof obj.key === "string" ? obj.key.trim().slice(0, 48) : "";
+  const label = typeof obj.label === "string" ? obj.label.trim().slice(0, 80) : "";
+  if (!key || !label) return null;
+  return { key, label };
+}
+
+function parseFields(raw: unknown): HomeworkResponseField[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const fields = raw.map(parseField).filter((field): field is HomeworkResponseField => field !== null);
+  return fields.length > 0 ? fields.slice(0, 8) : undefined;
+}
+
+/**
+ * A small safety net for saved lessons produced before the generic formation
+ * widget existed. The instruction is the source of truth: a list of verbs is
+ * not enough to decide that an exercise is conjugation.
+ */
+function isPersonNounFormationInstruction(instruction: string): boolean {
+  const text = instruction.toLocaleLowerCase();
+  const nounCue = /(существитель|substantiv|nomen)/u.test(text);
+  const personCue = /(лиц|person|personen|bezeichn|человек)/u.test(text);
+  return nounCue && personCue;
+}
+
+function fieldsForFormationInstruction(instruction: string): HomeworkResponseField[] {
+  const text = instruction.toLocaleLowerCase();
+  const fields: HomeworkResponseField[] = [{ key: "word", label: "Существительное" }];
+  if (/(женск|weib|feminin)/u.test(text)) fields.push({ key: "feminine", label: "Женская форма" });
+  if (/(множествен|plural)/u.test(text)) fields.push({ key: "plural", label: "Множественное число" });
+  if (/(перевед|перевод|русск|übersetz|uebersetz|bedeut)/u.test(text)) fields.push({ key: "translation", label: "Перевод" });
+  return fields;
+}
 
 function parseBlank(raw: unknown): HomeworkBlank | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -145,11 +194,13 @@ function parseItem(raw: unknown): HomeworkItem | null {
   const bank = Array.isArray(obj.bank)
     ? obj.bank.filter((b): b is string => typeof b === "string" && b.trim().length > 0)
     : undefined;
+  const fields = parseFields(obj.fields);
   return {
     number,
     text,
     ...(blanks && blanks.length > 0 ? { blanks } : {}),
     ...(bank && bank.length > 0 ? { bank } : {}),
+    ...(fields ? { fields } : {}),
   };
 }
 
@@ -173,15 +224,30 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
   const pronouns = Array.isArray(obj.pronouns)
     ? obj.pronouns.filter((p): p is string => typeof p === "string" && p.trim().length > 0)
     : undefined;
+  const fields = parseFields(obj.fields);
+
+  const formationByInstruction = isPersonNounFormationInstruction(instruction);
+  const sourceItems = items && items.length > 0
+    ? items
+    : ((formationByInstruction || widget === "formation") && verbs && verbs.length > 0
+      ? verbs.map((verb, index) => ({ number: index + 1, text: verb }))
+      : undefined);
+  const normalizedWidget = formationByInstruction && sourceItems && sourceItems.length > 0
+    ? "formation"
+    : widget;
+  const normalizedFields = normalizedWidget === "formation"
+    ? fields ?? fieldsForFormationInstruction(instruction)
+    : fields;
 
   return {
     number: typeof obj.number === "number" ? obj.number : 0,
     instruction,
-    widget,
-    ...(items && items.length > 0 ? { items } : {}),
+    widget: normalizedWidget,
+    ...(sourceItems && sourceItems.length > 0 ? { items: sourceItems } : {}),
     ...(bank && bank.length > 0 ? { bank } : {}),
     ...(verbs && verbs.length > 0 ? { verbs } : {}),
     ...(pronouns && pronouns.length > 0 ? { pronouns } : {}),
+    ...(normalizedFields && normalizedFields.length > 0 ? { fields: normalizedFields } : {}),
   };
 }
 
