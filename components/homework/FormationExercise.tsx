@@ -160,4 +160,3 @@ export function FormationExercise({ exercise, answers, onFieldsChange }: Props) 
     </div>
   );
 }
-
