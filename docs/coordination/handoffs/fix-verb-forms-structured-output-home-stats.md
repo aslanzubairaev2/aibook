@@ -2,7 +2,7 @@
 
 - Агент: Codex
 - Ветка: `fix/verb-forms-structured-output` (рабочая директория переключилась на неё параллельным процессом)
-- Commit: `4d37acb`
+- Commit: `e3559c6`
 - Статус: ready-for-review
 
 ## Сделано
