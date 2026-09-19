@@ -1,4 +1,4 @@
-import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { AI_CONFIG } from "@/lib/config";
 import { parseModelJson } from "./jsonResponse";
 
@@ -33,14 +33,13 @@ const SMART_DICTIONARY_SCHEMA = {
               komparativ: { type: Type.STRING },
               superlativ: { type: Type.STRING },
             },
-            required: ["praeteritum", "partizip2", "hilfsverb", "trennbar", "komparativ", "superlativ"],
           },
           cefr: { type: Type.STRING },
           note: { type: Type.STRING },
           example: { type: Type.STRING },
           exampleTranslation: { type: Type.STRING },
         },
-        required: ["headword", "lemma", "translation", "partOfSpeech", "contentType", "gender", "article", "plural", "forms", "cefr", "note", "example", "exampleTranslation"],
+        required: ["headword", "lemma", "translation", "partOfSpeech", "cefr"],
       },
     },
   },
@@ -73,13 +72,14 @@ export async function runSmartDictionaryPrompt(
 ): Promise<SmartDictionaryModelResult> {
   try {
     const response = await new GoogleGenAI({ apiKey }).models.generateContent({
-      model: AI_CONFIG.dictionaryModel,
+      model: AI_CONFIG.model,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config: {
-      responseMimeType: "application/json",
-      responseSchema: SMART_DICTIONARY_SCHEMA as never,
-      maxOutputTokens,
-      thinkingConfig: { thinkingLevel: AI_CONFIG.dictionaryThinkingLevel as ThinkingLevel },
+        responseMimeType: "application/json",
+        responseSchema: SMART_DICTIONARY_SCHEMA as never,
+        maxOutputTokens,
+        temperature: 0.15,
+        thinkingConfig: { thinkingBudget: 1024 },
       },
     });
 
