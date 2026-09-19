@@ -33,6 +33,7 @@ import { formatTrainedAt, packCoverage, type TrainingFilter } from "@/lib/srs/pa
 import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
+import { NOUN_ARTICLE_TTS_CACHE_SCOPE } from "@/lib/ttsCacheScope";
 
 type Props = {
   profile: UserProfile;
@@ -716,7 +717,12 @@ export function NounsView({ profile, onBack }: Props) {
                                         <span className={`gender-${gender}`}>{bareNoun(entry)}</span>
                                         {difficult && <span className="training-difficulty-badge" title={`Ошибок: ${errors}`}>сложно</span>}
                                       </span>
-                                      <SpeakButton text={entry.headword} lang={profile.targetLanguage} size={13} />
+                                      <SpeakButton
+                                        text={bareNoun(entry)}
+                                        lang={profile.targetLanguage}
+                                        size={13}
+                                        cacheScope={NOUN_ARTICLE_TTS_CACHE_SCOPE}
+                                      />
                                     </span>
                                     {entry.translation && (
                                       <span className={`verb-translation${hideForms ? " verb-translation-hidden" : ""}`}>
