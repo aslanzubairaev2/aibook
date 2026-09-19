@@ -57,11 +57,31 @@
 .smart-add-status { display: flex; align-items: center; gap: 7px; margin: 14px 0 0; color: var(--accent); font-size: 13px; font-weight: 700; }
 .smart-add-submit { width: 100%; justify-content: center; margin-top: 18px; }
 .smart-add-footnote { display: block; margin-top: 9px; color: var(--text-muted); font-size: 11px; line-height: 1.4; text-align: center; }
+.smart-question-backdrop { z-index: 96; align-items: center; padding: 16px; }
+.smart-question-modal {
+  width: min(100%, 440px);
+  padding: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 22px;
+  background: linear-gradient(145deg, #29251b, #1d1b16);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.62);
+  animation: smart-add-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.smart-question-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.smart-question-kicker { display: inline-flex; align-items: center; gap: 7px; color: var(--accent); font-size: 11px; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
+.smart-question-modal h3 { margin: 18px 0 8px; color: var(--text-primary); font-size: 22px; line-height: 1.15; }
+.smart-question-text { margin: 0 0 18px; color: var(--surface-dim); font-size: 14px; line-height: 1.55; }
+.smart-question-input-wrap { position: relative; }
+.smart-question-input-wrap textarea { display: block; width: 100%; min-height: 92px; resize: vertical; padding: 13px 52px 13px 14px; border: 1px solid var(--border-strong); border-radius: 14px; outline: 0; background: rgba(0,0,0,0.2); color: var(--text-primary); font: inherit; line-height: 1.45; }
+.smart-question-input-wrap textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(212,168,71,0.12); }
+.smart-question-input-wrap textarea::placeholder { color: var(--text-muted); opacity: 0.8; }
 .spin { animation: smart-spin 0.9s linear infinite; }
 @keyframes smart-spin { to { transform: rotate(360deg); } }
 @media (max-width: 460px) {
   .smart-add-backdrop { align-items: flex-end; padding: 0; }
   .smart-add-modal { max-height: 92svh; border-radius: 22px 22px 0 0; padding: 20px 16px 28px; }
+  .smart-question-backdrop { align-items: flex-end; padding: 0; }
+  .smart-question-modal { width: 100%; border-radius: 22px 22px 0 0; padding: 20px 16px 28px; }
   .dictionary-view .add-words-fab { bottom: 136px; }
 }
 

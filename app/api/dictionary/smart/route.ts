@@ -21,6 +21,8 @@ type SmartRequest = {
   targetLanguage?: string;
   nativeLanguage?: string;
   batchId?: string | null;
+  clarificationQuestion?: string | null;
+  clarificationAnswer?: string | null;
 };
 
 type SmartModelPayload = {
@@ -47,17 +49,28 @@ function makePrompt(params: {
   inputLanguage: string;
   known: string[];
   round: number;
+  batchTitle?: string;
+  clarificationQuestion?: string;
+  clarificationAnswer?: string;
 }): string {
-  const { mode, request, target, native, inputLanguage, known, round } = params;
+  const { mode, request, target, native, inputLanguage, known, round, batchTitle, clarificationQuestion, clarificationAnswer } = params;
   const isSingle = mode === "single";
   const knownBlock = known.length > 0
-    ? `Already collected — never repeat these lemmas or headwords:\n${known.join("\n")}`
+    ? `${batchTitle ? "These words are already in the selected pack" : "Already collected words"} — never repeat these lemmas or headwords:\n${known.join("\n")}`
     : "No words have been collected yet.";
+  const packBlock = batchTitle
+    ? `You are adding new words to the existing pack "${batchTitle}". Preserve its theme and do not duplicate anything already in it.`
+    : "Create a new pack when the request is complete.";
+  const clarificationBlock = clarificationQuestion && clarificationAnswer
+    ? `The learner answered your previous clarification question "${clarificationQuestion}" with: "${clarificationAnswer}". Use this answer as authoritative context, do not ask the same question again, and continue the task.`
+    : "";
 
   return `You are the vocabulary research agent inside a language-learning app.
 The learner studies ${target}; their native language is ${native}.
 The learner's request is: "${request}"
 The input language hint is ${inputLanguage}. Detect the actual language yourself; never use browser speech recognition.
+${packBlock}
+${clarificationBlock}
 
 ${isSingle
     ? "Return exactly one learning item matching the request. If it is ambiguous, return no entries and put one concise clarification question in clarification."
@@ -138,10 +151,14 @@ export async function POST(req: Request) {
   const target = clean(body.targetLanguage, 40) || "de";
   const native = clean(body.nativeLanguage, 40) || "ru";
   const inputLanguage = clean(body.inputLanguage, 20) || "auto";
+  const clarificationQuestion = clean(body.clarificationQuestion, 500);
+  const clarificationAnswer = clean(body.clarificationAnswer, 1200);
   if (!request) return NextResponse.json({ error: "Напишите слово или тему." }, { status: 400 });
+  if (clarificationQuestion && !clarificationAnswer) return NextResponse.json({ error: "Ответьте на уточнение ИИ." }, { status: 400 });
 
   let batchId = clean(body.batchId, 80) || null;
   let batchTitle = "";
+  let existingBatchWords: string[] = [];
   if (batchId) {
     const { data: batch, error } = await supabaseAdmin
       .from("dictionary_batches")
@@ -152,6 +169,15 @@ export async function POST(req: Request) {
     if (error || !batch) return NextResponse.json({ error: "Эта пачка не найдена." }, { status: 404 });
     if (batch.language !== target) return NextResponse.json({ error: "Язык пачки не совпадает с выбранным языком." }, { status: 400 });
     batchTitle = String(batch.title ?? "");
+    const { data: batchEntries, error: batchEntriesError } = await supabaseAdmin
+      .from("dictionary_entries")
+      .select("headword, lemma")
+      .eq("user_id", user.id)
+      .eq("batch_id", batchId)
+      .eq("language", target)
+      .limit(1000);
+    if (batchEntriesError) return NextResponse.json({ error: "Не удалось прочитать слова из пачки." }, { status: 500 });
+    existingBatchWords = Array.from(new Set((batchEntries ?? []).flatMap((entry) => [entry.lemma, entry.headword]).map((word) => clean(word, 200)).filter(Boolean))).slice(0, 800);
   }
 
   const allEntries: DictionaryEntryDraft[] = [];
@@ -160,10 +186,10 @@ export async function POST(req: Request) {
   let done = mode === "single";
 
   for (let round = 1; round <= (mode === "single" ? 1 : MAX_AGENT_ROUNDS); round++) {
-    const known = allEntries.flatMap((entry) => [entry.lemma, entry.headword]);
+    const known = [...existingBatchWords, ...allEntries.flatMap((entry) => [entry.lemma, entry.headword])];
     const result = await runSmartDictionaryPrompt(
       apiKey,
-      makePrompt({ mode, request, target, native, inputLanguage, known, round }),
+      makePrompt({ mode, request, target, native, inputLanguage, known, round, batchTitle: batchTitle || undefined, clarificationQuestion: clarificationQuestion || undefined, clarificationAnswer: clarificationAnswer || undefined }),
       mode === "single" ? 5000 : 14000,
     );
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
