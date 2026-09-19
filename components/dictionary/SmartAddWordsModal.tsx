@@ -97,10 +97,13 @@ export function SmartAddWordsModal({
     let cancelled = false;
     void (async () => {
       try {
-        const response = await fetch("/api/dictionary/smart/jobs", { headers: await getAiHeaders() });
+        const response = await fetch("/api/dictionary/smart/jobs?includeRecent=1", { headers: await getAiHeaders() });
         if (!response.ok) return;
         const data = await response.json() as { jobs?: SmartJobSnapshot[] };
-        const candidate = (data.jobs ?? []).find((item) => batch?.id ? item.batch_id === batch.id : true);
+        const candidates = data.jobs ?? [];
+        const matchesBatch = (item: SmartJobSnapshot) => batch?.id ? item.batch_id === batch.id : true;
+        const candidate = candidates.find((item) => isRunning(item.status) && matchesBatch(item))
+          ?? candidates.find((item) => item.status === "failed" && matchesBatch(item));
         if (cancelled || !candidate) return;
         setJobId(candidate.id);
         setJob(candidate);

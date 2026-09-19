@@ -2536,6 +2536,27 @@ textarea,
 /* The dictionary is its own screen now, not the last tab of Каталог. */
 .dictionary-view { padding-bottom: 120px; }
 
+.dictionary-job-notice {
+  display: flex; align-items: center; gap: 10px; margin: 12px 0 16px; padding: 11px 12px;
+  border: 1px solid rgba(212, 168, 71, 0.5); border-radius: 12px;
+  background: rgba(212, 168, 71, 0.09); color: var(--text-primary);
+}
+.dictionary-job-notice.failed { border-color: rgba(214, 112, 112, 0.65); background: rgba(214, 112, 112, 0.09); }
+.dictionary-job-notice-icon { display: flex; color: var(--accent); flex: 0 0 auto; }
+.dictionary-job-notice.failed .dictionary-job-notice-icon { color: #e58a8a; }
+.dictionary-job-notice-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.dictionary-job-notice-copy strong { font-size: 0.84rem; }
+.dictionary-job-notice-copy span { overflow: hidden; color: var(--text-secondary); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
+.dictionary-job-notice-action, .dictionary-job-notice-close { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 6px 8px; border: 1px solid rgba(212,168,71,0.35); border-radius: 8px; background: transparent; color: var(--accent); cursor: pointer; font: inherit; font-size: 0.75rem; }
+.dictionary-job-notice-close { padding: 6px; border-color: transparent; color: var(--text-muted); }
+.dictionary-job-notice-action:hover { background: rgba(212,168,71,0.12); }
+
+@media (max-width: 560px) {
+  .dictionary-job-notice { align-items: flex-start; flex-wrap: wrap; }
+  .dictionary-job-notice-copy { flex-basis: calc(100% - 38px); }
+  .dictionary-job-notice-action { margin-left: 28px; }
+}
+
 /* ── Pack coverage bar ────────────────────────────────────────────────────
    Two tones over one track: the dim layer is everything the pack has been
    asked at all, the solid one is what came back right. The gap between them
