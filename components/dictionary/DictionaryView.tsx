@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookA, Camera, Plus } from "lucide-react";
+import { BookA, Camera, LoaderCircle, Plus, Sparkles, X } from "lucide-react";
 import { DictionaryPanel, entryToAnalysis, entryToCardText } from "@/components/dictionary/DictionaryPanel";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { WordModal } from "@/components/word-modal/WordModal";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import type { TrainBatch } from "@/lib/cards";
-import { analyzeSelection } from "@/lib/ai/analyze";
+import { analyzeSelection, getAiHeaders } from "@/lib/ai/analyze";
 import { makeAiCacheKey } from "@/lib/ai/cacheKeys";
 import { getLocalAiAnalysis, saveLocalAiAnalysis } from "@/lib/db/local";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
@@ -32,6 +32,17 @@ type Props = {
    * has no lesson composer; it hands the pack to «Каталог», which does.
    */
   onCreateFromPack?: (pack: { title: string; brief: string; words: string[] }) => void;
+};
+
+type BackgroundDictionaryJob = {
+  id: string;
+  status: "queued" | "running" | "waiting_input" | "failed";
+  batch_id: string | null;
+  batch_title: string;
+  current_action: string;
+  rounds_completed: number;
+  total_added: number;
+  error: string | null;
 };
 
 /**
@@ -59,6 +70,8 @@ export function DictionaryView({
   const [photoOpen, setPhotoOpen] = useState(false);
   const [smartAdd, setSmartAdd] = useState<{ id: string; title: string } | null | false>(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [backgroundJob, setBackgroundJob] = useState<BackgroundDictionaryJob | null>(null);
+  const [backgroundJobDismissed, setBackgroundJobDismissed] = useState(false);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -85,6 +98,37 @@ export function DictionaryView({
   }, [userId, profile.targetLanguage]);
 
   useEffect(() => { void loadDictionary(); }, [loadDictionary]);
+
+  // Reconnect to the durable server-side task after a tab/page reload. This
+  // is deliberately independent from SmartAddWordsModal so the user can see
+  // that work is still running before opening any modal.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/dictionary/smart/jobs?includeRecent=1", { headers: await getAiHeaders() });
+        if (!response.ok) return;
+        const data = await response.json() as { jobs?: BackgroundDictionaryJob[] };
+        const jobs = data.jobs ?? [];
+        const next = jobs.find((item) => item.status !== "failed") ?? jobs.find((item) => item.status === "failed") ?? null;
+        if (!cancelled) {
+          setBackgroundJob(next);
+          if (next) setBackgroundJobDismissed(false);
+        }
+      } catch {
+        // The modal and the next poll can recover from a transient network error.
+      } finally {
+        if (!cancelled) timer = setTimeout(() => void poll(), 4000);
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [userId]);
 
   // A connected tutor can write to the same dictionary from another tab or
   // client. Refresh when the learner returns so the pack and type filters are
@@ -246,6 +290,21 @@ export function DictionaryView({
         </div>
       ) : (
         <>
+          {backgroundJob && !backgroundJobDismissed && (
+            <aside className={`dictionary-job-notice${backgroundJob.status === "failed" ? " failed" : ""}`} role="status">
+              <div className="dictionary-job-notice-icon">
+                {backgroundJob.status === "failed" ? <X size={16} /> : <LoaderCircle size={17} className="spin" />}
+              </div>
+              <div className="dictionary-job-notice-copy">
+                <strong>{backgroundJob.status === "failed" ? "Фоновая задача остановлена" : "ИИ продолжает собирать слова"}</strong>
+                <span>{backgroundJob.status === "failed" ? backgroundJob.error || "Неизвестная ошибка" : backgroundJob.current_action || `Раундов: ${backgroundJob.rounds_completed} · добавлено: ${backgroundJob.total_added}`}</span>
+              </div>
+              <button type="button" className="dictionary-job-notice-action" onClick={() => { setBackgroundJobDismissed(true); setSmartAdd(backgroundJob.batch_id ? { id: backgroundJob.batch_id, title: backgroundJob.batch_title } : null); }}>
+                <Sparkles size={14} /> Подробнее
+              </button>
+              <button type="button" className="dictionary-job-notice-close" aria-label="Скрыть уведомление" onClick={() => setBackgroundJobDismissed(true)}><X size={15} /></button>
+            </aside>
+          )}
           <DictionaryPanel
             entries={entries}
             batches={batches}

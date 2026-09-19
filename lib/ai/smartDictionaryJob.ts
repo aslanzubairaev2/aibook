@@ -1,7 +1,7 @@
 import { runSmartDictionaryPrompt } from "@/lib/ai/smartDictionary";
 import type { DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import { germanVerbContractText, validateGermanVerbEntries } from "@/lib/ai/verbEntryValidation";
-import { supabaseAdmin } from "@/lib/db/supabase-admin";
+import { getLazySupabaseAdmin } from "@/lib/db/supabase-admin-lazy";
 import {
   createCardsForEntries,
   dedupeDictionaryDrafts,
@@ -150,19 +150,22 @@ export function parseSmartEntries(payload: SmartModelPayload, targetLanguage: st
 }
 
 export async function readSmartDictionaryJob(jobId: string): Promise<SmartDictionaryJobRecord | null> {
-  if (!supabaseAdmin) return null;
-  const { data } = await supabaseAdmin.from("dictionary_generation_jobs").select("*").eq("id", jobId).maybeSingle();
+  const admin = getLazySupabaseAdmin();
+  if (!admin) return null;
+  const { data } = await admin.from("dictionary_generation_jobs").select("*").eq("id", jobId).maybeSingle();
   return (data as SmartDictionaryJobRecord | null) ?? null;
 }
 
 export async function updateSmartDictionaryJob(jobId: string, patch: Record<string, unknown>) {
-  if (!supabaseAdmin) return;
-  await supabaseAdmin.from("dictionary_generation_jobs").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", jobId);
+  const admin = getLazySupabaseAdmin();
+  if (!admin) return;
+  await admin.from("dictionary_generation_jobs").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", jobId);
 }
 
 async function readBatchWords(job: SmartDictionaryJobRecord): Promise<string[]> {
-  if (!supabaseAdmin || !job.batch_id) return [];
-  const { data } = await supabaseAdmin
+  const admin = getLazySupabaseAdmin();
+  if (!admin || !job.batch_id) return [];
+  const { data } = await admin
     .from("dictionary_entries")
     .select("headword, lemma")
     .eq("user_id", job.user_id)
@@ -176,8 +179,9 @@ async function readBatchWords(job: SmartDictionaryJobRecord): Promise<string[]> 
 }
 
 async function readBatchContext(job: SmartDictionaryJobRecord): Promise<{ title: string; words: string[] } | null> {
-  if (!supabaseAdmin || !job.batch_id) return { title: job.batch_title, words: [] };
-  const { data: batch } = await supabaseAdmin
+  const admin = getLazySupabaseAdmin();
+  if (!admin || !job.batch_id) return { title: job.batch_title, words: [] };
+  const { data: batch } = await admin
     .from("dictionary_batches")
     .select("id, title, language")
     .eq("id", job.batch_id)
@@ -188,7 +192,7 @@ async function readBatchContext(job: SmartDictionaryJobRecord): Promise<{ title:
 }
 
 async function saveBatchWordCount(batchId: string, userId: string, count: number) {
-  await supabaseAdmin?.from("dictionary_batches").update({ word_count: count }).eq("id", batchId).eq("user_id", userId);
+  await getLazySupabaseAdmin()?.from("dictionary_batches").update({ word_count: count }).eq("id", batchId).eq("user_id", userId);
 }
 
 async function failJob(jobId: string, round: number, error: string): Promise<SmartRoundResult> {
@@ -206,7 +210,8 @@ export async function runSmartDictionaryRound(
   "use step";
   const job = await readSmartDictionaryJob(jobId);
   if (!job) return { status: "failed", round: 0, error: "Задача добавления не найдена." };
-  if (!supabaseAdmin) return failJob(jobId, job.rounds_completed, "Supabase не настроен на сервере.");
+  const admin = getLazySupabaseAdmin();
+  if (!admin) return failJob(jobId, job.rounds_completed, "Supabase не настроен на сервере.");
 
   const round = job.rounds_completed + 1;
   if (round > MAX_AGENT_ROUNDS) return failJob(jobId, job.rounds_completed, "Сбор остановлен после безопасного лимита раундов. Запустите запрос ещё раз, чтобы продолжить пачку.");
@@ -306,7 +311,7 @@ Return the complete requested set again. Do not omit any item and do not return 
     batchTitle = job.mode === "single"
       ? `Слово · ${entries[0].headword} · ${stamp}`
       : clean(modelMeta.title, 180) || `ИИ · ${clean(modelMeta.topic, 100) || "новая тема"} · ${stamp}`;
-    const pack = await findOrCreatePack(supabaseAdmin, job.user_id, {
+    const pack = await findOrCreatePack(admin, job.user_id, {
       title: batchTitle,
       kind: "от ИИ",
       topic: clean(modelMeta.topic, 80),
@@ -323,12 +328,12 @@ Return the complete requested set again. Do not omit any item and do not return 
     current_action: `Сохраняю ${entries.length} новых слов в пачку…`,
     last_words: entries.map((entry) => entry.headword).slice(0, 60),
   });
-  const saved = await saveDictionaryEntries(supabaseAdmin, job.user_id, job.target_language, entries, `ИИ · ${job.request}`, batchId);
+  const saved = await saveDictionaryEntries(admin, job.user_id, job.target_language, entries, `ИИ · ${job.request}`, batchId);
   if (!saved.ok) return failJob(jobId, round, saved.error);
-  const cards = await createCardsForEntries(supabaseAdmin, job.user_id, entries, batchId, batchTitle);
+  const cards = await createCardsForEntries(admin, job.user_id, entries, batchId, batchTitle);
   if (!cards.ok) return failJob(jobId, round, cards.error);
 
-  const { count } = await supabaseAdmin.from("dictionary_entries")
+  const { count } = await admin.from("dictionary_entries")
     .select("id", { count: "exact", head: true })
     .eq("user_id", job.user_id)
     .eq("batch_id", batchId);
