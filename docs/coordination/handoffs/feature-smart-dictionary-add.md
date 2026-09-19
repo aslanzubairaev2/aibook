@@ -32,7 +32,10 @@
 
 ## Preview
 
-- URL: не создан; после merge выполнен production deploy по запросу владельца.
+- URL: https://aibook-liart.vercel.app
+- Deployment: https://aibook-qeg99lbsq-azamats-projects-799bf3a6.vercel.app
+- Inspect: https://vercel.com/azamats-projects-799bf3a6/aibook/EbEEuLCp5mQaCF3dT1KJgnWq17in
+- Статус: READY, production (`dpl_EbEEuLCp5mQaCF3dT1KJgnWq17in`)
 
 ## Риски и продолжение
 
