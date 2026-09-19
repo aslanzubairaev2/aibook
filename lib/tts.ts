@@ -18,6 +18,7 @@ import {
   SPEECH_STYLE_VERSION,
   OPENAI_TTS_MODEL,
 } from "./ttsProviders";
+import type { TtsCacheScope } from "./ttsCacheScope";
 
 /** Cached audio is headerless PCM, so its rate rides along as a response header. */
 const SAMPLE_RATE_HEADER = "X-Sample-Rate";
@@ -51,6 +52,8 @@ export type TTSState = {
   text: string;
   /** The language it was asked for in, so a re-record can ask the same way. */
   lang?: string;
+  /** Keeps special-purpose recordings distinct when buttons share the text. */
+  cacheScope?: TtsCacheScope;
   activeCharIndex?: number;
   repeat?: boolean;
   autoNext?: boolean;
@@ -316,7 +319,7 @@ function chosenModelFor(provider: string): string | undefined {
 }
 
 /** Cache key for one recording. Shared by `speak()` and the whole-text narration. */
-function ttsCacheKey(text: string, provider: string, lang: string): string {
+function ttsCacheKey(text: string, provider: string, lang: string, cacheScope: TtsCacheScope = "default"): string {
   // The model belongs in the key for the same reason the voice does: switching
   // it must not play back what the previous one recorded.
   const model = chosenModelFor(provider);
@@ -325,7 +328,8 @@ function ttsCacheKey(text: string, provider: string, lang: string): string {
   // The rest make the same sound they always did, and expiring their recordings
   // would spend quota to hear something identical.
   const style = isPromptDirectedTts(provider) ? `-${SPEECH_STYLE_VERSION}` : "";
-  return `tts-${engine}${style}-${voiceKeyFor(provider, lang)}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
+  const scope = cacheScope === "default" ? "" : `-${cacheScope}`;
+  return `tts-${engine}${style}${scope}-${voiceKeyFor(provider, lang)}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
 }
 
 /** One trip to `/api/tts`, returning null (and recording why) on any failure. */
@@ -334,6 +338,7 @@ async function requestTts(
   lang: string,
   provider: string,
   cacheKey: string,
+  cacheScope: TtsCacheScope = "default",
   /**
    * A prefetch, whose failures belong in the console rather than the interface.
    *
@@ -352,7 +357,7 @@ async function requestTts(
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
       body: JSON.stringify({
-        text, lang, provider,
+        text, lang, provider, cacheScope,
         voice: chosenVoiceFor(provider),
         model: chosenModelFor(provider),
         // Clearing only the browser's copy would re-download the same bad
@@ -438,7 +443,7 @@ export const SPEECH_PREFETCH_AHEAD = 2;
  * arrives while the prefetch is still on the wire joins that request rather
  * than starting a second one.
  */
-export async function prefetchSpeech(text: string, lang: string): Promise<void> {
+export async function prefetchSpeech(text: string, lang: string, cacheScope: TtsCacheScope = "default"): Promise<void> {
   if (!text.trim()) return;
 
   const profile = getLocalProfile();
@@ -446,7 +451,7 @@ export async function prefetchSpeech(text: string, lang: string): Promise<void> 
   // The browser voice speaks from the text itself — there is nothing to fetch.
   if (!isRemoteProvider(provider)) return;
 
-  const cacheKey = ttsCacheKey(text, provider, lang);
+  const cacheKey = ttsCacheKey(text, provider, lang, cacheScope);
   if (inFlight.has(cacheKey)) return;
 
   // Without somewhere to keep the answer, a prefetch is not a head start: the
@@ -460,7 +465,7 @@ export async function prefetchSpeech(text: string, lang: string): Promise<void> 
     return;
   }
 
-  const pending = requestTts(text, lang, provider, cacheKey, { silent: true });
+  const pending = requestTts(text, lang, provider, cacheKey, cacheScope, { silent: true });
   inFlight.set(cacheKey, pending);
   try {
     await pending;
@@ -475,9 +480,9 @@ export async function prefetchSpeech(text: string, lang: string): Promise<void> 
  * Callers pass what is coming in the order it is coming; how far ahead to go is
  * decided here, so every trainer prefetches to the same depth.
  */
-export function prefetchSpeechAhead(texts: string[], lang: string): void {
+export function prefetchSpeechAhead(texts: string[], lang: string, cacheScope: TtsCacheScope = "default"): void {
   for (const text of texts.slice(0, SPEECH_PREFETCH_AHEAD)) {
-    void prefetchSpeech(text, lang);
+    void prefetchSpeech(text, lang, cacheScope);
   }
 }
 
@@ -505,8 +510,9 @@ export async function speak(
   lang: string,
   onStart?: () => void,
   onEnd?: () => void,
+  cacheScope: TtsCacheScope = "default",
 ): Promise<PlaybackController | null> {
-  return play(text, lang, { onStart, onEnd });
+  return play(text, lang, { onStart, onEnd, cacheScope });
 }
 
 /**
@@ -527,20 +533,21 @@ export async function respeak(
   lang: string,
   onStart?: () => void,
   onEnd?: () => void,
+  cacheScope: TtsCacheScope = "default",
 ): Promise<PlaybackController | null> {
-  return play(text, lang, { onStart, onEnd, refresh: true });
+  return play(text, lang, { onStart, onEnd, refresh: true, cacheScope });
 }
 
 async function play(
   text: string,
   lang: string,
-  opts: { onStart?: () => void; onEnd?: () => void; refresh?: boolean },
+  opts: { onStart?: () => void; onEnd?: () => void; refresh?: boolean; cacheScope?: TtsCacheScope },
 ): Promise<PlaybackController | null> {
-  const { onStart, onEnd, refresh = false } = opts;
+  const { onStart, onEnd, refresh = false, cacheScope = "default" } = opts;
   const profile = getLocalProfile();
   const provider = resolveProvider(profile.ttsProvider ?? "local", lang);
 
-  updateState({ status: "loading", text, lang, currentTime: 0, duration: 0 });
+  updateState({ status: "loading", text, lang, cacheScope, currentTime: 0, duration: 0 });
 
   if (isRemoteProvider(provider)) {
     stopRemoteAudio(true); // silent stop
@@ -549,7 +556,7 @@ async function play(
     }
 
     let recording: Recording | null = null;
-    const cacheKey = ttsCacheKey(text, provider, lang);
+    const cacheKey = ttsCacheKey(text, provider, lang, cacheScope);
 
     if (refresh) {
       // Before asking for anything: the copy being replaced is the wrong one,
@@ -584,7 +591,7 @@ async function play(
     }
 
     if (!recording) {
-      const pending = inFlight.get(cacheKey) ?? requestTts(text, lang, provider, cacheKey, { refresh });
+      const pending = inFlight.get(cacheKey) ?? requestTts(text, lang, provider, cacheKey, cacheScope, { refresh });
       inFlight.set(cacheKey, pending);
       try {
         recording = await pending;

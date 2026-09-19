@@ -2623,6 +2623,25 @@ textarea,
 .noun-quiz-dot.current { box-shadow: inset 0 0 0 2px var(--accent); }
 .noun-quiz-dot-x { font-size: 11px; font-weight: 800; line-height: 1; }
 
+/* Article prompts can be visual, native-language or listening-only. The
+   latter keeps the prompt intentionally sparse, so the learner has to hold
+   the sound in memory instead of reading the answer shape. */
+.noun-quiz-native-prompt {
+  min-height: 48px; display: flex; align-items: center;
+  font-size: clamp(22px, 6vw, 32px); font-weight: 800;
+  color: var(--text-primary); line-height: 1.15;
+}
+.noun-quiz-audio-prompt {
+  min-height: 88px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px;
+  color: var(--text-muted); font-size: 12px; font-weight: 700;
+}
+.noun-quiz-audio-prompt .speak-btn {
+  width: 56px; height: 56px; border-radius: 50%;
+  border-color: var(--accent); color: var(--accent);
+  background: rgba(212, 168, 71, 0.12);
+}
+
 /* der / die / das — the whole decision space, as three tap targets. */
 .noun-quiz-choices { display: flex; flex-direction: column; gap: 8px; }
 .noun-quiz-choice {

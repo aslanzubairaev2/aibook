@@ -478,7 +478,8 @@ export async function updateEntryForms(
 }
 
 /**
- * Backfills the noun columns of one entry — gender, article, plural.
+ * Backfills the noun columns of one entry — gender, article, plural and, when
+ * empty, the native-language translation.
  *
  * Never blanks what is already there: a model that returned only the plural
  * must not wipe an article the learner already had right. Same rule the photo
@@ -488,12 +489,13 @@ export async function updateEntryNoun(
   admin: SupabaseClient,
   userId: string,
   entryId: string,
-  noun: { gender?: string; article?: string; plural?: string },
+  noun: { gender?: string; article?: string; plural?: string; translation?: string },
 ): Promise<string | null> {
   const patch: Record<string, string> = {};
   if (noun.gender?.trim()) patch.gender = noun.gender.trim();
   if (noun.article?.trim()) patch.article = noun.article.trim();
   if (noun.plural?.trim()) patch.plural = noun.plural.trim();
+  if (noun.translation?.trim()) patch.translation = noun.translation.trim();
   if (Object.keys(patch).length === 0) return null;
 
   const { error } = await admin

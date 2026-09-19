@@ -6,6 +6,9 @@
 
 export type NounQuizMode = "translation" | "article" | "plural" | "word";
 
+/** What the learner is given before choosing an article. */
+export type NounQuizPresentation = "target" | "native" | "audio";
+
 export const NOUN_QUIZ_MODE_ORDER: NounQuizMode[] = ["translation", "article", "plural", "word"];
 
 export const NOUN_QUIZ_MODE_LABEL: Record<NounQuizMode, string> = {
@@ -21,6 +24,22 @@ export const NOUN_QUIZ_MODE_HINT: Record<NounQuizMode, string> = {
   plural: "Написать форму множественного числа",
   word: "По переводу написать слово с артиклем",
 };
+
+export const NOUN_QUIZ_PRESENTATION_ORDER: NounQuizPresentation[] = ["target", "native", "audio"];
+
+export const NOUN_QUIZ_PRESENTATION_LABEL: Record<NounQuizPresentation, string> = {
+  target: "Изучаемый язык",
+  native: "Родной язык",
+  audio: "Аудио",
+};
+
+export const NOUN_QUIZ_PRESENTATION_HINT: Record<NounQuizPresentation, string> = {
+  target: "Показать существительное без артикля на изучаемом языке",
+  native: "Показать перевод и вспомнить артикль по смыслу",
+  audio: "Услышать существительное без артикля и вспомнить его род",
+};
+
+export const DEFAULT_NOUN_QUIZ_PRESENTATIONS: NounQuizPresentation[] = ["target"];
 
 /**
  * Default session: just the article. It is the drill the learner asked for,

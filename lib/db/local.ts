@@ -1,7 +1,14 @@
 import type { AiAnalysis, Book, CardSkillState, CardVariantState, DiscussMessage, Flashcard, GrammarTable, PackSort, ProductiveSkill, ReaderSelectionSnapshot, SkillProgress, TrainVariant, UserProfile } from "@/lib/types";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { CONJUGATION_TENSE_ORDER, DEFAULT_CONJUGATION_TENSES, DEFAULT_QUIZ_MODES, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
-import { DEFAULT_NOUN_QUIZ_MODES, NOUN_QUIZ_MODE_ORDER, type NounQuizMode } from "@/lib/nounsQuizModes";
+import {
+  DEFAULT_NOUN_QUIZ_MODES,
+  DEFAULT_NOUN_QUIZ_PRESENTATIONS,
+  NOUN_QUIZ_MODE_ORDER,
+  NOUN_QUIZ_PRESENTATION_ORDER,
+  type NounQuizMode,
+  type NounQuizPresentation,
+} from "@/lib/nounsQuizModes";
 import { emptyModuleProgress, type ModuleProgress, type PackModule, type TrainingFilter } from "@/lib/srs/packProgress";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 
@@ -27,6 +34,7 @@ const NOUNS_OPEN_GROUPS_KEY = "aibook_nouns_open_groups";
 const NOUNS_HIDE_FORMS_KEY = "aibook_nouns_hide_forms";
 const NOUNS_HIDE_ARTICLES_KEY = "aibook_nouns_hide_articles";
 const NOUNS_QUIZ_MODES_KEY = "aibook_nouns_quiz_modes";
+const NOUNS_QUIZ_PRESENTATIONS_KEY = "aibook_nouns_quiz_presentations";
 const PACK_PROGRESS_KEY = "aibook_pack_progress";
 const TRAINING_FILTER_KEY = "aibook_training_filter";
 const GENDER_RULE_STATS_KEY = "aibook_gender_rule_stats";
@@ -1039,6 +1047,29 @@ export function getLocalPackProgress(module: PackModule): ModuleProgress {
 export function saveLocalPackProgress(module: PackModule, progress: ModuleProgress): void {
   try {
     localStorage.setItem(getNsKey(`${PACK_PROGRESS_KEY}_${module}`), JSON.stringify(progress));
+  } catch {
+    // silently fail
+  }
+}
+
+export function getLocalNounsQuizPresentations(): NounQuizPresentation[] {
+  if (typeof window === "undefined") return [...DEFAULT_NOUN_QUIZ_PRESENTATIONS];
+  try {
+    const raw = localStorage.getItem(getNsKey(NOUNS_QUIZ_PRESENTATIONS_KEY));
+    if (!raw) return [...DEFAULT_NOUN_QUIZ_PRESENTATIONS];
+    const arr = JSON.parse(raw) as string[];
+    const valid = Array.isArray(arr)
+      ? NOUN_QUIZ_PRESENTATION_ORDER.filter((mode) => arr.includes(mode))
+      : [];
+    return valid.length ? valid : [...DEFAULT_NOUN_QUIZ_PRESENTATIONS];
+  } catch {
+    return [...DEFAULT_NOUN_QUIZ_PRESENTATIONS];
+  }
+}
+
+export function saveLocalNounsQuizPresentations(presentations: NounQuizPresentation[]): void {
+  try {
+    localStorage.setItem(getNsKey(NOUNS_QUIZ_PRESENTATIONS_KEY), JSON.stringify(presentations));
   } catch {
     // silently fail
   }

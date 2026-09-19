@@ -1,18 +1,19 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Volume2, Loader2, Pause, Play } from "lucide-react";
 import { speak, TTSState, getTTSState, subscribeTTS, pauseTTS, resumeTTS } from "@/lib/tts";
+import type { TtsCacheScope } from "@/lib/ttsCacheScope";
 
-type Props = { text: string; lang: string; size?: number };
+type Props = { text: string; lang: string; size?: number; cacheScope?: TtsCacheScope };
 
-export function SpeakButton({ text, lang, size = 15 }: Props) {
+export function SpeakButton({ text, lang, size = 15, cacheScope = "default" }: Props) {
   const [state, setState] = useState<TTSState>(getTTSState());
 
   useEffect(() => {
     return subscribeTTS((newState) => setState(newState));
   }, []);
 
-  const isMe = state.text === text;
+  const isMe = state.text === text && state.cacheScope === cacheScope;
   const status = isMe ? state.status : "idle";
 
   const handleClick = async (e: React.MouseEvent) => {
@@ -30,7 +31,7 @@ export function SpeakButton({ text, lang, size = 15 }: Props) {
       return;
     }
 
-    await speak(text, lang);
+    await speak(text, lang, undefined, undefined, cacheScope);
   };
 
   return (

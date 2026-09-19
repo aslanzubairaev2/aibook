@@ -56,8 +56,9 @@ export async function POST(req: Request) {
       ? ARTICLE_FOR[safeGender]
       : String(parsed.article ?? "").trim().slice(0, 20).toLowerCase();
     const plural = String(parsed.plural ?? "").trim().slice(0, 120);
+    const translation = String(parsed.translation ?? "").trim().slice(0, 400);
 
-    return NextResponse.json({ noun: { gender: safeGender, article, plural } });
+    return NextResponse.json({ noun: { gender: safeGender, article, plural, translation } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });
