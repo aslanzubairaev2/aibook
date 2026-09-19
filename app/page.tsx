@@ -1044,8 +1044,6 @@ function AppInner() {
       <QuickWordPreview nativeLanguage={profile.nativeLanguage} targetLanguage={profile.targetLanguage} />
       {section === "home" && (
         <HomeDashboard
-          profile={profile}
-          cards={cards}
           onOpenLiveChat={() => setIsLiveChatOpen(true)}
           onOpenLiveTranslate={() => setSection("live-translate")}
         />
