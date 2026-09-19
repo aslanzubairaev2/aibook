@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseDictionaryEntries } from "./buildDictionaryPrompt.ts";
-import { normalizeGermanVerbEntry, validateGermanVerbEntries } from "./verbEntryValidation.ts";
+import { authoritativeGermanVerbForms, normalizeGermanVerbEntry, validateGermanVerbEntries } from "./verbEntryValidation.ts";
 import type { DictionaryEntryDraft } from "./buildDictionaryPrompt.ts";
 
 function verb(overrides: Partial<DictionaryEntryDraft> = {}): DictionaryEntryDraft {
@@ -36,6 +36,33 @@ test("authoritative special forms make tun complete without trusting model omiss
   const result = validateGermanVerbEntries([verb({ headword: "tun", lemma: "tun" })], "de");
   assert.deepEqual(result.invalidVerbs, []);
   assert.equal(result.entries[0].forms?.partizip2, "getan");
+});
+
+test("all auxiliary and modal verbs shown without forms can be filled without an AI call", () => {
+  for (const lemma of ["haben", "werden", "können", "müssen", "wollen", "dürfen", "sollen", "mögen"]) {
+    const forms = authoritativeGermanVerbForms(lemma, "de");
+    assert.ok(forms, lemma);
+    assert.ok(forms.praeteritum && forms.partizip2 && forms.hilfsverb && forms.trennbar, lemma);
+  }
+});
+
+test("authoritative verb forms override wrong AI guesses", () => {
+  const result = normalizeGermanVerbEntry(verb({
+    headword: "tun", lemma: "tun", partOfSpeech: "модальный глагол",
+    forms: { praeteritum: "tunte", partizip2: "getunt", hilfsverb: "haben", trennbar: "нет" },
+  }));
+  assert.equal(result.partOfSpeech, "глагол");
+  assert.equal(result.forms?.praeteritum, "tat");
+  assert.equal(result.forms?.partizip2, "getan");
+});
+
+test("normalizes valid non-Russian separability flags for the practice screen", () => {
+  const result = validateGermanVerbEntries([verb({
+    headword: "aufstehen", lemma: "aufstehen",
+    forms: { praeteritum: "stand auf", partizip2: "aufgestanden", hilfsverb: "sein", trennbar: "ja" },
+  })], "de");
+  assert.deepEqual(result.invalidVerbs, []);
+  assert.equal(result.entries[0].forms?.trennbar, "да");
 });
 
 test("incomplete ordinary German verbs are rejected before persistence", () => {
