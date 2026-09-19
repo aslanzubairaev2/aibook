@@ -13,6 +13,7 @@ import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
 import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
+import { getAiHeaders } from "@/lib/ai/analyze";
 import { getLocalConjugationTenses, getLocalTrainingFilter, getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, saveLocalConjugationTenses, saveLocalTrainingFilter, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes } from "@/lib/db/local";
 import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_HINT, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { usePackProgress } from "@/lib/srs/usePackProgress";
@@ -297,7 +298,7 @@ export function VerbsView({ profile, onBack }: Props) {
     try {
       const res = await freshFetch("/api/ai/verb-forms", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+        headers: await getAiHeaders(),
         body: JSON.stringify({
           lemma: entry.lemma,
           headword: entry.headword,

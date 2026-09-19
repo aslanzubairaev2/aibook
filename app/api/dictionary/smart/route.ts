@@ -10,6 +10,7 @@ import {
   saveDictionaryEntries,
 } from "@/lib/db/dictionaryStore";
 import type { DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
+import { validateGermanVerbEntries } from "@/lib/ai/verbEntryValidation";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -72,7 +73,7 @@ ${clarificationBlock}
 
 ${isSingle
     ? "Return exactly one learning item matching the request. If it is ambiguous, return no entries and put one concise clarification question in clarification."
-    : "Return one reasonable vocabulary set in this single response. Do not split the request into rounds and do not continue after this response. For a finite canonical list such as seasons or colours, return only the members of that list, not thousands of related words. Do not invent extra items just to make the list larger."}
+    : "Return one reasonable vocabulary set of at most 40 items in this single response. Do not split the request into rounds and do not continue after this response. For a finite canonical list such as seasons or colours, return only the members of that list, not thousands of related words. Do not invent extra items just to make the list larger."}
 
 ${knownBlock}
 
@@ -83,7 +84,8 @@ For every item return:
 - partOfSpeech: in ${native} (существительное, глагол, прилагательное, наречие, выражение, etc.)
 - contentType: exactly word, phrase, sentence, or expression
 - noun gender/article/plural only for nouns; otherwise empty strings
-- forms for irregular verbs or irregular adjective comparison where relevant
+- for EVERY German verb, including regular and modal verbs, forms MUST contain praeteritum (3rd person singular), partizip2 (bare participle), hilfsverb (exactly haben or sein), and trennbar (exactly да or нет). Never save an incomplete verb. For non-verbs use empty strings in forms.
+- "möchten" is a form of "mögen", not a separate infinitive; "tun" is not a modal verb
 - cefr: A1, A2, B1, B2, C1, or C2
 - note: one short learner warning when useful
 - example and exampleTranslation: one natural short example
@@ -183,11 +185,18 @@ export async function POST(req: Request) {
     mode === "single" ? 5000 : 9000,
   );
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  if (result.repaired) return NextResponse.json({ error: "ИИ вернул обрезанный список. Попробуйте более короткую тему — неполная пачка не сохранена." }, { status: 502 });
 
   const modelMeta = payloadOf(result.value);
-  const entries = parseEntries(modelMeta).slice(0, mode === "single" ? 1 : 120);
+  const parsedEntries = parseEntries(modelMeta).slice(0, mode === "single" ? 1 : 40);
+  const checked = validateGermanVerbEntries(parsedEntries, target);
+  const entries = dedupeDictionaryDrafts(checked.entries);
   const clarification = smartDictionaryClarification(modelMeta.clarification, entries.length);
   if (clarification) return NextResponse.json({ clarification, rounds: 1 });
+
+  if (checked.invalidVerbs.length > 0) {
+    return NextResponse.json({ error: `ИИ не заполнил формы глаголов (${checked.invalidVerbs.slice(0, 3).join("; ")}). Пачка не сохранена; попробуйте уточнить запрос.` }, { status: 422 });
+  }
 
   if (entries.length === 0) {
     return NextResponse.json({ error: "ИИ не нашёл подходящих слов. Уточните запрос и попробуйте ещё раз." }, { status: 422 });
@@ -195,16 +204,16 @@ export async function POST(req: Request) {
 
   if (!batchId) {
     const date = new Date();
-    const stamp = `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    const stamp = `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
     batchTitle = mode === "single"
       ? `Слово · ${entries[0].headword} · ${stamp}`
-      : clean(modelMeta.title, 180) || `ИИ · ${clean(modelMeta.topic, 100) || "новая тема"} · ${stamp}`;
+      : `${clean(modelMeta.title, 160) || `ИИ · ${clean(modelMeta.topic, 100) || "новая тема"}`} · ${stamp}`;
     const pack = await findOrCreatePack(supabaseAdmin, user.id, {
       title: batchTitle,
       kind: "от ИИ",
       topic: clean(modelMeta.topic, 80),
       language: target,
-      description: clean(modelMeta.description, 1000) || `${entries.length} слов по запросу «${request}»`,
+      description: `${entries.length} слов по запросу «${request}»`.slice(0, 1000),
       instruction: request,
     });
     if (!pack.ok) return NextResponse.json({ error: pack.error }, { status: 500 });
@@ -214,7 +223,9 @@ export async function POST(req: Request) {
   const saved = await saveDictionaryEntries(supabaseAdmin, user.id, target, entries, `ИИ · ${request}`, batchId);
   if (!saved.ok) return NextResponse.json({ error: saved.error }, { status: 500 });
   const cards = await createCardsForEntries(supabaseAdmin, user.id, entries, batchId, batchTitle);
-  if (!cards.ok) return NextResponse.json({ error: cards.error }, { status: 500 });
+  // The dictionary is already committed. A flashcard failure must not make the
+  // learner think the pack vanished and retry the paid generation request.
+  if (!cards.ok) console.error("smart dictionary flashcards:", cards.error);
 
   const { count } = await supabaseAdmin.from("dictionary_entries")
     .select("id", { count: "exact", head: true })
@@ -227,7 +238,8 @@ export async function POST(req: Request) {
     batchTitle,
     added: saved.added,
     updated: saved.updated,
-    cardsCreated: cards.created,
+    cardsCreated: cards.ok ? cards.created : 0,
+    warning: cards.ok ? undefined : "Пачка и слова сохранены, но карточки не созданы. Повторный запрос к ИИ не нужен.",
     total: entries.length,
     rounds: 1,
     complete: true,

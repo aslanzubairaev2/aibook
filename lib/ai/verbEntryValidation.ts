@@ -4,6 +4,8 @@ const VERB_POS = /глагол|verb|verbo|verbe|verbo/iu;
 const VERB_FORM_KEYS = ["praeteritum", "partizip2", "hilfsverb", "trennbar"] as const;
 const AUXILIARIES = new Set(["haben", "sein"]);
 const SEPARABLE_VALUES = new Set(["да", "нет", "ja", "nein", "yes", "no", "true", "false"]);
+const SEPARABLE_YES = new Set(["да", "ja", "yes", "true"]);
+const SEPARABLE_NO = new Set(["нет", "nein", "no", "false"]);
 
 type GermanVerbForms = Record<string, string>;
 
@@ -30,6 +32,13 @@ const AUTHORITATIVE_GERMAN_FORMS: Record<string, GermanVerbForms> = {
   wissen: { praeteritum: "wusste", partizip2: "gewusst", hilfsverb: "haben", trennbar: "нет" },
   tun: { praeteritum: "tat", partizip2: "getan", hilfsverb: "haben", trennbar: "нет" },
 };
+
+export function authoritativeGermanVerbForms(lemma: string, targetLanguage: string): GermanVerbForms | null {
+  if (!isGerman(targetLanguage)) return null;
+  const canonical = CANONICAL_LEMMAS[normalizedKey(lemma)] ?? lemma;
+  const forms = AUTHORITATIVE_GERMAN_FORMS[normalizedKey(canonical)];
+  return forms ? { ...forms } : null;
+}
 
 function isGerman(language: string): boolean {
   return /^(de|german|deutsch|немецкий)$/iu.test(language.trim());
@@ -61,9 +70,14 @@ export function normalizeGermanVerbEntry(entry: DictionaryEntryDraft): Dictionar
   const authoritative = AUTHORITATIVE_GERMAN_FORMS[normalizedKey(canonicalLemma)];
   const forms: GermanVerbForms = { ...(entry.forms ?? {}) };
 
+  const separable = forms.trennbar?.trim().toLocaleLowerCase("de-DE") ?? "";
+  if (SEPARABLE_YES.has(separable)) forms.trennbar = "да";
+  else if (SEPARABLE_NO.has(separable)) forms.trennbar = "нет";
+  if (forms.hilfsverb) forms.hilfsverb = forms.hilfsverb.trim().toLocaleLowerCase("de-DE");
+
   if (authoritative) {
     for (const key of VERB_FORM_KEYS) {
-      if (!forms[key]?.trim()) forms[key] = authoritative[key];
+      forms[key] = authoritative[key];
     }
   }
 
@@ -74,7 +88,7 @@ export function normalizeGermanVerbEntry(entry: DictionaryEntryDraft): Dictionar
     ...entry,
     lemma: canonicalLemma,
     headword: shouldReplaceHeadword ? canonicalLemma : entry.headword,
-    partOfSpeech: entry.partOfSpeech.trim() ? entry.partOfSpeech : "глагол",
+    partOfSpeech: normalizedKey(canonicalLemma) === "tun" ? "глагол" : (entry.partOfSpeech.trim() ? entry.partOfSpeech : "глагол"),
     forms,
   };
 }
