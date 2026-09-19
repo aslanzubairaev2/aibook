@@ -83,11 +83,18 @@ export async function POST(req: Request) {
     topic,
     pageLabel,
     isVocabularyList,
-  } = parseDictionaryEntries(result.data);
+    invalidVerbs,
+  } = parseDictionaryEntries(result.data, targetLanguage);
   const entries = dedupeDictionaryDrafts(parsedEntries);
   if (entries.length === 0) {
     return NextResponse.json(
       { error: "На снимке не нашлось слов. Попробуйте кадр покрупнее или при лучшем свете." },
+      { status: 422 },
+    );
+  }
+  if (invalidVerbs.length > 0) {
+    return NextResponse.json(
+      { error: `ИИ вернул неполные формы глагола: ${invalidVerbs.slice(0, 3).join("; ")}. Пачка не сохранена — повторите импорт.` },
       { status: 422 },
     );
   }

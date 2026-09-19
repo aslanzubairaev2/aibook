@@ -28,6 +28,7 @@ test("mixed verbs are their own memorisation group", () => {
 
 test("special and impersonal verbs are not presented as ordinary strong verbs", () => {
   assert.equal(classifyGermanVerb("sein", "sein", { praeteritum: "war", partizip2: "gewesen" }), "special");
+  assert.equal(classifyGermanVerb("möchten", "möchten", { praeteritum: "mochte", partizip2: "gemocht" }), "special");
   assert.equal(classifyGermanVerb("regnen", "regnen", { praeteritum: "regnete", partizip2: "geregnet" }), "impersonal");
 });
 
