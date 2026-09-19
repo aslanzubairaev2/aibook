@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
-import { runSmartDictionaryPrompt } from "@/lib/ai/smartDictionary";
+import { runSmartDictionaryPrompt, smartDictionaryClarification } from "@/lib/ai/smartDictionary";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import {
@@ -89,7 +89,7 @@ For every item return:
 - example and exampleTranslation: one natural short example
 
 Use reliable linguistic knowledge. Do not invent a word merely to reach a count. If the request names a song, author, or other work without enough detail to identify it, ask which exact work in clarification before generating.
-Return only JSON with title, topic, description, clarification, done, and entries. ${isSingle ? "Set done=true." : ""}`;
+Return only JSON with title, topic, description, clarification, done, and entries. When no clarification is needed, set clarification to an empty string, never "None" or "null". When clarification is needed, return an actual question and no entries. ${isSingle ? "Set done=true." : ""}`;
 }
 
 function payloadOf(value: unknown): SmartModelPayload {
@@ -185,10 +185,10 @@ export async function POST(req: Request) {
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
 
   const modelMeta = payloadOf(result.value);
-  const clarification = clean(modelMeta.clarification, 500);
+  const entries = parseEntries(modelMeta).slice(0, mode === "single" ? 1 : 120);
+  const clarification = smartDictionaryClarification(modelMeta.clarification, entries.length);
   if (clarification) return NextResponse.json({ clarification, rounds: 1 });
 
-  const entries = parseEntries(modelMeta).slice(0, mode === "single" ? 1 : 120);
   if (entries.length === 0) {
     return NextResponse.json({ error: "ИИ не нашёл подходящих слов. Уточните запрос и попробуйте ещё раз." }, { status: 422 });
   }

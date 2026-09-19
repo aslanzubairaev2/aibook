@@ -50,6 +50,13 @@ export type SmartDictionaryModelResult =
   | { ok: true; value: unknown; repaired: boolean }
   | { ok: false; error: string; status: number };
 
+export function smartDictionaryClarification(value: unknown, validEntryCount: number): string {
+  if (validEntryCount > 0 || typeof value !== "string") return "";
+  const clarification = value.trim().slice(0, 500);
+  if (/^(?:none|null|n\/?a|нет|не требуется)[.!]?$/iu.test(clarification)) return "";
+  return clarification;
+}
+
 function describeError(error: unknown): { error: string; status: number } {
   const raw = error instanceof Error ? error.message : String(error);
   const lower = raw.toLowerCase();
