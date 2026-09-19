@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Layers, Search, SlidersHorizontal, Trash2, X,
+  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Layers, Plus, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { getCardVariantProgressMap, getLocalPackSort, saveLocalPackSort } from "@/lib/db/local";
@@ -74,6 +74,7 @@ type Props = {
   /** Native language, so the search mic can also listen for translations. */
   nativeLanguage: string;
   onPhotograph: () => void;
+  onAddWordsToBatch?: (batch: { id: string; title: string }) => void;
   onOpenEntry: (entry: DictionaryEntry) => void;
   onDeleteEntry: (id: string) => void;
   onDeleteBatch: (batchId: string) => void;
@@ -117,7 +118,7 @@ type Props = {
  */
 export function DictionaryPanel({
   entries, batches, cards, isLoading, error, language, nativeLanguage,
-  onPhotograph, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch, onCreateFromPack,
+  onPhotograph, onAddWordsToBatch, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch, onCreateFromPack,
   onRegisterPack, onDeleteCards,
 }: Props) {
   const [query, setQuery] = useState("");
@@ -610,6 +611,17 @@ export function DictionaryPanel({
 
               {isPack && (
                 <div className="dict-batch-actions">
+                  {group.batch && onAddWordsToBatch && (
+                    <button
+                      type="button"
+                      className="icon-btn dict-batch-add"
+                      aria-label={`Добавить слова в пачку «${title}»`}
+                      title="Добавить слова в эту пачку"
+                      onClick={() => onAddWordsToBatch({ id: group.batch!.id, title })}
+                    >
+                      <Plus size={15} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="dict-train-btn"
