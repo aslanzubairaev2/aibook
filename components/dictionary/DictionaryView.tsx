@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookA, Camera } from "lucide-react";
+import { BookA, Camera, Plus } from "lucide-react";
 import { DictionaryPanel, entryToAnalysis, entryToCardText } from "@/components/dictionary/DictionaryPanel";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { WordModal } from "@/components/word-modal/WordModal";
@@ -15,6 +15,7 @@ import { sbAuthHeaders, sbInsertFlashcard } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { useAuth } from "@/lib/auth/useAuth";
 import type { AiAnalysis, Flashcard, UserProfile } from "@/lib/types";
+import { SmartAddWordsModal, type SmartAddResult } from "@/components/dictionary/SmartAddWordsModal";
 
 type Props = {
   cards: Flashcard[];
@@ -56,6 +57,7 @@ export function DictionaryView({
   // The dictionary reuses the app-wide word modal rather than inventing its own.
   const [word, setWord] = useState<{ entry: DictionaryEntry; analysis: AiAnalysis } | null>(null);
   const [photoOpen, setPhotoOpen] = useState(false);
+  const [smartAdd, setSmartAdd] = useState<{ id: string; title: string } | null | false>(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = useCallback((message: string) => {
@@ -253,6 +255,7 @@ export function DictionaryView({
             language={profile.targetLanguage}
             nativeLanguage={profile.nativeLanguage}
             onPhotograph={() => setPhotoOpen(true)}
+            onAddWordsToBatch={(batch) => setSmartAdd(batch)}
             onOpenEntry={(entry) => void openWord(entry)}
             onDeleteEntry={(id) => void deleteEntry(id)}
             onDeleteBatch={(id) => void deleteBatch(id)}
@@ -269,6 +272,15 @@ export function DictionaryView({
             title="Сфотографировать слова"
           >
             <Camera size={22} />
+          </button>
+          <button
+            type="button"
+            className="add-lesson-fab add-words-fab"
+            onClick={() => setSmartAdd(null)}
+            aria-label="Добавить слова с помощью ИИ"
+            title="Добавить слова с помощью ИИ"
+          >
+            <Plus size={22} />
           </button>
         </>
       )}
@@ -318,6 +330,22 @@ export function DictionaryView({
                   ? `Добавлено слов: ${added}, обновлено: ${updated}`
                   : `Добавлено слов: ${added}`,
             );
+          }}
+        />
+      )}
+
+      {smartAdd !== false && (
+        <SmartAddWordsModal
+          isOpen
+          targetLanguage={profile.targetLanguage}
+          nativeLanguage={profile.nativeLanguage}
+          batch={smartAdd}
+          onClose={() => setSmartAdd(false)}
+          onCompleted={(result: SmartAddResult) => {
+            setSmartAdd(false);
+            void loadDictionary();
+            onReloadCards?.();
+            showToast(result.warning || `Добавлено слов: ${result.added}`);
           }}
         />
       )}

@@ -2012,6 +2012,16 @@ textarea,
 .dictionary-view .add-lesson-fab:hover { background: var(--accent-bright); }
 .dictionary-view .add-lesson-fab:active { transform: scale(0.92); }
 .dictionary-view .add-lesson-fab:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }
+.dictionary-view .add-words-fab {
+  bottom: 140px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(212,168,71,0.7);
+  background: var(--bg-secondary);
+  color: var(--accent);
+  box-shadow: 0 5px 16px rgba(0,0,0,0.35);
+}
+.dictionary-view .add-words-fab:hover { background: rgba(212,168,71,0.16); }
 
 /* Toolbar: filters toggle left, count centre, magnifier right. The search
    input floats over the row so opening it never shifts the layout. */
@@ -2182,6 +2192,7 @@ textarea,
   width: 36px; height: 36px; border-radius: 50%;
 }
 .dict-batch-actions .icon-btn.active { color: var(--accent); border-color: var(--accent); }
+.dict-batch-actions .dict-batch-add { color: var(--accent); border-color: rgba(212,168,71,0.55); background: rgba(212,168,71,0.08); }
 
 /* The brief the pack was collected to. Kept behind a tap: it is the pack's
    specification, needed when extending or judging it, not while scanning the

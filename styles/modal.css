@@ -11,6 +11,60 @@
   animation: backdrop-in 0.2s ease forwards;
 }
 
+/* Smart dictionary addition. Kept as a reusable modal rather than coupled to
+   the dictionary screen: the same component can be opened from a pack, the
+   reader, or a future assistant surface. */
+.smart-add-backdrop { align-items: center; padding: 16px; z-index: 86; }
+.smart-add-modal {
+  width: min(100%, 520px);
+  max-height: min(92svh, 720px);
+  overflow-y: auto;
+  padding: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 24px;
+  background: linear-gradient(145deg, var(--bg-secondary), #211e17);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.52);
+  animation: smart-add-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes smart-add-in {
+  from { transform: translateY(18px) scale(0.98); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+.smart-add-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.smart-add-head h2 { margin: 3px 0 6px; font-size: 23px; line-height: 1.12; }
+.smart-add-head p { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.45; }
+.smart-add-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 22px 0 18px; padding: 4px; border: 1px solid var(--border); border-radius: 14px; background: rgba(0,0,0,0.16); }
+.smart-add-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; border: 0; border-radius: 10px; background: transparent; color: var(--text-muted); font-size: 13px; font-weight: 800; cursor: pointer; }
+.smart-add-tabs button.active { background: rgba(212,168,71,0.18); color: var(--accent); box-shadow: inset 0 0 0 1px rgba(212,168,71,0.35); }
+.smart-add-label { display: block; margin-bottom: 8px; color: var(--text-primary); font-size: 13px; font-weight: 800; }
+.smart-add-input-wrap { position: relative; }
+.smart-add-input-wrap textarea { display: block; width: 100%; min-height: 76px; resize: vertical; padding: 13px 52px 13px 14px; border: 1px solid var(--border-strong); border-radius: 14px; outline: 0; background: rgba(0,0,0,0.18); color: var(--text-primary); font: inherit; line-height: 1.45; }
+.smart-add-input-wrap textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(212,168,71,0.12); }
+.smart-add-input-wrap textarea::placeholder { color: var(--text-muted); opacity: 0.8; }
+.smart-add-mic { position: absolute; right: 10px; top: 10px; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--bg-elevated); color: var(--accent); cursor: pointer; }
+.smart-add-mic:hover { border-color: var(--accent); background: rgba(212,168,71,0.16); }
+.smart-add-mic.recording { color: #ef857e; border-color: #ef857e; animation: smart-mic-pulse 1.2s ease-in-out infinite; }
+@keyframes smart-mic-pulse { 50% { box-shadow: 0 0 0 6px rgba(239,133,126,0.12); } }
+.smart-add-language-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 10px; color: var(--text-muted); font-size: 11px; }
+.smart-add-language-row span { margin-right: 3px; }
+.smart-add-language-row button, .smart-add-suggestions button { padding: 5px 9px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; }
+.smart-add-language-row button.active { border-color: rgba(212,168,71,0.65); background: rgba(212,168,71,0.12); color: var(--accent); }
+.smart-add-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.smart-add-suggestions button:hover { border-color: var(--accent); color: var(--accent); }
+.smart-add-error { margin: 14px 0 0; color: #ef857e; font-size: 13px; line-height: 1.4; }
+.smart-add-clarification { margin-top: 14px; padding: 11px 12px; border-left: 2px solid var(--accent); border-radius: 9px; background: rgba(212,168,71,0.1); color: var(--text-primary); font-size: 13px; line-height: 1.45; }
+.smart-add-clarification p { margin: 4px 0 0; color: var(--surface-dim); }
+.smart-add-status { display: flex; align-items: center; gap: 7px; margin: 14px 0 0; color: var(--accent); font-size: 13px; font-weight: 700; }
+.smart-add-submit { width: 100%; justify-content: center; margin-top: 18px; }
+.smart-add-footnote { display: block; margin-top: 9px; color: var(--text-muted); font-size: 11px; line-height: 1.4; text-align: center; }
+.spin { animation: smart-spin 0.9s linear infinite; }
+@keyframes smart-spin { to { transform: rotate(360deg); } }
+@media (max-width: 460px) {
+  .smart-add-backdrop { align-items: flex-end; padding: 0; }
+  .smart-add-modal { max-height: 92svh; border-radius: 22px 22px 0 0; padding: 20px 16px 28px; }
+  .dictionary-view .add-words-fab { bottom: 136px; }
+}
+
 @keyframes backdrop-in {
   from { opacity: 0; }
   to   { opacity: 1; }
