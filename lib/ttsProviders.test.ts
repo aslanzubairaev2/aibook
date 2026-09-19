@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildGeminiSpeechPrompt,
   getElevenLabsLanguageCode,
+  getGeminiTtsLanguageCode,
   getLanguageName,
   isPromptDirectedTts,
   teacherInstructions,
@@ -228,6 +229,13 @@ test("a language name is only claimed for languages we have one for", () => {
   assert.equal(getLanguageName("de"), "German");
   assert.equal(getLanguageName("de-AT"), "German");
   assert.equal(getLanguageName("xx"), null);
+});
+
+test("Gemini receives a supported structured locale for short German words", () => {
+  assert.equal(getGeminiTtsLanguageCode("de"), "de-DE");
+  assert.equal(getGeminiTtsLanguageCode("de-AT"), "de-DE");
+  assert.equal(getGeminiTtsLanguageCode("zh"), "cmn-CN");
+  assert.equal(getGeminiTtsLanguageCode("sv"), null);
 });
 
 test("ElevenLabs is told the language only by the models that accept one", () => {

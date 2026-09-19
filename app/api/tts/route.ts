@@ -12,10 +12,12 @@ import {
   ELEVENLABS_PCM_FORMAT,
   ELEVENLABS_PCM_SAMPLE_RATE,
   GEMINI_MALE_VOICES,
+  GEMINI_SPEECH_STYLE_VERSION,
   GEMINI_TTS_FALLBACK_MODELS,
   GEMINI_TTS_MODEL,
   getBcp47Locale,
   getElevenLabsVoiceIdByName,
+  getGeminiTtsLanguageCode,
   isCartesiaTtsSupported,
   isCartesiaVoiceId,
   isElevenLabsTtsSupported,
@@ -43,7 +45,7 @@ import type { TtsProvider } from "@/lib/types";
 import { diagnoseQuotaError, quotaMessageRu } from "@/lib/ttsQuota";
 import { parseWav } from "@/lib/wav";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
-import { normalizeTtsCacheScope, type TtsCacheScope } from "@/lib/ttsCacheScope";
+import { NOUN_ARTICLE_TTS_CACHE_SCOPE, normalizeTtsCacheScope, type TtsCacheScope } from "@/lib/ttsCacheScope";
 
 const MAX_TTS_TEXT_LENGTH = 2000;
 
@@ -214,14 +216,11 @@ export async function POST(req: Request) {
     // language it guessed, acted out or not — which is the thing being fixed,
     // so serving those again would be serving the bug.
     const geminiCacheKey = geminiModel === GEMINI_TTS_MODEL
-      ? `${voiceName}:${SPEECH_STYLE_VERSION}`
-      : `${geminiModel}:${voiceName}:${SPEECH_STYLE_VERSION}`;
-    const legacyGeminiCacheKey = geminiModel === GEMINI_TTS_MODEL
-      ? voiceName
-      : `${geminiModel}:${voiceName}`;
+      ? `${voiceName}:${GEMINI_SPEECH_STYLE_VERSION}`
+      : `${geminiModel}:${voiceName}:${GEMINI_SPEECH_STYLE_VERSION}`;
 
     // 1. Check database cache
-    const cachedAudio = fresh ? null : await sbGetCachedTts(text, lang, geminiCacheKey, [legacyGeminiCacheKey], cacheScope);
+    const cachedAudio = fresh ? null : await sbGetCachedTts(text, lang, geminiCacheKey, [], cacheScope);
     if (cachedAudio) {
       return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider: "gemini", model: geminiModel });
     }
@@ -362,6 +361,11 @@ async function speakWithAutomaticFallback(
     }
   }
 
+  // Article questions must not silently change to a completely different
+  // speaker. Gemini's alternate models above retain the selected voice name;
+  // the other providers below cannot reproduce that voice.
+  if (cacheScope === NOUN_ARTICLE_TTS_CACHE_SCOPE) return null;
+
   for (const provider of getTtsProviderChain("gemini", lang).slice(1)) {
     try {
       if (provider === "speechify") {
@@ -470,6 +474,7 @@ function geminiTtsRequest(
   inputText: string,
   lang: string,
 ) {
+  const languageCode = getGeminiTtsLanguageCode(lang);
   return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -483,7 +488,10 @@ function geminiTtsRequest(
       ],
       generationConfig: {
         responseModalities: ["AUDIO"],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+        speechConfig: {
+          ...(languageCode ? { languageCode } : {}),
+          voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+        },
       },
     }),
   });
@@ -507,11 +515,10 @@ async function speakWithGeminiModel(
 ): Promise<Spoken> {
   // Matches the main path's key exactly, so the two share their recordings.
   const cacheKey = model === GEMINI_TTS_MODEL
-    ? `${voiceName}:${SPEECH_STYLE_VERSION}`
-    : `${model}:${voiceName}:${SPEECH_STYLE_VERSION}`;
-  const legacyCacheKey = model === GEMINI_TTS_MODEL ? voiceName : `${model}:${voiceName}`;
+    ? `${voiceName}:${GEMINI_SPEECH_STYLE_VERSION}`
+    : `${model}:${voiceName}:${GEMINI_SPEECH_STYLE_VERSION}`;
 
-  const cached = fresh ? null : await sbGetCachedTts(text, lang, cacheKey, [legacyCacheKey], cacheScope);
+  const cached = fresh ? null : await sbGetCachedTts(text, lang, cacheKey, [], cacheScope);
   if (cached) return { audioBase64: cached, source: "db_cache" };
 
   const response = await geminiTtsRequest(apiKey, model, voiceName, text, lang);
@@ -909,9 +916,8 @@ async function speakWithOpenAi(
   // this key was recorded with, and the version marks which wording of it.
   const language = normalizeLanguageCode(lang);
   const cacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}:teacher:${SPEECH_STYLE_VERSION}`;
-  const legacyCacheVoiceKey = `${OPENAI_TTS_MODEL}:${voiceId}:teacher`;
 
-  const cached = fresh ? null : await sbGetCachedTts(text, language, cacheVoiceKey, [legacyCacheVoiceKey], cacheScope);
+  const cached = fresh ? null : await sbGetCachedTts(text, language, cacheVoiceKey, [], cacheScope);
   if (cached) return { audioBase64: cached, source: "db_cache", format: "mp3" };
 
   const response = await fetch("https://api.openai.com/v1/audio/speech", {
