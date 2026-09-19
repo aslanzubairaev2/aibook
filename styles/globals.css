@@ -2641,6 +2641,15 @@ textarea,
   border-color: var(--accent); color: var(--accent);
   background: rgba(212, 168, 71, 0.12);
 }
+.noun-quiz-audio-word-row { display: flex; align-items: center; gap: 6px; min-height: 28px; }
+.noun-quiz-audio-word {
+  display: inline-block; max-width: min(70vw, 280px); padding: 2px 4px;
+  color: var(--text-primary); font-size: 18px; font-weight: 800; line-height: 1.2;
+  filter: blur(7px); opacity: 0.58; user-select: none; cursor: help;
+  transition: filter 0.15s, opacity 0.15s;
+}
+.noun-quiz-audio-word:hover, .noun-quiz-audio-word.visible { filter: none; opacity: 1; user-select: text; }
+.noun-quiz-audio-word-toggle { flex: 0 0 auto; }
 .noun-quiz-audio-error { margin: 0 0 12px; color: var(--red); font-size: 13px; }
 .noun-quiz-regenerate {
   align-self: center; display: inline-flex; align-items: center; justify-content: center; gap: 6px;

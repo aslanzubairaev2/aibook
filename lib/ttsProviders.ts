@@ -454,7 +454,7 @@ export function teacherInstructions(lang: string) {
     // guess, and short words spelled alike across languages — German "so",
     // "was", "die", "hat" — get guessed into English.
     language
-      ? `The text is ${language}. Read it as ${language}, with ${language} pronunciation, whatever other language it may resemble.`
+      ? `The text is ${language}. This is a standalone vocabulary item. Read it strictly as ${language}, with ${language} pronunciation, never with English or another language's pronunciation, whatever other language the spelling may resemble.`
       : "Pronounce every word completely and distinctly, in the language of the text.",
     "Read the text exactly as written. Never translate, explain, spell out or add to it.",
     // The engines are answering a dictionary lookup, not performing a scene.
@@ -484,9 +484,9 @@ export function teacherInstructions(lang: string) {
 export function buildGeminiSpeechPrompt(text: string, lang: string) {
   const language = getLanguageName(lang);
   return [
-    "Say the following",
-    language ? ` in ${language}` : "",
-    ", exactly as written, with a calm and neutral teacher's voice,",
+    language ? `Say the following standalone vocabulary item in ${language}` : "Say the following vocabulary item",
+    ", exactly as written, using only its target-language pronunciation,",
+    " with a calm and neutral teacher's voice,",
     " without acting it out or adding any sound effects: ",
     text,
   ].join("");

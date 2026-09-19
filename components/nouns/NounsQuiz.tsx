@@ -177,12 +177,17 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
   // The translation is a hint, not the question in this card. Keep the
   // learner's choice for the whole session so one tap on the eye is enough.
   const [translationVisible, setTranslationVisible] = useState(true);
+  // Audio is the self-test: the word stays covered until the learner needs a
+  // visual confirmation. Hovering the cover or pressing the eye is an
+  // intentional peek, not something shown beside the recording by default.
+  const [audioWordVisible, setAudioWordVisible] = useState(false);
   const [audioError, setAudioError] = useState<{ key: string; message: string } | null>(null);
   const [regeneratingAudioKey, setRegeneratingAudioKey] = useState<string | null>(null);
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const dictateRefs = useRef<Array<DictateButtonHandle | null>>([]);
   const primaryButtonRef = useRef<HTMLButtonElement>(null);
   const firstArticleChoiceRef = useRef<HTMLButtonElement>(null);
+  const chooseArticleRef = useRef<(option: string) => void>(() => undefined);
   const regenerationAttemptRef = useRef<{ key: string; cancelled: boolean } | null>(null);
 
   const step = queue[index];
@@ -305,6 +310,26 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
     if (!step || revealed) return;
     finishStep(option === step.answer, { choice: option, inputs: {}, results: {} });
   }
+  useEffect(() => {
+    chooseArticleRef.current = chooseArticle;
+  });
+
+  // The article page owns the number keys even when focus is on the page body,
+  // a toolbar control, or a browser surface that is not one of the choices.
+  // Inputs/contenteditable remain excluded so this global listener never steals
+  // digits from a field if the layout gains one later.
+  useEffect(() => {
+    if (!isArticleStep || revealed) return;
+    const handleArticleHotkey = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return;
+      const option = nounArticleHotkey(event);
+      if (!option) return;
+      event.preventDefault();
+      chooseArticleRef.current(option);
+    };
+    window.addEventListener("keydown", handleArticleHotkey);
+    return () => window.removeEventListener("keydown", handleArticleHotkey);
+  }, [isArticleStep, revealed, step?.key]);
 
   async function regenerateArticleAudio() {
     if (!step || step.mode !== "article" || regeneratingAudio) return;
@@ -338,6 +363,7 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
     setDraft({});
     setHintOpen(false);
     setPeeked(new Set());
+    setAudioWordVisible(false);
     setIndex(next);
   }
 
@@ -422,16 +448,7 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
     && (!isArticleStep || presentation === "target");
 
   return (
-    <section
-      className="screen verbs-view verb-quiz noun-quiz"
-      onKeyDown={(event) => {
-        if (!isArticleStep || revealed || isTypingTarget(event.target)) return;
-        const option = nounArticleHotkey(event.nativeEvent);
-        if (!option) return;
-        event.preventDefault();
-        chooseArticle(option);
-      }}
-    >
+    <section className="screen verbs-view verb-quiz noun-quiz">
       <header className="screen-header">
         <button className="icon-btn" onClick={onExit} type="button" aria-label="Назад">
           <ArrowLeft size={20} />
@@ -476,6 +493,20 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
                   cacheScope={NOUN_ARTICLE_TTS_CACHE_SCOPE}
                   onPlaybackResult={(error) => setAudioError(error ? { key: step.key, message: error } : null)}
                 />
+                <div className="noun-quiz-audio-word-row">
+                  <span className={`noun-quiz-audio-word${audioWordVisible ? " visible" : ""}`}>
+                    {bareNoun(entry)}
+                  </span>
+                  <button
+                    type="button"
+                    className="quiz-translation-toggle noun-quiz-audio-word-toggle"
+                    onClick={() => setAudioWordVisible((visible) => !visible)}
+                    aria-label={audioWordVisible ? "Скрыть слово" : "Показать слово"}
+                    title={audioWordVisible ? "Скрыть слово" : "Показать слово"}
+                  >
+                    {audioWordVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
                 <span>Нажмите, чтобы услышать</span>
               </div>
             ) : presentation === "native" ? (
