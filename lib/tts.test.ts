@@ -349,6 +349,7 @@ test("only the agreed depth is fetched ahead", async () => {
   await settle();
 
   assert.equal(asked.length, SPEECH_PREFETCH_AHEAD);
+  // Cache lookups run in parallel, so network start order is not guaranteed.
   assert.deepEqual(
     [...asked].sort(),
     ["eins", "zwei"].slice(0, SPEECH_PREFETCH_AHEAD).sort(),
@@ -366,7 +367,7 @@ test("the noun drill can prefetch four recordings without changing other trainer
   prefetchSpeechAhead(["eins", "zwei", "drei", "vier", "fünf"], "de", "noun-article", 4);
   await settle();
 
-  assert.deepEqual(asked, ["eins", "zwei", "drei", "vier"]);
+  assert.deepEqual([...asked].sort(), ["eins", "zwei", "drei", "vier"].sort());
 });
 
 test("a prefetch that fails does not caption the card played next", async () => {
