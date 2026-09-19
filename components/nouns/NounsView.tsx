@@ -587,7 +587,7 @@ export function NounsView({ profile, onBack }: Props) {
                   ))}
                 </div>
                 <p className="verb-modes-hint">
-                  Несколько режимов — по каждому слову подряд: {NOUN_QUIZ_MODE_ORDER.map((m) => NOUN_QUIZ_MODE_LABEL[m]).join(" → ")}.
+                  Несколько режимов чередуются между существительными: то же слово вернётся позже, в другом задании.
                   «Артикль» — выбор из der / die / das с подсказкой по правилу окончания.
                 </p>
               </div>

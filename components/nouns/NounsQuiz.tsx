@@ -16,8 +16,9 @@ import {
 } from "@/lib/nounsQuizModes";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
-import { speak, stopTTS } from "@/lib/tts";
+import { prefetchSpeechAhead, SPEECH_PREFETCH_AHEAD, speak, stopTTS } from "@/lib/tts";
 import { NOUN_ARTICLE_TTS_CACHE_SCOPE } from "@/lib/ttsCacheScope";
+import { scheduleNounQuizSteps } from "@/lib/nounQuizQueue";
 
 type Props = {
   nouns: DictionaryEntry[];
@@ -64,15 +65,6 @@ type NounQuizStep = {
   /** What the card asks — the Russian side for a production step. */
   promptText?: string;
 };
-
-function shuffle<T>(items: T[]): T[] {
-  const arr = [...items];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
 
 /**
  * One noun's worth of steps for whichever drills are switched on, in the fixed
@@ -152,7 +144,7 @@ function buildQueue(
   modes: Set<NounQuizMode>,
   presentations: NounQuizPresentation[],
 ): NounQuizStep[] {
-  return shuffle(nouns).flatMap((entry) => stepsForEntry(entry, modes, presentations));
+  return scheduleNounQuizSteps(nouns.flatMap((entry) => stepsForEntry(entry, modes, presentations)));
 }
 
 /**
@@ -212,6 +204,15 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
       stopTTS();
     };
   }, [step, targetLanguage]);
+
+  // While the current answer is being chosen, fetch the next two audio
+  // prompts. The player uses this same article-free cache scope on arrival.
+  useEffect(() => {
+    const upcoming = queue.slice(index + 1, index + 1 + SPEECH_PREFETCH_AHEAD)
+      .filter((next) => next.mode === "article" && next.presentation === "audio")
+      .map((next) => bareNoun(next.entry));
+    prefetchSpeechAhead(upcoming, targetLanguage, NOUN_ARTICLE_TTS_CACHE_SCOPE);
+  }, [queue, index, targetLanguage]);
 
   // A fresh step: cursor straight into the first field on a computer, so
   // typing can start without reaching for the mouse. The article step has no
@@ -309,7 +310,7 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
 
   function retryMistakes() {
     setAnswers({});
-    setQueue(shuffle(mistakes));
+    setQueue(scheduleNounQuizSteps(mistakes));
     setMistakes([]);
     setCorrectCount(0);
     goTo(0);
