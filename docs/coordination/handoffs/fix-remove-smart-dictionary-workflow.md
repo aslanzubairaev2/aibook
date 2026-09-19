@@ -31,10 +31,11 @@
 
 ## Preview
 
-- URL: production deploy pending
+- URL: https://aibook-liart.vercel.app
+- Inspect: https://vercel.com/azamats-projects-799bf3a6/aibook/3pKAEin3T5kg5BWCXagMST9LAyEh
 
 ## Риски и продолжение
 
 - Уже сохранённые 97 слов из остановленной старой задачи не удалялись.
 - Историческая migration `dictionary_generation_jobs` не удалена; код её больше не использует.
-- Требуется fast-forward в `main` и production deploy.
+- Fast-forward в `main` выполнен до `c2dcc77`; production deploy `dpl_3pKAEin3T5kg5BWCXagMST9LAyEh` получил статус `READY`.
