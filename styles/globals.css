@@ -3028,4 +3028,61 @@ textarea,
 }
 .video-remove-history:hover { color: var(--text-primary); border-color: var(--accent); }
 .video-remove-history:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── Home statistics: keep the existing AIBook visual language ──────────────
+   The analytics is an extra panel inside the original home shell. It should
+   feel like the reference screen, not like a second application. */
+.stats-home-screen { padding-top: 10px; }
+.stats-home-header { margin-bottom: 8px; }
+.stats-home-call {
+  width: 42px;
+  height: 42px;
+  border-color: rgba(212, 168, 71, 0.34);
+  color: var(--accent);
+  background: rgba(212, 168, 71, 0.08);
+}
+.stats-home-call:hover { border-color: var(--accent); background: rgba(212, 168, 71, 0.16); }
+.stats-home-level {
+  margin-top: 16px;
+  padding: 21px 16px 16px;
+  border-color: rgba(104, 128, 218, 0.52);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(135, 54, 163, 0.32), transparent 34%),
+    linear-gradient(112deg, rgba(17, 35, 70, 0.98), rgba(38, 18, 63, 0.98));
+  box-shadow: 0 12px 30px rgba(12, 12, 32, 0.2);
+}
+.stats-home-level-head { gap: 14px; }
+.stats-home-profile-pill { border-color: rgba(83, 167, 255, 0.52); background: rgba(54, 111, 190, 0.2); }
+.stats-home-level h2 { max-width: 500px; font-size: clamp(19px, 4.8vw, 25px); }
+.stats-home-level p { margin-top: 8px; color: rgba(211, 215, 236, 0.56); }
+.stats-home-level-badge { min-width: 130px; }
+.stats-home-level-badge strong { color: #aeb6d9; font-size: 29px; }
+.stats-home-level-badge em { color: rgba(204, 211, 239, 0.6); font-weight: 700; }
+.stats-home-level-rule { margin: 19px 0 12px; background: rgba(221, 225, 246, 0.76); }
+.stats-home-progress-labels span:first-child { color: #67e3b5; }
+.stats-home-progress-empty { background: rgba(10, 18, 42, 0.72); }
+.stats-home-progress-empty span { width: 0 !important; background: transparent; box-shadow: none; }
+.stats-home-progress-foot { color: rgba(187, 195, 226, 0.5); }
+.stats-home-section { margin-top: 22px; }
+.stats-home-section-head { margin-bottom: 10px; }
+.stats-home-section h2 { font-size: 18px; }
+.stats-home-metrics { gap: 10px; }
+.stats-home-metric { min-height: 105px; padding: 12px 12px 11px; border-color: rgba(218, 213, 196, 0.12); border-radius: 11px; background: rgba(29, 29, 29, 0.9); box-shadow: none; }
+.stats-home-metric-icon { width: 25px; height: 25px; margin-bottom: 8px; border-radius: 7px; }
+.stats-home-metric > strong { font-size: 25px; }
+.stats-home-metric-label { margin-top: 5px; font-size: 9px; }
+.stats-home-metric-detail { margin-top: 4px; font-size: 10px; }
+.stats-home-footnote { margin-top: 13px; color: rgba(196, 202, 224, 0.44); }
+.stats-home-modal-level-unknown { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; }
+.stats-home-modal-level-unknown > p { grid-column: 1 / -1; margin: 11px 0 0; color: rgba(211, 218, 241, 0.62); font-size: 12px; line-height: 1.45; }
+.stats-home-modal-level-unknown > div:first-child strong { color: rgba(220, 225, 248, 0.78); }
+.stats-home-modal-level-unknown .stats-home-modal-level-copy { text-align: right; }
+.stats-home-modal-level-unknown .stats-home-modal-level-copy strong { color: #83d8c0; font-size: 14px; }
+.stats-home-modal-note { margin-top: 13px; color: rgba(211, 218, 241, 0.52); font-size: 11px; line-height: 1.45; }
+
+@media (max-width: 420px) {
+  .stats-home-level-badge { min-width: 0; }
+  .stats-home-progress-labels, .stats-home-progress-foot { font-size: 9px; }
+}
 .video-remove-history:disabled { opacity: .5; cursor: wait; }

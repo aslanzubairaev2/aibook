@@ -2,19 +2,20 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  AlertTriangle,
   ArrowUpRight,
-  BarChart,
   BookOpenCheck,
   Brain,
   ChevronRight,
   Clock3,
   Languages,
   Phone,
-  Target,
+  Repeat2,
   X,
 } from "lucide-react";
-import type { CefrLevel, Flashcard, UserProfile } from "@/lib/types";
-import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
+import { computeDeckStats, type DeckStats } from "@/lib/cards";
+import { getCardVariantProgressMap } from "@/lib/db/local";
+import type { Flashcard, UserProfile } from "@/lib/types";
 
 type Props = {
   profile: UserProfile;
@@ -24,26 +25,12 @@ type Props = {
 };
 
 type Tone = "cyan" | "green" | "violet" | "orange";
+type IntervalBucket = { label: string; count: number; tone: Tone };
 
 type DashboardStats = {
-  totalWords: number;
-  longTermWords: number;
-  longTermPercent: number | null;
-  accuracy: number | null;
-  attempts: number;
-  reviewedWords: number;
-  dueWords: number;
-  completedBooks: number;
-  readingMinutes: number;
-  intervalBuckets: Array<{ label: string; count: number; tone: Tone }>;
-};
-
-type LevelProgress = {
-  current: CefrLevel;
-  next: CefrLevel | null;
-  percent: number;
-  currentStart: number;
-  nextTarget: number | null;
+  deck: DeckStats;
+  intervalBuckets: IntervalBucket[];
+  maturePercent: number | null;
 };
 
 const LANGUAGE_NAMES: Record<string, string> = {
@@ -54,105 +41,34 @@ const LANGUAGE_NAMES: Record<string, string> = {
   it: "Итальянский язык",
 };
 
-const LEVEL_STEPS: Array<{ level: CefrLevel; start: number; target: number | null }> = [
-  { level: "A1", start: 0, target: 80 },
-  { level: "A2", start: 80, target: 250 },
-  { level: "B1", start: 250, target: 600 },
-  { level: "B2", start: 600, target: 1200 },
-  { level: "C1", start: 1200, target: 2500 },
-  { level: "C2", start: 2500, target: null },
-];
-
 function number(value: number) {
   return new Intl.NumberFormat("ru-RU").format(value);
 }
 
-function percent(value: number | null) {
-  return value === null ? "—" : `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
-}
-
-function deriveLevelFromWords(wordCount: number): CefrLevel {
-  return [...LEVEL_STEPS].reverse().find((step) => wordCount >= step.start)?.level ?? "A1";
-}
-
-function getLevelProgress(level: CefrLevel, wordCount: number): LevelProgress {
-  const step = LEVEL_STEPS.find((item) => item.level === level) ?? LEVEL_STEPS[0];
-  const nextStep = LEVEL_STEPS.find((item) => item.start === step.target);
-  const span = step.target === null ? 1 : Math.max(1, step.target - step.start);
-  const progress = step.target === null
-    ? 100
-    : Math.max(0, Math.min(100, Math.round(((wordCount - step.start) / span) * 100)));
-
-  return {
-    current: level,
-    next: nextStep?.level ?? null,
-    percent: progress,
-    currentStart: step.start,
-    nextTarget: step.target,
-  };
-}
-
-function getDashboardStats(cards: Flashcard[], profile: UserProfile): DashboardStats {
-  const totalWords = cards.length;
-  const attempts = cards.reduce((sum, card) => sum + card.repetitions + card.lapses, 0);
-  const correctReviews = cards.reduce((sum, card) => sum + card.repetitions, 0);
-  const reviewedWords = cards.filter((card) => card.repetitions > 0 || card.lapses > 0).length;
-  const longTermWords = cards.filter(
-    (card) => card.intervalDays >= 15 || (card.status === "review" && card.repetitions >= 2),
-  ).length;
-  const now = Date.now();
-  const dueWords = cards.filter((card) => {
-    const dueAt = Date.parse(card.dueAt);
-    return Number.isFinite(dueAt) && dueAt <= now;
-  }).length;
-
-  const intervalBuckets = [
-    { label: "0–3 дня", count: cards.filter((card) => card.intervalDays < 4).length, tone: "orange" as Tone },
-    { label: "4–14 дней", count: cards.filter((card) => card.intervalDays >= 4 && card.intervalDays < 15).length, tone: "violet" as Tone },
-    { label: "15–29 дней", count: cards.filter((card) => card.intervalDays >= 15 && card.intervalDays < 30).length, tone: "cyan" as Tone },
-    { label: "30+ дней", count: cards.filter((card) => card.intervalDays >= 30).length, tone: "green" as Tone },
+function getDashboardStats(cards: Flashcard[]): DashboardStats {
+  // This is the same aggregate used by the Practice screen and by the
+  // research-agent get_progress tool: three independent SRS directions,
+  // mature = 21+ days, due = the whole local day, hard = the SRS hard rule.
+  const deck = computeDeckStats(cards, getCardVariantProgressMap());
+  const intervalBuckets: IntervalBucket[] = [
+    { label: "0–3 дня", count: cards.filter((card) => card.intervalDays < 4).length, tone: "orange" },
+    { label: "4–14 дней", count: cards.filter((card) => card.intervalDays >= 4 && card.intervalDays < 15).length, tone: "violet" },
+    { label: "15–29 дней", count: cards.filter((card) => card.intervalDays >= 15 && card.intervalDays < 30).length, tone: "cyan" },
+    { label: "30+ дней", count: cards.filter((card) => card.intervalDays >= 30).length, tone: "green" },
   ];
 
   return {
-    totalWords,
-    longTermWords,
-    longTermPercent: totalWords > 0 ? Math.round((longTermWords / totalWords) * 1000) / 10 : null,
-    accuracy: attempts > 0 ? Math.round((correctReviews / attempts) * 1000) / 10 : null,
-    attempts,
-    reviewedWords,
-    dueWords,
-    completedBooks: Math.max(0, profile.booksFinished),
-    readingMinutes: Math.max(0, profile.readingMinutes),
+    deck,
     intervalBuckets,
+    maturePercent: cards.length > 0 ? Math.round((deck.matureCards / cards.length) * 1000) / 10 : null,
   };
 }
 
 export function HomeDashboard({ profile, cards, onOpenLiveChat, onOpenLiveTranslate }: Props) {
-  const [estimatedLevel, setEstimatedLevel] = useState<CefrLevel | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-
-  const stats = useMemo(() => getDashboardStats(cards, profile), [cards, profile]);
-  const fallbackLevel = deriveLevelFromWords(stats.totalWords);
-  const currentLevel = estimatedLevel ?? fallbackLevel;
-  const levelProgress = useMemo(
-    () => getLevelProgress(currentLevel, stats.totalWords),
-    [currentLevel, stats.totalWords],
-  );
-
-  useEffect(() => {
-    let active = true;
-    estimateTargetLanguageLevel(profile.targetLanguage)
-      .then((estimate) => {
-        if (active) setEstimatedLevel(estimate?.level ?? null);
-      })
-      .catch(() => {
-        if (active) setEstimatedLevel(null);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [profile.targetLanguage, stats.totalWords]);
+  const stats = useMemo(() => getDashboardStats(cards), [cards]);
+  const languageName = LANGUAGE_NAMES[profile.targetLanguage] ?? profile.targetLanguage.toUpperCase();
+  const languageCode = profile.targetLanguage.toUpperCase();
 
   useEffect(() => {
     if (!isDetailsOpen) return;
@@ -163,63 +79,59 @@ export function HomeDashboard({ profile, cards, onOpenLiveChat, onOpenLiveTransl
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isDetailsOpen]);
 
-  const languageName = LANGUAGE_NAMES[profile.targetLanguage] ?? profile.targetLanguage.toUpperCase();
-
   return (
     <section className="screen home-screen stats-home-screen">
-      <header className="stats-home-header">
+      <header className="home-header stats-home-header">
         <div>
-          <span className="stats-home-kicker">AIBook · Личный прогресс</span>
-          <h1 className="stats-home-title">Твоя статистика</h1>
-          <p className="stats-home-subtitle">{languageName} · данные обновляются после каждой тренировки</p>
+          <h1 className="home-title">AIBook</h1>
         </div>
         <button className="icon-btn stats-home-call" onClick={onOpenLiveChat} type="button" aria-label="Голосовой звонок с AI" title="Голосовой звонок с AI">
           <Phone size={19} />
         </button>
       </header>
 
-      <button className="stats-home-live" onClick={onOpenLiveTranslate} type="button">
-        <span className="stats-home-live-icon"><Languages size={23} /></span>
-        <span className="stats-home-live-copy">
-          <span className="stats-home-live-label">Для реального разговора</span>
-          <strong>Live перевод</strong>
-          <span>Слушайте перевод почти без задержки</span>
+      <button className="live-translate-home-card" onClick={onOpenLiveTranslate} type="button">
+        <span className="live-translate-home-icon"><Languages size={23} /></span>
+        <span>
+          <span className="action-card-label">Для реального разговора</span>
+          <strong className="action-card-title">Live перевод</strong>
+          <span className="action-card-sub">Слушайте русский перевод почти без задержки</span>
         </span>
-        <ChevronRight size={20} className="stats-home-live-arrow" />
+        <ChevronRight size={20} className="action-card-arrow" />
       </button>
 
       <section className="stats-home-level" aria-labelledby="stats-home-level-title">
         <div className="stats-home-level-head">
           <div>
-            <span className="stats-home-profile-pill">{profile.targetLanguage.toUpperCase()} · {languageName}</span>
+            <span className="stats-home-profile-pill">{languageCode} · {languageName}</span>
             <h2 id="stats-home-level-title">Аналитика прогресса и словарного запаса</h2>
-            <p>Словарь и интервалы повторений · {number(stats.totalWords)} слов в базе</p>
+            <p>Карточки SRS · {number(stats.deck.totalCards)} в синхронизированной колоде</p>
           </div>
-          <div className="stats-home-level-badge">
-            <span>Текущий уровень</span>
-            <strong>{currentLevel}<sup>+</sup></strong>
-            <em>{levelProgress.next ? `→ переход в ${levelProgress.next}` : "верхняя граница шкалы"}</em>
+          <div className="stats-home-level-badge stats-home-level-unknown">
+            <span>Текущий CEFR</span>
+            <strong>—</strong>
+            <em>нет диагностики</em>
           </div>
         </div>
 
         <div className="stats-home-level-rule" />
         <div className="stats-home-progress-labels">
-          <span>{currentLevel}: текущая зона</span>
-          <span>{levelProgress.next ? `${levelProgress.next}: следующий рубеж` : "C2: максимум"}</span>
+          <span>Уровень не определён</span>
+          <span>CEFR не выводится из числа карточек</span>
         </div>
-        <div className="stats-home-progress" aria-label={`Прогресс внутри уровня ${levelProgress.percent}%`}>
-          <span style={{ width: `${Math.max(3, levelProgress.percent)}%` }} />
+        <div className="stats-home-progress stats-home-progress-empty" aria-label="Диагностика CEFR не выполнена">
+          <span />
         </div>
         <div className="stats-home-progress-foot">
-          <span>{number(levelProgress.currentStart)} слов</span>
-          <span>{levelProgress.nextTarget ? `${number(levelProgress.nextTarget)} слов до ${levelProgress.next}` : "уровень C2"}</span>
+          <span>Нужна отдельная диагностика</span>
+          <span>данные SRS ≠ тест уровня</span>
         </div>
       </section>
 
       <section className="stats-home-section" aria-labelledby="stats-home-metrics-title">
         <div className="stats-home-section-head">
           <div>
-            <span className="stats-home-section-kicker">Сводка</span>
+            <span className="stats-home-section-kicker">Сводка SRS</span>
             <h2 id="stats-home-metrics-title">Главные показатели</h2>
           </div>
           <button className="stats-home-details-button" type="button" onClick={() => setIsDetailsOpen(true)}>
@@ -228,43 +140,23 @@ export function HomeDashboard({ profile, cards, onOpenLiveChat, onOpenLiveTransl
         </div>
 
         <div className="stats-home-metrics">
-          <MetricTile icon={<BookOpenCheck size={17} />} value={number(stats.totalWords)} label="Слов в базе" detail={`${number(stats.reviewedWords)} уже повторялись`} tone="cyan" />
-          <MetricTile icon={<Brain size={17} />} value={percent(stats.longTermPercent)} label="Долгосрочная память" detail={`${number(stats.longTermWords)} слов · интервал 15+ дней`} tone="green" />
-          <MetricTile icon={<Target size={17} />} value={percent(stats.accuracy)} label="Точность ответов" detail={stats.attempts > 0 ? `${number(stats.attempts)} ответов в SRS` : "Пока нет ответов в SRS"} tone="violet" />
-          <MetricTile icon={<BarChart size={17} />} value={number(stats.completedBooks)} label="Завершено книг" detail={`${number(stats.readingMinutes)} мин. чтения`} tone="orange" />
+          <MetricTile icon={<BookOpenCheck size={17} />} value={number(stats.deck.totalCards)} label="Карточки в SRS" detail="не уникальные слова" tone="cyan" />
+          <MetricTile icon={<Brain size={17} />} value={number(stats.deck.matureCards)} label="Зрелые карточки" detail="интервал 21+ дней" tone="green" />
+          <MetricTile icon={<Repeat2 size={17} />} value={number(stats.deck.dueCards)} label="На повторение" detail={`${number(stats.deck.dueReps)} заданий сегодня`} tone="violet" />
+          <MetricTile icon={<AlertTriangle size={17} />} value={number(stats.deck.hardCards)} label="Сложные карточки" detail="забывания / низкая лёгкость" tone="orange" />
         </div>
       </section>
 
       <p className="stats-home-footnote">
-        <Clock3 size={14} /> Показатели считаются по локальным карточкам и синхронизированному профилю.
+        <Clock3 size={14} /> Счётчики совпадают с экраном «Практика» и не притворяются диагностикой уровня.
       </p>
 
-      {isDetailsOpen && (
-        <AnalyticsModal
-          languageName={languageName}
-          currentLevel={currentLevel}
-          levelProgress={levelProgress}
-          stats={stats}
-          onClose={() => setIsDetailsOpen(false)}
-        />
-      )}
+      {isDetailsOpen && <AnalyticsModal stats={stats} languageName={languageName} onClose={() => setIsDetailsOpen(false)} />}
     </section>
   );
 }
 
-function MetricTile({
-  icon,
-  value,
-  label,
-  detail,
-  tone,
-}: {
-  icon: ReactNode;
-  value: string;
-  label: string;
-  detail: string;
-  tone: Tone;
-}) {
+function MetricTile({ icon, value, label, detail, tone }: { icon: ReactNode; value: string; label: string; detail: string; tone: Tone }) {
   return (
     <article className={`stats-home-metric stats-home-metric-${tone}`}>
       <span className="stats-home-metric-icon">{icon}</span>
@@ -275,20 +167,9 @@ function MetricTile({
   );
 }
 
-function AnalyticsModal({
-  languageName,
-  currentLevel,
-  levelProgress,
-  stats,
-  onClose,
-}: {
-  languageName: string;
-  currentLevel: CefrLevel;
-  levelProgress: LevelProgress;
-  stats: DashboardStats;
-  onClose: () => void;
-}) {
+function AnalyticsModal({ stats, languageName, onClose }: { stats: DashboardStats; languageName: string; onClose: () => void }) {
   const maxBucket = Math.max(1, ...stats.intervalBuckets.map((bucket) => bucket.count));
+  const matureLabel = stats.maturePercent === null ? "—" : `${stats.maturePercent.toFixed(1)}%`;
 
   return (
     <div className="stats-home-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -303,23 +184,23 @@ function AnalyticsModal({
           </button>
         </header>
 
-        <div className="stats-home-modal-level">
+        <div className="stats-home-modal-level stats-home-modal-level-unknown">
           <div>
-            <span>Уровень сейчас</span>
-            <strong>{currentLevel}<sup>+</sup></strong>
+            <span>Уровень CEFR</span>
+            <strong>—</strong>
           </div>
           <div className="stats-home-modal-level-copy">
-            <span>{levelProgress.next ? `До ${levelProgress.next} по словарю` : "Шкала завершена"}</span>
-            <strong>{levelProgress.percent}%</strong>
+            <span>Что можно утверждать</span>
+            <strong>только данные SRS</strong>
           </div>
-          <div className="stats-home-progress"><span style={{ width: `${Math.max(3, levelProgress.percent)}%` }} /></div>
+          <p>Количество карточек, интервалы и ответы показывают состояние колоды, но не заменяют языковую диагностику.</p>
         </div>
 
         <div className="stats-home-detail-grid">
-          <DetailStat label="Слов в базе" value={number(stats.totalWords)} />
-          <DetailStat label="Долгосрочная память" value={percent(stats.longTermPercent)} />
-          <DetailStat label="Точность ответов" value={percent(stats.accuracy)} />
-          <DetailStat label="На повторение" value={number(stats.dueWords)} />
+          <DetailStat label="Карточки в SRS" value={number(stats.deck.totalCards)} />
+          <DetailStat label="Зрелые (21+ дней)" value={number(stats.deck.matureCards)} />
+          <DetailStat label="Доля зрелых" value={matureLabel} />
+          <DetailStat label="Сложные" value={number(stats.deck.hardCards)} />
         </div>
 
         <section className="stats-home-modal-panel">
@@ -328,7 +209,7 @@ function AnalyticsModal({
               <span className="stats-home-section-kicker">Интервалы SRS</span>
               <h3>Устойчивость памяти</h3>
             </div>
-            <span>{number(stats.longTermWords)} слов держатся 15+ дней</span>
+            <span>{number(stats.deck.matureCards)} карточек с интервалом 21+ дней</span>
           </div>
           <div className="stats-home-intervals">
             {stats.intervalBuckets.map((bucket) => (
@@ -337,7 +218,7 @@ function AnalyticsModal({
                   <span>{bucket.label}</span>
                   <strong>{number(bucket.count)}</strong>
                 </div>
-                <div className="stats-home-interval-track"><span className={`stats-home-bar-${bucket.tone}`} style={{ width: `${Math.max(bucket.count > 0 ? 5 : 0, (bucket.count / maxBucket) * 100)}%` }} /></div>
+                <div className="stats-home-interval-track"><span className={`stats-home-bar-${bucket.tone}`} style={{ width: `${bucket.count === 0 ? 0 : Math.max(5, (bucket.count / maxBucket) * 100)}%` }} /></div>
               </div>
             ))}
           </div>
@@ -346,16 +227,17 @@ function AnalyticsModal({
         <section className="stats-home-modal-panel stats-home-reading-panel">
           <div className="stats-home-panel-heading">
             <div>
-              <span className="stats-home-section-kicker">Обучение</span>
-              <h3>Ритм занятий</h3>
+              <span className="stats-home-section-kicker">Ритм занятий</span>
+              <h3>Что происходит в колоде</h3>
             </div>
           </div>
           <div className="stats-home-reading-grid">
-            <DetailStat label="Повторено слов" value={number(stats.reviewedWords)} />
-            <DetailStat label="Ответов в SRS" value={number(stats.attempts)} />
-            <DetailStat label="Завершено книг" value={number(stats.completedBooks)} />
-            <DetailStat label="Минут чтения" value={number(stats.readingMinutes)} />
+            <DetailStat label="Начаты карточки" value={number(stats.deck.learnedCards)} />
+            <DetailStat label="Заданий сегодня" value={number(stats.deck.dueReps)} />
+            <DetailStat label="Серия дней" value={number(stats.deck.streak)} />
+            <DetailStat label="Забывания" value={number(stats.deck.lapses)} />
           </div>
+          <p className="stats-home-modal-note">Точный retention/процент правильных ответов здесь не показывается: в текущем хранилище нет полного журнала попыток, а счётчик repetitions сбрасывается после забывания.</p>
         </section>
       </section>
     </div>
