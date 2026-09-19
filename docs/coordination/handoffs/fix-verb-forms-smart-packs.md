@@ -28,7 +28,7 @@
 
 ## Preview
 
-- URL: не создан.
+- URL: https://aibook-812aq8ty3-azamats-projects-799bf3a6.vercel.app (Preview, READY для commit `d568818`).
 
 ## Риски и продолжение
 
