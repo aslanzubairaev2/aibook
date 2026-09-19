@@ -157,3 +157,13 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   if (element.isContentEditable === true) return true;
   return element.tagName === "INPUT" || element.tagName === "TEXTAREA" || element.tagName === "SELECT";
 }
+
+const NOUN_ARTICLE_BY_DIGIT = { "8": "der", "5": "die", "2": "das" } as const;
+
+/** The article choices occupy the vertical 8 / 5 / 2 column on a keypad. */
+export function nounArticleHotkey(event: KeyLike & Pick<KeyboardEvent, "shiftKey" | "repeat">): "der" | "die" | "das" | null {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.repeat) return null;
+  const numpad = /^Numpad([852])$/.exec(event.code);
+  const digit = numpad?.[1] ?? event.key;
+  return NOUN_ARTICLE_BY_DIGIT[digit as keyof typeof NOUN_ARTICLE_BY_DIGIT] ?? null;
+}

@@ -1,12 +1,18 @@
 "use client";
 import { useState, useEffect } from "react";
 import { Volume2, Loader2, Pause, Play } from "lucide-react";
-import { speak, TTSState, getTTSState, subscribeTTS, pauseTTS, resumeTTS } from "@/lib/tts";
+import { speak, TTSState, getTTSState, getLastTtsError, subscribeTTS, pauseTTS, resumeTTS } from "@/lib/tts";
 import type { TtsCacheScope } from "@/lib/ttsCacheScope";
 
-type Props = { text: string; lang: string; size?: number; cacheScope?: TtsCacheScope };
+type Props = {
+  text: string;
+  lang: string;
+  size?: number;
+  cacheScope?: TtsCacheScope;
+  onPlaybackResult?: (error: string | null) => void;
+};
 
-export function SpeakButton({ text, lang, size = 15, cacheScope = "default" }: Props) {
+export function SpeakButton({ text, lang, size = 15, cacheScope = "default", onPlaybackResult }: Props) {
   const [state, setState] = useState<TTSState>(getTTSState());
 
   useEffect(() => {
@@ -31,7 +37,13 @@ export function SpeakButton({ text, lang, size = 15, cacheScope = "default" }: P
       return;
     }
 
-    await speak(text, lang, undefined, undefined, cacheScope);
+    try {
+      const playback = await speak(text, lang, undefined, undefined, cacheScope);
+      onPlaybackResult?.(playback ? null : getLastTtsError() ?? "Не удалось озвучить слово выбранным голосом.");
+    } catch (error) {
+      console.error("TTS playback failed", error);
+      onPlaybackResult?.("Не удалось озвучить слово выбранным голосом.");
+    }
   };
 
   return (

@@ -4,6 +4,7 @@ import {
   CARTESIA_MODEL,
   DEEPGRAM_TTS_SAMPLE_RATE,
   ELEVENLABS_DEFAULT_VOICE,
+  GEMINI_SPEECH_STYLE_VERSION,
   getDeepgramTtsModel,
   isCartesiaTtsSupported,
   isElevenLabsTtsSupported,
@@ -18,7 +19,7 @@ import {
   SPEECH_STYLE_VERSION,
   OPENAI_TTS_MODEL,
 } from "./ttsProviders";
-import type { TtsCacheScope } from "./ttsCacheScope";
+import { NOUN_ARTICLE_TTS_CACHE_SCOPE, type TtsCacheScope } from "./ttsCacheScope";
 
 /** Cached audio is headerless PCM, so its rate rides along as a response header. */
 const SAMPLE_RATE_HEADER = "X-Sample-Rate";
@@ -327,7 +328,9 @@ function ttsCacheKey(text: string, provider: string, lang: string, cacheScope: T
   // And so does the direction, for the engines that take one — but only those.
   // The rest make the same sound they always did, and expiring their recordings
   // would spend quota to hear something identical.
-  const style = isPromptDirectedTts(provider) ? `-${SPEECH_STYLE_VERSION}` : "";
+  const style = isPromptDirectedTts(provider)
+    ? `-${provider === "gemini" ? GEMINI_SPEECH_STYLE_VERSION : SPEECH_STYLE_VERSION}`
+    : "";
   const scope = cacheScope === "default" ? "" : `-${cacheScope}`;
   return `tts-${engine}${style}${scope}-${voiceKeyFor(provider, lang)}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;
 }
@@ -370,7 +373,7 @@ async function requestTts(
       const detail = await res.json().catch(() => null) as { error?: string } | null;
       const message = detail?.error ?? `${provider} TTS: ошибка ${res.status}`;
       report(message);
-      console.warn(`${provider} TTS request failed with status ${res.status}: ${message}; using local voice`);
+      console.warn(`${provider} TTS request failed with status ${res.status}: ${message}${cacheScope === NOUN_ARTICLE_TTS_CACHE_SCOPE ? "; keeping the selected voice" : "; using local voice"}`);
       return null;
     }
 
@@ -457,31 +460,41 @@ export async function prefetchSpeech(text: string, lang: string, cacheScope: Tts
   // Without somewhere to keep the answer, a prefetch is not a head start: the
   // play it was meant to serve would have to ask all over again, and the only
   // thing gained is a second bill. So a missing Cache API means don't bother.
-  let cache: Cache;
-  try {
-    cache = await caches.open("aibook-tts-cache");
-    if (await cache.match(cacheKey)) return;
-  } catch {
-    return;
-  }
+  if (typeof caches === "undefined") return;
 
-  const pending = requestTts(text, lang, provider, cacheKey, cacheScope, { silent: true });
+  // Reserve the key before the first await. Otherwise two prefetches (or a
+  // play during cache lookup) can both miss inFlight and request the same
+  // recording from the provider.
+  const pending = (async (): Promise<Recording | null> => {
+    try {
+      const cache = await caches.open("aibook-tts-cache");
+      if (await cache.match(cacheKey)) return null;
+    } catch {
+      return null;
+    }
+    return requestTts(text, lang, provider, cacheKey, cacheScope, { silent: true });
+  })();
   inFlight.set(cacheKey, pending);
   try {
     await pending;
   } finally {
-    inFlight.delete(cacheKey);
+    if (inFlight.get(cacheKey) === pending) inFlight.delete(cacheKey);
   }
 }
 
 /**
  * Warm the next few lines a session will speak, nearest first.
  *
- * Callers pass what is coming in the order it is coming; how far ahead to go is
- * decided here, so every trainer prefetches to the same depth.
+ * Callers pass what is coming in the order it is coming. Most trainers share
+ * the default depth; a faster drill can explicitly request a larger window.
  */
-export function prefetchSpeechAhead(texts: string[], lang: string, cacheScope: TtsCacheScope = "default"): void {
-  for (const text of texts.slice(0, SPEECH_PREFETCH_AHEAD)) {
+export function prefetchSpeechAhead(
+  texts: string[],
+  lang: string,
+  cacheScope: TtsCacheScope = "default",
+  ahead = SPEECH_PREFETCH_AHEAD,
+): void {
+  for (const text of texts.slice(0, ahead)) {
     void prefetchSpeech(text, lang, cacheScope);
   }
 }
@@ -546,6 +559,7 @@ async function play(
   const { onStart, onEnd, refresh = false, cacheScope = "default" } = opts;
   const profile = getLocalProfile();
   const provider = resolveProvider(profile.ttsProvider ?? "local", lang);
+  lastTtsError = null;
 
   updateState({ status: "loading", text, lang, cacheScope, currentTime: 0, duration: 0 });
 
@@ -596,7 +610,7 @@ async function play(
       try {
         recording = await pending;
       } finally {
-        inFlight.delete(cacheKey);
+        if (inFlight.get(cacheKey) === pending) inFlight.delete(cacheKey);
       }
     }
 
@@ -685,8 +699,16 @@ async function play(
       };
     }
 
-    // A temporary auth/provider outage should not turn every speaker button
-    // into a silent no-op. Continue into the browser voice below instead.
+    // In the article drill, a different voice is a different question. Never
+    // quietly replace the selected engine with the browser's voice.
+    if (cacheScope === NOUN_ARTICLE_TTS_CACHE_SCOPE) {
+      lastTtsError ??= "Не удалось озвучить слово выбранным голосом. Попробуйте ещё раз.";
+      updateState({ status: "idle" });
+      return null;
+    }
+
+    // A temporary auth/provider outage should not turn every other speaker
+    // button into a silent no-op. Continue into the browser voice below.
   }
 
   // Fallback to local

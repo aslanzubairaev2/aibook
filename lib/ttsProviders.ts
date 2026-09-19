@@ -98,6 +98,18 @@ export function getLanguageName(lang: string): string | null {
   return LANGUAGE_NAMES[normalizeLanguageCode(lang)] ?? null;
 }
 
+/** Locales accepted by Gemini's speechConfig.languageCode (not all app languages are supported). */
+const GEMINI_TTS_LANGUAGE_CODES: Record<string, string> = {
+  de: "de-DE", en: "en-US", es: "es-ES", fr: "fr-FR", hi: "hi-IN",
+  pt: "pt-BR", ar: "ar-XA", id: "id-ID", it: "it-IT", ja: "ja-JP",
+  tr: "tr-TR", vi: "vi-VN", nl: "nl-NL", ko: "ko-KR", zh: "cmn-CN",
+  pl: "pl-PL", ru: "ru-RU",
+};
+
+export function getGeminiTtsLanguageCode(lang: string): string | null {
+  return GEMINI_TTS_LANGUAGE_CODES[normalizeLanguageCode(lang)] ?? null;
+}
+
 /**
  * Engines whose voice is directed in prose rather than configured in fields.
  *
@@ -118,6 +130,9 @@ export function isPromptDirectedTts(provider: string): boolean {
  * copy nor the shared one outlives the change that replaced it.
  */
 export const SPEECH_STYLE_VERSION = "s2";
+// Gemini now receives a structured locale. Older short-word recordings may
+// have guessed the wrong language despite the prose prompt.
+export const GEMINI_SPEECH_STYLE_VERSION = "s3";
 
 /** Widen a bare language code to the BCP-47 tag the voice APIs expect. */
 export function getBcp47Locale(lang: string) {

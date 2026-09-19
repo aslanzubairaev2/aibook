@@ -1,12 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { discussHotkey, isTypingTarget, trainerHotkey } from "./trainerHotkeys.ts";
+import { discussHotkey, isTypingTarget, nounArticleHotkey, trainerHotkey } from "./trainerHotkeys.ts";
 
 type KeyLike = Pick<KeyboardEvent, "code" | "key" | "ctrlKey" | "metaKey" | "altKey">;
 
 function press(code: string, key = code, modifiers: Partial<KeyLike> = {}): KeyLike {
   return { code, key, ctrlKey: false, metaKey: false, altKey: false, ...modifiers };
 }
+
+function nounPress(code: string, key: string, options: Partial<Parameters<typeof nounArticleHotkey>[0]> = {}) {
+  return { ...press(code, key), shiftKey: false, repeat: false, ...options };
+}
+
+test("noun articles use the keypad's 8 / 5 / 2 column or the digit row", () => {
+  assert.equal(nounArticleHotkey(nounPress("Numpad8", "8")), "der");
+  assert.equal(nounArticleHotkey(nounPress("Numpad5", "5")), "die");
+  assert.equal(nounArticleHotkey(nounPress("Numpad2", "2")), "das");
+  assert.equal(nounArticleHotkey(nounPress("Digit8", "8")), "der");
+  assert.equal(nounArticleHotkey(nounPress("Digit5", "5")), "die");
+  assert.equal(nounArticleHotkey(nounPress("Digit2", "2")), "das");
+  assert.equal(nounArticleHotkey(nounPress("Numpad2", "ArrowDown")), "das");
+  assert.equal(nounArticleHotkey(nounPress("Numpad8", "ArrowUp")), "der");
+});
+
+test("noun article shortcuts ignore held keys, modifiers and other digits", () => {
+  assert.equal(nounArticleHotkey(nounPress("Numpad8", "8", { repeat: true })), null);
+  assert.equal(nounArticleHotkey(nounPress("Numpad8", "8", { ctrlKey: true })), null);
+  assert.equal(nounArticleHotkey(nounPress("Digit5", "5", { shiftKey: true })), null);
+  assert.equal(nounArticleHotkey(nounPress("Digit3", "3")), null);
+  assert.equal(nounArticleHotkey(nounPress("ArrowDown", "ArrowDown")), null);
+});
 
 test("the keypad digits map onto the card the way the buttons are laid out", () => {
   assert.deepEqual(trainerHotkey(press("Numpad1", "1")), { kind: "grade", score: 1 });

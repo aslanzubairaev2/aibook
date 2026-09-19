@@ -2641,6 +2641,16 @@ textarea,
   border-color: var(--accent); color: var(--accent);
   background: rgba(212, 168, 71, 0.12);
 }
+.noun-quiz-audio-error { margin: 0 0 12px; color: var(--red); font-size: 13px; }
+.noun-quiz-regenerate {
+  align-self: center; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 36px; padding: 6px 10px;
+  color: var(--text-muted); background: transparent;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.noun-quiz-regenerate:not(:disabled):hover { color: var(--accent); border-color: var(--accent); }
+.noun-quiz-regenerate:disabled { opacity: 0.65; cursor: wait; }
 
 /* der / die / das — the whole decision space, as three tap targets. */
 .noun-quiz-choices { display: flex; flex-direction: column; gap: 8px; }
@@ -2660,6 +2670,11 @@ textarea,
 .noun-quiz-choice.correct { border-color: var(--green); background: rgba(122, 171, 106, 0.16); color: var(--green); }
 .noun-quiz-choice.wrong { border-color: var(--red); background: rgba(196, 106, 106, 0.16); color: var(--red); }
 .noun-quiz-choice:disabled { opacity: 1; cursor: default; }
+.noun-quiz-shortcut {
+  margin-left: auto; padding: 2px 6px;
+  color: var(--text-muted); font-size: 12px; font-weight: 600;
+  border: 1px solid var(--border); border-radius: 4px;
+}
 
 /* The hint is opt-in and points at the rule; the debrief afterwards is the one
    that names the article and its exceptions. */

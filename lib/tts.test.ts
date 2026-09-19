@@ -230,6 +230,92 @@ test("a play that catches a prefetch mid-flight joins it", async () => {
   assert.equal(calls, 1);
 });
 
+test("simultaneous prefetches reserve the cache key before lookup", async () => {
+  useProvider("gemini");
+  const server: Server = { calls: 0, reply: () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  serve(server);
+  const originalCaches = g.caches;
+  let release: (() => void) | undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  g.caches = {
+    open: async () => ({
+      ...new FakeCache(),
+      match: async (key: string) => {
+        await held;
+        return new FakeCache().match(key);
+      },
+      put: (key: string, response: FakeResponse) => new FakeCache().put(key, response),
+    }),
+  };
+  try {
+    const first = prefetchSpeech("Haus", "de", "noun-article");
+    const second = prefetchSpeech("Haus", "de", "noun-article");
+    release?.();
+    await Promise.all([first, second]);
+    assert.equal(server.calls, 1);
+  } finally {
+    g.caches = originalCaches;
+  }
+});
+
+test("article-free recordings are reused only within their own cache scope", async () => {
+  useProvider("gemini");
+  const requests: Array<{ text: string; lang: string; cacheScope: string }> = [];
+  g.fetch = async (_url: string, init: { body: string }) => {
+    requests.push(JSON.parse(init.body));
+    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  };
+
+  await prefetchSpeech("Haus", "de", "noun-article");
+  await speak("Haus", "de", undefined, undefined, "noun-article");
+  await speak("Haus", "de", undefined, undefined, "noun-article");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].text, "Haus");
+  assert.equal(requests[0].lang, "de");
+  assert.equal(requests[0].cacheScope, "noun-article");
+
+  await speak("Haus", "de");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].cacheScope, "default");
+});
+
+test("an article prompt does not switch to the browser voice after a provider error", async () => {
+  useProvider("gemini");
+  const originalSpeechSynthesis = g.speechSynthesis;
+  let browserSpeechCalls = 0;
+  g.speechSynthesis = { cancel() {}, speak() { browserSpeechCalls++; } };
+  g.fetch = async () => ({ ok: false, status: 503, json: async () => ({ error: "Выбранный голос недоступен" }) });
+  try {
+    const playback = await speak("frei", "de", undefined, undefined, "noun-article");
+    assert.equal(playback, null);
+    assert.equal(browserSpeechCalls, 0);
+    assert.equal(getLastTtsError(), "Выбранный голос недоступен");
+    assert.equal(getTTSState().status, "idle");
+  } finally {
+    if (originalSpeechSynthesis === undefined) delete g.speechSynthesis;
+    else g.speechSynthesis = originalSpeechSynthesis;
+  }
+});
+
+test("re-voicing a noun replaces its scoped recording and then reuses it", async () => {
+  useProvider("gemini");
+  const requests: Array<{ text: string; lang: string; cacheScope: string; refresh?: boolean }> = [];
+  g.fetch = async (_url: string, init: { body: string }) => {
+    requests.push(JSON.parse(init.body));
+    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  };
+
+  await speak("frei", "de", undefined, undefined, "noun-article");
+  await respeak("frei", "de", undefined, undefined, "noun-article");
+  await speak("frei", "de", undefined, undefined, "noun-article");
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests.map(({ text, lang, cacheScope, refresh }) => ({ text, lang, cacheScope, refresh })), [
+    { text: "frei", lang: "de", cacheScope: "noun-article", refresh: undefined },
+    { text: "frei", lang: "de", cacheScope: "noun-article", refresh: true },
+  ]);
+});
+
 test("nothing is fetched ahead for a line already cached", async () => {
   useProvider("gemini");
   const server: Server = { calls: 0, reply: () => ({ audioBase64: SILENCE, provider: "gemini" }) };
@@ -264,6 +350,20 @@ test("only the agreed depth is fetched ahead, nearest first", async () => {
 
   assert.equal(asked.length, SPEECH_PREFETCH_AHEAD);
   assert.deepEqual(asked, ["eins", "zwei"].slice(0, SPEECH_PREFETCH_AHEAD));
+});
+
+test("the noun drill can prefetch four recordings without changing other trainers", async () => {
+  useProvider("gemini");
+  const asked: string[] = [];
+  g.fetch = async (_url: string, init: { body: string }) => {
+    asked.push(JSON.parse(init.body).text);
+    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  };
+
+  prefetchSpeechAhead(["eins", "zwei", "drei", "vier", "fünf"], "de", "noun-article", 4);
+  await settle();
+
+  assert.deepEqual(asked, ["eins", "zwei", "drei", "vier"]);
 });
 
 test("a prefetch that fails does not caption the card played next", async () => {

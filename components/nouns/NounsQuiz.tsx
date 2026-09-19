@@ -16,14 +16,16 @@ import {
 } from "@/lib/nounsQuizModes";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
-import { prefetchSpeechAhead, SPEECH_PREFETCH_AHEAD, speak, stopTTS } from "@/lib/tts";
+import { getLastTtsError, prefetchSpeechAhead, respeak, speak, stopTTS } from "@/lib/tts";
 import { NOUN_ARTICLE_TTS_CACHE_SCOPE } from "@/lib/ttsCacheScope";
 import { scheduleNounQuizSteps } from "@/lib/nounQuizQueue";
+import { isTypingTarget, nounArticleHotkey } from "@/lib/srs/trainerHotkeys";
 
 type Props = {
   nouns: DictionaryEntry[];
   targetLanguage: string;
   nativeLanguage: string;
+  canRegenerateAudio: boolean;
   modes: Set<NounQuizMode>;
   presentations: NounQuizPresentation[];
   onExit: () => void;
@@ -50,6 +52,8 @@ type AnsweredStep = {
 
 /** The three articles a German noun can take — the whole decision space, so the whole option list. */
 const ARTICLE_CHOICES = ["der", "die", "das"];
+const ARTICLE_SHORTCUT_LABEL: Record<string, string> = { der: "8", die: "5", das: "2" };
+const NOUN_ARTICLE_PREFETCH_AHEAD = 4;
 
 type NounQuizStep = {
   /** `${entry.id}:${mode}` — stable across reshuffles, so React keys track the right step. */
@@ -157,7 +161,7 @@ function buildQueue(
  * Like the verb trainer this is deliberately outside the SM-2 flashcard
  * schedule; what it does feed is the pack's coverage bar, through `onRecord`.
  */
-export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presentations, onExit, onRecord }: Props) {
+export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerateAudio, modes, presentations, onExit, onRecord }: Props) {
   const [queue, setQueue] = useState<NounQuizStep[]>(() => buildQueue(nouns, modes, presentations));
   const [index, setIndex] = useState(0);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -173,11 +177,16 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
   // The translation is a hint, not the question in this card. Keep the
   // learner's choice for the whole session so one tap on the eye is enough.
   const [translationVisible, setTranslationVisible] = useState(true);
+  const [audioError, setAudioError] = useState<{ key: string; message: string } | null>(null);
+  const [regeneratingAudioKey, setRegeneratingAudioKey] = useState<string | null>(null);
   const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const dictateRefs = useRef<Array<DictateButtonHandle | null>>([]);
   const primaryButtonRef = useRef<HTMLButtonElement>(null);
+  const firstArticleChoiceRef = useRef<HTMLButtonElement>(null);
+  const regenerationAttemptRef = useRef<{ key: string; cancelled: boolean } | null>(null);
 
   const step = queue[index];
+  const regeneratingAudio = regeneratingAudioKey === step?.key;
   const done = index >= queue.length;
   const isArticleStep = step?.mode === "article";
   const answered = step ? answers[step.key] : undefined;
@@ -197,7 +206,14 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
     let disposed = false;
     void speak(text, targetLanguage, undefined, undefined, NOUN_ARTICLE_TTS_CACHE_SCOPE)
       .then((controller) => {
-        if (disposed) controller?.stop();
+        if (disposed) {
+          controller?.stop();
+          return;
+        }
+        setAudioError(controller ? null : {
+          key: step.key,
+          message: getLastTtsError() ?? "Не удалось озвучить слово выбранным голосом.",
+        });
       });
     return () => {
       disposed = true;
@@ -205,21 +221,27 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
     };
   }, [step, targetLanguage]);
 
-  // While the current answer is being chosen, fetch the next two audio
+  useEffect(() => () => {
+    if (regenerationAttemptRef.current?.key === step?.key) regenerationAttemptRef.current.cancelled = true;
+  }, [step?.key]);
+
+  // While the current answer is being chosen, fetch the next four audio
   // prompts. The player uses this same article-free cache scope on arrival.
   useEffect(() => {
-    const upcoming = queue.slice(index + 1, index + 1 + SPEECH_PREFETCH_AHEAD)
+    const upcoming = queue.slice(index + 1, index + 1 + NOUN_ARTICLE_PREFETCH_AHEAD)
       .filter((next) => next.mode === "article" && next.presentation === "audio")
       .map((next) => bareNoun(next.entry));
-    prefetchSpeechAhead(upcoming, targetLanguage, NOUN_ARTICLE_TTS_CACHE_SCOPE);
+    prefetchSpeechAhead(upcoming, targetLanguage, NOUN_ARTICLE_TTS_CACHE_SCOPE, NOUN_ARTICLE_PREFETCH_AHEAD);
   }, [queue, index, targetLanguage]);
 
   // A fresh step: cursor straight into the first field on a computer, so
-  // typing can start without reaching for the mouse. The article step has no
-  // field to focus — the choices take the tap instead.
+  // typing can start without reaching for the mouse. On article steps, focus
+  // the first choice so number keys work immediately, including after a card
+  // auto-advances on a correct answer.
   useEffect(() => {
-    inputRefs.current[0]?.focus();
-  }, [step?.key]);
+    if (step?.mode === "article") firstArticleChoiceRef.current?.focus({ preventScroll: true });
+    else inputRefs.current[0]?.focus();
+  }, [step?.key, step?.mode]);
 
   // Revealing disables every input, so the browser drops focus onto <body> and
   // the next Enter never reaches the card. Moving focus onto «Далее» keeps it
@@ -284,8 +306,35 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
     finishStep(option === step.answer, { choice: option, inputs: {}, results: {} });
   }
 
+  async function regenerateArticleAudio() {
+    if (!step || step.mode !== "article" || regeneratingAudio) return;
+    const text = bareNoun(step.entry);
+    if (!text) return;
+    const attempt = { key: step.key, cancelled: false };
+    regenerationAttemptRef.current = attempt;
+    setRegeneratingAudioKey(step.key);
+    setAudioError(null);
+    try {
+      const playback = await respeak(text, targetLanguage, undefined, undefined, NOUN_ARTICLE_TTS_CACHE_SCOPE);
+      if (attempt.cancelled) {
+        playback?.stop();
+        return;
+      }
+      if (!playback) {
+        setAudioError({ key: step.key, message: getLastTtsError() ?? "Не удалось переозвучить слово." });
+      }
+    } catch {
+      if (!attempt.cancelled) setAudioError({ key: step.key, message: "Не удалось переозвучить слово." });
+    } finally {
+      if (regenerationAttemptRef.current === attempt) regenerationAttemptRef.current = null;
+      setRegeneratingAudioKey((current) => current === attempt.key ? null : current);
+    }
+  }
+
   /** Moves to another question, carrying nothing typed on this one with it. */
   function goTo(next: number) {
+    if (regenerationAttemptRef.current) regenerationAttemptRef.current.cancelled = true;
+    setRegeneratingAudioKey(null);
     setDraft({});
     setHintOpen(false);
     setPeeked(new Set());
@@ -373,7 +422,16 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
     && (!isArticleStep || presentation === "target");
 
   return (
-    <section className="screen verbs-view verb-quiz noun-quiz">
+    <section
+      className="screen verbs-view verb-quiz noun-quiz"
+      onKeyDown={(event) => {
+        if (!isArticleStep || revealed || isTypingTarget(event.target)) return;
+        const option = nounArticleHotkey(event.nativeEvent);
+        if (!option) return;
+        event.preventDefault();
+        chooseArticle(option);
+      }}
+    >
       <header className="screen-header">
         <button className="icon-btn" onClick={onExit} type="button" aria-label="Назад">
           <ArrowLeft size={20} />
@@ -408,29 +466,39 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
             <p className="verb-quiz-translation">напишите слово с артиклем</p>
           </>
         ) : isArticleStep ? (
-          presentation === "audio" ? (
-            <div className="noun-quiz-audio-prompt">
-              <SpeakButton
-                text={bareNoun(entry)}
-                lang={targetLanguage}
-                size={24}
-                cacheScope={NOUN_ARTICLE_TTS_CACHE_SCOPE}
-              />
-              <span>Нажмите, чтобы услышать</span>
-            </div>
-          ) : presentation === "native" ? (
-            <div className="noun-quiz-native-prompt">{entry.translation}</div>
-          ) : (
-            <div className="verb-quiz-infinitive">
-              <span>{bareNoun(entry)}</span>
-              <SpeakButton
-                text={bareNoun(entry)}
-                lang={targetLanguage}
-                size={16}
-                cacheScope={NOUN_ARTICLE_TTS_CACHE_SCOPE}
-              />
-            </div>
-          )
+          <>
+            {presentation === "audio" ? (
+              <div className="noun-quiz-audio-prompt">
+                <SpeakButton
+                  text={bareNoun(entry)}
+                  lang={targetLanguage}
+                  size={24}
+                  cacheScope={NOUN_ARTICLE_TTS_CACHE_SCOPE}
+                  onPlaybackResult={(error) => setAudioError(error ? { key: step.key, message: error } : null)}
+                />
+                <span>Нажмите, чтобы услышать</span>
+              </div>
+            ) : presentation === "native" ? (
+              <div className="noun-quiz-native-prompt">{entry.translation}</div>
+            ) : (
+              <div className="verb-quiz-infinitive">
+                <span>{bareNoun(entry)}</span>
+                <SpeakButton
+                  text={bareNoun(entry)}
+                  lang={targetLanguage}
+                  size={16}
+                  cacheScope={NOUN_ARTICLE_TTS_CACHE_SCOPE}
+                  onPlaybackResult={(error) => setAudioError(error ? { key: step.key, message: error } : null)}
+                />
+              </div>
+            )}
+            {presentation !== "native" && canRegenerateAudio && (
+              <button type="button" className="noun-quiz-regenerate" disabled={regeneratingAudio} onClick={() => void regenerateArticleAudio()}>
+                <RotateCcw size={14} className={regeneratingAudio ? "animate-spin" : undefined} />
+                {regeneratingAudio ? "Озвучиваю заново…" : "Переозвучить"}
+              </button>
+            )}
+          </>
         ) : (
           <>
             <div className="verb-quiz-infinitive">
@@ -456,6 +524,9 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
 
         {isArticleStep ? (
           <>
+            {audioError?.key === step.key && (
+              <p className="noun-quiz-audio-error" role="alert">{audioError.message}</p>
+            )}
             <div className="noun-quiz-choices">
               {ARTICLE_CHOICES.map((option) => {
                 const state = !revealed
@@ -471,9 +542,14 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presen
                     type="button"
                     className={`noun-quiz-choice${state}${choice === option ? " picked" : ""}`}
                     disabled={revealed}
+                    ref={option === "der" ? firstArticleChoiceRef : undefined}
+                    aria-keyshortcuts={ARTICLE_SHORTCUT_LABEL[option]}
                     onClick={() => chooseArticle(option)}
                   >
                     {option}
+                    <kbd className="noun-quiz-shortcut" aria-hidden="true">
+                      {ARTICLE_SHORTCUT_LABEL[option]}
+                    </kbd>
                   </button>
                 );
               })}

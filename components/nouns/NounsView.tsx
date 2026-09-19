@@ -396,6 +396,7 @@ export function NounsView({ profile, onBack }: Props) {
         nouns={quizNouns}
         targetLanguage={profile.targetLanguage}
         nativeLanguage={profile.nativeLanguage}
+        canRegenerateAudio={profile.ttsProvider !== "local"}
         modes={quizModes}
         presentations={quizPresentations}
         onExit={() => setQuizNouns(null)}
