@@ -1,8 +1,5 @@
-// The four drills the «Артикли и Существительные» trainer can run, and the
-// fixed order they play in for one noun when more than one is switched on:
-// recognise it, name its article, name its plural, then produce the whole
-// thing from the translation — recall first, production last, the same shape
-// the verb trainer already uses.
+// The four drills the «Артикли и Существительные» trainer can run. Within one
+// noun they keep this order, but the queue spaces them among other nouns.
 
 export type NounQuizMode = "translation" | "article" | "plural" | "word";
 
