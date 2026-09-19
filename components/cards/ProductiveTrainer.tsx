@@ -130,7 +130,7 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
       .slice(index)
       .filter((next, offset) => offset > 0 || shouldSpeakOnReveal(next.skill))
       .map((next) => next.card.front);
-    prefetchSpeechAhead(upcoming, targetLanguage);
+    void prefetchSpeechAhead(upcoming, targetLanguage);
   }, [queue, index, targetLanguage]);
 
   function restart() {

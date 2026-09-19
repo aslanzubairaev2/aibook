@@ -345,26 +345,30 @@ test("only the agreed depth is fetched ahead", async () => {
     return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
   };
 
-  prefetchSpeechAhead(["eins", "zwei", "drei", "vier", "fünf"], "de");
-  await settle();
+  await prefetchSpeechAhead(["eins", "zwei", "drei", "vier", "fünf"], "de");
 
   assert.equal(asked.length, SPEECH_PREFETCH_AHEAD);
-  // Cache lookups run in parallel, so network start order is not guaranteed.
-  assert.deepEqual([...asked].sort(), ["eins", "zwei"].slice(0, SPEECH_PREFETCH_AHEAD).sort());
+  assert.deepEqual(asked, ["eins", "zwei"].slice(0, SPEECH_PREFETCH_AHEAD));
 });
 
-test("the noun drill can prefetch four recordings without changing other trainers", async () => {
+test("the noun drill prefetches four recordings one at a time", async () => {
   useProvider("gemini");
   const asked: string[] = [];
+  let requestsInFlight = 0;
+  let peakRequestsInFlight = 0;
   g.fetch = async (_url: string, init: { body: string }) => {
     asked.push(JSON.parse(init.body).text);
+    requestsInFlight++;
+    peakRequestsInFlight = Math.max(peakRequestsInFlight, requestsInFlight);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    requestsInFlight--;
     return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
   };
 
-  prefetchSpeechAhead(["eins", "zwei", "drei", "vier", "fünf"], "de", "noun-article", 4);
-  await settle();
+  await prefetchSpeechAhead(["eins", "zwei", "drei", "vier", "fünf"], "de", "noun-article", 4);
 
-  assert.deepEqual([...asked].sort(), ["eins", "zwei", "drei", "vier"].sort());
+  assert.deepEqual(asked, ["eins", "zwei", "drei", "vier"]);
+  assert.equal(peakRequestsInFlight, 1);
 });
 
 test("a prefetch that fails does not caption the card played next", async () => {

@@ -231,7 +231,7 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
     const upcoming = queue.slice(index + 1, index + 1 + NOUN_ARTICLE_PREFETCH_AHEAD)
       .filter((next) => next.mode === "article" && next.presentation === "audio")
       .map((next) => bareNoun(next.entry));
-    prefetchSpeechAhead(upcoming, targetLanguage, NOUN_ARTICLE_TTS_CACHE_SCOPE, NOUN_ARTICLE_PREFETCH_AHEAD);
+    void prefetchSpeechAhead(upcoming, targetLanguage, NOUN_ARTICLE_TTS_CACHE_SCOPE, NOUN_ARTICLE_PREFETCH_AHEAD);
   }, [queue, index, targetLanguage]);
 
   // A fresh step: cursor straight into the first field on a computer, so

@@ -712,7 +712,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       .slice(currentTrainIndex + 1)
       .filter((item) => item.variant === "audio")
       .map((item) => item.card.front);
-    prefetchSpeechAhead(upcoming, targetLanguage);
+    void prefetchSpeechAhead(upcoming, targetLanguage);
   }, [trainQueue, currentTrainIndex, targetLanguage]);
 
   // Switching tabs starts its list from the top again.
