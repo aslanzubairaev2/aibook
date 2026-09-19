@@ -159,7 +159,7 @@ export async function PATCH(req: NextRequest) {
   const body = await req.json() as {
     id?: string;
     forms?: Record<string, string>;
-    noun?: { gender?: string; article?: string; plural?: string };
+    noun?: { gender?: string; article?: string; plural?: string; translation?: string };
   };
   const id = (body.id ?? "").trim();
   if (!id) return NextResponse.json({ error: "Не указано слово." }, { status: 400 });

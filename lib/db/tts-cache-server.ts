@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
+import { normalizeTtsCacheScope, type TtsCacheScope } from "@/lib/ttsCacheScope";
 
 const BUCKET = "tts-audio";
 
@@ -14,16 +15,33 @@ function storagePath(text: string, lang: string, voiceName: string): string {
   return `audio/${key}.bin`;
 }
 
+/** Keep special-purpose recordings apart without changing the public schema. */
+function scopedVoiceName(voiceName: string, scope: TtsCacheScope): string {
+  return scope === "default" ? voiceName : `${scope}:${voiceName}`;
+}
+
+function scopedLegacyVoiceNames(voiceNames: string[], scope: TtsCacheScope): string[] {
+  return voiceNames.map((name) => scopedVoiceName(name, scope));
+}
+
 /** Read a cache entry with the privileged server client only. */
 export async function sbGetCachedTtsServer(
   text: string,
   lang: string,
   voiceName: string,
   legacyVoiceNames: string[] = [],
+  scope: TtsCacheScope = "default",
 ): Promise<string | null> {
   if (!supabaseAdmin) return null;
 
-  for (const candidate of cacheVoiceNameCandidates(voiceName, legacyVoiceNames)) {
+  const safeScope = normalizeTtsCacheScope(scope);
+  const currentVoiceName = scopedVoiceName(voiceName, safeScope);
+  const candidates = cacheVoiceNameCandidates(
+    currentVoiceName,
+    scopedLegacyVoiceNames(legacyVoiceNames, safeScope),
+  );
+
+  for (const candidate of candidates) {
     const { data, error } = await supabaseAdmin
       .from("ai_tts_cache")
       .select("audio_base64, storage_path")
@@ -61,10 +79,13 @@ export async function sbSaveCachedTtsServer(
   lang: string,
   voiceName: string,
   audioBase64: string,
+  scope: TtsCacheScope = "default",
 ): Promise<void> {
   if (!supabaseAdmin) return;
 
-  const path = storagePath(text, lang, voiceName);
+  const safeScope = normalizeTtsCacheScope(scope);
+  const cacheVoiceName = scopedVoiceName(voiceName, safeScope);
+  const path = storagePath(text, lang, cacheVoiceName);
   const bytes = Buffer.from(audioBase64, "base64");
   const { error: uploadError } = await supabaseAdmin.storage.from(BUCKET).upload(path, bytes, {
     contentType: "application/octet-stream",
@@ -78,8 +99,8 @@ export async function sbSaveCachedTtsServer(
     audio_base64: string;
     storage_path?: string;
   } = uploadError
-    ? { text, lang, voice_name: voiceName, audio_base64: audioBase64 }
-    : { text, lang, voice_name: voiceName, audio_base64: "", storage_path: path };
+    ? { text, lang, voice_name: cacheVoiceName, audio_base64: audioBase64 }
+    : { text, lang, voice_name: cacheVoiceName, audio_base64: "", storage_path: path };
 
   if (uploadError) {
     console.error("TTS Storage upload failed; retaining legacy Base64:", uploadError.message);

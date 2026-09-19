@@ -15,10 +15,19 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
 import {
-  getLocalNounsDict, getLocalNounsHideArticles, getLocalNounsHideForms, getLocalNounsOpenGroups, getLocalNounsQuizModes, getLocalTrainingFilter,
-  saveLocalNounsDict, saveLocalNounsHideArticles, saveLocalNounsHideForms, saveLocalNounsOpenGroups, saveLocalNounsQuizModes, saveLocalTrainingFilter,
+  getLocalNounsDict, getLocalNounsHideArticles, getLocalNounsHideForms, getLocalNounsOpenGroups, getLocalNounsQuizModes, getLocalNounsQuizPresentations, getLocalTrainingFilter,
+  saveLocalNounsDict, saveLocalNounsHideArticles, saveLocalNounsHideForms, saveLocalNounsOpenGroups, saveLocalNounsQuizModes, saveLocalNounsQuizPresentations, saveLocalTrainingFilter,
 } from "@/lib/db/local";
-import { NOUN_QUIZ_MODE_HINT, NOUN_QUIZ_MODE_LABEL, NOUN_QUIZ_MODE_ORDER, type NounQuizMode } from "@/lib/nounsQuizModes";
+import {
+  NOUN_QUIZ_MODE_HINT,
+  NOUN_QUIZ_MODE_LABEL,
+  NOUN_QUIZ_MODE_ORDER,
+  NOUN_QUIZ_PRESENTATION_HINT,
+  NOUN_QUIZ_PRESENTATION_LABEL,
+  NOUN_QUIZ_PRESENTATION_ORDER,
+  type NounQuizMode,
+  type NounQuizPresentation,
+} from "@/lib/nounsQuizModes";
 import { usePackProgress } from "@/lib/srs/usePackProgress";
 import { formatTrainedAt, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
 import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
@@ -70,6 +79,7 @@ export function NounsView({ profile, onBack }: Props) {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [quizModes, setQuizModes] = useState<Set<NounQuizMode>>(() => getLocalNounsQuizModes());
+  const [quizPresentations, setQuizPresentations] = useState<NounQuizPresentation[]>(() => getLocalNounsQuizPresentations());
   const [modesOpen, setModesOpen] = useState(false);
   const [trainingFilter, setTrainingFilter] = useState<TrainingFilter>(() => getLocalTrainingFilter("nouns"));
   // Covers the translation and the plural so the table becomes a self-test —
@@ -171,6 +181,11 @@ export function NounsView({ profile, onBack }: Props) {
     [allNounEntries],
   );
 
+  const missingTranslations = useMemo(
+    () => allNounEntries.filter((e) => !e.translation?.trim()),
+    [allNounEntries],
+  );
+
   const nouns = useMemo(() => {
     const terms = parseSearchTerms(query);
     return allNouns.filter((e) => {
@@ -235,6 +250,17 @@ export function NounsView({ profile, onBack }: Props) {
     });
   }
 
+  function togglePresentation(presentation: NounQuizPresentation) {
+    setQuizPresentations((prev) => {
+      const next = prev.includes(presentation)
+        ? prev.filter((value) => value !== presentation)
+        : [...prev, presentation];
+      const safe = next.length ? next : ["target" as const];
+      saveLocalNounsQuizPresentations(safe);
+      return safe;
+    });
+  }
+
   function chooseTrainingFilter(filter: TrainingFilter) {
     setTrainingFilter(filter);
     saveLocalTrainingFilter("nouns", filter);
@@ -275,7 +301,7 @@ export function NounsView({ profile, onBack }: Props) {
           nativeLanguage: profile.nativeLanguage,
         }),
       });
-      const data = await res.json() as { noun?: { gender?: string; article?: string; plural?: string }; error?: string };
+      const data = await res.json() as { noun?: { gender?: string; article?: string; plural?: string; translation?: string }; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Не удалось получить артикль.");
       const noun = data.noun ?? {};
       if (!noun.gender && !noun.article) throw new Error(`ИИ не смог определить род «${entry.headword}»`);
@@ -283,7 +309,16 @@ export function NounsView({ profile, onBack }: Props) {
       const saveRes = await freshFetch("/api/dictionary", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
-        body: JSON.stringify({ id: entry.id, noun }),
+        body: JSON.stringify({
+          id: entry.id,
+          noun: {
+            gender: noun.gender,
+            article: noun.article,
+            plural: noun.plural,
+            // A stored translation is learner data; only fill an empty cell.
+            ...(entry.translation?.trim() ? {} : { translation: noun.translation }),
+          },
+        }),
       });
       const saveData = await saveRes.json() as { ok?: boolean; error?: string };
       if (!saveRes.ok) throw new Error(saveData.error ?? "Не удалось сохранить артикль.");
@@ -294,6 +329,7 @@ export function NounsView({ profile, onBack }: Props) {
             gender: noun.gender || e.gender,
             article: noun.article || e.article,
             plural: noun.plural || e.plural,
+            translation: e.translation || noun.translation || e.translation,
           }
         : e)));
       return { ok: true };
@@ -306,7 +342,9 @@ export function NounsView({ profile, onBack }: Props) {
     setFillingIds((prev) => new Set(prev).add(entry.id));
     const result = await fillEntryNoun(entry);
     setFillingIds((prev) => { const next = new Set(prev); next.delete(entry.id); return next; });
-    setToast(result.ok ? "✓ Артикль определён" : result.error);
+    setToast(result.ok
+      ? (entry.translation?.trim() ? "✓ Артикль определён" : "✓ Перевод добавлен")
+      : result.error);
   }
 
   async function fillAllMissing() {
@@ -329,6 +367,26 @@ export function NounsView({ profile, onBack }: Props) {
     );
   }
 
+  async function fillAllMissingTranslations() {
+    const targets = missingTranslations;
+    if (targets.length === 0 || bulkProgress) return;
+    setBulkProgress({ done: 0, total: targets.length });
+    setFillingIds(new Set(targets.map((e) => e.id)));
+    let failures = 0;
+    for (const entry of targets) {
+      const result = await fillEntryNoun(entry);
+      if (!result.ok) failures += 1;
+      setFillingIds((prev) => { const next = new Set(prev); next.delete(entry.id); return next; });
+      setBulkProgress((prev) => (prev ? { done: prev.done + 1, total: prev.total } : prev));
+    }
+    setBulkProgress(null);
+    setToast(
+      failures === 0
+        ? `✓ Переводов добавлено: ${targets.length}`
+        : `Добавлено ${targets.length - failures} из ${targets.length} переводов, ${failures} не удалось`,
+    );
+  }
+
   const activeFilterCount = genderFilter !== "all" ? 1 : 0;
 
   if (quizNouns) {
@@ -338,6 +396,7 @@ export function NounsView({ profile, onBack }: Props) {
         targetLanguage={profile.targetLanguage}
         nativeLanguage={profile.nativeLanguage}
         modes={quizModes}
+        presentations={quizPresentations}
         onExit={() => setQuizNouns(null)}
         onRecord={record}
       />
@@ -457,7 +516,7 @@ export function NounsView({ profile, onBack }: Props) {
                 onClick={() => setModesOpen((v) => !v)}
               >
                 <ListChecks size={15} /> Режимы
-                <span className="all-filter-count">{quizModes.size + (trainingFilter !== "all" ? 1 : 0)}</span>
+                <span className="all-filter-count">{quizModes.size + (trainingFilter !== "all" ? 1 : 0) + (quizPresentations.length > 1 ? 1 : 0)}</span>
                 <ChevronDown size={12} />
               </button>
             )}
@@ -531,6 +590,39 @@ export function NounsView({ profile, onBack }: Props) {
                   «Артикль» — выбор из der / die / das с подсказкой по правилу окончания.
                 </p>
               </div>
+              {quizModes.has("article") && (
+                <div className="filter-group">
+                  <div className="filter-group-label">Что показывать перед «Артиклем»</div>
+                  <div className="filter-chips">
+                    {NOUN_QUIZ_PRESENTATION_ORDER.map((presentation) => (
+                      <button
+                        key={presentation}
+                        type="button"
+                        className={`filter-chip ${quizPresentations.includes(presentation) ? "active" : ""}`}
+                        onClick={() => togglePresentation(presentation)}
+                        title={NOUN_QUIZ_PRESENTATION_HINT[presentation]}
+                      >
+                        {NOUN_QUIZ_PRESENTATION_LABEL[presentation]}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className={`filter-chip ${quizPresentations.length === NOUN_QUIZ_PRESENTATION_ORDER.length ? "active" : ""}`}
+                      onClick={() => {
+                        const all = [...NOUN_QUIZ_PRESENTATION_ORDER];
+                        setQuizPresentations(all);
+                        saveLocalNounsQuizPresentations(all);
+                      }}
+                      title="Пройти артикль в трёх вариантах вперемешку"
+                    >
+                      Всё
+                    </button>
+                  </div>
+                  <p className="verb-modes-hint">
+                    Для «Артикля» можно вспомнить род по слову, переводу, слуху или пройти все три варианта вперемешку. Аудио всегда содержит только существительное без артикля.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -682,6 +774,43 @@ export function NounsView({ profile, onBack }: Props) {
                       type="button"
                       className="icon-btn"
                       aria-label={`Определить артикль для ${entry.headword}`}
+                      onClick={() => void fillOne(entry)}
+                      disabled={fillingIds.has(entry.id)}
+                    >
+                      {fillingIds.has(entry.id) ? <Loader2 className="spin" size={15} /> : <Wand2 size={15} />}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {missingTranslations.length > 0 && (
+            <section className="verb-missing noun-missing-translations">
+              <div className="verb-missing-head">
+                <strong>Без перевода — {missingTranslations.length}</strong>
+                <button
+                  type="button"
+                  className="dict-train-btn verb-missing-fill-all"
+                  onClick={() => void fillAllMissingTranslations()}
+                  disabled={bulkProgress !== null}
+                >
+                  {bulkProgress
+                    ? `Перевожу ${bulkProgress.done} из ${bulkProgress.total}…`
+                    : <><Wand2 size={14} /> Дозаполнить переводы</>}
+                </button>
+              </div>
+              <p className="verb-missing-hint">
+                Для режима «Родной язык» нужен перевод. ИИ добавит его только в пустые поля и не изменит уже сохранённые переводы.
+              </p>
+              <div className="verb-missing-list">
+                {missingTranslations.map((entry) => (
+                  <div key={entry.id} className="verb-missing-row">
+                    <span className="verb-missing-word">{entry.headword}</span>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      aria-label={`Добавить перевод для ${entry.headword}`}
                       onClick={() => void fillOne(entry)}
                       disabled={fillingIds.has(entry.id)}
                     >

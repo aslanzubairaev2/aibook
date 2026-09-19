@@ -2,9 +2,9 @@
 // in their dictionary but that was saved without them — typed in by hand, added
 // by an assistant, or read from a photo where the model missed the article.
 //
-// Asks for exactly the columns `DictionaryEntry` already has (`gender`,
-// `article`, `plural`), so nothing downstream — the noun table, the gender
-// colours, the article drill — needs to change once the answer comes back.
+// Asks for the noun columns the module can safely backfill (`gender`,
+// `article`, `plural`, `translation`), so missing native-language prompts are
+// fixed through the same audited path as missing grammatical forms.
 
 export type NounFormsPromptParams = {
   lemma: string;
@@ -25,6 +25,7 @@ Return an object with:
 - "gender": exactly "m", "f", "n", or "pl" (for a plural-only noun such as "die Eltern"). Empty string if "${word}" is not a noun.
 - "article": the definite article in the nominative singular — for German exactly "der", "die" or "das". For a plural-only noun, "die".
 - "plural": the full plural form written out, with its article: for "der Ball" that is "die Bälle", for "die Lösung" that is "die Lösungen". Empty string if the noun has no plural.
+- "translation": a short primary translation in ${p.nativeLanguage}. Empty string only if "${word}" is not a real noun.
 
 Rules:
 - Every form must be written in ${p.targetLanguage}, spelled exactly as a native dictionary would print it (correct umlauts, ß, etc.).
@@ -32,5 +33,5 @@ Rules:
 - Never invent a word that does not exist — if "${word}" is not a real ${p.targetLanguage} noun, return every field as an empty string.
 
 Return ONLY valid JSON, no markdown:
-{ "gender": "…", "article": "…", "plural": "…" }`;
+{ "gender": "…", "article": "…", "plural": "…", "translation": "…" }`;
 }

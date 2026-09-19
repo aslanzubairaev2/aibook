@@ -6,15 +6,25 @@ import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
 import { bareNoun, genderRuleExplanation, genderRuleHint, nounArticle, nounGender, suffixRuleFor, GENDER_ARTICLE } from "@/lib/nounForms";
 import { getLocalGenderRuleStats, saveLocalGenderRuleStats } from "@/lib/db/local";
-import { NOUN_QUIZ_MODE_LABEL, NOUN_QUIZ_MODE_ORDER, type NounQuizMode } from "@/lib/nounsQuizModes";
+import {
+  NOUN_QUIZ_MODE_LABEL,
+  NOUN_QUIZ_MODE_ORDER,
+  NOUN_QUIZ_PRESENTATION_LABEL,
+  NOUN_QUIZ_PRESENTATION_ORDER,
+  type NounQuizMode,
+  type NounQuizPresentation,
+} from "@/lib/nounsQuizModes";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
+import { speak, stopTTS } from "@/lib/tts";
+import { NOUN_ARTICLE_TTS_CACHE_SCOPE } from "@/lib/ttsCacheScope";
 
 type Props = {
   nouns: DictionaryEntry[];
   targetLanguage: string;
   nativeLanguage: string;
   modes: Set<NounQuizMode>;
+  presentations: NounQuizPresentation[];
   onExit: () => void;
   /** Reports one answered step so the pack's coverage bar can move. */
   onRecord: (entryId: string, correct: boolean) => void;
@@ -49,6 +59,8 @@ type NounQuizStep = {
   fields: QuizField[];
   /** Article step only: the correct article, matched against the tapped option. */
   answer?: string;
+  /** Article step only: what the learner receives before choosing the article. */
+  presentation?: NounQuizPresentation;
   /** What the card asks — the Russian side for a production step. */
   promptText?: string;
 };
@@ -68,7 +80,11 @@ function shuffle<T>(items: T[]): T[] {
  * that has nothing for it to ask (no stored plural, no known gender) rather
  * than asking an unanswerable question.
  */
-function stepsForEntry(entry: DictionaryEntry, modes: Set<NounQuizMode>): NounQuizStep[] {
+function stepsForEntry(
+  entry: DictionaryEntry,
+  modes: Set<NounQuizMode>,
+  presentations: NounQuizPresentation[],
+): NounQuizStep[] {
   const steps: NounQuizStep[] = [];
   const translation = entry.translation?.trim();
   const article = nounArticle(entry);
@@ -89,7 +105,20 @@ function stepsForEntry(entry: DictionaryEntry, modes: Set<NounQuizMode>): NounQu
     } else if (mode === "article") {
       const gender = nounGender(entry);
       if (gender) {
-        steps.push({ key: `${entry.id}:article`, entry, mode, fields: [], answer: GENDER_ARTICLE[gender] });
+        const selectedPresentations = NOUN_QUIZ_PRESENTATION_ORDER.filter((presentation) => presentations.includes(presentation));
+        for (const presentation of selectedPresentations.length ? selectedPresentations : ["target" as const]) {
+          // A native prompt cannot be shown honestly without a translation.
+          // NounsView exposes a backfill action for those entries.
+          if (presentation === "native" && !translation) continue;
+          steps.push({
+            key: `${entry.id}:article:${presentation}`,
+            entry,
+            mode,
+            fields: [],
+            answer: GENDER_ARTICLE[gender],
+            presentation,
+          });
+        }
       }
     } else if (mode === "plural") {
       const plural = entry.plural?.trim();
@@ -118,8 +147,12 @@ function stepsForEntry(entry: DictionaryEntry, modes: Set<NounQuizMode>): NounQu
   return steps;
 }
 
-function buildQueue(nouns: DictionaryEntry[], modes: Set<NounQuizMode>): NounQuizStep[] {
-  return shuffle(nouns).flatMap((entry) => stepsForEntry(entry, modes));
+function buildQueue(
+  nouns: DictionaryEntry[],
+  modes: Set<NounQuizMode>,
+  presentations: NounQuizPresentation[],
+): NounQuizStep[] {
+  return shuffle(nouns).flatMap((entry) => stepsForEntry(entry, modes, presentations));
 }
 
 /**
@@ -132,8 +165,8 @@ function buildQueue(nouns: DictionaryEntry[], modes: Set<NounQuizMode>): NounQui
  * Like the verb trainer this is deliberately outside the SM-2 flashcard
  * schedule; what it does feed is the pack's coverage bar, through `onRecord`.
  */
-export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, onExit, onRecord }: Props) {
-  const [queue, setQueue] = useState<NounQuizStep[]>(() => buildQueue(nouns, modes));
+export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, presentations, onExit, onRecord }: Props) {
+  const [queue, setQueue] = useState<NounQuizStep[]>(() => buildQueue(nouns, modes, presentations));
   const [index, setIndex] = useState(0);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [hintOpen, setHintOpen] = useState(false);
@@ -162,6 +195,23 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, onExit
   const inputs = answered?.inputs ?? draft;
   const results = answered?.results ?? {};
   const choice = answered?.choice ?? null;
+
+  // Audio prompts behave like flashcard audio directions: start as the next
+  // noun arrives, while the replay button remains available for a second listen.
+  useEffect(() => {
+    if (!step || step.mode !== "article" || step.presentation !== "audio") return;
+    const text = bareNoun(step.entry);
+    if (!text) return;
+    let disposed = false;
+    void speak(text, targetLanguage, undefined, undefined, NOUN_ARTICLE_TTS_CACHE_SCOPE)
+      .then((controller) => {
+        if (disposed) controller?.stop();
+      });
+    return () => {
+      disposed = true;
+      stopTTS();
+    };
+  }, [step, targetLanguage]);
 
   // A fresh step: cursor straight into the first field on a computer, so
   // typing can start without reaching for the mouse. The article step has no
@@ -315,9 +365,11 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, onExit
 
   const entry = step.entry;
   const isProduction = step.mode === "word";
+  const presentation = isArticleStep ? (step.presentation ?? "target") : "target";
   // Every drill but «Перевод» builds on knowing the word, so the translation is
   // shown as a hint. «Перевод» hides it — it is the answer.
-  const showTranslation = entry.translation && step.mode !== "translation" && !isProduction;
+  const showTranslation = entry.translation && step.mode !== "translation" && !isProduction
+    && (!isArticleStep || presentation === "target");
 
   return (
     <section className="screen verbs-view verb-quiz noun-quiz">
@@ -326,7 +378,10 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, onExit
           <ArrowLeft size={20} />
         </button>
         <div>
-          <p className="eyebrow">Существительные · тренировка · {NOUN_QUIZ_MODE_LABEL[step.mode]}</p>
+          <p className="eyebrow">
+            Существительные · тренировка · {NOUN_QUIZ_MODE_LABEL[step.mode]}
+            {isArticleStep && step.presentation ? ` · ${NOUN_QUIZ_PRESENTATION_LABEL[step.presentation]}` : ""}
+          </p>
           <h1>{index + 1} / {queue.length}</h1>
         </div>
       </header>
@@ -351,12 +406,34 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, modes, onExit
             <p className="verb-quiz-phrase-prompt">{step.promptText}</p>
             <p className="verb-quiz-translation">напишите слово с артиклем</p>
           </>
+        ) : isArticleStep ? (
+          presentation === "audio" ? (
+            <div className="noun-quiz-audio-prompt">
+              <SpeakButton
+                text={bareNoun(entry)}
+                lang={targetLanguage}
+                size={24}
+                cacheScope={NOUN_ARTICLE_TTS_CACHE_SCOPE}
+              />
+              <span>Нажмите, чтобы услышать</span>
+            </div>
+          ) : presentation === "native" ? (
+            <div className="noun-quiz-native-prompt">{entry.translation}</div>
+          ) : (
+            <div className="verb-quiz-infinitive">
+              <span>{bareNoun(entry)}</span>
+              <SpeakButton
+                text={bareNoun(entry)}
+                lang={targetLanguage}
+                size={16}
+                cacheScope={NOUN_ARTICLE_TTS_CACHE_SCOPE}
+              />
+            </div>
+          )
         ) : (
           <>
             <div className="verb-quiz-infinitive">
-              {/* The article is the answer in the article drill, so the word is
-                  shown bare there and with its article everywhere else. */}
-              <span>{isArticleStep ? bareNoun(entry) : entry.headword}</span>
+              <span>{entry.headword}</span>
               <SpeakButton text={entry.headword} lang={targetLanguage} size={16} />
             </div>
             {showTranslation && (
