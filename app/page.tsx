@@ -1044,22 +1044,8 @@ function AppInner() {
       <QuickWordPreview nativeLanguage={profile.nativeLanguage} targetLanguage={profile.targetLanguage} />
       {section === "home" && (
         <HomeDashboard
-          book={lastBook}
-          books={books}
           profile={profile}
           cards={cards}
-          onBooksChange={handleBooksChange}
-          onOpenBook={(book) => void handleOpenBook(book)}
-          openingBookId={openingBookId}
-          downloadTasks={downloadTasks}
-          onDownloadBook={(book) => void handleCatalogDownload(book)}
-          onContinueReading={() => {
-            if (lastBook) { setActiveBook(lastBook); setSection("reader"); }
-            else setSection("books");
-          }}
-          onOpenCards={() => setSection("cards")}
-          onOpenBooks={() => setSection("books")}
-          onOpenDiscover={() => setSection("discover")}
           onOpenLiveChat={() => setIsLiveChatOpen(true)}
           onOpenLiveTranslate={() => setSection("live-translate")}
         />
