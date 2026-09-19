@@ -20,8 +20,8 @@
 
 ## Проверки
 
-- `npm test` — passed, 417 тестов.
-- `npm run build` — passed, включая тесты и TypeScript.
+- `npm test` — passed, 416 тестов в чистой интеграции с `origin/main` (417 в исходной рабочей ветке с отдельным незакоммиченным тестом).
+- `npm run build` — passed в чистой интеграции, включая тесты и TypeScript.
 - `npx tsc --noEmit` — passed.
 - `npm run lint` — failed на существующем долге проекта: 75 ошибок, 37 предупреждений. Точечный lint изменённых файлов показывает только прежнюю ошибку `react-hooks/set-state-in-effect` в `NounsView.tsx:128`.
 
