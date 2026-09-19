@@ -28,6 +28,7 @@ Return an object with:
 
 Rules:
 - Every form must be written in ${p.targetLanguage}, spelled exactly as a native dictionary would print it (correct umlauts, ß, etc.).
+- For German, "möchten"/"moechten" is the polite present form of the modal verb "mögen", not a separate infinitive: return the canonical modal forms "mochte", "gemocht", "haben", "нет".
 - If the verb has no distinct simple-past or participle form in ${p.targetLanguage} (irregular/defective cases aside), still give the standard form a native speaker would produce.
 - Never invent a verb that does not exist — if "${word}" is not a real ${p.targetLanguage} verb, return every field as an empty string.
 

@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import withPWAInit from "@ducanh2912/next-pwa";
+import { withWorkflow } from "workflow/next";
 
 const withPWA = withPWAInit({
   dest: "public",
@@ -37,4 +38,4 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ['192.168.178.55', 'localhost:3000'],
 };
 
-export default withPWA(nextConfig);
+export default withWorkflow(withPWA(nextConfig));

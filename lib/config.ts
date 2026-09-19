@@ -1,5 +1,8 @@
 export const AI_CONFIG = {
   model: "gemini-3.1-flash-lite",
+  /** Structured dictionary and morphology need stronger reasoning than chat/TTS. */
+  dictionaryModel: "gemini-3.8-flash",
+  dictionaryThinkingLevel: "HIGH",
   /** Keep discussions on the same fast, inexpensive model as the rest of the app. */
   discussModel: "gemini-3.1-flash-lite",
   /** A discussion answer carries several examples and their translations. */

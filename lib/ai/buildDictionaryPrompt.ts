@@ -18,6 +18,7 @@
 // than merely recognise it.
 
 import { LEARNING_ITEM_TYPES, type LearningItemType } from "@/lib/types";
+import { germanVerbContractText, validateGermanVerbEntries } from "./verbEntryValidation";
 
 export type DictionaryEntryDraft = {
   headword: string;
@@ -90,6 +91,7 @@ For EVERY entry provide:
   "sein"), and "trennbar" ("да"/"нет") — for ${target} other than German, the equivalent
   principal parts under sensible keys. For adjectives with irregular comparison, use
   "komparativ" and "superlativ". Empty object when there is nothing irregular to show.
+${germanVerbContractText(target)}
 - "cefr": the CEFR level of the word itself — one of A1, A2, B1, B2, C1, C2.
   * For basic everyday vocabulary (hobbies, food, daily routines, basic actions like "grillen", "baden", "ausgehen", "träumen", "kochen", "wohnen", "einkaufen", "Möbel", "Balkon", "Picknick", "Kosten", "Treffpunkt"), assign "A1".
   * Do NOT over-estimate beginner words to A2 or B1. If the photo comes from an elementary coursebook page (e.g. A1/A2), words taught on that page belong to that course's CEFR level unless clearly advanced.
@@ -194,12 +196,13 @@ const A1_DICTIONARY_WORDS = new Set([
 ]);
 
 /** Narrow the model's raw JSON into entries worth storing. */
-export function parseDictionaryEntries(raw: unknown): {
+export function parseDictionaryEntries(raw: unknown, targetLanguage = ""): {
   entries: DictionaryEntryDraft[];
   pageKind: string;
   topic: string;
   pageLabel: string;
   isVocabularyList: boolean;
+  invalidVerbs: string[];
 } {
   const obj = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   const list = Array.isArray(obj.entries) ? obj.entries : [];
@@ -252,11 +255,13 @@ export function parseDictionaryEntries(raw: unknown): {
     }));
   }
 
+  const checked = validateGermanVerbEntries(entries, targetLanguage);
   return {
-    entries,
+    entries: checked.entries,
     pageKind: String(obj.pageKind ?? "").trim().slice(0, 120),
     topic: String(obj.topic ?? "").trim().slice(0, 80),
     pageLabel: String(obj.pageLabel ?? "").trim().slice(0, 40),
     isVocabularyList: obj.isVocabularyList === true,
+    invalidVerbs: checked.invalidVerbs,
   };
 }

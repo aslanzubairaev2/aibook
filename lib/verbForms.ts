@@ -146,7 +146,7 @@ const GERMAN_IRREGULAR_VERB_STEMS = new Set([
 // forms learners most often have to memorise as a complete mini-paradigm.
 const GERMAN_SPECIAL_VERB_STEMS = new Set([
   "sein", "haben", "werden", "wissen", "tun",
-  "können", "müssen", "wollen", "sollen", "dürfen", "mögen",
+  "können", "müssen", "wollen", "sollen", "dürfen", "mögen", "möchten", "moechten",
 ]);
 
 const GERMAN_MIXED_VERB_STEMS = new Set([

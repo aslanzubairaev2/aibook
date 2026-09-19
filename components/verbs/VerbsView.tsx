@@ -171,18 +171,20 @@ export function VerbsView({ profile, onBack }: Props) {
     [entries],
   );
 
-  // The teacher's table is about verbs with at least one principal part
-  // recorded — a "глагол" with nothing in `forms` has nothing to show here.
+  // The teacher's table is only for verbs with a complete principal-parts
+  // record. A partial AI response must stay visible in the repair backlog,
+  // instead of looking like a valid training card.
   const allVerbs = useMemo(
-    () => allGlagolEntries.filter((e) => e.forms?.praeteritum || e.forms?.partizip2),
+    () => allGlagolEntries.filter((e) => isCompleteGermanVerbForms(e.forms)),
     [allGlagolEntries],
   );
 
-  // Saved as verbs, but with no Präteritum/Partizip II on file — typed in by
-  // hand, added by an assistant, or read from a photo the model missed them
-  // on. Shown separately with a way to ask the AI to fill them in.
+  // Saved as verbs, but with a partial or missing principal-parts record —
+  // typed in by hand, added by an assistant, or read from a photo the model
+  // missed. Shown separately with a way to ask the AI to fill every required
+  // field in one validated response.
   const missingForms = useMemo(
-    () => allGlagolEntries.filter((e) => !e.forms?.praeteritum && !e.forms?.partizip2),
+    () => allGlagolEntries.filter((e) => !isCompleteGermanVerbForms(e.forms)),
     [allGlagolEntries],
   );
 
@@ -306,7 +308,9 @@ export function VerbsView({ profile, onBack }: Props) {
       const data = await res.json() as { forms?: Record<string, string>; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Не удалось получить формы.");
       const forms = data.forms ?? {};
-      if (!forms.praeteritum && !forms.partizip2) throw new Error(`ИИ не смог определить формы «${entry.headword}»`);
+      if (!isCompleteGermanVerbForms(forms)) {
+        throw new Error(`ИИ вернул неполные формы «${entry.headword}». Нужны Präteritum, Partizip II, вспомогательный глагол и признак отделяемости.`);
+      }
 
       const saveRes = await freshFetch("/api/dictionary", {
         method: "PATCH",
@@ -831,6 +835,15 @@ function partizipFirstPerson(entry: DictionaryEntry): string {
   if (!p2) return "";
   const aux = (entry.forms?.hilfsverb || "").trim().toLowerCase();
   return aux === "sein" ? `ich bin ${p2}` : `ich habe ${p2}`;
+}
+
+function isCompleteGermanVerbForms(forms: Record<string, string> | null | undefined): boolean {
+  return Boolean(
+    forms?.praeteritum?.trim()
+    && forms?.partizip2?.trim()
+    && /^(haben|sein)$/iu.test(forms.hilfsverb?.trim() ?? "")
+    && /^(да|нет)$/iu.test(forms.trennbar?.trim() ?? ""),
+  );
 }
 
 function verbNoun(n: number): string {
