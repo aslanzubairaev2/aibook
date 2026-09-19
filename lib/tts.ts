@@ -434,6 +434,38 @@ async function requestTts(
 export const SPEECH_PREFETCH_AHEAD = 2;
 
 /**
+ * One shared lane for background synthesis.
+ *
+ * Starting four remote TTS calls together neither helps the learner hear the
+ * current word nor treats a provider's quota kindly. A single lane keeps them
+ * in card order and also prevents successive cards from queuing the same word
+ * twice before it has reached the browser cache.
+ */
+let prefetchTail: Promise<void> = Promise.resolve();
+const queuedPrefetches = new Map<string, Promise<void>>();
+
+function queuedPrefetchKey(text: string, lang: string, cacheScope: TtsCacheScope) {
+  return `${cacheScope}\0${normalizeLanguageCode(lang)}\0${text}`;
+}
+
+function enqueueSpeechPrefetch(text: string, lang: string, cacheScope: TtsCacheScope): Promise<void> {
+  const key = queuedPrefetchKey(text, lang, cacheScope);
+  const queued = queuedPrefetches.get(key);
+  if (queued) return queued;
+
+  const job = prefetchTail
+    .then(() => prefetchSpeech(text, lang, cacheScope))
+    .catch((error) => { console.warn("TTS prefetch failed", error); });
+  // A failed background request must never block the words behind it.
+  prefetchTail = job;
+  queuedPrefetches.set(key, job);
+  void job.finally(() => {
+    if (queuedPrefetches.get(key) === job) queuedPrefetches.delete(key);
+  });
+  return job;
+}
+
+/**
  * Fetch a line's audio now, so that playing it later is immediate.
  *
  * A card that speaks the moment it appears cannot start fetching until it is on
@@ -485,18 +517,19 @@ export async function prefetchSpeech(text: string, lang: string, cacheScope: Tts
 /**
  * Warm the next few lines a session will speak, nearest first.
  *
- * Callers pass what is coming in the order it is coming. Most trainers share
- * the default depth; a faster drill can explicitly request a larger window.
+ * Callers pass what is coming in the order it is coming. The shared queue
+ * warms one recording at a time, nearest first; a faster drill can explicitly
+ * request a larger window without creating a burst of provider requests.
  */
 export function prefetchSpeechAhead(
   texts: string[],
   lang: string,
   cacheScope: TtsCacheScope = "default",
   ahead = SPEECH_PREFETCH_AHEAD,
-): void {
-  for (const text of texts.slice(0, ahead)) {
-    void prefetchSpeech(text, lang, cacheScope);
-  }
+): Promise<void> {
+  return Promise.all(
+    texts.slice(0, ahead).map((text) => enqueueSpeechPrefetch(text, lang, cacheScope)),
+  ).then(() => undefined);
 }
 
 /**
