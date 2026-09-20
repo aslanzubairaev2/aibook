@@ -76,9 +76,9 @@ export type CardFilters = {
   filterBook?: string;
   /** CEFR level of the word on the card ("all" or A1…C2). */
   filterLevel?: string;
-  /** Selected CEFR levels for the multi-select card filter. */
+  /** CEFR levels excluded by the multi-select card filter. */
   filterLevels?: string[];
-  /** Whether selected CEFR levels are included or excluded. */
+  /** Legacy compatibility for profiles written before excluded levels became the only UI. */
   filterLevelMode?: CefrFilterMode;
   /** Part of speech of the word on the card — normalized, e.g. "глагол", or "all". */
   filterPos?: string;

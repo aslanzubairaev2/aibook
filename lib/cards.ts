@@ -329,9 +329,21 @@ function resolveCefrFilters(saved: CardFilters | undefined): { levels: CefrLevel
     ? [saved.filterLevel as CefrLevel]
     : [];
 
+  // The current UI treats the stored levels as exclusions. Profiles written by
+  // the short-lived include/exclude UI need to be converted once so a saved
+  // filter keeps showing the same cards after the mode controls disappear.
+  const hasLevelSelection = savedLevels.length > 0 || legacyLevel.length > 0;
+  if (hasLevelSelection && saved?.filterLevelMode !== "exclude") {
+    const included = savedLevels.length > 0 ? savedLevels : legacyLevel;
+    return {
+      levels: CEFR_LEVELS.filter((level) => !included.includes(level)),
+      mode: "exclude",
+    };
+  }
+
   return {
     levels: [...new Set(savedLevels.length > 0 ? savedLevels : legacyLevel)],
-    mode: saved?.filterLevelMode === "exclude" ? "exclude" : "include",
+    mode: "exclude",
   };
 }
 
@@ -379,7 +391,7 @@ export function resolveCardFilters(
       filterBook: batch.title,
       filterLevel: "all",
       filterLevels: [],
-      filterLevelMode: "include",
+      filterLevelMode: "exclude",
       filterPos: "all",
       sortOrder,
       trainFilter: training?.type ?? "all",

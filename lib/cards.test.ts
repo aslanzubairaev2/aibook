@@ -66,10 +66,16 @@ test("a dictionary batch narrows by its exact id, not only its non-unique title"
   assert.deepEqual(session.trainVariants, ALL_TRAIN_VARIANTS);
 });
 
-test("CEFR card filters support multiple levels and exclusion", () => {
-  const selected = resolveCardFilters({ filterLevels: ["A1", "C2"], filterLevelMode: "include" });
-  assert.deepEqual(selected.filterLevels, ["A1", "C2"]);
-  assert.equal(selected.filterLevelMode, "include");
+test("CEFR card filters use toggled exclusions and migrate older selections", () => {
+  const fresh = resolveCardFilters(undefined);
+  assert.deepEqual(fresh.filterLevels, []);
+
+  const migrated = resolveCardFilters({ filterLevels: ["A1", "C2"], filterLevelMode: "include" });
+  assert.deepEqual(migrated.filterLevels, ["A2", "B1", "B2", "C1"]);
+  assert.equal(migrated.filterLevelMode, "exclude");
+  assert.equal(matchesCefrFilter("A1", migrated.filterLevels, migrated.filterLevelMode), true);
+  assert.equal(matchesCefrFilter("C2", migrated.filterLevels, migrated.filterLevelMode), true);
+  assert.equal(matchesCefrFilter("B1", migrated.filterLevels, migrated.filterLevelMode), false);
 
   const excluded = resolveCardFilters({ filterLevels: ["B1", "B2", "C1", "C2"], filterLevelMode: "exclude" });
   assert.deepEqual(excluded.filterLevels, ["B1", "B2", "C1", "C2"]);
@@ -80,10 +86,11 @@ test("CEFR card filters support multiple levels and exclusion", () => {
   assert.equal(matchesCefrFilter("C2", ["A1", "C2"], "include"), true);
 });
 
-test("legacy single CEFR filter is restored as one selected level", () => {
+test("legacy single CEFR filter keeps its visible level", () => {
   const restored = resolveCardFilters({ filterLevel: "C1" });
-  assert.deepEqual(restored.filterLevels, ["C1"]);
-  assert.equal(restored.filterLevelMode, "include");
+  assert.deepEqual(restored.filterLevels, ["A1", "A2", "B1", "B2", "C2"]);
+  assert.equal(restored.filterLevelMode, "exclude");
+  assert.equal(matchesCefrFilter("C1", restored.filterLevels, restored.filterLevelMode), true);
 });
 
 // ─── The order of the packs ─────────────────────────────────────────────────
