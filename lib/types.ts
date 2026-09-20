@@ -21,7 +21,9 @@ export type TtsProvider =
  */
 export type LiveTranslateProvider = "gemini" | "openai" | "openai-realtime";
 
-export type CefrLevel = "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
+export const CEFR_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"] as const;
+export type CefrLevel = (typeof CEFR_LEVELS)[number];
+export type CefrFilterMode = "include" | "exclude";
 export type ContentSource = "upload" | "gutenberg" | "standard_ebooks" | "klexikon" | "oersi" | "universal_cefr" | "generated" | "librivox" | "archive_audio";
 
 /**
@@ -74,6 +76,10 @@ export type CardFilters = {
   filterBook?: string;
   /** CEFR level of the word on the card ("all" or A1…C2). */
   filterLevel?: string;
+  /** Selected CEFR levels for the multi-select card filter. */
+  filterLevels?: string[];
+  /** Whether selected CEFR levels are included or excluded. */
+  filterLevelMode?: CefrFilterMode;
   /** Part of speech of the word on the card — normalized, e.g. "глагол", or "all". */
   filterPos?: string;
   sortOrder?: "added" | "due" | "ease";

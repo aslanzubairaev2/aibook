@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ALL_TRAIN_VARIANTS, buildTrainQueue, cardSourceKey, matchesSourceQuery, comparePacks, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, endOfTodayMs, getVariantProgress, isVariantDue, listCardSources, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
+import { ALL_TRAIN_VARIANTS, buildTrainQueue, cardSourceKey, matchesSourceQuery, comparePacks, computeDeckStats, countTrainCandidates, deckInsight, describePackTraining, endOfTodayMs, getVariantProgress, isVariantDue, listCardSources, matchesCefrFilter, normalizePackTraining, resolveCardFilters, filterCardsByTrainingSource, getCardsVariantProgress, getReviewHistoryPosition, mergeCardVariantProgress, splitCardBack } from "./cards.ts";
 import type { CardVariantState, Flashcard, SkillProgress, TrainVariant } from "./types.ts";
 
 function card(id: string, sourceBookId: string, repetitions = 0): Flashcard {
@@ -64,6 +64,26 @@ test("a dictionary batch narrows by its exact id, not only its non-unique title"
   assert.equal(session.trainFilter, "all");
   assert.equal(session.trainMode, "recognize");
   assert.deepEqual(session.trainVariants, ALL_TRAIN_VARIANTS);
+});
+
+test("CEFR card filters support multiple levels and exclusion", () => {
+  const selected = resolveCardFilters({ filterLevels: ["A1", "C2"], filterLevelMode: "include" });
+  assert.deepEqual(selected.filterLevels, ["A1", "C2"]);
+  assert.equal(selected.filterLevelMode, "include");
+
+  const excluded = resolveCardFilters({ filterLevels: ["B1", "B2", "C1", "C2"], filterLevelMode: "exclude" });
+  assert.deepEqual(excluded.filterLevels, ["B1", "B2", "C1", "C2"]);
+  assert.equal(excluded.filterLevelMode, "exclude");
+  assert.equal(matchesCefrFilter("A2", excluded.filterLevels, excluded.filterLevelMode), true);
+  assert.equal(matchesCefrFilter("B2", excluded.filterLevels, excluded.filterLevelMode), false);
+  assert.equal(matchesCefrFilter("C1", ["A1", "C2"], "include"), false);
+  assert.equal(matchesCefrFilter("C2", ["A1", "C2"], "include"), true);
+});
+
+test("legacy single CEFR filter is restored as one selected level", () => {
+  const restored = resolveCardFilters({ filterLevel: "C1" });
+  assert.deepEqual(restored.filterLevels, ["C1"]);
+  assert.equal(restored.filterLevelMode, "include");
 });
 
 // ─── The order of the packs ─────────────────────────────────────────────────

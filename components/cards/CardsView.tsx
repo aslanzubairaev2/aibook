@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard, EyeOff } from "lucide-react";
-import { LEARNING_ITEM_TYPES, type AiAnalysis, type CardFilters, type CardSkillState, type DiscussMessage, type Flashcard, type LearningItemType, type ReverseWordAnalysis, type TrainVariant, type TtsProvider } from "@/lib/types";
+import { CEFR_LEVELS, LEARNING_ITEM_TYPES, type AiAnalysis, type CardFilters, type CardSkillState, type CefrFilterMode, type CefrLevel, type DiscussMessage, type Flashcard, type LearningItemType, type ReverseWordAnalysis, type TrainVariant, type TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
 import {
   ALL_TRAIN_VARIANTS,
@@ -12,6 +12,7 @@ import {
   deckInsight,
   endOfTodayMs,
   listCardSources,
+  matchesCefrFilter,
   type CardSource,
   describePackTraining,
   normalizePackTraining,
@@ -522,7 +523,8 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const [filterStatus, setFilterStatus] = useState<FilterStatus>(initialFilters.filterStatus);
   const [filterType, setFilterType] = useState<FilterType>(initialFilters.filterType);
   const [filterBook, setFilterBook] = useState<string>(initialFilters.filterBook);
-  const [filterLevel, setFilterLevel] = useState<string>(initialFilters.filterLevel);
+  const [filterLevels, setFilterLevels] = useState<CefrLevel[]>(initialFilters.filterLevels);
+  const [filterLevelMode, setFilterLevelMode] = useState<CefrFilterMode>(initialFilters.filterLevelMode);
   const [filterPos, setFilterPos] = useState<string>(initialFilters.filterPos);
   const [sortOrder, setSortOrder] = useState<SortOrder>(initialFilters.sortOrder);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
@@ -952,7 +954,8 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     setFilterStatus(restored.filterStatus);
     setFilterType(restored.filterType);
     setFilterBook(restored.filterBook);
-    setFilterLevel(restored.filterLevel);
+    setFilterLevels(restored.filterLevels);
+    setFilterLevelMode(restored.filterLevelMode);
     setFilterPos(restored.filterPos);
     setTrainFilter(restored.trainFilter);
     setTrainStatus(restored.trainStatus);
@@ -1110,6 +1113,20 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
       return updated;
     });
   }, [user]);
+
+  const updateLevelFilter = useCallback((levels: CefrLevel[], mode: CefrFilterMode = filterLevelMode) => {
+    const nextLevels = [...new Set(levels)];
+    const nextMode = nextLevels.length > 0 ? mode : "include";
+    setFilterLevels(nextLevels);
+    setFilterLevelMode(nextMode);
+    persistCardFilters({
+      // Keep the old field meaningful for older clients and saved profiles.
+      filterLevel: nextMode === "include" && nextLevels.length === 1 ? nextLevels[0] : "all",
+      filterLevels: nextLevels,
+      filterLevelMode: nextMode,
+    });
+    setVisibleCount(50);
+  }, [filterLevelMode, persistCardFilters]);
 
   // Zen is a way of working, not a one-off view, so the choice is remembered
   // the same way the filters are: a learner who trains this way trains this way
@@ -1330,12 +1347,11 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     () => Array.from(new Set(cards.map((c) => c.sourceBookTitle || c.source || "").filter(Boolean))),
     [cards],
   );
-  // Only levels that actually occur — cards made before levels existed have none.
-  const cardLevels = useMemo(
-    () => ["A1", "A2", "B1", "B2", "C1", "C2"].filter((l) => cards.some((c) => c.cefr === l)),
-    [cards],
-  );
-  const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all", filterLevel !== "all", filterPos !== "all"].filter(Boolean).length;
+  // Keep every CEFR level available in the filter, including levels that do
+  // not occur in the current deck yet. This lets a saved/empty C2 filter be
+  // selected and makes the full A1–C2 range discoverable in the trainer.
+  const cardLevels = CEFR_LEVELS;
+  const activeFilterCount = [filterStatus !== "all", filterType !== "all", filterBook !== "all", filterLevels.length > 0, filterPos !== "all"].filter(Boolean).length;
   const variantsAreDefault = trainVariants.length === 1 && trainVariants[0] === "forward";
   // With one source picked there is nothing for the exclusions to remove — the
   // chips stay visible (so the learner can see what they set) but say so.
@@ -1354,7 +1370,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         if (filterStatus !== "all" && c.status !== filterStatus) return false;
         if (filterType !== "all" && c.type !== filterType) return false;
         if (filterBook !== "all" && (c.sourceBookTitle || c.source || "") !== filterBook) return false;
-        if (filterLevel !== "all" && (c.cefr ?? "") !== filterLevel) return false;
+        if (!matchesCefrFilter(c.cefr, filterLevels, filterLevelMode)) return false;
         if (filterPos !== "all" && posOf(c) !== filterPos) return false;
         if (query) return c.front.toLowerCase().includes(query) || c.back.toLowerCase().includes(query) || (c.sourceBookTitle || c.source || "").toLowerCase().includes(query);
         return true;
@@ -1364,7 +1380,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         if (sortOrder === "ease") return a.easeFactor - b.easeFactor;
         return Date.parse(b.addedAt) - Date.parse(a.addedAt);
       });
-  }, [cards, filterStatus, filterType, filterBook, filterLevel, filterPos, posOf, searchQuery, sortOrder]);
+  }, [cards, filterStatus, filterType, filterBook, filterLevels, filterLevelMode, filterPos, posOf, searchQuery, sortOrder]);
 
   // Both long lists page in as they are scrolled: rendering 500-plus rows at
   // once cost more than everything else on the screen put together.
@@ -2668,19 +2684,26 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                 </div>
               </div>
 
-              {cardLevels.length > 0 && (
-                <div className="filter-group">
-                  <div className="filter-group-label">Уровень CEFR</div>
-                  <div className="filter-chips">
-                    <button className={`filter-chip ${filterLevel === "all" ? "active" : ""}`} onClick={() => { setFilterLevel("all"); persistCardFilters({ filterLevel: "all" }); setVisibleCount(50); }} type="button">Все</button>
-                    {cardLevels.map((l) => (
-                      <button key={l} className={`filter-chip ${filterLevel === l ? "active" : ""}`} onClick={() => { setFilterLevel(l); persistCardFilters({ filterLevel: l }); setVisibleCount(50); }} type="button">
-                        {l}
-                      </button>
-                    ))}
-                  </div>
+              <div className="filter-group">
+                <div className="filter-group-label">Уровень CEFR</div>
+                <div className="filter-chips">
+                  <button aria-pressed={filterLevels.length === 0} className={`filter-chip ${filterLevels.length === 0 ? "active" : ""}`} onClick={() => updateLevelFilter([])} type="button">Все</button>
+                  <button aria-pressed={filterLevels.length > 0 && filterLevelMode === "include"} className={`filter-chip ${filterLevels.length > 0 && filterLevelMode === "include" ? "active" : ""}`} onClick={() => updateLevelFilter(filterLevels, "include")} type="button">Только выбранные</button>
+                  <button aria-pressed={filterLevels.length > 0 && filterLevelMode === "exclude"} className={`filter-chip ${filterLevels.length > 0 && filterLevelMode === "exclude" ? "active" : ""}`} onClick={() => updateLevelFilter(filterLevels, "exclude")} type="button">Исключить выбранные</button>
                 </div>
-              )}
+                <div className="filter-chips" aria-label="Выбор уровней CEFR">
+                  {cardLevels.map((l) => (
+                    <button aria-pressed={filterLevels.includes(l)} key={l} className={`filter-chip ${filterLevels.includes(l) ? "active" : ""}`} onClick={() => {
+                      const nextLevels = filterLevels.includes(l)
+                        ? filterLevels.filter((level) => level !== l)
+                        : [...filterLevels, l];
+                      updateLevelFilter(nextLevels);
+                    }} type="button">
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {posOptions.length > 1 && (
                 <div className="filter-group">
@@ -2717,7 +2740,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
 
               {activeFilterCount > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
-                  <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); setFilterLevel("all"); setFilterPos("all"); persistCardFilters({ filterStatus: "all", filterType: "all", filterBook: "all", filterLevel: "all", filterPos: "all" }); setVisibleCount(50); }} type="button">
+                  <button className="filter-reset-btn" onClick={() => { setFilterStatus("all"); setFilterType("all"); setFilterBook("all"); updateLevelFilter([]); setFilterPos("all"); persistCardFilters({ filterStatus: "all", filterType: "all", filterBook: "all", filterPos: "all" }); setVisibleCount(50); }} type="button">
                     Сбросить фильтры
                   </button>
                   {filteredAllCards.length > 0 && (

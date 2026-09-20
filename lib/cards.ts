@@ -1,4 +1,4 @@
-import type { CardFilters, CardVariantState, Flashcard, LearningItemType, PackSort, PackTraining, SkillProgress, TrainVariant } from "@/lib/types";
+import { CEFR_LEVELS, type CardFilters, type CardVariantState, type CefrFilterMode, type CefrLevel, type Flashcard, type LearningItemType, type PackSort, type PackTraining, type SkillProgress, type TrainVariant } from "@/lib/types";
 
 export const ALL_TRAIN_VARIANTS: TrainVariant[] = ["forward", "reverse", "audio"];
 
@@ -306,6 +306,8 @@ export type ResolvedCardFilters = {
   filterType: TrainTypeFilter;
   filterBook: string;
   filterLevel: string;
+  filterLevels: CefrLevel[];
+  filterLevelMode: CefrFilterMode;
   filterPos: string;
   sortOrder: NonNullable<CardFilters["sortOrder"]>;
   trainFilter: TrainTypeFilter;
@@ -318,6 +320,30 @@ export type ResolvedCardFilters = {
   trainPos: string;
   zenMode: boolean;
 };
+
+function resolveCefrFilters(saved: CardFilters | undefined): { levels: CefrLevel[]; mode: CefrFilterMode } {
+  const savedLevels = Array.isArray(saved?.filterLevels)
+    ? saved.filterLevels.filter((level): level is CefrLevel => CEFR_LEVELS.includes(level as CefrLevel))
+    : [];
+  const legacyLevel = saved?.filterLevel && saved.filterLevel !== "all" && CEFR_LEVELS.includes(saved.filterLevel as CefrLevel)
+    ? [saved.filterLevel as CefrLevel]
+    : [];
+
+  return {
+    levels: [...new Set(savedLevels.length > 0 ? savedLevels : legacyLevel)],
+    mode: saved?.filterLevelMode === "exclude" ? "exclude" : "include",
+  };
+}
+
+export function matchesCefrFilter(
+  cardLevel: string | null | undefined,
+  levels: CefrLevel[],
+  mode: CefrFilterMode,
+): boolean {
+  if (levels.length === 0) return true;
+  const isSelected = levels.includes(cardLevel as CefrLevel);
+  return mode === "exclude" ? !isSelected : isSelected;
+}
 
 /**
  * The filters a screen actually runs with.
@@ -352,6 +378,8 @@ export function resolveCardFilters(
       filterType: "all",
       filterBook: batch.title,
       filterLevel: "all",
+      filterLevels: [],
+      filterLevelMode: "include",
       filterPos: "all",
       sortOrder,
       trainFilter: training?.type ?? "all",
@@ -377,11 +405,15 @@ export function resolveCardFilters(
     };
   }
 
+  const cefrFilters = resolveCefrFilters(saved);
+
   return {
     filterStatus: saved?.filterStatus ?? "all",
     filterType: saved?.filterType ?? "all",
     filterBook: saved?.filterBook ?? "all",
     filterLevel: saved?.filterLevel ?? "all",
+    filterLevels: cefrFilters.levels,
+    filterLevelMode: cefrFilters.mode,
     filterPos: saved?.filterPos ?? "all",
     sortOrder,
     trainFilter: saved?.trainFilter ?? "all",
