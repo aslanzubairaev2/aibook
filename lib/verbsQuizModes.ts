@@ -11,14 +11,14 @@ export const QUIZ_MODE_LABEL: Record<QuizMode, string> = {
   translation: "Перевод",
   forms: "Формы",
   conjugation: "Спряжения",
-  phrase: "Фразы",
+  phrase: "Фразы с ИИ",
 };
 
 export const QUIZ_MODE_HINT: Record<QuizMode, string> = {
   translation: "Перевести слово на русский",
   forms: "Präteritum и Partizip II",
   conjugation: "Спрягать по лицам — время выбирается ниже",
-  phrase: "Перевести фразу на немецкий",
+  phrase: "Диалог с ИИ: составить фразу, получить объяснение и попробовать снова",
 };
 
 /** Default session: exactly what the trainer already did before modes existed. */

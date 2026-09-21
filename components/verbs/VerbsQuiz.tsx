@@ -5,14 +5,14 @@ import { ArrowLeft, Eye, EyeOff, Loader2, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
 import { fetchGrammar } from "@/lib/ai/grammar";
-import { fetchVerbPhrase } from "@/lib/ai/verbPhrase";
-import { makeGrammarCacheKey, makeVerbPhraseCacheKey } from "@/lib/ai/cacheKeys";
-import { getLocalGrammar, getLocalVerbPhrase, saveLocalGrammar, saveLocalVerbPhrase } from "@/lib/db/local";
+import { makeGrammarCacheKey } from "@/lib/ai/cacheKeys";
+import { getLocalGrammar, saveLocalGrammar } from "@/lib/db/local";
 import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
 import { toRows } from "@/components/word-modal/GrammarModal";
 import { getPresentSeparableSuffix, isPresentPluralInfinitive } from "@/lib/verbForms";
+import { VerbPhraseTutor } from "@/components/verbs/VerbPhraseTutor";
 
 type Props = {
   verbs: DictionaryEntry[];
@@ -116,11 +116,10 @@ function stepsForEntry(entry: DictionaryEntry, modes: Set<QuizMode>, conjugation
         steps.push({ key: `${entry.id}:conjugation:${tense}`, entry, mode, tense, fields: null });
       }
     } else if (mode === "phrase") {
-      const example = entry.example?.trim();
-      const exampleTranslation = entry.example_translation?.trim();
-      // Use the entry's own example when it has one — no AI call needed.
-      // Most verbs don't (backfilled ones especially), so the step still
-      // gets created; its sentence is generated the moment it comes up.
+      // The AI tutor creates the situation and evaluates natural variants
+      // conversationally, so this step deliberately has no expected string.
+      const example = "";
+      const exampleTranslation = "";
       steps.push(example && exampleTranslation
         ? { key: `${entry.id}:phrase`, entry, mode, fields: [{ key: "german", label: "Немецкий", expected: example }], promptText: exampleTranslation }
         : { key: `${entry.id}:phrase`, entry, mode, fields: null });
@@ -182,15 +181,12 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
     if (revealed) primaryButtonRef.current?.focus();
   }, [revealed]);
 
-  // Fetches a conjugation or phrase step's AI-generated content the moment it
-  // becomes current — not for the whole queue up front, which would mean an
-  // AI call per verb before the session could even start. Conjugation reuses
-  // the exact cache the grammar modal's "Кратко" view already fills, so a
-  // verb looked up there once needs no network call here at all; a phrase
-  // step only ever gets here when the entry had no example of its own.
+  // Fetches a conjugation step's AI-generated content the moment it becomes
+  // current. Phrase steps own their conversational loading state in
+  // VerbPhraseTutor, so they never block this quiz effect.
   useEffect(() => {
     if (!step || step.fields !== null) return;
-    if (step.mode !== "conjugation" && step.mode !== "phrase") return;
+    if (step.mode !== "conjugation") return;
     let cancelled = false;
     const entry = step.entry;
     const stepKey = step.key;
@@ -275,24 +271,6 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
           return;
         }
         setQueue((prev) => prev.map((s) => (s.key === stepKey ? { ...s, fields } : s)));
-      } else {
-        const cacheKey = makeVerbPhraseCacheKey(entry.lemma || entry.headword, targetLanguage, nativeLanguage);
-        let phrase = getLocalVerbPhrase(cacheKey);
-        if (!phrase) {
-          try {
-            phrase = await fetchVerbPhrase({ lemma: entry.lemma, headword: entry.headword, targetLanguage, nativeLanguage });
-            saveLocalVerbPhrase(cacheKey, phrase);
-          } catch {
-            phrase = null;
-          }
-        }
-        if (cancelled) return;
-        if (!phrase?.example.trim() || !phrase.exampleTranslation.trim()) {
-          setIndex((i) => i + 1);
-          return;
-        }
-        const fields: QuizField[] = [{ key: "german", label: "Немецкий", expected: phrase.example }];
-        setQueue((prev) => prev.map((s) => (s.key === stepKey ? { ...s, fields, promptText: phrase!.exampleTranslation } : s)));
       }
     })();
     return () => { cancelled = true; };
@@ -330,6 +308,15 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
     setResults({});
     setPeeked(new Set());
     setIndex((i) => i + 1);
+  }
+
+  function acceptPhrase() {
+    if (!step) return;
+    onRecord?.(step.entry.id, true);
+    setCorrectCount((count) => count + 1);
+    const hasLaterStepForEntry = queue.some((candidate, candidateIndex) => candidateIndex > index && candidate.entry.id === step.entry.id);
+    const hasUnresolvedMistakeForEntry = mistakes.some((mistake) => mistake.entry.id === step.entry.id);
+    if (!hasLaterStepForEntry && !hasUnresolvedMistakeForEntry) onComplete?.(step.entry.id);
   }
 
   function retryMistakes() {
@@ -418,6 +405,17 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
       </header>
 
       <div className="verb-quiz-card">
+        {isPhrase ? (
+          <VerbPhraseTutor
+            key={step.key}
+            entry={entry}
+            targetLanguage={targetLanguage}
+            nativeLanguage={nativeLanguage}
+            onAccepted={acceptPhrase}
+            onFinish={nextItem}
+          />
+        ) : (
+          <>
         {isPhrase ? (
           step.fields === null ? (
             <div className="verb-quiz-skeleton">
@@ -545,6 +543,8 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
           ) : (
             <button type="button" ref={primaryButtonRef} className="primary-btn" onClick={nextItem}>Далее</button>
           )
+        )}
+          </>
         )}
       </div>
     </section>

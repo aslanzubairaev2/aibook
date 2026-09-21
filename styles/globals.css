@@ -2476,6 +2476,192 @@ textarea,
 }
 .verb-quiz-summary strong { font-size: 18px; color: var(--text-primary); }
 
+/* AI phrase tutor: a conversation-first practice surface. The learner sees
+   the situation, the back-and-forth, and one useful correction at a time. */
+.verb-phrase-tutor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+.verb-phrase-tutor-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 2px;
+}
+.verb-phrase-tutor-heading-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(112, 209, 199, 0.4);
+  border-radius: 11px;
+  color: #8be0d7;
+  background: rgba(53, 139, 135, 0.2);
+}
+.verb-phrase-tutor-heading strong,
+.verb-phrase-tutor-heading span { display: block; }
+.verb-phrase-tutor-heading strong { color: var(--text-primary); font-size: 14px; }
+.verb-phrase-tutor-heading span { margin-top: 2px; color: var(--text-muted); font-size: 11px; }
+.verb-phrase-tutor-heading-chat { margin-left: auto; color: var(--text-muted); }
+.verb-phrase-tutor-challenge {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 14px 15px;
+  border: 1px solid rgba(212, 168, 71, 0.42);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(212, 168, 71, 0.14), transparent 48%),
+    rgba(212, 168, 71, 0.08);
+}
+.verb-phrase-tutor-label {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.verb-phrase-tutor-challenge strong {
+  color: var(--text-primary);
+  font-size: 17px;
+  line-height: 1.35;
+}
+.verb-phrase-tutor-challenge > span:last-child { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+.verb-phrase-tutor-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-height: min(360px, 42vh);
+  overflow-y: auto;
+  padding: 2px 2px 4px;
+  scroll-behavior: smooth;
+}
+.verb-phrase-tutor-message {
+  width: fit-content;
+  max-width: 90%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 13px 13px 13px 4px;
+  background: var(--bg-elevated);
+}
+.verb-phrase-tutor-message.user {
+  align-self: flex-end;
+  border-color: rgba(112, 209, 199, 0.3);
+  border-radius: 13px 13px 4px 13px;
+  background: rgba(53, 139, 135, 0.16);
+}
+.verb-phrase-tutor-message-role {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+.verb-phrase-tutor-message.user .verb-phrase-tutor-message-role { color: #8be0d7; }
+.verb-phrase-tutor-message p { margin: 0; color: var(--text-primary); font-size: 14px; line-height: 1.45; white-space: pre-wrap; }
+.verb-phrase-tutor-message.typing { color: var(--text-muted); }
+.verb-phrase-tutor-typing { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.verb-phrase-tutor-correction {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 13px;
+  border: 1px solid rgba(212, 168, 71, 0.38);
+  border-radius: 13px;
+  background: rgba(212, 168, 71, 0.08);
+}
+.verb-phrase-tutor-correction.accepted {
+  border-color: rgba(122, 171, 106, 0.48);
+  background: rgba(122, 171, 106, 0.1);
+}
+.verb-phrase-tutor-correction-title { display: flex; align-items: center; gap: 7px; color: var(--accent); font-size: 13px; }
+.verb-phrase-tutor-correction.accepted .verb-phrase-tutor-correction-title { color: var(--green); }
+.verb-phrase-tutor-correction-target { display: flex; align-items: center; gap: 8px; color: var(--text-primary); font-size: 16px; line-height: 1.35; }
+.verb-phrase-tutor-correction-target .speak-btn { flex: 0 0 auto; }
+.verb-phrase-tutor-correction-translation { color: var(--text-muted); font-size: 12px; }
+.verb-phrase-tutor-correction p { margin: 2px 0 0; color: var(--text-primary); font-size: 13px; line-height: 1.45; }
+.verb-phrase-tutor-suggestions { display: flex; flex-wrap: wrap; gap: 7px; }
+.verb-phrase-tutor-suggestions button,
+.verb-phrase-tutor-mode-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.verb-phrase-tutor-suggestions button:hover,
+.verb-phrase-tutor-suggestions button:focus-visible,
+.verb-phrase-tutor-mode-row button:hover,
+.verb-phrase-tutor-mode-row button:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+.verb-phrase-tutor-suggestions button:disabled,
+.verb-phrase-tutor-mode-row button:disabled { cursor: default; opacity: 0.55; }
+.verb-phrase-tutor-input {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 13px;
+  background: rgba(0, 0, 0, 0.08);
+}
+.verb-phrase-tutor-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-muted); font-size: 11px; }
+.verb-phrase-tutor-mode-row button { min-height: 25px; padding: 3px 7px; border-color: transparent; color: var(--accent); font-size: 10px; }
+.verb-phrase-tutor-input-row { display: flex; align-items: flex-end; gap: 7px; }
+.verb-phrase-tutor-input textarea {
+  width: 100%;
+  min-height: 48px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  outline: none;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.35;
+}
+.verb-phrase-tutor-input textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(212, 168, 71, 0.1); }
+.verb-phrase-tutor-input textarea::placeholder { color: var(--text-muted); opacity: 0.8; }
+.verb-phrase-tutor-input-actions { display: flex; align-items: center; gap: 5px; }
+.verb-phrase-tutor-input-actions .dictate-btn,
+.verb-phrase-tutor-send {
+  display: inline-grid;
+  place-items: center;
+  width: 37px;
+  height: 37px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+}
+.verb-phrase-tutor-send { color: var(--accent); border-color: rgba(212, 168, 71, 0.5); cursor: pointer; }
+.verb-phrase-tutor-send:hover:not(:disabled) { background: rgba(212, 168, 71, 0.14); }
+.verb-phrase-tutor-send:disabled { cursor: default; opacity: 0.45; }
+.verb-phrase-tutor-error { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid rgba(196, 106, 106, 0.45); border-radius: 10px; color: var(--red); font-size: 12px; line-height: 1.35; }
+.verb-phrase-tutor-error span { flex: 1; }
+.verb-phrase-tutor-error button { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; border: 0; color: var(--red); background: transparent; cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; }
+.verb-phrase-tutor-next { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; }
+@media (max-width: 420px) {
+  .verb-phrase-tutor-message { max-width: 96%; }
+  .verb-phrase-tutor-mode-row { align-items: flex-start; flex-direction: column; gap: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .verb-phrase-tutor-messages { scroll-behavior: auto; }
+}
+
 /* Verbs already in the dictionary but saved without Präteritum/Partizip II —
    a backlog the AI can fill in, rather than a silently missing pile. */
 .verb-missing {
