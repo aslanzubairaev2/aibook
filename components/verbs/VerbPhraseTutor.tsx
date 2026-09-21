@@ -37,6 +37,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
   const challengeRef = useRef<{ nativePrompt: string } | undefined>(undefined);
   const acceptedReportedRef = useRef(false);
   const onAcceptedRef = useRef(onAccepted);
+  const lastMessageRef = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -87,6 +88,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
     if (!text && action !== "hint") return;
 
     const visibleText = action === "hint" ? "Дай небольшую подсказку" : text;
+    lastMessageRef.current = visibleText;
     const previousMessages = messagesRef.current;
     const nextMessages = [...previousMessages, { role: "user" as const, text: visibleText }];
     messagesRef.current = nextMessages;
@@ -139,7 +141,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
       setStartAttempt((attempt) => attempt + 1);
       return;
     }
-    const retryText = lastAction === "hint" ? "" : input;
+    const retryText = lastAction === "hint" ? "" : lastMessageRef.current;
     void send(lastAction, retryText);
   }
 
