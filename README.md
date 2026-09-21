@@ -91,11 +91,15 @@ the words, and these tools store them exactly the way the in-app generator does.
 
 | Area | Tools |
 |------|-------|
-| Discovery | `get_overview`, `get_capabilities` |
+| Discovery | `get_overview`, `get_capabilities`, `get_action_history` |
 | Flashcards | `list_flashcards`, `add_flashcards`, `update_flashcard`, `delete_flashcards`, `get_study_words` |
-| Dictionary & batches | `list_word_batches`, `list_batch_words`, `search_dictionary`, `add_word_batch`, `add_words_to_batch` |
+| Dictionary & batches | `list_word_batches`, `list_batch_words`, `search_dictionary`, `add_word_batch`, `add_words_to_batch`, `update_batch_training`, `update_pack_details`, `delete_pack` |
 | Learning quality | `get_progress` |
 | Texts | `create_lesson`, `list_texts`, `get_text`, `list_catalogue` |
+
+`lib/mcp/tools.test.ts` fails the build if this list — or the in-app capability
+map every client actually reads from — drifts from what `MCP_TOOLS` declares,
+so it cannot go stale the way it just did here.
 
 Beyond tools, the server also serves **prompts** (ready-made flows the learner
 can pick from a menu: «рассказ из моих слов», «что я забываю») and **resources**

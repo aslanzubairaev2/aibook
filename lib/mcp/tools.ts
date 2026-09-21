@@ -1153,11 +1153,6 @@ async function getText(ctx: Ctx, args: Args): Promise<unknown> {
 
 // ─── The dictionary: batches of words the learner was set to learn ──────────
 
-type DictRow = {
-  id: string; batch_id: string | null; headword: string; lemma: string;
-  translation: string; part_of_speech: string; cefr: string; example: string;
-};
-
 async function listBatches(ctx: Ctx): Promise<unknown> {
   const [{ batches, error }, cards, variants] = await Promise.all([
     readBatches(ctx.admin, ctx.userId, { limit: 100 }),
