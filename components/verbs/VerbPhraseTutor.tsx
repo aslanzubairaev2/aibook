@@ -15,10 +15,22 @@ type Props = {
   onFinish: () => void;
 };
 
-const DEFAULT_SUGGESTIONS = ["Дай подсказку", "Объясни проще", "Дай похожий пример"];
+const DEFAULT_SUGGESTIONS = ["Дай подсказку", "Объясни ошибку"];
 
-function messageForReply(reply: VerbPhraseTutorReply): VerbPhraseTutorMessage {
-  return { role: "model", text: reply.reply };
+function isHelpSuggestion(value: string): boolean {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 90) return false;
+  return /[?？]$|подсказ|объясн|почему|как сказать|hint|explain|why|how do I say/i.test(normalized);
+}
+
+function helpSuggestions(values: string[] | undefined): string[] {
+  const filtered = (values ?? []).filter(isHelpSuggestion).slice(0, 3);
+  return filtered.length ? filtered : DEFAULT_SUGGESTIONS;
+}
+
+function messageForReply(reply: VerbPhraseTutorReply): VerbPhraseTutorMessage | null {
+  const text = reply.reply.trim();
+  return text ? { role: "model", text } : null;
 }
 
 export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccepted, onFinish }: Props) {
@@ -57,13 +69,14 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
       nativeLanguage,
     }).then((reply) => {
       if (cancelled) return;
-      const nextMessages = [messageForReply(reply)];
+      const initialMessage = messageForReply(reply);
+      const nextMessages = initialMessage ? [initialMessage] : [];
       messagesRef.current = nextMessages;
       setMessages(nextMessages);
       const nextChallenge = reply.challenge ?? null;
       challengeRef.current = nextChallenge ?? undefined;
       setChallenge(nextChallenge);
-      setSuggestions(reply.suggestions?.length ? reply.suggestions : DEFAULT_SUGGESTIONS);
+      setSuggestions(helpSuggestions(reply.suggestions));
       setCorrection(reply.correction ?? null);
       setAccepted(reply.status === "accepted");
       if (reply.status === "accepted" && !acceptedReportedRef.current) {
@@ -111,7 +124,8 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
         history: previousMessages,
         message: visibleText,
       });
-      const withReply = [...messagesRef.current, messageForReply(reply)];
+      const modelMessage = messageForReply(reply);
+      const withReply = modelMessage ? [...messagesRef.current, modelMessage] : messagesRef.current;
       messagesRef.current = withReply;
       setMessages(withReply);
       if (reply.challenge) {
@@ -119,7 +133,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
         setChallenge(reply.challenge);
       }
       setCorrection(reply.correction ?? null);
-      setSuggestions(reply.suggestions?.length ? reply.suggestions : DEFAULT_SUGGESTIONS);
+      setSuggestions(helpSuggestions(reply.suggestions));
       if (reply.status === "accepted") {
         setAccepted(true);
         if (!acceptedReportedRef.current) {
@@ -151,7 +165,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
         <div className="verb-phrase-tutor-heading-icon"><Sparkles size={17} /></div>
         <div>
           <strong>Живой репетитор</strong>
-          <span>Пиши как умеешь — разберём вместе</span>
+          <span>Напиши свой вариант</span>
         </div>
         <MessageCircle size={17} className="verb-phrase-tutor-heading-chat" />
       </div>
@@ -184,7 +198,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
         <div className={"verb-phrase-tutor-correction" + (accepted ? " accepted" : "")}>
           <div className="verb-phrase-tutor-correction-title">
             {accepted ? <CheckCircle2 size={17} /> : <Lightbulb size={17} />}
-            <strong>{accepted ? "Отлично — фраза засчитана" : "Вот как сказать естественнее"}</strong>
+            <strong>{accepted ? "Фраза засчитана" : "Исправление"}</strong>
           </div>
           {correction.target && (
             <div className="verb-phrase-tutor-correction-target">
@@ -242,6 +256,11 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+                  event.preventDefault();
+                  void send(inputMode, input);
+                }}
                 placeholder={inputMode === "answer" ? "Напиши фразу… можно с ошибками" : "Например: почему здесь такой порядок слов?"}
                 rows={2}
                 disabled={busy}

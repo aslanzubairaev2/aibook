@@ -28,3 +28,11 @@ test("phrase tutor prompt asks for patient retry guidance", () => {
   assert.match(prompt, /Пунктуация, регистр буквы/);
   assert.match(prompt, /status «accepted»/);
 });
+
+test("phrase tutor prompt does not offer a ready answer as a button", () => {
+  const prompt = buildVerbPhraseTutorPrompt({ ...base, action: "start" });
+
+  assert.match(prompt, /Поле reply оставь пустым/);
+  assert.match(prompt, /Никогда не возвращай там готовую фразу/);
+  assert.match(prompt, /без приветствий, похвалы/);
+});

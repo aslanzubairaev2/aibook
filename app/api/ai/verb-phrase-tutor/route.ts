@@ -58,9 +58,14 @@ function parseReply(raw: string, request: VerbPhraseTutorRequest) {
     ? source.suggestions.map((item) => text(item, 90)).filter(Boolean).slice(0, 3)
     : [];
 
+  const parsedReply = text(source.reply, 1400);
+  const fallbackReply = request.action === "hint" || request.action === "question"
+    ? "Сформулируй вопрос точнее — я отвечу по существу."
+    : "";
+
   return {
     status,
-    reply: text(source.reply, 1400) || "Давай разберём это вместе. Попробуй ещё раз — я помогу.",
+    reply: parsedReply || fallbackReply,
     ...(text(source.hint, 360) ? { hint: text(source.hint, 360) } : {}),
     ...(text(correctionSource.target, 500) || text(correctionSource.translation, 500) || text(correctionSource.explanation, 700)
       ? {
