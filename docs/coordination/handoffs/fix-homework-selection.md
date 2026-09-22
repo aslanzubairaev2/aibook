@@ -26,7 +26,7 @@
 - `npm run lint` — общий lint проекта содержит существующие ошибки; изменённые homework-файлы проходят отдельно.
 - `npm test` — passed, 446/446.
 - `npx tsc --noEmit --incremental false` — passed.
-- `npm run build` — в изолированной worktree заблокирован правами записи в `.next`; повторить в основной рабочей копии.
+- `npm run build` — passed в основной рабочей копии; production-сборка завершилась успешно.
 
 ## Preview
 
