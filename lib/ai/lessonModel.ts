@@ -308,6 +308,7 @@ const HOMEWORK_SCHEMA = {
     title: { type: Type.STRING },
     description: { type: Type.STRING },
     sourceKind: { type: Type.STRING },
+    referenceBatchId: { type: Type.STRING },
     exercises: {
       type: Type.ARRAY,
       items: {
@@ -327,7 +328,10 @@ const HOMEWORK_SCHEMA = {
                   type: Type.ARRAY,
                   items: {
                     type: Type.OBJECT,
-                    properties: { select: { type: Type.BOOLEAN } },
+                    properties: {
+                      select: { type: Type.BOOLEAN },
+                      options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    },
                     required: ["select"],
                   },
                 },

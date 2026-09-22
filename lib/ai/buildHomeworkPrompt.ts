@@ -35,6 +35,8 @@
 export type HomeworkBlank = {
   /** true → a dropdown built from the item's/exercise's bank. false → free text. */
   select: boolean;
+  /** A small per-blank choice list, e.g. ["du", "dich", "dir"]. */
+  options?: string[];
 };
 
 export type HomeworkResponseField = {
@@ -85,6 +87,8 @@ export type HomeworkLesson = {
   /** What the page appears to be, in Russian — e.g. "Учебник немецкого, с. 75–76, упражнения 1–15". */
   sourceKind: string;
   exercises: HomeworkExercise[];
+  /** The dictionary pack the model identified from a page/vocabulary reference. */
+  referenceBatchId?: string;
 };
 
 // ─── Prompt ───────────────────────────────────────────────────────────────
@@ -92,12 +96,21 @@ export type HomeworkLesson = {
 export type HomeworkPromptContext = {
   referenceTitle?: string;
   referenceWords?: string[];
+  referencePacks?: Array<{
+    id: string;
+    title: string;
+    kind?: string;
+    description?: string;
+    words: string[];
+  }>;
 };
 
 export function buildHomeworkExtractPrompt(context: HomeworkPromptContext = {}): string {
   const referenceBlock = context.referenceWords?.length
     ? `\nA dictionary pack was selected as a reference for this photo. It is the word list the page may refer to:\n- Pack: ${context.referenceTitle ?? "Словарь"}\n- Words: ${context.referenceWords.join(", ")}\nUse these words as the bank when the photographed instruction refers to that vocabulary/page. For a picture or diagram exercise, keep the words as an interactive bank and recover the visible category labels; do not silently omit the exercise.\n`
-    : "";
+    : context.referencePacks?.length
+      ? `\nThe learner's dictionary packs are available as reference candidates. If the photographed page says that an exercise uses a vocabulary list (for example \"Ihr Wortschatz auf Seite 68\"), identify the matching pack by its page number, title, or words and set its id in \"referenceBatchId\". Do not ask the learner to select a pack manually. Use the matching pack's words as the bank for that exercise; for picture/diagram exercises, recover the visible category labels and keep the words as an interactive bank.\n${context.referencePacks.map((pack) => `- id=${pack.id}; title=${pack.title}; kind=${pack.kind ?? ""}; description=${pack.description ?? ""}; words=${pack.words.join(", ")}`).join("\n")}\n`
+      : "";
   return `You are reading a photograph of a page of language-learning exercises ("УПРАЖНЕНИЯ") for a study app. The learner will fill in every blank themselves, by hand equivalent, and print the result for their teacher — so your job is to recover the page's structure, never to solve it.
 ${referenceBlock}
 
@@ -119,6 +132,8 @@ Rules, in order of importance:
   - "sort": a picture/diagram asks to put words into named categories. Return the visible category labels in "categories" and the available words in "bank". Do not solve or omit it just because answers are represented by pictures.
   - "text": only when the instruction references something outside this photo and there is no answer area to fill in here. For self-writing tasks such as "Ihre Sätze und Wörter" or "Ihr Text", use "open" with one item containing the printed prompt, so the learner gets a text area.
 - Do not omit an exercise merely because it contains pictures or blank lines. Exercises that ask the learner to write their own examples must still be represented as "open".
+- For an exercise that says to complete sentences with verbs from a vocabulary list, keep the verb word bank as a hint but make each sentence gap free text: the learner must type the conjugated form required by the surrounding pronoun, not select an infinitive.
+- For an exercise that asks to underline/select the correct personal pronoun and prints alternatives such as "du/dich/dir", replace each slash-separated group with its own "{{n}}" marker and set that blank's "options" to the exact alternatives. Do not turn the whole dialogue into one open text field.
 - A word bank that is visually attached to a whole exercise (a column of adjectives, a list of nouns) but is meant to fill every gap in it belongs on the exercise's "bank", not repeated per item.
 - If a page is cropped and an exercise is cut off mid-item, include only the items you can read in full.
 
@@ -127,12 +142,13 @@ Return ONLY valid JSON with this exact shape:
   "title": "short title in Russian naming the material (e.g. the textbook section)",
   "description": "one sentence in Russian saying what this page is",
   "sourceKind": "what the page is, in Russian (e.g. 'учебник, с. 75-76, упражнения 1-15')",
+  "referenceBatchId": "id of the matching dictionary pack, or an empty string when no vocabulary reference is present",
   "exercises": [
     {
       "number": 1,
       "instruction": "instruction line as printed",
       "widget": "cloze" | "compose" | "open" | "conjugation" | "formation" | "sort" | "text",
-      "items": [ { "number": 1, "text": "...", "blanks": [ { "select": false } ], "bank": [] } ],
+      "items": [ { "number": 1, "text": "...", "blanks": [ { "select": false, "options": ["du", "dich", "dir"] } ], "bank": [] } ],
       "bank": [],
       "verbs": [],
       "pronouns": [],
@@ -193,7 +209,17 @@ function fieldsForFormationInstruction(instruction: string): HomeworkResponseFie
 function parseBlank(raw: unknown): HomeworkBlank | null {
   if (typeof raw !== "object" || raw === null) return null;
   const obj = raw as Record<string, unknown>;
-  return { select: obj.select === true };
+  const options = Array.isArray(obj.options)
+    ? obj.options
+      .filter((option): option is string => typeof option === "string" && option.trim().length > 0)
+      .map((option) => option.trim())
+      .filter((option, index, all) => all.indexOf(option) === index)
+      .slice(0, 12)
+    : [];
+  return {
+    select: obj.select === true || options.length > 1,
+    ...(options.length > 1 ? { options } : {}),
+  };
 }
 
 function parseItem(raw: unknown): HomeworkItem | null {
@@ -223,6 +249,33 @@ function parseItem(raw: unknown): HomeworkItem | null {
     ...(bank && bank.length > 0 ? { bank } : {}),
     ...(fields ? { fields } : {}),
   };
+}
+
+const PERSONAL_PRONOUN_CHOICE_RE = /\b(?:ich\s*\/\s*mich\s*\/\s*mir|du\s*\/\s*dich\s*\/\s*dir|ihr\s*\/\s*euch|wir\s*\/\s*uns|er\s*\/\s*ihn\s*\/\s*ihm|sie\s*\/\s*ihr|Sie\s*\/\s*Ihr)\b/giu;
+
+function isPersonalPronounChoiceInstruction(instruction: string): boolean {
+  return /(personalpronomen|personal pronoun|личн(?:ые|ых)\s+местоимени|местоимени)/iu.test(instruction)
+    && /(unterstreich|passend|выберите|подчерк)/iu.test(instruction);
+}
+
+/** Recover per-blank dropdowns when the model preserved printed alternatives as text. */
+function normalizePersonalPronounChoices(item: HomeworkItem): HomeworkItem {
+  const choiceIndices: Array<{ index: number; options: string[] }> = [];
+  const existingMarkerCount = [...item.text.matchAll(/\{\{\d+\}\}/g)].length;
+  let nextIndex = existingMarkerCount;
+  const text = item.text.replace(PERSONAL_PRONOUN_CHOICE_RE, (choice) => {
+    const options = choice.split(/\s*\/\s*/u).map((option) => option.trim());
+    const index = nextIndex++;
+    choiceIndices.push({ index, options });
+    return `{{${index}}}`;
+  });
+  if (choiceIndices.length === 0) return item;
+
+  const blanks = Array.from({ length: nextIndex }, (_, index) => item.blanks?.[index] ?? { select: false });
+  for (const choice of choiceIndices) {
+    blanks[choice.index] = { select: true, options: choice.options };
+  }
+  return { ...item, text, blanks };
 }
 
 /** Exported so a saved lesson's stored exercises (read back from shared_book_chapters.paragraphs) can be re-validated the same way a fresh model answer is. */
@@ -259,7 +312,11 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
     : ((formationByInstruction || widget === "formation") && verbs && verbs.length > 0
       ? verbs.map((verb, index) => ({ number: index + 1, text: verb }))
       : undefined);
-  const hasMarkers = sourceItems?.some((item) => /\{\{\d+\}\}/.test(item.text)) === true;
+  const pronounChoiceExercise = isPersonalPronounChoiceInstruction(instruction);
+  const normalizedItems = pronounChoiceExercise && sourceItems
+    ? sourceItems.map(normalizePersonalPronounChoices)
+    : sourceItems;
+  const hasMarkers = normalizedItems?.some((item) => /\{\{\d+\}\}/.test(item.text)) === true;
   const writingCue = /(ihre sätze|ihr text|schreiben sie|для себя|напишите|свои предложения|текст)/iu.test(instruction);
   const normalizedWidget = formationByInstruction && sourceItems && sourceItems.length > 0
     ? "formation"
@@ -276,7 +333,7 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
     number: typeof obj.number === "number" ? obj.number : 0,
     instruction,
     widget: normalizedWidget,
-    ...(sourceItems && sourceItems.length > 0 ? { items: sourceItems } : {}),
+    ...(normalizedItems && normalizedItems.length > 0 ? { items: normalizedItems } : {}),
     ...(bank && bank.length > 0 ? { bank } : {}),
     ...(verbs && verbs.length > 0 ? { verbs } : {}),
     ...(pronouns && pronouns.length > 0 ? { pronouns } : {}),
@@ -299,6 +356,9 @@ export function parseHomeworkLesson(raw: unknown): HomeworkLesson | null {
     title,
     description: typeof obj.description === "string" ? obj.description.trim() : "",
     sourceKind: typeof obj.sourceKind === "string" ? obj.sourceKind.trim() : "",
+    ...(typeof obj.referenceBatchId === "string" && obj.referenceBatchId.trim()
+      ? { referenceBatchId: obj.referenceBatchId.trim() }
+      : {}),
     exercises,
   };
 }

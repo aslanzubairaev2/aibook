@@ -1114,7 +1114,11 @@ function AppInner() {
           initialAnswers={activeHomework.initialAnswers}
           cards={cards}
           onAddCard={handleAddCard}
-          onBack={() => { setActiveHomework(null); setSection(readerOrigin); }}
+          onBack={() => {
+            setActiveHomework(null);
+            setDiscoverInitialTab("lessons");
+            setSection("discover");
+          }}
         />
       ) : section === "homework" ? (
         <>{setSection("discover")}</>

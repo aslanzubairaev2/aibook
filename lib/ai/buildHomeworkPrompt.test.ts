@@ -95,6 +95,35 @@ test("missing blank metadata is inferred from internal markers", () => {
   assert.deepEqual(exercise.items?.[0].blanks, [{ select: false }, { select: false }]);
 });
 
+test("personal pronoun alternatives become separate dropdown blanks", () => {
+  const exercise = parseExercise({
+    number: 6,
+    instruction: "Unterstreichen Sie das passende Personalpronomen.",
+    widget: "open",
+    items: [{
+      number: 1,
+      text: "Wann hast (1) du/dich/dir Geburtstag? Am ersten Mai. Ich lade (2) du/dich/dir ein.",
+    }],
+  });
+
+  assert.ok(exercise);
+  assert.equal(exercise.widget, "cloze");
+  assert.equal(exercise.items?.[0].text, "Wann hast (1) {{0}} Geburtstag? Am ersten Mai. Ich lade (2) {{1}} ein.");
+  assert.deepEqual(exercise.items?.[0].blanks, [
+    { select: true, options: ["du", "dich", "dir"] },
+    { select: true, options: ["du", "dich", "dir"] },
+  ]);
+});
+
+test("the homework prompt exposes candidate dictionary packs and conjugated verb gaps", () => {
+  const prompt = buildHomeworkExtractPrompt({
+    referencePacks: [{ id: "batch-68", title: "Wortschatz Seite 68", kind: "учебник, с. 68", words: ["helfen", "schenken"] }],
+  });
+  assert.match(prompt, /referenceBatchId/u);
+  assert.match(prompt, /Do not ask the learner to select a pack manually/u);
+  assert.match(prompt, /conjugated form required/u);
+});
+
 test("self-writing exercises get a usable response field", () => {
   const exercise = parseExercise({
     number: 11,
