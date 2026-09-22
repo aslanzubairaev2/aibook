@@ -430,6 +430,7 @@ const STYLES = `
   .hw-open-input { resize: vertical; }
 
   .hw-bank { display: flex; flex-wrap: wrap; gap: 6px; }
+  .hw-chip.used { color: var(--text-muted); border-color: rgba(150, 150, 150, 0.28); text-decoration: line-through; text-decoration-thickness: 1.5px; opacity: 0.72; }
   .hw-chip {
     padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px;
     background: rgba(212,168,71,0.08); color: var(--text-primary); font-size: 13px;

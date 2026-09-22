@@ -7,6 +7,7 @@ import {
   exerciseAnswerKey,
   itemKey,
   sortSelectionKey,
+  normalizeHomeworkBank,
   type HomeworkAnswers,
   type SortSelection,
 } from "./homeworkAnswers";
@@ -54,7 +55,7 @@ function isSameWord(left: string, right: string): boolean {
  */
 export function SortExercise({ exercise, answers, onSelectionChange }: Props) {
   const rows = rowsForExercise(exercise);
-  const bank = Array.from(new Set((exercise.bank ?? []).map((word) => word.trim()).filter(Boolean)));
+  const bank = normalizeHomeworkBank(exercise.bank ?? []);
   const categories = Array.from(new Set([
     ...(exercise.categories ?? []),
     ...rows.map((row) => row.category ?? "").filter(Boolean),
@@ -66,6 +67,7 @@ export function SortExercise({ exercise, answers, onSelectionChange }: Props) {
   );
   const activeRow = rows.find((row) => row.number === pickerRow);
   const activeSelection = activeRow ? selections.get(activeRow.number) ?? { words: [] } : null;
+  const availableBank = bank.filter((word) => !usedWords.has(word.toLocaleLowerCase()));
 
   const chooseCategory = (row: HomeworkSortRow, category: string) => {
     const current = selections.get(row.number) ?? { words: [] };
@@ -162,16 +164,17 @@ export function SortExercise({ exercise, answers, onSelectionChange }: Props) {
               <button type="button" className="hw-popup-close" onClick={() => setPickerRow(null)} aria-label="Закрыть"><X size={18} /></button>
             </div>
             <div className="hw-sort-picker-list">
-              {bank.map((word) => {
-                const isUsed = usedWords.has(word.toLocaleLowerCase());
+              {availableBank.length === 0 ? (
+                <p className="hw-text-note">Все слова уже добавлены. Удалите чип из поля, чтобы выбрать его снова.</p>
+              ) : availableBank.map((word) => {
                 const isCurrent = activeSelection.words.some((item) => isSameWord(item, word));
                 const isFull = Boolean(activeRow.slots && activeSelection.words.length >= activeRow.slots);
                 return (
                   <button
                     key={word}
                     type="button"
-                    className={`hw-sort-picker-word${isUsed ? " used" : ""}`}
-                    disabled={isUsed || isCurrent || isFull}
+                    className="hw-sort-picker-word"
+                    disabled={isCurrent || isFull}
                     onClick={() => chooseWord(activeRow, word)}
                   >
                     {word}

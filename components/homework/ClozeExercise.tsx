@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import type { HomeworkExercise, HomeworkItem } from "@/lib/ai/buildHomeworkPrompt";
-import { exerciseAnswerKey, itemKey, type HomeworkAnswers } from "./homeworkAnswers";
+import { exerciseAnswerKey, isGermanVerbFormOf, itemKey, type HomeworkAnswers } from "./homeworkAnswers";
 import { TappableText } from "./TappableText";
 
 type Props = {
@@ -129,13 +129,27 @@ export function ClozeExercise({ exercise, answers, onBlankChange, onWordTap }: P
     ...items.flatMap((item) => item.bank ?? []),
   ].map((word) => word.trim()).filter(Boolean)));
   const verbFill = isVerbFillExercise(exercise);
+  const usedVerbWords = new Set(
+    items.flatMap((item) => {
+      const stored = answers.items[itemKey(exerciseAnswerKey(exercise), item.number)];
+      return Array.isArray(stored) ? stored : typeof stored === "string" ? [stored] : [];
+    }).flatMap((answer) => verbBank.filter((verb) => isGermanVerbFormOf(answer, verb))),
+  );
 
   return (
     <div className="hw-items">
       {verbFill && verbBank.length > 0 && (
         <div className="hw-bank hw-bank-static" aria-label="Глаголы из словаря">
           <span className="hw-sort-label">Инфинитивы из словаря:</span>
-          {verbBank.map((word) => <span key={word} className="hw-chip">{word}</span>)}
+          {verbBank.map((word) => (
+            <span
+              key={word}
+              className={`hw-chip${usedVerbWords.has(word) ? " used" : ""}`}
+              title={usedVerbWords.has(word) ? "Глагол уже использован" : undefined}
+            >
+              {word}
+            </span>
+          ))}
         </div>
       )}
       {items.map((item, i) => (

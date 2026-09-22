@@ -38,6 +38,78 @@ export function sortSelectionKey(exercise: HomeworkExercise, rowNumber: number):
   return itemKey(exerciseAnswerKey(exercise), rowNumber);
 }
 
+const GERMAN_ARTICLE_RE = /^(der|die|das)\s+(.+)$/iu;
+
+function cleanBankWord(word: string): string {
+  return word.trim()
+    .replace(/\s*,\s*[^,]+$/u, "")
+    .replace(/\s+\((?:Sg\.?|Pl\.?)\)$/iu, "")
+    .trim();
+}
+
+/** Keep one display form per dictionary word, preferring the article-bearing form. */
+export function normalizeHomeworkBank(words: string[]): string[] {
+  const cleaned = words.map(cleanBankWord).filter(Boolean);
+  const articleForms = new Map<string, string>();
+  for (const word of cleaned) {
+    const match = word.match(GERMAN_ARTICLE_RE);
+    if (match) articleForms.set(match[2].trim().toLocaleLowerCase("de-DE"), word);
+  }
+
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const word of cleaned) {
+    const match = word.match(GERMAN_ARTICLE_RE);
+    const key = (match ? match[2] : word).trim().toLocaleLowerCase("de-DE");
+    const display = articleForms.get(key) ?? word;
+    const displayKey = display.toLocaleLowerCase("de-DE");
+    if (seen.has(displayKey)) continue;
+    seen.add(displayKey);
+    result.push(display);
+  }
+  return result;
+}
+
+const COMMON_GERMAN_PRESENT_FORMS: Record<string, string[]> = {
+  gefallen: ["gefalle", "gefällst", "gefällt", "gefallen"],
+  helfen: ["helfe", "hilfst", "hilft", "helfen", "helft"],
+  geben: ["gebe", "gibst", "gibt", "geben", "gebt"],
+  nehmen: ["nehme", "nimmst", "nimmt", "nehmen", "nehmt"],
+  sehen: ["sehe", "siehst", "sieht", "sehen", "seht"],
+  sprechen: ["spreche", "sprichst", "spricht", "sprechen", "sprecht"],
+  fahren: ["fahre", "fährst", "fährt", "fahren", "fahrt"],
+  lesen: ["lese", "liest", "lesen", "lest"],
+  essen: ["esse", "isst", "essen", "esst"],
+  sein: ["bin", "bist", "ist", "sind", "seid"],
+  haben: ["habe", "hast", "hat", "haben", "habt"],
+  werden: ["werde", "wirst", "wird", "werden", "werdet"],
+};
+
+function germanPresentForms(infinitive: string): string[] {
+  const infinitiveKey = infinitive.trim().toLocaleLowerCase("de-DE");
+  const known = COMMON_GERMAN_PRESENT_FORMS[infinitiveKey] ?? [];
+  const stem = infinitiveKey.endsWith("en") ? infinitiveKey.slice(0, -2) : infinitiveKey;
+  const forms = new Set([infinitiveKey, ...known]);
+  if (stem) {
+    forms.add(`${stem}e`);
+    forms.add(`${stem}st`);
+    forms.add(`${stem}t`);
+    forms.add(`${stem}en`);
+    // Verbs whose stem ends in -d/-t/-m/-n take an extra e before -st/-t.
+    if (/[dtmn]$/u.test(stem)) {
+      forms.add(`${stem}est`);
+      forms.add(`${stem}et`);
+    }
+  }
+  return [...forms];
+}
+
+/** True when a typed answer is the infinitive or a normal German present form. */
+export function isGermanVerbFormOf(answer: string, infinitive: string): boolean {
+  const value = answer.trim().toLocaleLowerCase("de-DE").replace(/[.!?,;:]+$/u, "");
+  return value.length > 0 && germanPresentForms(infinitive).includes(value);
+}
+
 /**
  * The 6 subject markers a conjugation field is labelled with — same fixed set
  * components/verbs/VerbsQuiz.tsx already uses for its own conjugation drill

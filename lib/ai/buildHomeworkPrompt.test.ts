@@ -6,7 +6,7 @@ import {
   parseExercise,
   parseHomeworkLesson,
 } from "./buildHomeworkPrompt.ts";
-import { computeHomeworkProgress } from "../../components/homework/homeworkAnswers.ts";
+import { computeHomeworkProgress, isGermanVerbFormOf, normalizeHomeworkBank } from "../../components/homework/homeworkAnswers.ts";
 
 test("word formation is not misrouted to the conjugation modal", () => {
   const exercise = parseExercise({
@@ -189,6 +189,16 @@ test("a saved sorter is rehydrated from its linked dictionary pack", () => {
   const restored = mergeHomeworkReferenceBank(exercise, ["der Frühling", "der Geburtstag"], []);
   assert.deepEqual(restored.bank, ["der Frühling", "der Geburtstag"]);
   assert.deepEqual(restored.categories, ["Feste", "Jahreszeiten", "Monate"]);
+});
+
+test("homework dictionary banks prefer one article-bearing noun chip", () => {
+  assert.deepEqual(normalizeHomeworkBank(["die Blume, -n", "Blume", "der April", "April", "der Durst (Sg.)"]), ["die Blume", "der April", "der Durst"]);
+});
+
+test("a conjugated verb marks its infinitive as used without accepting another verb", () => {
+  assert.equal(isGermanVerbFormOf("gratuliere", "gratulieren"), true);
+  assert.equal(isGermanVerbFormOf("dekorierst", "dekorieren"), true);
+  assert.equal(isGermanVerbFormOf("gehen", "gratulieren"), false);
 });
 
 test("parts with the same printed number get isolated answer namespaces", () => {
