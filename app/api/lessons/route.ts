@@ -66,3 +66,46 @@ export async function DELETE(req: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
+
+// PATCH /api/lessons — manually edit the title and description of an owned lesson.
+export async function PATCH(req: NextRequest) {
+  if (!supabaseAdmin) {
+    return NextResponse.json({ error: "Supabase не настроен." }, { status: 503 });
+  }
+  const user = await getUserFromRequest(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json() as { id?: string; title?: string; description?: string };
+  const id = (body.id ?? "").trim();
+  const title = (body.title ?? "").trim().slice(0, 200);
+  const description = (body.description ?? "").trim().slice(0, 1000);
+  if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
+  if (!title) return NextResponse.json({ error: "Название урока не может быть пустым." }, { status: 400 });
+
+  const { data: current, error: readError } = await supabaseAdmin
+    .from("shared_books")
+    .select("id, metadata")
+    .eq("id", id)
+    .eq("source_type", "generated")
+    .eq("owner_user_id", user.id)
+    .maybeSingle();
+  if (readError) return NextResponse.json({ error: readError.message }, { status: 500 });
+  if (!current) return NextResponse.json({ error: "Урок не найден." }, { status: 404 });
+
+  const metadata = current.metadata && typeof current.metadata === "object"
+    ? current.metadata as Record<string, unknown>
+    : {};
+  const { error } = await supabaseAdmin
+    .from("shared_books")
+    .update({ title, metadata: { ...metadata, description } })
+    .eq("id", id)
+    .eq("source_type", "generated")
+    .eq("owner_user_id", user.id);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await supabaseAdmin
+    .from("shared_book_chapters")
+    .update({ title })
+    .eq("shared_book_id", id);
+  return NextResponse.json({ ok: true });
+}

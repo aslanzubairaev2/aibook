@@ -12,6 +12,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AI_CONFIG } from "@/lib/config";
 import { pickCoverColor } from "@/lib/db/lessonStore";
 import type { HomeworkLesson } from "@/lib/ai/buildHomeworkPrompt";
+import { extractPageLabel, withPageDescription } from "@/lib/lessonMetadata";
 
 function formatRuDate(iso: string): string {
   const [y, m, d] = iso.split("-");
@@ -38,6 +39,8 @@ export type SaveHomeworkInput = {
   homeworkDate: string;
   /** Route-specific extras: the photographed page's source_kind, whether the model's answer was truncated, etc. */
   extraMetadata?: Record<string, unknown>;
+  /** Optional user-provided suffix, e.g. «часть 2». */
+  titleSuffix?: string;
 };
 
 export type SaveHomeworkResult =
@@ -56,7 +59,22 @@ export async function saveHomeworkLesson(
   // homework is actually for is the one thing that identifies it at a glance,
   // so that becomes the card's title. The model's own title survives in
   // metadata for reference, but is not shown as the title anywhere.
-  const title = `Урок от ${formatRuDate(input.homeworkDate)}`;
+  const { data: sameDateBooks } = await admin
+    .from("shared_books")
+    .select("metadata")
+    .eq("source_type", "generated")
+    .eq("owner_user_id", input.userId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  const sameDateCount = (sameDateBooks ?? []).filter((book) => {
+    const metadata = book.metadata as Record<string, unknown> | null;
+    return metadata?.lesson_kind === "homework" && metadata?.homework_date === input.homeworkDate;
+  }).length;
+  const automaticPart = sameDateCount > 0 ? ` · часть ${sameDateCount + 1}` : "";
+  const manualSuffix = input.titleSuffix?.trim() ? ` · ${input.titleSuffix.trim().slice(0, 100)}` : "";
+  const title = `Урок от ${formatRuDate(input.homeworkDate)}${automaticPart}${manualSuffix}`;
+  const pageLabel = extractPageLabel(lesson.sourceKind, lesson.title, lesson.description);
+  const description = withPageDescription(lesson.description, pageLabel);
 
   const { data: bookData, error: bookError } = await admin
     .from("shared_books")
@@ -73,7 +91,7 @@ export async function saveHomeworkLesson(
       lesson_order: null,
       total_chars: plainText.length,
       metadata: {
-        description: lesson.description,
+        description,
         lesson_kind: "homework",
         cover_color: pickCoverColor(title),
         // What the model called the page — kept for reference, never shown as the title.
@@ -81,6 +99,8 @@ export async function saveHomeworkLesson(
         native_language: input.nativeLanguage,
         source_kind: lesson.sourceKind,
         homework_date: input.homeworkDate,
+        page_label: pageLabel || undefined,
+        part_number: sameDateCount + 1,
         generated_at: new Date().toISOString(),
         model: AI_CONFIG.model,
         ...input.extraMetadata,
@@ -97,7 +117,7 @@ export async function saveHomeworkLesson(
   const { error: chapterError } = await admin.from("shared_book_chapters").insert({
     shared_book_id: bookData.id,
     chapter_index: 0,
-    title: lesson.title,
+    title,
     // The exercises themselves, not prose — shared_book_chapters.paragraphs is
     // jsonb precisely so a row can hold either shape.
     paragraphs: lesson.exercises,

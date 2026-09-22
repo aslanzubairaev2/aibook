@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Layers, Plus, Search, SlidersHorizontal, Trash2, X,
+  BookA, Camera, ChevronDown, Dumbbell, FileText, Info, Layers, Pencil, Plus, Search, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { getCardVariantProgressMap, getLocalPackSort, saveLocalPackSort } from "@/lib/db/local";
@@ -12,6 +12,8 @@ import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/se
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
 import { LEARNING_ITEM_TYPES, type AiAnalysis, type CefrLevel, type Flashcard, type LearningItemType, type PackSort, type PosTag } from "@/lib/types";
+import { sbAuthHeaders } from "@/lib/db/supabase";
+import { EditMetadataModal } from "@/components/ui/EditMetadataModal";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const CONTENT_TYPE_LABELS: Record<LearningItemType, string> = {
@@ -78,6 +80,7 @@ type Props = {
   onOpenEntry: (entry: DictionaryEntry) => void;
   onDeleteEntry: (id: string) => void;
   onDeleteBatch: (batchId: string) => void;
+  onEditBatch?: (batch: DictionaryBatch) => void;
   /** Open the flashcard trainer narrowed to this pack's cards. */
   onTrainBatch: (batch: TrainBatch) => void;
   /**
@@ -118,10 +121,11 @@ type Props = {
  */
 export function DictionaryPanel({
   entries, batches, cards, isLoading, error, language, nativeLanguage,
-  onPhotograph, onAddWordsToBatch, onOpenEntry, onDeleteEntry, onDeleteBatch, onTrainBatch, onCreateFromPack,
+  onPhotograph, onAddWordsToBatch, onOpenEntry, onDeleteEntry, onDeleteBatch, onEditBatch, onTrainBatch, onCreateFromPack,
   onRegisterPack, onDeleteCards,
 }: Props) {
   const [query, setQuery] = useState("");
+  const [editingBatch, setEditingBatch] = useState<DictionaryBatch | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [level, setLevel] = useState<string>("all");
@@ -136,6 +140,18 @@ export function DictionaryPanel({
   const [briefsOpen, setBriefsOpen] = useState<Set<string>>(new Set());
   const [isStuck, setIsStuck] = useState(false);
   const stickyRef = useRef<HTMLDivElement>(null);
+
+  async function saveLocalBatch(title: string, description: string) {
+    if (!editingBatch) return;
+    const response = await fetch("/api/dictionary", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+      body: JSON.stringify({ id: editingBatch.id, title, description }),
+    });
+    const data = await response.json() as { error?: string };
+    if (!response.ok) throw new Error(data.error ?? "Не удалось сохранить пачку.");
+    window.location.reload();
+  }
 
   useEffect(() => {
     const handleScroll = () => {
@@ -712,6 +728,17 @@ export function DictionaryPanel({
                   {group.batch && (
                     <button
                       type="button"
+                      className="icon-btn"
+                      aria-label="Изменить пачку"
+                      title="Изменить название и описание"
+                      onClick={() => onEditBatch ? onEditBatch(group.batch!) : setEditingBatch(group.batch!)}
+                    >
+                      <Pencil size={15} />
+                    </button>
+                  )}
+                  {group.batch && (
+                    <button
+                      type="button"
                       className="icon-btn danger"
                       aria-label="Удалить пачку"
                       title="Удалить пачку (карточки и их прогресс остаются)"
@@ -794,11 +821,20 @@ export function DictionaryPanel({
                   {group.entries.length === 0 && <p className="dict-nothing">В этой пачке слов не осталось.</p>}
                 </div>
               )}
-            </section>
+              </section>
           );
         })}
         {sortedGroups.length === 0 && <p className="dict-nothing">Ничего не нашлось.</p>}
       </div>
+      {editingBatch && (
+        <EditMetadataModal
+          kind="пачки"
+          title={editingBatch.title}
+          description={editingBatch.description ?? ""}
+          onClose={() => setEditingBatch(null)}
+          onSave={saveLocalBatch}
+        />
+      )}
     </>
   );
 }

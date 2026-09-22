@@ -22,6 +22,7 @@ import { buildKnownWordSet, computeCoverage, COMFORT_MIN, COMFORT_MAX, type Cove
 import { LessonComposerModal, type ComposerState, type LessonKind, type LessonLength } from "./LessonComposerModal";
 import { LessonRefineModal } from "./LessonRefineModal";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
+import { EditMetadataModal } from "@/components/ui/EditMetadataModal";
 
 type Props = {
   books: Book[];
@@ -363,6 +364,7 @@ export function DiscoverView({
   const [photoOpen, setPhotoOpen] = useState(false);
   // "lesson" photographs a text to read; "dictionary" photographs words to learn.
   const [photoMode, setPhotoMode] = useState<"lesson" | "dictionary" | "homework">("lesson");
+  const [editingLesson, setEditingLesson] = useState<SharedBook | null>(null);
 
   // The shared shelves are paged; only the visible page is fetched.
   const [klexPage, setKlexPage] = useState(1);
@@ -996,6 +998,19 @@ export function DiscoverView({
     }
   };
 
+  async function saveLessonMetadata(title: string, description: string) {
+    if (!editingLesson) return;
+    const res = await fetch("/api/lessons", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
+      body: JSON.stringify({ id: editingLesson.id, title, description }),
+    });
+    const data = await res.json() as { error?: string };
+    if (!res.ok) throw new Error(data.error ?? "Не удалось сохранить урок.");
+    await loadMyLessons();
+    showToast("Урок обновлён");
+  }
+
   const matchStatus = useCallback((bookId: string, filter: string) => {
     if (!filter) return true;
     const status = lessonProgress[bookId]?.status ?? "not_started";
@@ -1565,6 +1580,7 @@ export function DiscoverView({
                       coverage={coverageOf(lesson)}
                       onOpen={() => void openSharedLesson(lesson, myLessons)}
                       onDelete={() => void deleteLesson(lesson.id)}
+                      onEdit={() => setEditingLesson(lesson)}
                       onRefine={lesson.metadata?.lesson_kind === "homework" ? undefined : () => openRefine(lesson.id)}
                     />
                   ))}
@@ -1821,6 +1837,16 @@ export function DiscoverView({
         />
       )}
 
+      {editingLesson && (
+        <EditMetadataModal
+          kind="урока"
+          title={editingLesson.title}
+          description={String(editingLesson.metadata?.description ?? "")}
+          onClose={() => setEditingLesson(null)}
+          onSave={saveLessonMetadata}
+        />
+      )}
+
       {/* Seed progress modal */}
       {isSeeding && (
         <div className="seed-modal-backdrop">
@@ -1900,6 +1926,7 @@ type SyllabusItemProps = {
   /** Only generated lessons can be removed or revised — public content is shared. */
   onDelete?: () => void;
   onRefine?: () => void;
+  onEdit?: () => void;
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -1909,7 +1936,7 @@ const SOURCE_LABELS: Record<string, string> = {
   oersi: "OERSI",
 };
 
-function SyllabusItem({ book, progress, isLoading, showLang, coverage, onOpen, onDelete, onRefine }: SyllabusItemProps) {
+function SyllabusItem({ book, progress, isLoading, showLang, coverage, onOpen, onDelete, onRefine, onEdit }: SyllabusItemProps) {
   const status = progress?.status ?? "not_started";
   const sourceUrl = book.metadata?.source_url;
   const license = book.metadata?.license;
@@ -2006,6 +2033,11 @@ function SyllabusItem({ book, progress, isLoading, showLang, coverage, onOpen, o
             title="Изменить: правки, другой объём"
           >
             <Pencil size={13} />Изменить
+          </button>
+        )}
+        {onEdit && (
+          <button type="button" className="mini-btn syllabus-refine" onClick={onEdit} title="Изменить название и описание">
+            <Pencil size={13} />Переименовать
           </button>
         )}
       </div>

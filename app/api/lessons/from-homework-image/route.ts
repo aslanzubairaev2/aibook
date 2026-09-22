@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import { runHomeworkPrompt } from "@/lib/ai/lessonModel";
 import { buildHomeworkExtractPrompt, parseHomeworkLesson } from "@/lib/ai/buildHomeworkPrompt";
 import { saveHomeworkLesson } from "@/lib/db/homeworkStore";
+import { readBatches } from "@/lib/db/dictionaryStore";
 
 export const dynamic = "force-dynamic";
 // Same ceiling as /api/lessons/from-image: a dense page routinely takes longer
@@ -45,6 +46,8 @@ export async function POST(req: Request) {
     targetLanguage?: string;
     nativeLanguage?: string;
     note?: string;
+    referenceBatchId?: string;
+    titleSuffix?: string;
   };
 
   const homeworkDate = (body.homeworkDate ?? "").trim();
@@ -69,7 +72,38 @@ export async function POST(req: Request) {
   const targetLanguage = (body.targetLanguage ?? "de").trim();
   const nativeLanguage = (body.nativeLanguage ?? "ru").trim();
 
-  const result = await runHomeworkPrompt(apiKey, buildHomeworkExtractPrompt(), base64, mimeType.toLowerCase());
+  let referenceTitle = "";
+  let referenceWords: string[] = [];
+  const referenceBatchId = (body.referenceBatchId ?? "").trim();
+  if (referenceBatchId) {
+    const { batches } = await readBatches(supabaseAdmin, user.id, { language: targetLanguage });
+    const referenceBatch = batches.find((batch) => batch.id === referenceBatchId);
+    if (!referenceBatch) {
+      return NextResponse.json({ error: "Выбранная пачка слов не найдена." }, { status: 400 });
+    }
+    referenceTitle = referenceBatch.title;
+    const { data: words, error: wordsError } = await supabaseAdmin
+      .from("dictionary_entries")
+      .select("headword, lemma, translation")
+      .eq("user_id", user.id)
+      .eq("batch_id", referenceBatchId)
+      .limit(300);
+    if (wordsError) {
+      return NextResponse.json({ error: "Не удалось прочитать выбранную пачку слов." }, { status: 500 });
+    }
+    referenceWords = (words ?? []).flatMap((word) => [word.headword, word.lemma, word.translation])
+      .filter((word): word is string => typeof word === "string" && word.trim().length > 0)
+      .map((word) => word.trim())
+      .filter((word, index, all) => all.indexOf(word) === index)
+      .slice(0, 300);
+  }
+
+  const result = await runHomeworkPrompt(
+    apiKey,
+    buildHomeworkExtractPrompt({ referenceTitle, referenceWords }),
+    base64,
+    mimeType.toLowerCase(),
+  );
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
@@ -90,8 +124,12 @@ export async function POST(req: Request) {
     homeworkDate,
     extraMetadata: {
       note: (body.note ?? "").trim().slice(0, 800),
+      reference_batch_id: referenceBatchId || undefined,
+      reference_batch_title: referenceTitle || undefined,
+      reference_words_count: referenceWords.length || undefined,
       truncated: result.truncated,
     },
+    titleSuffix: (body.titleSuffix ?? "").trim(),
   });
 
   if (!saved.ok) {

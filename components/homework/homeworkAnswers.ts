@@ -65,6 +65,14 @@ export function computeHomeworkProgress(exercises: HomeworkExercise[], answers: 
       }
       continue;
     }
+    if (exercise.widget === "sort") {
+      for (let index = 0; index < (exercise.categories?.length ?? 0); index += 1) {
+        total += 1;
+        const value = answers.items[itemKey(exercise.number, index + 1)];
+        if (typeof value === "string" && isFilled(value)) filled += 1;
+      }
+      continue;
+    }
     if (exercise.widget !== "cloze" && exercise.widget !== "compose" && exercise.widget !== "open") continue;
 
     for (const item of exercise.items ?? []) {

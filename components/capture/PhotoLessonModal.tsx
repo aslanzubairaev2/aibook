@@ -102,6 +102,9 @@ export function PhotoLessonModal({
   // Required for homework: the date the assignment is for, as it appears on
   // the page — there is no reliable way to infer it, and the printout needs it.
   const [homeworkDate, setHomeworkDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [homeworkPart, setHomeworkPart] = useState("");
+  const [referenceBatches, setReferenceBatches] = useState<Array<{ id: string; title: string; description?: string }>>([]);
+  const [referenceBatchId, setReferenceBatchId] = useState("");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -151,6 +154,20 @@ export function PhotoLessonModal({
   }, [stage]);
 
   useEffect(() => stopCamera, [stopCamera]);
+
+  useEffect(() => {
+    if (!toHomework) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/dictionary?language=${encodeURIComponent(targetLanguage)}`, { headers: await authHeaders() });
+        if (!res.ok) return;
+        const data = await res.json() as { batches?: Array<{ id: string; title: string; description?: string }> };
+        if (!cancelled) setReferenceBatches(data.batches ?? []);
+      } catch { /* Reference selection is optional. */ }
+    })();
+    return () => { cancelled = true; };
+  }, [authHeaders, targetLanguage, toHomework]);
 
   const shoot = () => {
     const video = videoRef.current;
@@ -228,7 +245,7 @@ export function PhotoLessonModal({
       const res = await fetch("/api/lessons/from-homework-image", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-        body: JSON.stringify({ image: cropped, homeworkDate, targetLanguage, nativeLanguage, note: note.trim() }),
+        body: JSON.stringify({ image: cropped, homeworkDate, targetLanguage, nativeLanguage, note: note.trim(), titleSuffix: homeworkPart.trim(), referenceBatchId: referenceBatchId || undefined }),
       });
       const data = await readJsonResponse<{ id?: string; error?: string; warning?: string }>(res);
       if (!res.ok || !data.id) throw new Error(data.error ?? `Ошибка распознавания (${res.status})`);
@@ -370,6 +387,32 @@ export function PhotoLessonModal({
                   required
                 />
               </div>
+            )}
+            {toHomework && (
+              <>
+                <div className="photo-date-row">
+                  <label htmlFor="hw-capture-part">Часть / подпись</label>
+                  <input
+                    id="hw-capture-part"
+                    type="text"
+                    value={homeworkPart}
+                    onChange={(e) => setHomeworkPart(e.target.value)}
+                    placeholder="необязательно"
+                    maxLength={100}
+                  />
+                </div>
+                <div className="photo-date-row">
+                  <label htmlFor="hw-reference-pack">Словарь для ссылок</label>
+                  <select
+                    id="hw-reference-pack"
+                    value={referenceBatchId}
+                    onChange={(e) => setReferenceBatchId(e.target.value)}
+                  >
+                    <option value="">Не выбирать</option>
+                    {referenceBatches.map((batch) => <option key={batch.id} value={batch.id}>{batch.title}</option>)}
+                  </select>
+                </div>
+              </>
             )}
             <div className="lesson-input-row">
               <input

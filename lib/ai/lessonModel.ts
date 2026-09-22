@@ -348,6 +348,7 @@ const HOMEWORK_SCHEMA = {
             },
           },
           bank: { type: Type.ARRAY, items: { type: Type.STRING } },
+          categories: { type: Type.ARRAY, items: { type: Type.STRING } },
           verbs: { type: Type.ARRAY, items: { type: Type.STRING } },
           pronouns: { type: Type.ARRAY, items: { type: Type.STRING } },
           fields: {

@@ -64,7 +64,7 @@ export type HomeworkExercise = {
   number: number;
   /** The instruction line exactly as printed, e.g. "Вставьте правильные окончания." */
   instruction: string;
-  widget: "cloze" | "compose" | "open" | "conjugation" | "formation" | "text";
+  widget: "cloze" | "compose" | "open" | "conjugation" | "formation" | "sort" | "text";
   /** cloze / compose / open. */
   items?: HomeworkItem[];
   /** Shared word bank for items in this exercise that don't carry their own. */
@@ -75,6 +75,8 @@ export type HomeworkExercise = {
   pronouns?: string[];
   /** formation widget: fields the learner must fill for each source item. */
   fields?: HomeworkResponseField[];
+  /** sort widget: labels read from a picture/diagram. */
+  categories?: string[];
 };
 
 export type HomeworkLesson = {
@@ -87,8 +89,17 @@ export type HomeworkLesson = {
 
 // ─── Prompt ───────────────────────────────────────────────────────────────
 
-export function buildHomeworkExtractPrompt(): string {
+export type HomeworkPromptContext = {
+  referenceTitle?: string;
+  referenceWords?: string[];
+};
+
+export function buildHomeworkExtractPrompt(context: HomeworkPromptContext = {}): string {
+  const referenceBlock = context.referenceWords?.length
+    ? `\nA dictionary pack was selected as a reference for this photo. It is the word list the page may refer to:\n- Pack: ${context.referenceTitle ?? "Словарь"}\n- Words: ${context.referenceWords.join(", ")}\nUse these words as the bank when the photographed instruction refers to that vocabulary/page. For a picture or diagram exercise, keep the words as an interactive bank and recover the visible category labels; do not silently omit the exercise.\n`
+    : "";
   return `You are reading a photograph of a page of language-learning exercises ("УПРАЖНЕНИЯ") for a study app. The learner will fill in every blank themselves, by hand equivalent, and print the result for their teacher — so your job is to recover the page's structure, never to solve it.
+${referenceBlock}
 
 Rules, in order of importance:
 - NEVER supply, guess, or imply a correct answer anywhere — not in a blank, not in an item's text, not in a field you invent. Every "{{n}}" you mark stays exactly that: a marker, nothing filled in.
@@ -105,7 +116,9 @@ Rules, in order of importance:
   - "open": the item needs a whole sentence or phrase written with no gap to key off — translation, answering a question, forming a word from an example. Put the full prompt (including any given example) in "text", no "{{n}}" markers.
   - "conjugation": the instruction says to conjugate/decline a list of words. List them in "verbs", and put the pronoun or grammatical-person labels the exercise implies in "pronouns" (infer the standard set for the language if the page doesn't spell it out).
   - "formation": the instruction asks to derive, transform, or form a new word from each source word (for example, form person-denoting nouns from verbs). Put each source word in an item "text" exactly as printed. Describe the requested answer columns in an exercise-level "fields" array. Each field has a stable English "key" (use "word", "article_word", "feminine", "plural", "translation", or "other") and a short Russian "label". Include only what the instruction asks for. For "Образуйте от глаголов существительные, обозначающие лица, переведите их на русский язык" use exactly [{"key":"word","label":"Существительное"},{"key":"translation","label":"Перевод"}]. Do not route a word-formation task to "conjugation" just because its source list contains verbs.
-  - "text": the instruction references something outside this photo (e.g. "прочтите текст «Wir lernen Fremdsprachen»" when that text isn't on the page) or is otherwise not something to fill in here. No items.
+  - "sort": a picture/diagram asks to put words into named categories. Return the visible category labels in "categories" and the available words in "bank". Do not solve or omit it just because answers are represented by pictures.
+  - "text": only when the instruction references something outside this photo and there is no answer area to fill in here. For self-writing tasks such as "Ihre Sätze und Wörter" or "Ihr Text", use "open" with one item containing the printed prompt, so the learner gets a text area.
+- Do not omit an exercise merely because it contains pictures or blank lines. Exercises that ask the learner to write their own examples must still be represented as "open".
 - A word bank that is visually attached to a whole exercise (a column of adjectives, a list of nouns) but is meant to fill every gap in it belongs on the exercise's "bank", not repeated per item.
 - If a page is cropped and an exercise is cut off mid-item, include only the items you can read in full.
 
@@ -118,12 +131,13 @@ Return ONLY valid JSON with this exact shape:
     {
       "number": 1,
       "instruction": "instruction line as printed",
-      "widget": "cloze" | "compose" | "open" | "conjugation" | "formation" | "text",
+      "widget": "cloze" | "compose" | "open" | "conjugation" | "formation" | "sort" | "text",
       "items": [ { "number": 1, "text": "...", "blanks": [ { "select": false } ], "bank": [] } ],
       "bank": [],
       "verbs": [],
       "pronouns": [],
-      "fields": [ { "key": "word", "label": "Существительное" }, { "key": "translation", "label": "Перевод" } ]
+      "fields": [ { "key": "word", "label": "Существительное" }, { "key": "translation", "label": "Перевод" } ],
+      "categories": ["Feste", "Jahreszeiten", "Monate"]
     }
   ]
 }
@@ -138,7 +152,7 @@ No markdown, no commentary, nothing outside the JSON object.`;
 // @google/genai import so client components can pull HomeworkLesson etc.
 // straight from it.
 
-const WIDGETS = new Set(["cloze", "compose", "open", "conjugation", "formation", "text"]);
+const WIDGETS = new Set(["cloze", "compose", "open", "conjugation", "formation", "sort", "text"]);
 
 function parseField(raw: unknown): HomeworkResponseField | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -162,7 +176,7 @@ function parseFields(raw: unknown): HomeworkResponseField[] | undefined {
  */
 function isPersonNounFormationInstruction(instruction: string): boolean {
   const text = instruction.toLocaleLowerCase();
-  const nounCue = /(существитель|substantiv|nomen)/u.test(text);
+  const nounCue = /(существитель|substantiv|\bnomen\b)/u.test(text);
   const personCue = /(лиц|person|personen|bezeichn|человек)/u.test(text);
   return nounCue && personCue;
 }
@@ -188,9 +202,16 @@ function parseItem(raw: unknown): HomeworkItem | null {
   const text = typeof obj.text === "string" ? obj.text.trim() : "";
   if (!text) return null;
   const number = typeof obj.number === "number" ? obj.number : 0;
-  const blanks = Array.isArray(obj.blanks)
+  const explicitBlanks = Array.isArray(obj.blanks)
     ? obj.blanks.map(parseBlank).filter((b): b is HomeworkBlank => b !== null)
     : undefined;
+  // Some model responses contain the contract markers but omit the parallel
+  // blanks array. Infer free-text slots so old/sparse responses never leak
+  // {{0}} into the learner-facing exercise.
+  const markerCount = [...text.matchAll(/\{\{\d+\}\}/g)].length;
+  const blanks = markerCount > 0
+    ? Array.from({ length: markerCount }, (_, index) => explicitBlanks?.[index] ?? { select: false })
+    : explicitBlanks;
   const bank = Array.isArray(obj.bank)
     ? obj.bank.filter((b): b is string => typeof b === "string" && b.trim().length > 0)
     : undefined;
@@ -225,6 +246,12 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
     ? obj.pronouns.filter((p): p is string => typeof p === "string" && p.trim().length > 0)
     : undefined;
   const fields = parseFields(obj.fields);
+  const categories = Array.isArray(obj.categories)
+    ? obj.categories
+      .filter((category): category is string => typeof category === "string" && category.trim().length > 0)
+      .map((category) => category.trim())
+      .slice(0, 12)
+    : undefined;
 
   const formationByInstruction = isPersonNounFormationInstruction(instruction);
   const sourceItems = items && items.length > 0
@@ -232,9 +259,15 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
     : ((formationByInstruction || widget === "formation") && verbs && verbs.length > 0
       ? verbs.map((verb, index) => ({ number: index + 1, text: verb }))
       : undefined);
+  const hasMarkers = sourceItems?.some((item) => /\{\{\d+\}\}/.test(item.text)) === true;
+  const writingCue = /(ihre sätze|ihr text|schreiben sie|для себя|напишите|свои предложения|текст)/iu.test(instruction);
   const normalizedWidget = formationByInstruction && sourceItems && sourceItems.length > 0
     ? "formation"
-    : widget;
+    : hasMarkers && widget !== "conjugation" && widget !== "formation"
+      ? "cloze"
+      : widget === "text" && writingCue
+        ? "open"
+        : widget;
   const normalizedFields = normalizedWidget === "formation"
     ? fields ?? fieldsForFormationInstruction(instruction)
     : fields;
@@ -248,6 +281,7 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
     ...(verbs && verbs.length > 0 ? { verbs } : {}),
     ...(pronouns && pronouns.length > 0 ? { pronouns } : {}),
     ...(normalizedFields && normalizedFields.length > 0 ? { fields: normalizedFields } : {}),
+    ...(categories && categories.length > 0 ? { categories } : {}),
   };
 }
 

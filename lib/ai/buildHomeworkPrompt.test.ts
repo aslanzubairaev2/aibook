@@ -81,3 +81,43 @@ test("formation progress counts every AI-described response field", () => {
     conjugations: {},
   }), 50);
 });
+
+test("missing blank metadata is inferred from internal markers", () => {
+  const exercise = parseExercise({
+    number: 6,
+    instruction: "Ergänzen Sie die passenden Personalpronomen.",
+    widget: "open",
+    items: [{ number: 1, text: "Schenkt (2) {{0}} doch ein Hörbuch! Das gefällt {{1}} sicher." }],
+  });
+
+  assert.ok(exercise);
+  assert.equal(exercise.widget, "cloze");
+  assert.deepEqual(exercise.items?.[0].blanks, [{ select: false }, { select: false }]);
+});
+
+test("self-writing exercises get a usable response field", () => {
+  const exercise = parseExercise({
+    number: 11,
+    instruction: "Ihr Text – Ergänzen Sie für sich selbst. Schreiben Sie den Text ins Heft.",
+    widget: "text",
+  });
+
+  assert.ok(exercise);
+  assert.equal(exercise.widget, "open");
+  assert.deepEqual(exercise.items, undefined);
+});
+
+test("picture sorting keeps categories and the selected vocabulary bank", () => {
+  const exercise = parseExercise({
+    number: 7,
+    instruction: "Ordnen Sie die Nomen aus Ihrem Wortschatz zu.",
+    widget: "sort",
+    categories: ["Feste", "Jahreszeiten", "Monate"],
+    bank: ["der Frühling", "Januar"],
+  });
+
+  assert.ok(exercise);
+  assert.equal(exercise.widget, "sort");
+  assert.deepEqual(exercise.categories, ["Feste", "Jahreszeiten", "Monate"]);
+  assert.equal(computeHomeworkProgress([exercise], { items: { "7:1": "Januar" }, conjugations: {} }), 33);
+});

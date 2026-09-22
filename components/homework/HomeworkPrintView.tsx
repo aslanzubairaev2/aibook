@@ -130,6 +130,10 @@ export function HomeworkPrintView({ title, sourceKind, homeworkDate, exercises, 
                 </p>
               );
             })}
+            {exercise.widget === "sort" && (exercise.categories ?? []).map((category, index) => {
+              const value = answers.items[itemKey(exercise.number, index + 1)];
+              return <p key={category} className="hw-print-item"><strong>{category}:</strong> <span className="hw-print-answer">{typeof value === "string" && value.trim() ? value : "…"}</span></p>;
+            })}
           </section>
         ))}
       </div>

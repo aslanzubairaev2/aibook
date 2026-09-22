@@ -21,6 +21,7 @@ import { ComposeExercise } from "./ComposeExercise";
 import { OpenResponseExercise } from "./OpenResponseExercise";
 import { ConjugationExercise } from "./ConjugationExercise";
 import { FormationExercise } from "./FormationExercise";
+import { SortExercise } from "./SortExercise";
 import { HomeworkPrintView } from "./HomeworkPrintView";
 
 export type HomeworkBook = {
@@ -262,8 +263,13 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
               <FormationExercise exercise={exercise} answers={answers}
                 onFieldsChange={(itemNumber, fields) => onFieldsChange(exercise.number, itemNumber, fields)} />
             )}
+            {exercise.widget === "sort" && (
+              <SortExercise exercise={exercise} answers={answers}
+                onCategoryChange={(categoryNumber, value) => setItemValue(exercise.number, categoryNumber, value)} />
+            )}
             {exercise.widget === "text" && (
-              <p className="hw-text-note">См. текст, указанный в задании — на этом снимке его нет.</p>
+              <OpenResponseExercise exercise={{ ...exercise, widget: "open", items: exercise.items?.length ? exercise.items : [{ number: 1, text: exercise.instruction }] }} answers={answers} onWordTap={handleWordTap}
+                onItemChange={(itemNumber, value) => setItemValue(exercise.number, itemNumber, value)} />
             )}
           </section>
         ))}
@@ -351,6 +357,11 @@ const STYLES = `
     background: rgba(212,168,71,0.12); color: var(--accent);
   }
   .hw-text-note { font-size: 13px; color: var(--text-muted); font-style: italic; }
+  .hw-sort { display: grid; gap: 12px; }
+  .hw-sort-bank { display: grid; gap: 6px; }
+  .hw-sort-label { color: var(--text-muted); font-size: 12px; }
+  .hw-sort-category { display: grid; gap: 6px; color: var(--text-primary); font-size: 14px; font-weight: 700; }
+  .hw-sort-category textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: rgba(240,230,211,0.04); color: var(--text-primary); font: inherit; font-weight: 400; }
 
   .hw-items { display: flex; flex-direction: column; gap: 10px; }
   .hw-item { font-size: 14.5px; line-height: 1.8; }

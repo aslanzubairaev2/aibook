@@ -158,11 +158,26 @@ export async function PATCH(req: NextRequest) {
 
   const body = await req.json() as {
     id?: string;
+    title?: string;
+    description?: string;
     forms?: Record<string, string>;
     noun?: { gender?: string; article?: string; plural?: string; translation?: string };
   };
   const id = (body.id ?? "").trim();
   if (!id) return NextResponse.json({ error: "Не указано слово." }, { status: 400 });
+
+  if (typeof body.title === "string" || typeof body.description === "string") {
+    const title = body.title?.trim().slice(0, 200);
+    const description = body.description?.trim().slice(0, 1000);
+    if (!title) return NextResponse.json({ error: "Название пачки не может быть пустым." }, { status: 400 });
+    const { error } = await supabaseAdmin
+      .from("dictionary_batches")
+      .update({ title, description: description ?? "" })
+      .eq("id", id)
+      .eq("user_id", user.id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  }
 
   if (body.noun && typeof body.noun === "object") {
     const error = await updateEntryNoun(supabaseAdmin, user.id, id, body.noun);
