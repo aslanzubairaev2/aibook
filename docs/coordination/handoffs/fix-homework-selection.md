@@ -2,7 +2,7 @@
 
 - Агент: Codex
 - Ветка: `fix-homework-selection`
-- Commit: `e9788ee`
+- Commit: `cff65f7`
 - Статус: ready-for-review
 
 ## Сделано
