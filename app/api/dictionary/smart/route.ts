@@ -9,7 +9,7 @@ import {
   findOrCreatePack,
   saveDictionaryEntries,
 } from "@/lib/db/dictionaryStore";
-import type { DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
+import { normalizeDictionaryEntryDraft, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import { validateGermanVerbEntries } from "@/lib/ai/verbEntryValidation";
 
 export const dynamic = "force-dynamic";
@@ -98,7 +98,7 @@ function payloadOf(value: unknown): SmartModelPayload {
   return (typeof value === "object" && value !== null ? value : {}) as SmartModelPayload;
 }
 
-function parseEntries(payload: SmartModelPayload): DictionaryEntryDraft[] {
+function parseEntries(payload: SmartModelPayload, targetLanguage: string): DictionaryEntryDraft[] {
   const raw = Array.isArray(payload.entries) ? payload.entries : [];
   const entries: DictionaryEntryDraft[] = [];
   for (const item of raw) {
@@ -109,7 +109,7 @@ function parseEntries(payload: SmartModelPayload): DictionaryEntryDraft[] {
         .map(([key, value]) => [key.slice(0, 30), clean(value, 120)])
         .filter(([, value]) => value))
       : {};
-    entries.push({
+    entries.push(normalizeDictionaryEntryDraft({
       headword: clean(row.headword, 200),
       lemma: clean(row.lemma, 200),
       translation: clean(row.translation, 400),
@@ -123,7 +123,7 @@ function parseEntries(payload: SmartModelPayload): DictionaryEntryDraft[] {
       note: clean(row.note, 300),
       example: clean(row.example, 400),
       exampleTranslation: clean(row.exampleTranslation, 400),
-    });
+    }, targetLanguage));
   }
   return dedupeDictionaryDrafts(entries).filter((entry) => entry.headword && entry.lemma && entry.translation);
 }
@@ -188,7 +188,7 @@ export async function POST(req: Request) {
   if (result.repaired) return NextResponse.json({ error: "ИИ вернул обрезанный список. Попробуйте более короткую тему — неполная пачка не сохранена." }, { status: 502 });
 
   const modelMeta = payloadOf(result.value);
-  const parsedEntries = parseEntries(modelMeta).slice(0, mode === "single" ? 1 : 40);
+  const parsedEntries = parseEntries(modelMeta, target).slice(0, mode === "single" ? 1 : 40);
   const checked = validateGermanVerbEntries(parsedEntries, target);
   const entries = dedupeDictionaryDrafts(checked.entries);
   const clarification = smartDictionaryClarification(modelMeta.clarification, entries.length);

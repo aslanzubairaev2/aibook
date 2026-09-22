@@ -48,10 +48,10 @@ function isSameWord(left: string, right: string): boolean {
 }
 
 /**
- * A word-bank sorter for diagram and vocabulary tasks. The bank is always
- * visible, but choosing a field opens a compact picker so a long vocabulary
- * list does not turn the exercise into a wall of buttons. Answers are chips,
- * and a word used in one row is visibly disabled everywhere else.
+ * A word-bank sorter for diagram and vocabulary tasks. The bank stays above
+ * the fields so the learner can pick one field and then add several words in
+ * quick succession. A word used in one row disappears from the bank until its
+ * chip is removed again.
  */
 export function SortExercise({ exercise, answers, onSelectionChange }: Props) {
   const rows = rowsForExercise(exercise);
@@ -60,27 +60,28 @@ export function SortExercise({ exercise, answers, onSelectionChange }: Props) {
     ...(exercise.categories ?? []),
     ...rows.map((row) => row.category ?? "").filter(Boolean),
   ]));
-  const [pickerRow, setPickerRow] = useState<number | null>(null);
+  const [activeRowNumber, setActiveRowNumber] = useState<number | null>(null);
   const selections = new Map(rows.map((row) => [row.number, initialSelection(answers, exercise, row)]));
   const usedWords = new Set(
-    Array.from(selections.values()).flatMap((selection) => selection.words.map((word) => word.toLocaleLowerCase())),
+    Array.from(selections.values()).flatMap((selection) => selection.words.map((word) => word.trim().toLocaleLowerCase())),
   );
-  const activeRow = rows.find((row) => row.number === pickerRow);
+  const activeRow = rows.find((row) => row.number === activeRowNumber);
   const activeSelection = activeRow ? selections.get(activeRow.number) ?? { words: [] } : null;
-  const availableBank = bank.filter((word) => !usedWords.has(word.toLocaleLowerCase()));
+  const availableBank = bank.filter((word) => !usedWords.has(word.trim().toLocaleLowerCase()));
 
   const chooseCategory = (row: HomeworkSortRow, category: string) => {
     const current = selections.get(row.number) ?? { words: [] };
     onSelectionChange(row.number, { ...current, category });
   };
 
-  const chooseWord = (row: HomeworkSortRow, word: string) => {
+  const chooseWord = (word: string) => {
+    if (!activeRow) return;
+    const row = activeRow;
     const current = selections.get(row.number) ?? { words: [] };
     if (current.words.some((item) => isSameWord(item, word))) return;
-    if (usedWords.has(word.toLocaleLowerCase())) return;
+    if (usedWords.has(word.trim().toLocaleLowerCase())) return;
     if (row.slots && current.words.length >= row.slots) return;
     onSelectionChange(row.number, { ...current, words: [...current.words, word] });
-    setPickerRow(null);
   };
 
   const removeWord = (row: HomeworkSortRow, word: string) => {
@@ -91,7 +92,35 @@ export function SortExercise({ exercise, answers, onSelectionChange }: Props) {
 
   return (
     <div className="hw-sort">
-      <div className="hw-sort-help">Нажмите на поле и выберите слова из списка. Использованные слова станут серыми.</div>
+      <div className="hw-sort-help">Выберите поле, затем нажимайте слова сверху. Использованные слова исчезают из списка.</div>
+      {bank.length > 0 && (
+        <div className="hw-sort-bank" role="group" aria-label="Слова для выбора">
+          <div className="hw-sort-bank-heading">
+            <span>Слова для выбора</span>
+            {activeRow && <span className="hw-sort-bank-target">→ строка {activeRow.number}</span>}
+          </div>
+          <div className="hw-sort-bank-chips">
+            {availableBank.length > 0 ? availableBank.map((word) => {
+              const isFull = Boolean(activeRow?.slots && activeSelection && activeSelection.words.length >= activeRow.slots);
+              return (
+                <button
+                  key={word}
+                  type="button"
+                  className="hw-sort-bank-chip"
+                  disabled={!activeRow || isFull}
+                  onClick={() => chooseWord(word)}
+                  title={!activeRow ? "Сначала выберите поле" : isFull ? "В этом поле больше нет мест" : `Добавить в строку ${activeRow.number}`}
+                >
+                  {word}
+                </button>
+              );
+            }) : (
+              <span className="hw-text-note">Все слова уже распределены. Удалите чип из поля, чтобы выбрать его снова.</span>
+            )}
+          </div>
+          {!activeRow && availableBank.length > 0 && <span className="hw-sort-bank-note">Сначала нажмите на поле, куда добавить слово.</span>}
+        </div>
+      )}
       {rows.map((row) => {
         const selection = selections.get(row.number) ?? { words: [] };
         const fixedWords = new Set((row.fixed ?? []).map((word) => word.toLocaleLowerCase()));
@@ -118,12 +147,12 @@ export function SortExercise({ exercise, answers, onSelectionChange }: Props) {
             <div
               role="button"
               tabIndex={0}
-              className="hw-sort-field"
-              onClick={() => setPickerRow(row.number)}
+              className={`hw-sort-field${activeRowNumber === row.number ? " active" : ""}`}
+              onClick={() => setActiveRowNumber(row.number)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  setPickerRow(row.number);
+                  setActiveRowNumber(row.number);
                 }
               }}
               aria-label={`Выбрать слова для строки ${row.number}`}
@@ -152,39 +181,6 @@ export function SortExercise({ exercise, answers, onSelectionChange }: Props) {
 
       {rows.length === 0 && <p className="hw-text-note">Распределите слова по категориям, указанным на фотографии.</p>}
       {bank.length === 0 && rows.length > 0 && <p className="hw-text-note">Список слов не распознан. Откройте обсуждение упражнения или перефотографируйте страницу крупнее.</p>}
-
-      {activeRow && activeSelection && (
-        <div className="hw-popup-backdrop" onClick={() => setPickerRow(null)}>
-          <div className="hw-sort-picker" role="dialog" aria-modal="true" aria-labelledby="hw-sort-picker-title" onClick={(event) => event.stopPropagation()}>
-            <div className="hw-popup-header">
-              <div>
-                <span className="hw-formation-kicker">Слова для строки {activeRow.number}</span>
-                <h3 id="hw-sort-picker-title" className="hw-sort-picker-title">Выберите слово</h3>
-              </div>
-              <button type="button" className="hw-popup-close" onClick={() => setPickerRow(null)} aria-label="Закрыть"><X size={18} /></button>
-            </div>
-            <div className="hw-sort-picker-list">
-              {availableBank.length === 0 ? (
-                <p className="hw-text-note">Все слова уже добавлены. Удалите чип из поля, чтобы выбрать его снова.</p>
-              ) : availableBank.map((word) => {
-                const isCurrent = activeSelection.words.some((item) => isSameWord(item, word));
-                const isFull = Boolean(activeRow.slots && activeSelection.words.length >= activeRow.slots);
-                return (
-                  <button
-                    key={word}
-                    type="button"
-                    className="hw-sort-picker-word"
-                    disabled={isCurrent || isFull}
-                    onClick={() => chooseWord(activeRow, word)}
-                  >
-                    {word}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

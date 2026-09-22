@@ -157,6 +157,21 @@ const VERB_FORM_KEYS = ["praeteritum", "partizip2", "hilfsverb", "trennbar", "in
 const NON_NOUN_POS = /глагол|прилаг|наречи|предлог|союз|местоим|числит|выражени|verb|adject|adverb|preposition|phrase/i;
 const NOUN_POS = /существ|noun|substantiv/i;
 const LEADING_ARTICLE = /^(der|die|das)\s+/i;
+const GERMAN_ARTICLE = /^(der|die|das)$/i;
+const GERMAN_TARGET = /^(?:de|de[-_]|german|немец)/iu;
+const GERMAN_ARTICLE_GENDER: Record<string, string> = { der: "m", die: "f", das: "n" };
+
+// A small closed vocabulary is useful when an assistant returns a German noun
+// without its article. It covers the calendar/season words that are commonly
+// added to the same pack as the textbook exercises; arbitrary nouns still need
+// the model's explicit article rather than a risky guess based on spelling.
+const COMMON_GERMAN_NOUN_ARTICLES: Record<string, string> = {
+  april: "der", august: "der", dezember: "der", februar: "der", frühling: "der",
+  herbst: "der", januar: "der", juli: "der", juni: "der", märz: "der",
+  mai: "der", monat: "der", november: "der", oktober: "der", september: "der",
+  sommer: "der", winter: "der", datum: "das", fest: "das", jahr: "das",
+  kalender: "der", jahreszeit: "die", woche: "die",
+};
 
 function isNoun(entry: DictionaryEntryDraft): boolean {
   if (entry.contentType && entry.contentType !== "word") return false;
@@ -185,6 +200,33 @@ export function applyNounFieldRules(entry: DictionaryEntryDraft): DictionaryEntr
   // Существительные trainer) can see it too, not just the fields this
   // function already protects.
   return entry.partOfSpeech.trim() ? entry : { ...entry, partOfSpeech: "существительное" };
+}
+
+/**
+ * Fill the two noun fields the UI needs for colour and grammar hints.
+ *
+ * The photo prompt normally supplies them, but the smart dictionary prompt
+ * occasionally returns only `headword: "der Sommer"`. The article is already
+ * present in that value, so carrying it into the structured columns is a safe
+ * repair; the closed calendar list also covers a bare `Sommer` response.
+ */
+export function normalizeDictionaryEntryDraft(
+  entry: DictionaryEntryDraft,
+  targetLanguage = "",
+): DictionaryEntryDraft {
+  const ruled = applyNounFieldRules(entry);
+  if (!GERMAN_TARGET.test(targetLanguage) || !isNoun(ruled)) return ruled;
+
+  const leading = ruled.headword.match(LEADING_ARTICLE)?.[1].toLowerCase() ?? "";
+  const explicit = ruled.article.trim().toLowerCase();
+  const article = GERMAN_ARTICLE.test(explicit)
+    ? explicit
+    : leading || COMMON_GERMAN_NOUN_ARTICLES[ruled.lemma.trim().toLocaleLowerCase("de-DE")] || "";
+  const gender = GENDERS.has(ruled.gender) && ruled.gender !== ""
+    ? ruled.gender
+    : GERMAN_ARTICLE_GENDER[article] ?? "";
+
+  return { ...ruled, article, gender };
 }
 
 const A1_DICTIONARY_WORDS = new Set([
@@ -239,7 +281,7 @@ export function parseDictionaryEntries(raw: unknown, targetLanguage = ""): {
     }
     const gender = String(e.gender ?? "").trim().toLowerCase();
 
-    entries.push(applyNounFieldRules({
+    entries.push(normalizeDictionaryEntryDraft({
       headword,
       lemma,
       translation: String(e.translation ?? "").trim().slice(0, 400),
@@ -253,7 +295,7 @@ export function parseDictionaryEntries(raw: unknown, targetLanguage = ""): {
       note: String(e.note ?? "").trim().slice(0, 300),
       example: String(e.example ?? "").trim().slice(0, 400),
       exampleTranslation: String(e.exampleTranslation ?? "").trim().slice(0, 400),
-    }));
+    }, targetLanguage));
   }
 
   const checked = validateGermanVerbEntries(entries, targetLanguage);

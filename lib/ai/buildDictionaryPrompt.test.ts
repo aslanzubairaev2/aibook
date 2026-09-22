@@ -1,6 +1,6 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { parseDictionaryEntries, buildDictionaryFromImagePrompt } from "./buildDictionaryPrompt.ts";
+import { normalizeDictionaryEntryDraft, parseDictionaryEntries, buildDictionaryFromImagePrompt } from "./buildDictionaryPrompt.ts";
 import { startFakeGeminiServer, type FakeGeminiServer } from "./fakeGeminiServer.ts";
 
 // A page like the coursebook "Ihr Wortschatz" spread: nouns with plural
@@ -150,6 +150,38 @@ describe("reading a vocabulary page into entries", () => {
       ],
     });
     assert.deepEqual(entries.map((e) => e.plural), ["die Zeitungen", "die Mädchen", "die Bälle"]);
+  });
+
+  test("German smart-add nouns recover article and gender from the headword", () => {
+    const summer = normalizeDictionaryEntryDraft({
+      headword: "der Sommer",
+      lemma: "Sommer",
+      translation: "лето",
+      partOfSpeech: "существительное",
+      contentType: "word",
+      gender: "",
+      article: "",
+      plural: "die Sommer",
+      forms: {},
+      cefr: "A1",
+    }, "de");
+    const spring = normalizeDictionaryEntryDraft({
+      headword: "Frühling",
+      lemma: "Frühling",
+      translation: "весна",
+      partOfSpeech: "существительное",
+      contentType: "word",
+      gender: "",
+      article: "",
+      plural: "die Frühlinge",
+      forms: {},
+      cefr: "A1",
+    }, "de");
+
+    assert.equal(summer.article, "der");
+    assert.equal(summer.gender, "m");
+    assert.equal(spring.article, "der");
+    assert.equal(spring.gender, "m");
   });
 
   // A real deck ended up with ~300 words that had a filled gender/article but

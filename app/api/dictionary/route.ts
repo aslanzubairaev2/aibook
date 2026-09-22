@@ -6,9 +6,11 @@ import {
   adoptCardsIntoPack,
   DICTIONARY_COLUMNS,
   findOrCreatePack,
+  normalizeStoredDictionaryEntry,
   readBatches,
   updateEntryForms,
   updateEntryNoun,
+  type DictionaryEntry,
 } from "@/lib/db/dictionaryStore";
 
 export const dynamic = "force-dynamic";
@@ -57,7 +59,10 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ entries: data ?? [], batches: batches ?? [] });
+  const normalizedEntries = ((data ?? []) as unknown as DictionaryEntry[]).map((entry) =>
+    normalizeStoredDictionaryEntry(entry, language ?? ""),
+  );
+  return NextResponse.json({ entries: normalizedEntries, batches: batches ?? [] });
 }
 
 // POST /api/dictionary   { title, language? }

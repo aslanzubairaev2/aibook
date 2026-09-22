@@ -6,7 +6,7 @@
 // erase the plural form the first one got right.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { applyNounFieldRules, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
+import { applyNounFieldRules, normalizeDictionaryEntryDraft, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import type { LearningItemType, PackTraining } from "@/lib/types";
 import { extractPageLabel } from "@/lib/lessonMetadata";
 import { CONTENT_TYPE_MIGRATION_ERROR, isMissingContentType } from "./dictionarySchema";
@@ -106,6 +106,38 @@ export type DictionaryEntry = {
   source: string;
   created_at: string;
 };
+
+/**
+ * Repair metadata that older smart-add responses left empty. This is kept
+ * pure so the dictionary screen can show the right gender immediately; a
+ * later import of the same word persists the repaired fields through the
+ * normal upsert path.
+ */
+export function normalizeStoredDictionaryEntry(entry: DictionaryEntry, targetLanguage: string): DictionaryEntry {
+  const normalized = normalizeDictionaryEntryDraft({
+    headword: String(entry.headword ?? ""),
+    lemma: String(entry.lemma ?? ""),
+    translation: String(entry.translation ?? ""),
+    partOfSpeech: String(entry.part_of_speech ?? ""),
+    contentType: entry.content_type ?? "word",
+    gender: String(entry.gender ?? ""),
+    article: String(entry.article ?? ""),
+    plural: String(entry.plural ?? ""),
+    forms: entry.forms ?? {},
+    cefr: String(entry.cefr ?? ""),
+    note: String(entry.note ?? ""),
+    example: String(entry.example ?? ""),
+    exampleTranslation: String(entry.example_translation ?? ""),
+  }, targetLanguage);
+
+  return {
+    ...entry,
+    part_of_speech: normalized.partOfSpeech,
+    gender: normalized.gender,
+    article: normalized.article,
+    plural: normalized.plural,
+  };
+}
 
 export const DICTIONARY_COLUMNS =
   "id, batch_id, headword, lemma, language, content_type, translation, part_of_speech, gender, article, plural, forms, cefr, note, example, example_translation, source, created_at";
