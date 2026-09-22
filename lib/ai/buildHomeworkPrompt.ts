@@ -438,6 +438,48 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
   };
 }
 
+function uniqueReferenceWords(values: string[]): string[] {
+  return values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .filter((value, index, all) => all.indexOf(value) === index)
+    .slice(0, 180);
+}
+
+/**
+ * Adds a dictionary pack to an exercise that explicitly needs it. This is
+ * shared by the import route and by the read path for lessons saved before
+ * the interactive word picker existed: opening an old lesson must not lose
+ * the vocabulary it was linked to.
+ */
+export function mergeHomeworkReferenceBank(
+  exercise: HomeworkExercise,
+  words: string[],
+  verbs: string[] = [],
+  force = false,
+): HomeworkExercise {
+  const exerciseText = `${exercise.instruction} ${(exercise.items ?? []).map((item) => item.text).join(" ")}`;
+  const mentionsVocabulary = force
+    || exercise.widget === "sort"
+    || /(wortschatz|vokabular|dictionary|словар|лексик)/iu.test(exerciseText);
+  if (!mentionsVocabulary) return exercise;
+
+  const isVerbExercise = /(verben|глагол|verbs)/iu.test(exercise.instruction)
+    && !/(pronomen|местоимени|personal)/iu.test(exercise.instruction);
+  const source = isVerbExercise && verbs.length > 0 ? verbs : words;
+  const cleanSource = uniqueReferenceWords(source);
+  if (cleanSource.length === 0) return exercise;
+
+  if (exercise.widget === "sort") {
+    const bank = uniqueReferenceWords([...(exercise.bank ?? []), ...cleanSource]);
+    return bank.length > 0 ? { ...exercise, bank } : exercise;
+  }
+
+  return exercise.bank && exercise.bank.length > 0
+    ? exercise
+    : { ...exercise, bank: cleanSource };
+}
+
 export function assignHomeworkAnswerKeys(exercises: HomeworkExercise[]): HomeworkExercise[] {
   const counts = new Map<number, number>();
   for (const exercise of exercises) counts.set(exercise.number, (counts.get(exercise.number) ?? 0) + 1);

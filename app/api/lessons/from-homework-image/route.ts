@@ -3,7 +3,12 @@ import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import { runHomeworkPrompt } from "@/lib/ai/lessonModel";
-import { buildHomeworkExtractPrompt, parseHomeworkLesson, type HomeworkLesson } from "@/lib/ai/buildHomeworkPrompt";
+import {
+  buildHomeworkExtractPrompt,
+  mergeHomeworkReferenceBank,
+  parseHomeworkLesson,
+  type HomeworkLesson,
+} from "@/lib/ai/buildHomeworkPrompt";
 import { saveHomeworkLesson } from "@/lib/db/homeworkStore";
 import { readBatches, type DictionaryBatch } from "@/lib/db/dictionaryStore";
 import { extractPageLabel } from "@/lib/lessonMetadata";
@@ -111,20 +116,8 @@ function findReferencePack(lesson: HomeworkLesson, packs: ReferencePack[], reque
 
 function applyReferenceBank(lesson: HomeworkLesson, pack: ReferencePack | null, force: boolean): HomeworkLesson {
   if (!pack) return lesson;
-  const exercises = lesson.exercises.map((exercise) => {
-    const exerciseText = `${exercise.instruction} ${(exercise.items ?? []).map((item) => item.text).join(" ")}`;
-    const mentionsVocabulary = force || /(wortschatz|vokabular|dictionary|словар|лексик)/iu.test(exerciseText);
-    if (!mentionsVocabulary && exercise.widget !== "sort") return exercise;
-    const isVerbExercise = /(verben|глагол|verbs)/iu.test(exercise.instruction)
-      && !/(pronomen|местоимени|personal)/iu.test(exercise.instruction);
-    const bank = isVerbExercise && pack.verbs.length > 0 ? pack.verbs : pack.words;
-    const mergedBank = exercise.widget === "sort"
-      ? uniqueWords([...(exercise.bank ?? []), ...bank])
-      : bank;
-    return (mergedBank.length === 0 || (exercise.widget !== "sort" && (exercise.bank?.length ?? 0) > 0))
-      ? exercise
-      : { ...exercise, bank: mergedBank };
-  });
+  const exercises = lesson.exercises.map((exercise) =>
+    mergeHomeworkReferenceBank(exercise, pack.words, pack.verbs, force));
   return { ...lesson, referenceBatchId: pack.id, exercises };
 }
 

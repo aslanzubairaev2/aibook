@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildHomeworkExtractPrompt, parseExercise, parseHomeworkLesson } from "./buildHomeworkPrompt.ts";
+import {
+  buildHomeworkExtractPrompt,
+  mergeHomeworkReferenceBank,
+  parseExercise,
+  parseHomeworkLesson,
+} from "./buildHomeworkPrompt.ts";
 import { computeHomeworkProgress } from "../../components/homework/homeworkAnswers.ts";
 
 test("word formation is not misrouted to the conjugation modal", () => {
@@ -170,6 +175,20 @@ test("season activity word banks become a sorter with a preserved worked example
     { number: 1, category: "Frühling", fixed: ["Inliner fahren"], slots: 2 },
     { number: 2, slots: 2 },
   ]);
+});
+
+test("a saved sorter is rehydrated from its linked dictionary pack", () => {
+  const exercise = parseExercise({
+    number: 7,
+    instruction: 'Ordnen Sie Nomen aus „Ihr Wortschatz“ auf Seite 68 zu.',
+    widget: "sort",
+    categories: ["Feste", "Jahreszeiten", "Monate"],
+  });
+
+  assert.ok(exercise);
+  const restored = mergeHomeworkReferenceBank(exercise, ["der Frühling", "der Geburtstag"], []);
+  assert.deepEqual(restored.bank, ["der Frühling", "der Geburtstag"]);
+  assert.deepEqual(restored.categories, ["Feste", "Jahreszeiten", "Monate"]);
 });
 
 test("parts with the same printed number get isolated answer namespaces", () => {
