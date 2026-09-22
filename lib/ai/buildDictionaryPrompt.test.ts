@@ -205,7 +205,16 @@ describe("the dictionary call against a stand-in Gemini", () => {
     const config = (server.requests.at(-1)!.body as { generationConfig?: Record<string, unknown> }).generationConfig ?? {};
     assert.deepEqual(config.thinkingConfig, { thinkingBudget: 0 });
     assert.ok((config.maxOutputTokens as number) >= 16384, "forty entries is a long answer");
-    assert.ok(config.responseSchema);
+    const schema = config.responseSchema as {
+      properties?: { entries?: { items?: { required?: string[]; properties?: { forms?: { required?: string[] } } } } };
+    };
+    assert.deepEqual(schema.properties?.entries?.items?.required, [
+      "headword", "lemma", "translation", "partOfSpeech", "contentType", "gender", "article", "plural",
+      "forms", "cefr", "note", "example", "exampleTranslation",
+    ]);
+    assert.deepEqual(schema.properties?.entries?.items?.properties?.forms?.required, [
+      "praeteritum", "partizip2", "hilfsverb", "trennbar",
+    ]);
   });
 
   test("a page cut off halfway keeps the words that did arrive", async () => {

@@ -239,6 +239,7 @@ const DICTIONARY_SCHEMA = {
           lemma: { type: Type.STRING },
           translation: { type: Type.STRING },
           partOfSpeech: { type: Type.STRING },
+          contentType: { type: Type.STRING },
           gender: { type: Type.STRING },
           article: { type: Type.STRING },
           plural: { type: Type.STRING },
@@ -252,13 +253,18 @@ const DICTIONARY_SCHEMA = {
               komparativ: { type: Type.STRING },
               superlativ: { type: Type.STRING },
             },
+            // Keep this object present for every row. Non-verbs return empty
+            // strings; German verbs must fill all four principal-part fields.
+            // Without this contract Gemini may omit `forms` entirely, after
+            // which the import validator correctly rejects the whole batch.
+            required: ["praeteritum", "partizip2", "hilfsverb", "trennbar"],
           },
           cefr: { type: Type.STRING },
           note: { type: Type.STRING },
           example: { type: Type.STRING },
           exampleTranslation: { type: Type.STRING },
         },
-        required: ["headword", "lemma", "translation", "cefr"],
+        required: ["headword", "lemma", "translation", "partOfSpeech", "contentType", "gender", "article", "plural", "forms", "cefr", "note", "example", "exampleTranslation"],
       },
     },
   },

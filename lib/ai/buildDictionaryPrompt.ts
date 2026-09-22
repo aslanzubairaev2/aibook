@@ -87,10 +87,11 @@ For EVERY entry provide:
   "die Bälle"; for "das Mädchen, -" that is "die Mädchen"; for "die Kosten (Pl.)" write
   "только мн. ч.". Expand the page's shorthand markers into the real form — the marker is
   what the learner cannot yet read. Empty for non-nouns.
-- "forms": for verbs, an object with "praeteritum", "partizip2", "hilfsverb" ("haben" or
-  "sein"), and "trennbar" ("да"/"нет") — for ${target} other than German, the equivalent
-  principal parts under sensible keys. For adjectives with irregular comparison, use
-  "komparativ" and "superlativ". Empty object when there is nothing irregular to show.
+- "forms": always return an object. For German verbs it MUST contain non-empty
+  "praeteritum", "partizip2", "hilfsverb" ("haben" or "sein"), and "trennbar"
+  ("да"/"нет"). For nouns and other non-verbs, include those four keys with empty
+  strings; adjectives may additionally use "komparativ" and "superlativ". Do not
+  omit the object or any of its four standard keys — the response schema requires them.
 ${germanVerbContractText(target)}
 - "cefr": the CEFR level of the word itself — one of A1, A2, B1, B2, C1, C2.
   * For basic everyday vocabulary (hobbies, food, daily routines, basic actions like "grillen", "baden", "ausgehen", "träumen", "kochen", "wohnen", "einkaufen", "Möbel", "Balkon", "Picknick", "Kosten", "Treffpunkt"), assign "A1".
