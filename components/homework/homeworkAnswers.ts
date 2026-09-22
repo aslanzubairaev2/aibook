@@ -8,19 +8,34 @@ import type { HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
 /** cloze: one string per "{{n}}" blank, in order. compose/open: the whole answer. */
 export type ItemAnswer = string | string[];
 
+export type SortSelection = {
+  category?: string;
+  words: string[];
+};
+
 export type HomeworkAnswers = {
   items: Record<string, ItemAnswer>;
   conjugations: Record<string, string[]>;
+  /** Structured answers for vocabulary sorting exercises. */
+  sortSelections?: Record<string, SortSelection>;
 };
 
 export const EMPTY_ANSWERS: HomeworkAnswers = { items: {}, conjugations: {} };
 
-export function itemKey(exerciseNumber: number, itemNumber: number): string {
+export function exerciseAnswerKey(exercise: HomeworkExercise): string {
+  return exercise.answerKey ?? String(exercise.number);
+}
+
+export function itemKey(exerciseNumber: number | string, itemNumber: number): string {
   return `${exerciseNumber}:${itemNumber}`;
 }
 
-export function verbKey(exerciseNumber: number, verb: string): string {
+export function verbKey(exerciseNumber: number | string, verb: string): string {
   return `${exerciseNumber}:${verb}`;
+}
+
+export function sortSelectionKey(exercise: HomeworkExercise, rowNumber: number): string {
+  return itemKey(exerciseAnswerKey(exercise), rowNumber);
 }
 
 /**
@@ -50,7 +65,7 @@ export function computeHomeworkProgress(exercises: HomeworkExercise[], answers: 
     if (exercise.widget === "conjugation") {
       for (const verb of exercise.verbs ?? []) {
         total += CONJUGATION_PRONOUNS.length;
-        const forms = answers.conjugations[verbKey(exercise.number, verb)] ?? [];
+        const forms = answers.conjugations[verbKey(exerciseAnswerKey(exercise), verb)] ?? [];
         filled += forms.filter(isFilled).length;
       }
       continue;
@@ -59,16 +74,22 @@ export function computeHomeworkProgress(exercises: HomeworkExercise[], answers: 
       for (const item of exercise.items ?? []) {
         const fieldCount = formationFieldCount(exercise, item.number);
         total += fieldCount;
-        const value = answers.items[itemKey(exercise.number, item.number)];
+        const value = answers.items[itemKey(exerciseAnswerKey(exercise), item.number)];
         const values = Array.isArray(value) ? value : value ? [value] : [];
         filled += values.slice(0, fieldCount).filter(isFilled).length;
       }
       continue;
     }
     if (exercise.widget === "sort") {
-      for (let index = 0; index < (exercise.categories?.length ?? 0); index += 1) {
+      const rowCount = exercise.sortRows?.length ?? exercise.categories?.length ?? 0;
+      for (let index = 0; index < rowCount; index += 1) {
         total += 1;
-        const value = answers.items[itemKey(exercise.number, index + 1)];
+        const selection = answers.sortSelections?.[sortSelectionKey(exercise, index + 1)];
+        if (selection?.words.some((word) => isFilled(word))) {
+          filled += 1;
+          continue;
+        }
+        const value = answers.items[itemKey(exerciseAnswerKey(exercise), index + 1)];
         if (typeof value === "string" && isFilled(value)) filled += 1;
       }
       continue;
@@ -76,7 +97,7 @@ export function computeHomeworkProgress(exercises: HomeworkExercise[], answers: 
     if (exercise.widget !== "cloze" && exercise.widget !== "compose" && exercise.widget !== "open") continue;
 
     for (const item of exercise.items ?? []) {
-      const key = itemKey(exercise.number, item.number);
+      const key = itemKey(exerciseAnswerKey(exercise), item.number);
       if (exercise.widget === "cloze") {
         const blankCount = item.blanks?.length ?? 1;
         total += blankCount;

@@ -13,8 +13,8 @@ import type { AiAnalysis, DiscussMessage, Flashcard } from "@/lib/types";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import {
-  computeHomeworkProgress, itemKey, verbKey,
-  type HomeworkAnswers, type ItemAnswer,
+  computeHomeworkProgress, exerciseAnswerKey, itemKey, sortSelectionKey, verbKey,
+  type HomeworkAnswers, type ItemAnswer, type SortSelection,
 } from "./homeworkAnswers";
 import { ClozeExercise } from "./ClozeExercise";
 import { ComposeExercise } from "./ComposeExercise";
@@ -64,8 +64,8 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
   // "Обсудить" — one shared DiscussAiModal, addressed at whichever exercise's
   // button was tapped; history kept per exercise so switching back and forth
   // doesn't lose the conversation.
-  const [discussExercise, setDiscussExercise] = useState<number | null>(null);
-  const [discussMessages, setDiscussMessages] = useState<Record<number, DiscussMessage[]>>({});
+  const [discussExercise, setDiscussExercise] = useState<string | null>(null);
+  const [discussMessages, setDiscussMessages] = useState<Record<string, DiscussMessage[]>>({});
 
   // Tap any German word — in an item, or inside the chat's own examples — and
   // it opens the same "Слово" modal the reader uses.
@@ -111,13 +111,13 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
     return () => clearTimeout(t);
   }, [toast]);
 
-  const setItemValue = (exerciseNumber: number, itemNumber: number, value: ItemAnswer) => {
-    setAnswers((prev) => ({ ...prev, items: { ...prev.items, [itemKey(exerciseNumber, itemNumber)]: value } }));
+  const setItemValue = (answerKey: string, itemNumber: number, value: ItemAnswer) => {
+    setAnswers((prev) => ({ ...prev, items: { ...prev.items, [itemKey(answerKey, itemNumber)]: value } }));
   };
 
-  const onBlankChange = (exerciseNumber: number, itemNumber: number, blankIndex: number, value: string) => {
+  const onBlankChange = (answerKey: string, itemNumber: number, blankIndex: number, value: string) => {
     setAnswers((prev) => {
-      const key = itemKey(exerciseNumber, itemNumber);
+      const key = itemKey(answerKey, itemNumber);
       const existing = prev.items[key];
       const values = Array.isArray(existing) ? [...existing] : [];
       values[blankIndex] = value;
@@ -125,12 +125,24 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
     });
   };
 
-  const onFormsChange = (exerciseNumber: number, verb: string, forms: string[]) => {
-    setAnswers((prev) => ({ ...prev, conjugations: { ...prev.conjugations, [verbKey(exerciseNumber, verb)]: forms } }));
+  const onFormsChange = (answerKey: string, verb: string, forms: string[]) => {
+    setAnswers((prev) => ({ ...prev, conjugations: { ...prev.conjugations, [verbKey(answerKey, verb)]: forms } }));
   };
 
-  const onFieldsChange = (exerciseNumber: number, itemNumber: number, fields: string[]) => {
-    setAnswers((prev) => ({ ...prev, items: { ...prev.items, [itemKey(exerciseNumber, itemNumber)]: fields } }));
+  const onFieldsChange = (answerKey: string, itemNumber: number, fields: string[]) => {
+    setAnswers((prev) => ({ ...prev, items: { ...prev.items, [itemKey(answerKey, itemNumber)]: fields } }));
+  };
+
+  const onSortSelectionChange = (exercise: HomeworkExercise, rowNumber: number, selection: SortSelection) => {
+    const answerKey = exerciseAnswerKey(exercise);
+    setAnswers((prev) => ({
+      ...prev,
+      items: { ...prev.items, [itemKey(answerKey, rowNumber)]: selection.words.join(", ") },
+      sortSelections: {
+        ...(prev.sortSelections ?? {}),
+        [sortSelectionKey(exercise, rowNumber)]: selection,
+      },
+    }));
   };
 
   // Same cache chain as the reader's own word tap (local IndexedDB first, then
@@ -202,7 +214,9 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
     setToast("Добавлено в карточки");
   }
 
-  const activeDiscussExercise = discussExercise !== null ? exercises.find((e) => e.number === discussExercise) : undefined;
+  const activeDiscussExercise = discussExercise !== null
+    ? exercises.find((exercise) => exerciseAnswerKey(exercise) === discussExercise)
+    : undefined;
 
   return (
     <div className="hw-view">
@@ -227,15 +241,17 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
         </div>
         {book.description && <p className="hw-desc">{book.description}</p>}
 
-        {exercises.map((exercise) => (
-          <section key={exercise.number} className="hw-exercise">
+        {exercises.map((exercise) => {
+          const answerKey = exerciseAnswerKey(exercise);
+          return (
+          <section key={answerKey} className="hw-exercise">
             <div className="hw-exercise-header">
               <h2 className="hw-exercise-title">{exercise.number}. {exercise.instruction}</h2>
               {exercise.widget !== "text" && (
                 <button
                   type="button"
                   className="hw-discuss-btn"
-                  onClick={() => setDiscussExercise(exercise.number)}
+                  onClick={() => setDiscussExercise(answerKey)}
                   aria-label="Обсудить"
                   title="Обсудить"
                 >
@@ -245,34 +261,35 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
             </div>
             {exercise.widget === "cloze" && (
               <ClozeExercise exercise={exercise} answers={answers} onWordTap={handleWordTap}
-                onBlankChange={(itemNumber, blankIndex, value) => onBlankChange(exercise.number, itemNumber, blankIndex, value)} />
+                onBlankChange={(itemNumber, blankIndex, value) => onBlankChange(answerKey, itemNumber, blankIndex, value)} />
             )}
             {exercise.widget === "compose" && (
               <ComposeExercise exercise={exercise} answers={answers} onWordTap={handleWordTap}
-                onItemChange={(itemNumber, value) => setItemValue(exercise.number, itemNumber, value)} />
+                onItemChange={(itemNumber, value) => setItemValue(answerKey, itemNumber, value)} />
             )}
             {exercise.widget === "open" && (
               <OpenResponseExercise exercise={exercise} answers={answers} onWordTap={handleWordTap}
-                onItemChange={(itemNumber, value) => setItemValue(exercise.number, itemNumber, value)} />
+                onItemChange={(itemNumber, value) => setItemValue(answerKey, itemNumber, value)} />
             )}
             {exercise.widget === "conjugation" && (
               <ConjugationExercise exercise={exercise} answers={answers}
-                onFormsChange={(verb, forms) => onFormsChange(exercise.number, verb, forms)} />
+                onFormsChange={(verb, forms) => onFormsChange(answerKey, verb, forms)} />
             )}
             {exercise.widget === "formation" && (
               <FormationExercise exercise={exercise} answers={answers}
-                onFieldsChange={(itemNumber, fields) => onFieldsChange(exercise.number, itemNumber, fields)} />
+                onFieldsChange={(itemNumber, fields) => onFieldsChange(answerKey, itemNumber, fields)} />
             )}
             {exercise.widget === "sort" && (
               <SortExercise exercise={exercise} answers={answers}
-                onCategoryChange={(categoryNumber, value) => setItemValue(exercise.number, categoryNumber, value)} />
+                onSelectionChange={(rowNumber, selection) => onSortSelectionChange(exercise, rowNumber, selection)} />
             )}
             {exercise.widget === "text" && (
               <OpenResponseExercise exercise={{ ...exercise, widget: "open", items: exercise.items?.length ? exercise.items : [{ number: 1, text: exercise.instruction }] }} answers={answers} onWordTap={handleWordTap}
-                onItemChange={(itemNumber, value) => setItemValue(exercise.number, itemNumber, value)} />
+                onItemChange={(itemNumber, value) => setItemValue(answerKey, itemNumber, value)} />
             )}
           </section>
-        ))}
+          );
+        })}
        </div>
       </div>
 
@@ -284,8 +301,8 @@ export function HomeworkView({ book, exercises, initialAnswers, cards, onAddCard
           sentence={exerciseTextForDiscuss(activeDiscussExercise).join(" / ")}
           nativeLanguage={book.nativeLanguage}
           targetLanguage={book.targetLanguage}
-          messages={discussMessages[activeDiscussExercise.number] ?? []}
-          onMessagesChange={(msgs) => setDiscussMessages((prev) => ({ ...prev, [activeDiscussExercise.number]: msgs }))}
+          messages={discussMessages[exerciseAnswerKey(activeDiscussExercise)] ?? []}
+          onMessagesChange={(msgs) => setDiscussMessages((prev) => ({ ...prev, [exerciseAnswerKey(activeDiscussExercise)]: msgs }))}
           onClose={() => setDiscussExercise(null)}
           onWordTap={handleWordTap}
           onAddExample={(text, translation) => addFlashcard(text, translation, "phrase")}
@@ -358,10 +375,26 @@ const STYLES = `
   }
   .hw-text-note { font-size: 13px; color: var(--text-muted); font-style: italic; }
   .hw-sort { display: grid; gap: 12px; }
-  .hw-sort-bank { display: grid; gap: 6px; }
+  .hw-sort-help { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
   .hw-sort-label { color: var(--text-muted); font-size: 12px; }
-  .hw-sort-category { display: grid; gap: 6px; color: var(--text-primary); font-size: 14px; font-weight: 700; }
-  .hw-sort-category textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: rgba(240,230,211,0.04); color: var(--text-primary); font: inherit; font-weight: 400; }
+  .hw-sort-row { display: grid; gap: 6px; }
+  .hw-sort-row-heading { display: flex; align-items: center; gap: 7px; min-height: 28px; color: var(--text-primary); font-size: 14px; font-weight: 700; }
+  .hw-sort-row-number { color: var(--text-muted); font-weight: 500; }
+  .hw-sort-category-name { color: var(--text-primary); }
+  .hw-sort-category-select { min-height: 34px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 8px; background: rgba(240,230,211,0.04); color: var(--text-primary); font: inherit; font-weight: 600; }
+  .hw-sort-category-select option { color: #1a1a1a; background: #fff; }
+  .hw-sort-field { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; min-height: 46px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 9px; background: rgba(240,230,211,0.04); color: var(--text-primary); font: inherit; text-align: left; }
+  .hw-sort-field:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hw-sort-placeholder { color: var(--text-muted); font-size: 13px; font-weight: 400; }
+  .hw-sort-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid rgba(212,168,71,0.45); border-radius: 999px; background: rgba(212,168,71,0.12); color: var(--text-primary); font-size: 13px; font-weight: 500; }
+  .hw-sort-chip.fixed { border-style: dashed; color: var(--text-muted); }
+  .hw-sort-chip-remove { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: transparent; color: var(--text-muted); }
+  .hw-sort-picker { width: 100%; max-width: 420px; max-height: 78vh; overflow-y: auto; border-radius: 16px 16px 0 0; padding: 18px 16px max(20px, env(safe-area-inset-bottom)); background: var(--bg-secondary, #24201b); color: var(--text-primary); }
+  .hw-sort-picker-title { margin: 0; font-size: 20px; line-height: 1.2; }
+  .hw-sort-picker-list { display: grid; gap: 7px; margin-top: 16px; }
+  .hw-sort-picker-word { min-height: 40px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: rgba(240,230,211,0.04); color: var(--text-primary); font: inherit; text-align: left; }
+  .hw-sort-picker-word.used, .hw-sort-picker-word:disabled { color: var(--text-muted); opacity: .45; text-decoration: line-through; }
+  .hw-sort-picker-word:not(:disabled):active { background: rgba(212,168,71,0.16); }
 
   .hw-items { display: flex; flex-direction: column; gap: 10px; }
   .hw-item { font-size: 14.5px; line-height: 1.8; }

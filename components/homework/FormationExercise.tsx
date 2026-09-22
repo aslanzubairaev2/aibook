@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Check, X } from "lucide-react";
 import type { HomeworkExercise, HomeworkResponseField } from "@/lib/ai/buildHomeworkPrompt";
-import { itemKey, type HomeworkAnswers } from "./homeworkAnswers";
+import { exerciseAnswerKey, itemKey, type HomeworkAnswers } from "./homeworkAnswers";
 
 type Props = {
   exercise: HomeworkExercise;
@@ -30,8 +30,8 @@ function labelForField(field: HomeworkResponseField): string {
   }
 }
 
-function valuesForItem(answers: HomeworkAnswers, exerciseNumber: number, itemNumber: number): string[] {
-  const raw = answers.items[itemKey(exerciseNumber, itemNumber)];
+function valuesForItem(answers: HomeworkAnswers, exercise: HomeworkExercise, itemNumber: number): string[] {
+  const raw = answers.items[itemKey(exerciseAnswerKey(exercise), itemNumber)];
   if (Array.isArray(raw)) return raw;
   return raw ? [raw] : [];
 }
@@ -131,7 +131,7 @@ export function FormationExercise({ exercise, answers, onFieldsChange }: Props) 
     <div className="hw-formation-list">
       {items.map((item) => {
         const fields = fieldsForItem(exercise, item.number);
-        const values = valuesForItem(answers, exercise.number, item.number);
+        const values = valuesForItem(answers, exercise, item.number);
         const filledCount = values.filter((value) => value.trim()).length;
         return (
           <button
@@ -152,7 +152,7 @@ export function FormationExercise({ exercise, answers, onFieldsChange }: Props) 
         <FormationPopup
           source={openItem.text}
           fields={openFields}
-          values={valuesForItem(answers, exercise.number, openItem.number)}
+          values={valuesForItem(answers, exercise, openItem.number)}
           onChange={(values) => onFieldsChange(openItem.number, values)}
           onClose={() => setOpenItemNumber(null)}
         />

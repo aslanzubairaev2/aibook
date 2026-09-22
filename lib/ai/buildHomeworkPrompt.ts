@@ -46,6 +46,16 @@ export type HomeworkResponseField = {
   label: string;
 };
 
+export type HomeworkSortRow = {
+  number: number;
+  /** Printed category, or empty when the learner must choose it. */
+  category?: string;
+  /** Words already printed in a worked example and therefore not blanks. */
+  fixed?: string[];
+  /** Maximum number of words expected in the row, when the page makes it clear. */
+  slots?: number;
+};
+
 export type HomeworkItem = {
   number: number;
   /**
@@ -64,6 +74,8 @@ export type HomeworkItem = {
 
 export type HomeworkExercise = {
   number: number;
+  /** Stable answer namespace. Needed when a textbook has 3a, 3b and 3c. */
+  answerKey?: string;
   /** The instruction line exactly as printed, e.g. "Вставьте правильные окончания." */
   instruction: string;
   widget: "cloze" | "compose" | "open" | "conjugation" | "formation" | "sort" | "text";
@@ -79,6 +91,8 @@ export type HomeworkExercise = {
   fields?: HomeworkResponseField[];
   /** sort widget: labels read from a picture/diagram. */
   categories?: string[];
+  /** Optional row layout for word-bank exercises with per-row blanks/examples. */
+  sortRows?: HomeworkSortRow[];
 };
 
 export type HomeworkLesson = {
@@ -130,10 +144,12 @@ Rules, in order of importance:
   - "open": the item needs a whole sentence or phrase written with no gap to key off — translation, answering a question, forming a word from an example. Put the full prompt (including any given example) in "text", no "{{n}}" markers.
   - "conjugation": the instruction says to conjugate/decline a list of words. List them in "verbs", and put the pronoun or grammatical-person labels the exercise implies in "pronouns" (infer the standard set for the language if the page doesn't spell it out).
   - "formation": the instruction asks to derive, transform, or form a new word from each source word (for example, form person-denoting nouns from verbs). Put each source word in an item "text" exactly as printed. Describe the requested answer columns in an exercise-level "fields" array. Each field has a stable English "key" (use "word", "article_word", "feminine", "plural", "translation", or "other") and a short Russian "label". Include only what the instruction asks for. For "Образуйте от глаголов существительные, обозначающие лица, переведите их на русский язык" use exactly [{"key":"word","label":"Существительное"},{"key":"translation","label":"Перевод"}]. Do not route a word-formation task to "conjugation" just because its source list contains verbs.
-  - "sort": a picture/diagram asks to put words into named categories. Return the visible category labels in "categories" and the available words in "bank". Do not solve or omit it just because answers are represented by pictures.
+  - "sort": a picture/diagram or word-bank task asks to put words into named categories. Return the visible category labels in "categories" and the available words in "bank". Do not solve or omit it just because answers are represented by pictures. For a task such as "Schreiben Sie zwei Aktivitäten zu jeder Jahreszeit", use "sort" (not "cloze"): return one "sortRows" entry per printed row, keep a worked-example word in "fixed" (it is already answered), and put only the still-empty choices into the row's slots. A row whose category is blank must have an empty "category" so the learner can choose it.
   - "text": only when the instruction references something outside this photo and there is no answer area to fill in here. For self-writing tasks such as "Ihre Sätze und Wörter" or "Ihr Text", use "open" with one item containing the printed prompt, so the learner gets a text area.
 - Do not omit an exercise merely because it contains pictures or blank lines. Exercises that ask the learner to write their own examples must still be represented as "open".
-- For an exercise that says to complete sentences with verbs from a vocabulary list, keep the verb word bank as a hint but make each sentence gap free text: the learner must type the conjugated form required by the surrounding pronoun, not select an infinitive.
+  - For an exercise that says to complete sentences with verbs from a vocabulary list, keep the verb word bank as a hint but make each sentence gap free text: the learner must type the conjugated form required by the surrounding pronoun, not select an infinitive.
+
+- Never reuse the same numeric exercise number as an answer identity: textbooks often label several parts "3a", "3b", "3c". The application assigns a separate answer namespace after parsing, so each field must remain independent.
 - For an exercise that asks to underline/select the correct personal pronoun and prints alternatives such as "du/dich/dir", replace each slash-separated group with its own "{{n}}" marker and set that blank's "options" to the exact alternatives. Do not turn the whole dialogue into one open text field.
 - A word bank that is visually attached to a whole exercise (a column of adjectives, a list of nouns) but is meant to fill every gap in it belongs on the exercise's "bank", not repeated per item.
 - If a page is cropped and an exercise is cut off mid-item, include only the items you can read in full.
@@ -154,7 +170,8 @@ Return ONLY valid JSON with this exact shape:
       "verbs": [],
       "pronouns": [],
       "fields": [ { "key": "word", "label": "Существительное" }, { "key": "translation", "label": "Перевод" } ],
-      "categories": ["Feste", "Jahreszeiten", "Monate"]
+      "categories": ["Feste", "Jahreszeiten", "Monate"],
+      "sortRows": [ { "number": 1, "category": "Frühling", "fixed": ["Inliner fahren"], "slots": 2 } ]
     }
   ]
 }
@@ -184,6 +201,58 @@ function parseFields(raw: unknown): HomeworkResponseField[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const fields = raw.map(parseField).filter((field): field is HomeworkResponseField => field !== null);
   return fields.length > 0 ? fields.slice(0, 8) : undefined;
+}
+
+function cleanWordList(raw: unknown, limit = 24): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim())
+    .filter((value, index, all) => all.indexOf(value) === index)
+    .slice(0, limit);
+}
+
+function parseSortRows(raw: unknown): HomeworkSortRow[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const rows = raw.flatMap((value): HomeworkSortRow[] => {
+    if (typeof value !== "object" || value === null) return [];
+    const obj = value as Record<string, unknown>;
+    const number = typeof obj.number === "number" ? obj.number : 0;
+    if (!number) return [];
+    const category = typeof obj.category === "string" ? obj.category.trim() : "";
+    const fixed = cleanWordList(obj.fixed ?? obj.fixedWords, 8);
+    const slots = typeof obj.slots === "number" && Number.isFinite(obj.slots)
+      ? Math.max(1, Math.min(8, Math.round(obj.slots)))
+      : undefined;
+    return [{
+      number,
+      ...(category ? { category } : {}),
+      ...(fixed.length > 0 ? { fixed } : {}),
+      ...(slots ? { slots } : {}),
+    }];
+  });
+  return rows.length > 0 ? rows.slice(0, 24) : undefined;
+}
+
+const SEASON_NAMES = ["Frühling", "Sommer", "Herbst", "Winter"];
+
+function isSeasonActivityExercise(instruction: string, items: HomeworkItem[] | undefined): boolean {
+  const text = `${instruction} ${(items ?? []).map((item) => item.text).join(" ")}`;
+  return /(aktivität|aktivitäten|activity|activities)/iu.test(text)
+    && /(jahreszeit|jahreszeiten|season|seasons)/iu.test(text);
+}
+
+function deriveSeasonFromItem(text: string): string | undefined {
+  return SEASON_NAMES.find((season) => new RegExp(`\\b${season}\\b`, "iu").test(text));
+}
+
+function deriveFixedWordsFromItem(text: string): string[] {
+  const colonIndex = text.indexOf(":");
+  if (colonIndex < 0) return [];
+  return text.slice(colonIndex + 1)
+    .split(",")
+    .map((part) => part.replace(/\{\{\d+\}\}/gu, "").replace(/[._…]+/gu, "").trim())
+    .filter((part) => part.length > 1);
 }
 
 /**
@@ -306,6 +375,28 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
       .map((category) => category.trim())
       .slice(0, 12)
     : undefined;
+  const sortRows = parseSortRows(obj.sortRows);
+  const activitySort = isSeasonActivityExercise(instruction, items);
+  const itemBank = cleanWordList(items?.flatMap((item) => item.bank ?? []), 180);
+  const activityBank = activitySort
+    ? Array.from(new Set([...(bank ?? []), ...itemBank])).slice(0, 180)
+    : bank;
+  const activityRows = activitySort && items
+    ? items.map((item) => {
+      const category = deriveSeasonFromItem(item.text);
+      const fixed = deriveFixedWordsFromItem(item.text);
+      return {
+        number: item.number,
+        ...(category ? { category } : {}),
+        ...(fixed.length > 0 ? { fixed } : {}),
+        slots: 2,
+      } satisfies HomeworkSortRow;
+    })
+    : undefined;
+  const normalizedCategories = activitySort
+    ? (categories && categories.some((category) => SEASON_NAMES.includes(category)) ? categories : SEASON_NAMES)
+    : categories;
+  const normalizedSortRows = sortRows ?? activityRows;
 
   const formationByInstruction = isPersonNounFormationInstruction(instruction);
   const sourceItems = items && items.length > 0
@@ -319,7 +410,9 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
     : sourceItems;
   const hasMarkers = normalizedItems?.some((item) => /\{\{\d+\}\}/.test(item.text)) === true;
   const writingCue = /(ihre sätze|ihr text|schreiben sie|для себя|напишите|свои предложения|текст)/iu.test(instruction);
-  const normalizedWidget = formationByInstruction && sourceItems && sourceItems.length > 0
+  const normalizedWidget = activitySort
+    ? "sort"
+    : formationByInstruction && sourceItems && sourceItems.length > 0
     ? "formation"
     : hasMarkers && widget !== "conjugation" && widget !== "formation"
       ? "cloze"
@@ -332,15 +425,34 @@ export function parseExercise(raw: unknown): HomeworkExercise | null {
 
   return {
     number: typeof obj.number === "number" ? obj.number : 0,
+    ...(typeof obj.answerKey === "string" && obj.answerKey.trim() ? { answerKey: obj.answerKey.trim().slice(0, 80) } : {}),
     instruction,
     widget: normalizedWidget,
     ...(normalizedItems && normalizedItems.length > 0 ? { items: normalizedItems } : {}),
-    ...(bank && bank.length > 0 ? { bank } : {}),
+    ...(activityBank && activityBank.length > 0 ? { bank: activityBank } : {}),
     ...(verbs && verbs.length > 0 ? { verbs } : {}),
     ...(pronouns && pronouns.length > 0 ? { pronouns } : {}),
     ...(normalizedFields && normalizedFields.length > 0 ? { fields: normalizedFields } : {}),
-    ...(categories && categories.length > 0 ? { categories } : {}),
+    ...(normalizedCategories && normalizedCategories.length > 0 ? { categories: normalizedCategories } : {}),
+    ...(normalizedSortRows && normalizedSortRows.length > 0 ? { sortRows: normalizedSortRows } : {}),
   };
+}
+
+export function assignHomeworkAnswerKeys(exercises: HomeworkExercise[]): HomeworkExercise[] {
+  const counts = new Map<number, number>();
+  for (const exercise of exercises) counts.set(exercise.number, (counts.get(exercise.number) ?? 0) + 1);
+  const occurrences = new Map<number, number>();
+  return exercises.map((exercise) => {
+    if (exercise.answerKey) return exercise;
+    const occurrence = (occurrences.get(exercise.number) ?? 0) + 1;
+    occurrences.set(exercise.number, occurrence);
+    return {
+      ...exercise,
+      answerKey: counts.get(exercise.number) === 1
+        ? String(exercise.number)
+        : `${exercise.number}:${occurrence}`,
+    };
+  });
 }
 
 /** Narrow the model's raw JSON, or null when there is nothing usable in it. */
@@ -360,6 +472,6 @@ export function parseHomeworkLesson(raw: unknown): HomeworkLesson | null {
     ...(typeof obj.referenceBatchId === "string" && obj.referenceBatchId.trim()
       ? { referenceBatchId: obj.referenceBatchId.trim() }
       : {}),
-    exercises,
+    exercises: assignHomeworkAnswerKeys(exercises),
   };
 }

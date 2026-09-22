@@ -34,7 +34,7 @@ import { normalizeLiveTranslateProvider } from "@/lib/ai/liveTranslateState";
 import type { AppSection, Book, CardVariantState, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
 import { HomeworkView, type HomeworkBook } from "@/components/homework/HomeworkView";
 import type { HomeworkAnswers } from "@/components/homework/homeworkAnswers";
-import { parseExercise, type HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
+import { assignHomeworkAnswerKeys, parseExercise, type HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
 
 // ─── Inner app (needs auth context) ─────────────────────────────────────────
 
@@ -658,9 +658,10 @@ function AppInner() {
         freshFetch("/api/lesson-progress", { headers: await sbAuthHeaders() }),
       ]);
       const chaptersData = await chaptersRes.json() as { paragraphs?: unknown[] };
-      const exercises = (chaptersData.paragraphs ?? [])
+      const parsedExercises = (chaptersData.paragraphs ?? [])
         .map(parseExercise)
         .filter((e): e is HomeworkExercise => e !== null);
+      const exercises = assignHomeworkAnswerKeys(parsedExercises);
 
       const progressData = await progressRes.json() as {
         progress?: Array<{ shared_book_id: string; answers?: Partial<HomeworkAnswers> }>;
@@ -669,6 +670,7 @@ function AppInner() {
       const initialAnswers: HomeworkAnswers = {
         items: row?.answers?.items ?? {},
         conjugations: row?.answers?.conjugations ?? {},
+        sortSelections: row?.answers?.sortSelections ?? {},
       };
 
       setActiveHomework({

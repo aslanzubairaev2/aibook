@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildHomeworkExtractPrompt, parseExercise } from "./buildHomeworkPrompt.ts";
+import { buildHomeworkExtractPrompt, parseExercise, parseHomeworkLesson } from "./buildHomeworkPrompt.ts";
 import { computeHomeworkProgress } from "../../components/homework/homeworkAnswers.ts";
 
 test("word formation is not misrouted to the conjugation modal", () => {
@@ -149,4 +149,44 @@ test("picture sorting keeps categories and the selected vocabulary bank", () => 
   assert.equal(exercise.widget, "sort");
   assert.deepEqual(exercise.categories, ["Feste", "Jahreszeiten", "Monate"]);
   assert.equal(computeHomeworkProgress([exercise], { items: { "7:1": "Januar" }, conjugations: {} }), 33);
+});
+
+test("season activity word banks become a sorter with a preserved worked example", () => {
+  const exercise = parseExercise({
+    number: 3,
+    instruction: "Wann machen Sie was gerne? Schreiben Sie zwei Aktivitäten zu jeder Jahreszeit.",
+    widget: "cloze",
+    bank: ["Inliner fahren", "Ski fahren", "lesen"],
+    items: [
+      { number: 1, text: "Im Frühling: Inliner fahren, {{0}}" },
+      { number: 2, text: "Im {{0}}: {{1}}, {{2}}" },
+    ],
+  });
+
+  assert.ok(exercise);
+  assert.equal(exercise.widget, "sort");
+  assert.deepEqual(exercise.categories, ["Frühling", "Sommer", "Herbst", "Winter"]);
+  assert.deepEqual(exercise.sortRows, [
+    { number: 1, category: "Frühling", fixed: ["Inliner fahren"], slots: 2 },
+    { number: 2, slots: 2 },
+  ]);
+});
+
+test("parts with the same printed number get isolated answer namespaces", () => {
+  const lesson = parseHomeworkLesson({
+    title: "Урок",
+    description: "",
+    exercises: [
+      { number: 3, instruction: "a", widget: "open", items: [{ number: 1, text: "a" }] },
+      { number: 3, instruction: "b", widget: "open", items: [{ number: 1, text: "b" }] },
+      { number: 3, instruction: "c", widget: "open", items: [{ number: 1, text: "c" }] },
+    ],
+  });
+
+  assert.ok(lesson);
+  assert.deepEqual(lesson.exercises.map((exercise) => exercise.answerKey), ["3:1", "3:2", "3:3"]);
+  assert.equal(computeHomeworkProgress(lesson.exercises, {
+    items: { "3:1:1": "a", "3:2:1": "b" },
+    conjugations: {},
+  }), 67);
 });

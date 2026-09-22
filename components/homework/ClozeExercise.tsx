@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import type { HomeworkExercise, HomeworkItem } from "@/lib/ai/buildHomeworkPrompt";
-import { itemKey, type HomeworkAnswers } from "./homeworkAnswers";
+import { exerciseAnswerKey, itemKey, type HomeworkAnswers } from "./homeworkAnswers";
 import { TappableText } from "./TappableText";
 
 type Props = {
@@ -45,7 +45,7 @@ function ClozeItem({
   registerRef: (globalIndex: number, el: HTMLInputElement | HTMLSelectElement | null) => void;
   onEnterAt: (globalIndex: number) => void;
 }) {
-  const key = itemKey(exercise.number, item.number);
+  const key = itemKey(exerciseAnswerKey(exercise), item.number);
   const stored = answers.items[key];
   const values = Array.isArray(stored) ? stored : [];
   const verbFill = isVerbFillExercise(exercise);

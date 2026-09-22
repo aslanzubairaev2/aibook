@@ -118,9 +118,12 @@ function applyReferenceBank(lesson: HomeworkLesson, pack: ReferencePack | null, 
     const isVerbExercise = /(verben|глагол|verbs)/iu.test(exercise.instruction)
       && !/(pronomen|местоимени|personal)/iu.test(exercise.instruction);
     const bank = isVerbExercise && pack.verbs.length > 0 ? pack.verbs : pack.words;
-    return (exercise.bank?.length ?? 0) > 0 || !bank.length
+    const mergedBank = exercise.widget === "sort"
+      ? uniqueWords([...(exercise.bank ?? []), ...bank])
+      : bank;
+    return (mergedBank.length === 0 || (exercise.widget !== "sort" && (exercise.bank?.length ?? 0) > 0))
       ? exercise
-      : { ...exercise, bank };
+      : { ...exercise, bank: mergedBank };
   });
   return { ...lesson, referenceBatchId: pack.id, exercises };
 }

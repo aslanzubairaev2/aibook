@@ -2,7 +2,7 @@
 
 import { Printer, X } from "lucide-react";
 import type { HomeworkExercise, HomeworkItem, HomeworkResponseField } from "@/lib/ai/buildHomeworkPrompt";
-import { CONJUGATION_PRONOUNS, itemKey, verbKey, type HomeworkAnswers } from "./homeworkAnswers";
+import { CONJUGATION_PRONOUNS, exerciseAnswerKey, itemKey, verbKey, type HomeworkAnswers } from "./homeworkAnswers";
 
 type Props = {
   title: string;
@@ -21,7 +21,7 @@ function formationFields(exercise: HomeworkExercise, item: HomeworkItem): Homewo
 
 /** The item's own text with each "{{n}}" swapped for the learner's answer, or a visible gap when it was left empty. */
 function clozeLine(exercise: HomeworkExercise, item: HomeworkItem, answers: HomeworkAnswers): (string | { answer: string })[] {
-  const key = itemKey(exercise.number, item.number);
+  const key = itemKey(exerciseAnswerKey(exercise), item.number);
   const stored = answers.items[key];
   const values = Array.isArray(stored) ? stored : [];
   let i = 0;
@@ -67,14 +67,14 @@ export function HomeworkPrintView({ title, sourceKind, homeworkDate, exercises, 
         </header>
 
         {exercises.map((exercise) => (
-          <section key={exercise.number} className="hw-print-exercise">
+          <section key={exerciseAnswerKey(exercise)} className="hw-print-exercise">
             <h2>{exercise.number}. {exercise.instruction}</h2>
 
             {exercise.widget === "conjugation" && (
               <div className="hw-print-conjugations">
                 {(exercise.verbs ?? []).map((verb) => {
                   const pronouns = CONJUGATION_PRONOUNS;
-                  const forms = answers.conjugations[verbKey(exercise.number, verb)] ?? [];
+                  const forms = answers.conjugations[verbKey(exerciseAnswerKey(exercise), verb)] ?? [];
                   return (
                     <div key={verb} className="hw-print-verb">
                       <strong>{verb}</strong>
@@ -92,7 +92,7 @@ export function HomeworkPrintView({ title, sourceKind, homeworkDate, exercises, 
             )}
 
             {exercise.widget === "formation" && (exercise.items ?? []).map((item) => {
-              const value = answers.items[itemKey(exercise.number, item.number)];
+              const value = answers.items[itemKey(exerciseAnswerKey(exercise), item.number)];
               const values = Array.isArray(value) ? value : value ? [value] : [];
               return (
                 <div key={item.number} className="hw-print-item hw-print-formation-item">
@@ -120,7 +120,7 @@ export function HomeworkPrintView({ title, sourceKind, homeworkDate, exercises, 
             ))}
 
             {(exercise.widget === "compose" || exercise.widget === "open") && (exercise.items ?? []).map((item) => {
-              const value = answers.items[itemKey(exercise.number, item.number)];
+              const value = answers.items[itemKey(exerciseAnswerKey(exercise), item.number)];
               const answer = typeof value === "string" ? value : "";
               return (
                 <p key={item.number} className="hw-print-item">
@@ -131,7 +131,7 @@ export function HomeworkPrintView({ title, sourceKind, homeworkDate, exercises, 
               );
             })}
             {exercise.widget === "sort" && (exercise.categories ?? []).map((category, index) => {
-              const value = answers.items[itemKey(exercise.number, index + 1)];
+              const value = answers.items[itemKey(exerciseAnswerKey(exercise), index + 1)];
               return <p key={category} className="hw-print-item"><strong>{category}:</strong> <span className="hw-print-answer">{typeof value === "string" && value.trim() ? value : "…"}</span></p>;
             })}
           </section>

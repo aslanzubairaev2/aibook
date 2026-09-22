@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
 import type { HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
-import { CONJUGATION_PRONOUNS, verbKey, type HomeworkAnswers } from "./homeworkAnswers";
+import { CONJUGATION_PRONOUNS, exerciseAnswerKey, verbKey, type HomeworkAnswers } from "./homeworkAnswers";
 
 type Props = {
   exercise: HomeworkExercise;
@@ -74,7 +74,7 @@ export function ConjugationExercise({ exercise, answers, onFormsChange }: Props)
   return (
     <div className="hw-verb-list">
       {(exercise.verbs ?? []).map((verb) => {
-        const forms = answers.conjugations[verbKey(exercise.number, verb)] ?? [];
+        const forms = answers.conjugations[verbKey(exerciseAnswerKey(exercise), verb)] ?? [];
         const filledCount = forms.filter((f) => f.trim()).length;
         return (
           <button
@@ -92,7 +92,7 @@ export function ConjugationExercise({ exercise, answers, onFormsChange }: Props)
       {openVerb && (
         <ConjugationPopup
           verb={openVerb}
-          forms={answers.conjugations[verbKey(exercise.number, openVerb)] ?? []}
+              forms={answers.conjugations[verbKey(exerciseAnswerKey(exercise), openVerb)] ?? []}
           onChange={(forms) => onFormsChange(openVerb, forms)}
           onClose={() => setOpenVerb(null)}
         />

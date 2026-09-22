@@ -353,6 +353,19 @@ const HOMEWORK_SCHEMA = {
           },
           bank: { type: Type.ARRAY, items: { type: Type.STRING } },
           categories: { type: Type.ARRAY, items: { type: Type.STRING } },
+          sortRows: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                number: { type: Type.INTEGER },
+                category: { type: Type.STRING },
+                fixed: { type: Type.ARRAY, items: { type: Type.STRING } },
+                slots: { type: Type.INTEGER },
+              },
+              required: ["number"],
+            },
+          },
           verbs: { type: Type.ARRAY, items: { type: Type.STRING } },
           pronouns: { type: Type.ARRAY, items: { type: Type.STRING } },
           fields: {

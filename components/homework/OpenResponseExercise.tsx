@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import type { HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
-import { itemKey, type HomeworkAnswers } from "./homeworkAnswers";
+import { exerciseAnswerKey, itemKey, type HomeworkAnswers } from "./homeworkAnswers";
 import { TappableText } from "./TappableText";
 
 type Props = {
@@ -20,7 +20,7 @@ export function OpenResponseExercise({ exercise, answers, onItemChange, onWordTa
   return (
     <div className="hw-items">
       {items.map((item, index) => {
-        const key = itemKey(exercise.number, item.number);
+        const key = itemKey(exerciseAnswerKey(exercise), item.number);
         const value = typeof answers.items[key] === "string" ? answers.items[key] as string : "";
         const isLast = index === items.length - 1;
         return (
