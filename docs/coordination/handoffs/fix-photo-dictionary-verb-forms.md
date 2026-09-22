@@ -2,7 +2,7 @@
 
 - Агент: Codex
 - Ветка: `feature/ai-verb-phrase-tutor`
-- Commit: не создан — среда не разрешила создать `.git/index.lock`
+- Commit: `d6b193f` в `origin/main` (исходный коммит ветки: `96fe466`)
 - Статус: ready-for-review
 
 ## Сделано
