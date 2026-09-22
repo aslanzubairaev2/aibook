@@ -103,6 +103,7 @@ export function PhotoLessonModal({
   // the page — there is no reliable way to infer it, and the printout needs it.
   const [homeworkDate, setHomeworkDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [homeworkPart, setHomeworkPart] = useState("");
+  const [dictionaryPage, setDictionaryPage] = useState("");
   const [referenceBatches, setReferenceBatches] = useState<Array<{ id: string; title: string; description?: string }>>([]);
   const [referenceBatchId, setReferenceBatchId] = useState("");
 
@@ -215,7 +216,7 @@ export function PhotoLessonModal({
       const res = await fetch("/api/dictionary/from-image", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-        body: JSON.stringify({ image: cropped, targetLanguage, nativeLanguage, note: note.trim() }),
+        body: JSON.stringify({ image: cropped, targetLanguage, nativeLanguage, note: note.trim(), pageLabel: dictionaryPage.trim() }),
       });
       const data = await readJsonResponse<{
         added?: number; updated?: number; total?: number; warning?: string; error?: string;
@@ -258,6 +259,10 @@ export function PhotoLessonModal({
 
   /** Step 1: send the cropped region and get back what it says. */
   const readPhoto = async () => {
+    if (toDictionary && !dictionaryPage.trim()) {
+      setError("Укажите номер страницы, урока или раздела — без этого пачку нельзя сохранить.");
+      return;
+    }
     const cropped = cropperRef.current?.exportCropped(MAX_UPLOAD_SIZE, JPEG_QUALITY);
     if (!cropped) {
       setError("Не удалось подготовить снимок. Попробуйте ещё раз.");
@@ -376,6 +381,20 @@ export function PhotoLessonModal({
 
         {stage === "crop" && (
           <div className="photo-note">
+            {toDictionary && (
+              <div className="photo-date-row">
+                <label htmlFor="dictionary-capture-page">Страница / урок</label>
+                <input
+                  id="dictionary-capture-page"
+                  type="text"
+                  value={dictionaryPage}
+                  onChange={(e) => setDictionaryPage(e.target.value)}
+                  placeholder="например: 68 или Seite 68"
+                  maxLength={40}
+                  required
+                />
+              </div>
+            )}
             {toHomework && (
               <div className="photo-date-row">
                 <label htmlFor="hw-capture-date">Дата задания</label>

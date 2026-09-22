@@ -28,7 +28,7 @@ const word: DictionaryEntryDraft = {
   headword: "der Anfang", lemma: "Anfang", contentType: "word", translation: "начало",
   partOfSpeech: "существительное", article: "der", gender: "m", plural: "Anfänge", cefr: "A1",
 };
-const photo = { image: "data:image/jpeg;base64,YWJj", targetLanguage: "de", nativeLanguage: "ru", homeworkDate: "2026-09-14" };
+const photo = { image: "data:image/jpeg;base64,YWJj", targetLanguage: "de", nativeLanguage: "ru", homeworkDate: "2026-09-14", pageLabel: "68" };
 const envKeys = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "GEMINI_API_BASE_URL", "GEMINI_API_KEY", "AI_ALLOW_DEV_AI"];
 const oldEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
@@ -54,13 +54,16 @@ before(async () => {
       if (table === failTable) return reply(403, { code: "42501", message: "permission denied for table " + table });
       const select = url.searchParams.get("select") ?? "";
       if (table === "dictionary_batches" && method === "GET" && legacy) {
-        const missing = ["training", "description", "instruction"].find((column) => select.includes(column));
+        const missing = ["page_label", "training", "description", "instruction"].find((column) => select.includes(column));
         if (missing) return reply(400, { code: "42703", message: `column dictionary_batches.${missing} does not exist` });
       }
       if (table === "dictionary_entries" && method === "GET" && legacy && (select.includes("content_type") || url.searchParams.has("content_type"))) {
         return reply(400, { code: "42703", message: "column dictionary_entries.content_type does not exist" });
       }
       const payload: Row[] = body ? Array.isArray(body) ? body : [body] : [];
+      if (table === "dictionary_batches" && method === "POST" && legacy && payload.some((row) => "page_label" in row)) {
+        return reply(400, { code: "PGRST204", message: "Could not find the 'page_label' column in the schema cache" });
+      }
       if (table === "dictionary_batches" && method === "POST" && legacy && payload.some((row) => "description" in row)) {
         return reply(400, { code: "PGRST204", message: "Could not find the 'description' column in the schema cache" });
       }
@@ -149,6 +152,8 @@ for (const schema of ["current", "legacy", "stale write cache"]) {
     assert.equal(rows.dictionary_entries.length, 1);
     assert.equal(rows.flashcards.length, 1);
     assert.equal(rows.dictionary_entries[0].plural, "Anfänge");
+    if (legacy) assert.match(String(rows.dictionary_batches[0].kind), /страница 68/iu);
+    else assert.equal(rows.dictionary_batches[0].page_label, "страница 68");
     assert.equal(rows.flashcards[0].source_book_id, rows.dictionary_batches[0].id);
     Object.assign(rows.flashcards[0], { repetitions: 8, interval_days: 15, next_review_at: "2026-10-01" });
     gemini.queue({ kind: "json", value: { entries: [{ ...word, plural: "" }] } });
@@ -194,6 +199,15 @@ test("dictionary failure reports an error, removes empty batch and creates no ca
   assert.equal(rows.dictionary_batches.length, 0);
   assert.equal(rows.flashcards.length, 0);
   assert.equal(calls.filter((call) => call.table === "dictionary_entries").length, 1);
+});
+
+test("photographed dictionary packs cannot be saved without a page reference", async () => {
+  gemini.queue({ kind: "json", value: { entries: [word], pageKind: "список слов", isVocabularyList: true } });
+  const response = await routes.dictionary(request({ ...photo, pageLabel: "" }));
+  assert.equal(response.status, 422);
+  assert.match((await response.json()).error, /страниц|урок|раздел/iu);
+  assert.equal(rows.dictionary_batches.length, 0);
+  assert.equal(rows.dictionary_entries.length, 0);
 });
 
 test("failed card creation does not report a successful import or leave an empty batch", async () => {

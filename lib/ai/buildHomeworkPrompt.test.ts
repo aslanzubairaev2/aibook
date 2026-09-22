@@ -117,7 +117,7 @@ test("personal pronoun alternatives become separate dropdown blanks", () => {
 
 test("the homework prompt exposes candidate dictionary packs and conjugated verb gaps", () => {
   const prompt = buildHomeworkExtractPrompt({
-    referencePacks: [{ id: "batch-68", title: "Wortschatz Seite 68", kind: "учебник, с. 68", words: ["helfen", "schenken"] }],
+    referencePacks: [{ id: "batch-68", title: "Wortschatz Seite 68", pageLabel: "страница 68", kind: "учебник, с. 68", words: ["helfen", "schenken"] }],
   });
   assert.match(prompt, /referenceBatchId/u);
   assert.match(prompt, /Do not ask the learner to select a pack manually/u);

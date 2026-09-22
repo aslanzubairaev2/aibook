@@ -378,7 +378,7 @@ export function VerbsView({ profile, onBack }: Props) {
         nativeLanguage={profile.nativeLanguage}
         modes={quizModes}
         conjugationTenses={conjugationTenses}
-        onExit={() => setQuizVerbs(null)}
+        onExit={onBack}
         onRecord={record}
         onComplete={completeWord}
       />

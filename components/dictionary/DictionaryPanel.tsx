@@ -141,12 +141,12 @@ export function DictionaryPanel({
   const [isStuck, setIsStuck] = useState(false);
   const stickyRef = useRef<HTMLDivElement>(null);
 
-  async function saveLocalBatch(title: string, description: string) {
+  async function saveLocalBatch(title: string, description: string, pageLabel?: string) {
     if (!editingBatch) return;
     const response = await fetch("/api/dictionary", {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...(await sbAuthHeaders()) },
-      body: JSON.stringify({ id: editingBatch.id, title, description }),
+      body: JSON.stringify({ id: editingBatch.id, title, description, ...(pageLabel !== undefined ? { pageLabel } : {}) }),
     });
     const data = await response.json() as { error?: string };
     if (!response.ok) throw new Error(data.error ?? "Не удалось сохранить пачку.");
@@ -831,6 +831,7 @@ export function DictionaryPanel({
           kind="пачки"
           title={editingBatch.title}
           description={editingBatch.description ?? ""}
+          pageLabel={editingBatch.page_label ?? ""}
           onClose={() => setEditingBatch(null)}
           onSave={saveLocalBatch}
         />

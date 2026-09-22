@@ -12,7 +12,7 @@ if (!url || !key) {
 const admin = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 const tables = {
   dictionary_entries: "id,user_id,lemma,language,batch_id,content_type,plural,forms,example,example_translation",
-  dictionary_batches: "id,user_id,title,kind,topic,language,word_count,training,description,instruction",
+  dictionary_batches: "id,user_id,title,kind,topic,language,word_count,training,description,instruction,page_label",
   flashcards: "id,user_id,front,back,source_book_id,selection_type,cefr,repetitions,next_review_at",
   shared_books: "id,owner_user_id,metadata",
   shared_book_chapters: "id,shared_book_id,paragraphs",

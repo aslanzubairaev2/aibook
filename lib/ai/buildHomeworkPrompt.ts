@@ -101,6 +101,7 @@ export type HomeworkPromptContext = {
     title: string;
     kind?: string;
     description?: string;
+    pageLabel?: string | null;
     words: string[];
   }>;
 };
@@ -109,7 +110,7 @@ export function buildHomeworkExtractPrompt(context: HomeworkPromptContext = {}):
   const referenceBlock = context.referenceWords?.length
     ? `\nA dictionary pack was selected as a reference for this photo. It is the word list the page may refer to:\n- Pack: ${context.referenceTitle ?? "Словарь"}\n- Words: ${context.referenceWords.join(", ")}\nUse these words as the bank when the photographed instruction refers to that vocabulary/page. For a picture or diagram exercise, keep the words as an interactive bank and recover the visible category labels; do not silently omit the exercise.\n`
     : context.referencePacks?.length
-      ? `\nThe learner's dictionary packs are available as reference candidates. If the photographed page says that an exercise uses a vocabulary list (for example \"Ihr Wortschatz auf Seite 68\"), identify the matching pack by its page number, title, or words and set its id in \"referenceBatchId\". Do not ask the learner to select a pack manually. Use the matching pack's words as the bank for that exercise; for picture/diagram exercises, recover the visible category labels and keep the words as an interactive bank.\n${context.referencePacks.map((pack) => `- id=${pack.id}; title=${pack.title}; kind=${pack.kind ?? ""}; description=${pack.description ?? ""}; words=${pack.words.join(", ")}`).join("\n")}\n`
+      ? `\nThe learner's dictionary packs are available as reference candidates. If the photographed page says that an exercise uses a vocabulary list (for example \"Ihr Wortschatz auf Seite 68\"), identify the matching pack by its page number, title, or words and set its id in \"referenceBatchId\". Do not ask the learner to select a pack manually. Use the matching pack's words as the bank for that exercise; for picture/diagram exercises, recover the visible category labels and keep the words as an interactive bank.\n${context.referencePacks.map((pack) => `- id=${pack.id}; title=${pack.title}; page=${pack.pageLabel ?? ""}; kind=${pack.kind ?? ""}; description=${pack.description ?? ""}; words=${pack.words.join(", ")}`).join("\n")}\n`
       : "";
   return `You are reading a photograph of a page of language-learning exercises ("УПРАЖНЕНИЯ") for a study app. The learner will fill in every blank themselves, by hand equivalent, and print the result for their teacher — so your job is to recover the page's structure, never to solve it.
 ${referenceBlock}

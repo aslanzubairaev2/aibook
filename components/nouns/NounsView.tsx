@@ -399,7 +399,7 @@ export function NounsView({ profile, onBack }: Props) {
         canRegenerateAudio={profile.ttsProvider !== "local"}
         modes={quizModes}
         presentations={quizPresentations}
-        onExit={() => setQuizNouns(null)}
+        onExit={onBack}
         onRecord={record}
       />
     );

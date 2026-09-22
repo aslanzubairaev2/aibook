@@ -6,14 +6,17 @@ import { Check, X } from "lucide-react";
 type Props = {
   title: string;
   description: string;
+  /** Dictionary packs may also repair the source page used by homework links. */
+  pageLabel?: string;
   kind: "пачки" | "урока";
   onClose: () => void;
-  onSave: (title: string, description: string) => Promise<void>;
+  onSave: (title: string, description: string, pageLabel?: string) => Promise<void>;
 };
 
-export function EditMetadataModal({ title: initialTitle, description: initialDescription, kind, onClose, onSave }: Props) {
+export function EditMetadataModal({ title: initialTitle, description: initialDescription, pageLabel: initialPageLabel, kind, onClose, onSave }: Props) {
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState(initialDescription);
+  const [pageLabel, setPageLabel] = useState(initialPageLabel ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,7 +26,7 @@ export function EditMetadataModal({ title: initialTitle, description: initialDes
     setSaving(true);
     setError(null);
     try {
-      await onSave(title.trim(), description.trim());
+      await onSave(title.trim(), description.trim(), initialPageLabel === undefined ? undefined : pageLabel.trim());
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось сохранить изменения.");
@@ -46,6 +49,16 @@ export function EditMetadataModal({ title: initialTitle, description: initialDes
         <label>Описание
           <textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1000} rows={4} />
         </label>
+        {initialPageLabel !== undefined && (
+          <label>Страница / урок для ссылок
+            <input
+              value={pageLabel}
+              onChange={(event) => setPageLabel(event.target.value)}
+              placeholder="например: страница 68 или Lektion 4"
+              maxLength={40}
+            />
+          </label>
+        )}
         {error && <p className="inline-error">{error}</p>}
         <button type="submit" className="seed-btn" disabled={saving}><Check size={15} />{saving ? "Сохраняю…" : "Сохранить"}</button>
       </form>

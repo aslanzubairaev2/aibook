@@ -23,6 +23,7 @@ type ReferencePack = {
   title: string;
   kind?: string;
   description?: string;
+  pageLabel?: string | null;
   words: string[];
   verbs: string[];
 };
@@ -63,6 +64,7 @@ function makeReferencePacks(batches: DictionaryBatch[], entries: ReferenceEntry[
         title: batch.title,
         kind: batch.kind,
         description: batch.description,
+        pageLabel: batch.page_label,
         words,
         verbs,
       };
@@ -92,7 +94,7 @@ function findReferencePack(lesson: HomeworkLesson, packs: ReferencePack[], reque
   const text = homeworkReferenceText(lesson);
   const pages = [...text.matchAll(PAGE_REFERENCE_RE)].map((match) => match[1].replace(/\s+/g, ""));
   for (const page of pages) {
-    const pagePack = packs.find((pack) => extractPageLabel(pack.kind, pack.description, pack.title) === page);
+    const pagePack = packs.find((pack) => extractPageLabel(pack.pageLabel, pack.kind, pack.description, pack.title) === page);
     if (pagePack) return pagePack;
   }
 

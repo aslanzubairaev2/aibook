@@ -272,6 +272,20 @@ function AppInner() {
   // resume), which would re-apply the synced last view and yank the reader back.
   const loadedIdentityRef = useRef<string | null>(null);
 
+  // A screen can disappear while an async open/load operation is finishing
+  // (or after a lesson/book was deleted). Do this redirect in an effect rather
+  // than calling setState from JSX; the latter can turn a simple Back action
+  // into a render loop and the browser's generic "page couldn't load" screen.
+  useEffect(() => {
+    if (section === "reader" && !activeBook && books.length === 0) {
+      setSection("books");
+    }
+    if (section === "homework" && !activeHomework) {
+      setDiscoverInitialTab("lessons");
+      setSection("discover");
+    }
+  }, [activeBook, activeHomework, books.length, section]);
+
   useEffect(() => {
     if (!isHydrated) return;
     saveLocalLastView(section, activeBook?.id ?? null);
@@ -1103,8 +1117,6 @@ function AppInner() {
           }}
           onFindVideos={handleFindVideos}
         />
-      ) : section === "reader" ? (
-        <>{setSection("books")}</>
       ) : null}
 
       {section === "homework" && activeHomework ? (
@@ -1120,8 +1132,6 @@ function AppInner() {
             setSection("discover");
           }}
         />
-      ) : section === "homework" ? (
-        <>{setSection("discover")}</>
       ) : null}
 
       {section === "cards" && (

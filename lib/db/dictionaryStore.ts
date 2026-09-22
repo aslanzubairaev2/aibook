@@ -8,6 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { applyNounFieldRules, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
 import type { LearningItemType, PackTraining } from "@/lib/types";
+import { extractPageLabel } from "@/lib/lessonMetadata";
 import { CONTENT_TYPE_MIGRATION_ERROR, isMissingContentType } from "./dictionarySchema";
 
 export type DictionaryBatch = {
@@ -24,15 +25,17 @@ export type DictionaryBatch = {
   description?: string;
   /** The brief it was built to — the criteria its words had to meet. */
   instruction?: string;
+  /** Printed page, lesson or unit the pack came from, when it has one. */
+  page_label?: string | null;
 };
 
 export const BATCH_COLUMNS =
-  "id, title, kind, topic, language, word_count, created_at, training, description, instruction";
+  "id, title, kind, topic, language, word_count, created_at, training, description, instruction, page_label";
 
 /**
  * Reads the learner's packs.
  *
- * `training`, `description` and `instruction` each arrive with a migration, and
+ * `training`, `description`, `instruction` and `page_label` each arrive with a migration, and
  * a deployment that has not run one yet must still show the dictionary rather
  * than an error page — so a rejected column is retried without the columns the
  * database does not have, and the packs simply come back without them.
@@ -56,8 +59,12 @@ export async function readBatches(
   };
 
   const BASE_COLUMNS = "id, title, kind, topic, language, word_count, created_at";
+  const WITHOUT_PAGE_LABEL_COLUMNS = BATCH_COLUMNS.replace(", page_label", "");
 
   let { data, error } = await run(BATCH_COLUMNS);
+  if (error && /page_label/.test(error.message)) {
+    ({ data, error } = await run(WITHOUT_PAGE_LABEL_COLUMNS));
+  }
   if (error && /description|instruction/.test(error.message)) {
     ({ data, error } = await run(`${BASE_COLUMNS}, training`));
   }
@@ -66,7 +73,17 @@ export async function readBatches(
   }
   if (error) return { batches: [], error: error.message };
 
-  return { batches: (data ?? []) as unknown as DictionaryBatch[], error: null };
+  const batches = (data ?? []) as unknown as DictionaryBatch[];
+  // Older photographed packs kept the page only in their human-readable
+  // metadata. Derive it on read so they can still be linked to homework and
+  // repaired through the edit dialog; new packs use the dedicated column.
+  return {
+    batches: batches.map((batch) => ({
+      ...batch,
+      page_label: batch.page_label || extractPageLabel(batch.kind, batch.description, batch.title) || null,
+    })),
+    error: null,
+  };
 }
 
 export type DictionaryEntry = {

@@ -4,6 +4,7 @@ import { getUserFromRequest } from "@/lib/auth/serverUser";
 import { supabaseAdmin } from "@/lib/db/supabase-admin";
 import { runDictionaryPrompt } from "@/lib/ai/lessonModel";
 import { buildDictionaryFromImagePrompt, parseDictionaryEntries } from "@/lib/ai/buildDictionaryPrompt";
+import { hasPageReference, normalizePageLabel } from "@/lib/lessonMetadata";
 import {
   createCardsForEntries,
   dedupeDictionaryDrafts,
@@ -26,7 +27,7 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 // POST /api/dictionary/from-image
-// Body: { image: "data:image/jpeg;base64,…", targetLanguage, nativeLanguage, note? }
+// Body: { image: "data:image/jpeg;base64,…", targetLanguage, nativeLanguage, note?, pageLabel }
 //
 // Turns a photographed page into dictionary entries — one row per word. A
 // coursebook word list yields exactly the words printed on it; any other page
@@ -53,6 +54,7 @@ export async function POST(req: Request) {
     targetLanguage?: string;
     nativeLanguage?: string;
     note?: string;
+    pageLabel?: string;
   };
 
   const match = (body.image ?? "").trim().match(/^data:([a-z/+.-]+);base64,(.+)$/i);
@@ -70,6 +72,7 @@ export async function POST(req: Request) {
   const targetLanguage = (body.targetLanguage ?? "de").trim();
   const nativeLanguage = (body.nativeLanguage ?? "ru").trim();
   const note = (body.note ?? "").trim().slice(0, 500);
+  const requestedPageLabel = normalizePageLabel(body.pageLabel);
 
   const prompt = buildDictionaryFromImagePrompt({ targetLanguage, nativeLanguage, note });
   const result = await runDictionaryPrompt(apiKey, prompt, base64, mimeType.toLowerCase());
@@ -99,18 +102,29 @@ export async function POST(req: Request) {
     );
   }
 
+  // The model may read the printed number, but the capture form is the source
+  // of truth when the photo has a cropped or blurry page corner. Never create a
+  // photographed pack that cannot later be matched to a homework reference.
+  const finalPageLabel = requestedPageLabel || normalizePageLabel(pageLabel);
+  if (!hasPageReference(finalPageLabel)) {
+    return NextResponse.json(
+      { error: "Укажите номер страницы, урока или раздела перед сохранением пачки." },
+      { status: 422 },
+    );
+  }
+
   // One photo, one batch: the page is the unit the learner was set to learn,
   // and keeping it whole is the whole point of the dictionary being organised.
   const title = batchTitle(pageKind, topic);
-  // The page label ("стр. 56", "Lektion 4") travels inside `kind`, which the
-  // batch header prints — no extra column needed.
-  const kindLine = [pageKind, pageLabel].filter(Boolean).join(" · ");
+  // Keep the label in the readable metadata too, while page_label below is the
+  // canonical value used for lookups.
+  const kindLine = [pageKind, finalPageLabel].filter(Boolean).join(" · ");
   // What this pack is, written from what was actually read off the page. A
   // photographed pack gets one for the same reason an assistant-built one
   // does: three packs named «Страница · 18 авг» tell the learner nothing.
   const description = [
     pageKind ? `${pageKind.charAt(0).toUpperCase()}${pageKind.slice(1)}` : "Снимок",
-    pageLabel,
+    finalPageLabel,
     topic ? `тема: ${topic}` : "",
     `${entries.length} слов`,
   ].filter(Boolean).join(" · ");
@@ -123,6 +137,7 @@ export async function POST(req: Request) {
     language: targetLanguage,
     word_count: entries.length,
     description,
+    page_label: finalPageLabel,
   };
 
   let { data: batch, error: batchError } = await supabaseAdmin
@@ -130,8 +145,17 @@ export async function POST(req: Request) {
     .insert(batchRow)
     .select("id")
     .single();
-  // A deployment that has not run the description migration must still be able
-  // to take the photo; it just cannot keep the line describing it.
+  // A deployment that has not run one of the metadata migrations must still be
+  // able to take the photo. The readable kind/description copies preserve the
+  // page until the dedicated column is available.
+  if (batchError && /page_label/.test(batchError.message)) {
+    delete batchRow.page_label;
+    ({ data: batch, error: batchError } = await supabaseAdmin
+      .from("dictionary_batches")
+      .insert(batchRow)
+      .select("id")
+      .single());
+  }
   if (batchError && /description/.test(batchError.message)) {
     delete batchRow.description;
     ({ data: batch, error: batchError } = await supabaseAdmin
@@ -179,6 +203,7 @@ export async function POST(req: Request) {
     pageKind,
     topic,
     isVocabularyList,
+    pageLabel: finalPageLabel,
     // A truncated answer means the tail of a long page did not arrive; the
     // learner should know to photograph the rest rather than assume it is in.
     warning: result.truncated
