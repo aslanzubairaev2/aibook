@@ -277,13 +277,17 @@ function AppInner() {
   // than calling setState from JSX; the latter can turn a simple Back action
   // into a render loop and the browser's generic "page couldn't load" screen.
   useEffect(() => {
-    if (section === "reader" && !activeBook && books.length === 0) {
-      setSection("books");
-    }
-    if (section === "homework" && !activeHomework) {
-      setDiscoverInitialTab("lessons");
-      setSection("discover");
-    }
+    const target = section === "reader" && !activeBook && books.length === 0
+      ? "books"
+      : section === "homework" && !activeHomework
+        ? "discover"
+        : null;
+    if (!target) return;
+    const timer = window.setTimeout(() => {
+      if (target === "discover") setDiscoverInitialTab("lessons");
+      setSection(target);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [activeBook, activeHomework, books.length, section]);
 
   useEffect(() => {
