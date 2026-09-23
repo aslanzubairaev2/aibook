@@ -169,8 +169,9 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
   // conjugation/phrase step's fields actually arrive, since there is nothing
   // to focus before that.
   useEffect(() => {
+    if (step?.mode === "phrase") return;
     inputRefs.current[0]?.focus();
-  }, [step?.key, step?.fields]);
+  }, [step?.key, step?.fields, step?.mode]);
 
   // Revealing disables every input — the one Enter was just pressed in among
   // them — so the browser drops focus onto <body>, outside .verb-quiz-card.

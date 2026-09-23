@@ -28,6 +28,11 @@ function helpSuggestions(values: string[] | undefined): string[] {
   return filtered.length ? filtered : DEFAULT_SUGGESTIONS;
 }
 
+function focusWithoutScroll(element: HTMLElement | null) {
+  if (!element) return;
+  element.focus({ preventScroll: true });
+}
+
 function messageForReply(reply: VerbPhraseTutorReply): VerbPhraseTutorMessage | null {
   const text = (reply.reply.trim() || reply.hint?.trim() || "").trim();
   return text ? { role: "model", text } : null;
@@ -119,12 +124,40 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
   }, [messages, busy, correction]);
 
   useEffect(() => {
-    if (accepted) {
-      nextButtonRef.current?.focus();
-    } else if (!busy && challenge && !error) {
-      inputRef.current?.focus();
+    const focusTarget = () => {
+      if (accepted) {
+        focusWithoutScroll(nextButtonRef.current);
+      } else if (!busy && challenge) {
+        focusWithoutScroll(inputRef.current);
+      }
+    };
+
+    // The textarea is disabled while the request is running and the button is
+    // mounted only after an accepted reply. Focus after that DOM commit, then
+    // repeat once shortly afterwards in case the parent quiz rerendered too.
+    const frame = window.requestAnimationFrame(focusTarget);
+    const timer = window.setTimeout(focusTarget, 80);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [accepted, busy, challenge]);
+
+  useEffect(() => {
+    if (!accepted) return;
+
+    // Keep the exercise moving even when the browser did not retain focus on
+    // the newly mounted button. There is no text field in this state, so Enter
+    // unambiguously means “Следующая фраза”.
+    function handleAcceptedEnter(event: KeyboardEvent) {
+      if (event.key !== "Enter" || event.isComposing || event.repeat) return;
+      event.preventDefault();
+      onFinish();
     }
-  }, [accepted, busy, challenge, error]);
+
+    window.addEventListener("keydown", handleAcceptedEnter);
+    return () => window.removeEventListener("keydown", handleAcceptedEnter);
+  }, [accepted, onFinish]);
 
   async function send(action: "answer" | "hint" | "question", value: string, replaceLastUserMessage = false) {
     if (busy || accepted) return;
@@ -321,6 +354,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
                 placeholder={inputMode === "answer" ? "Напиши фразу… можно с ошибками" : "Например: почему здесь такой порядок слов?"}
                 rows={2}
                 disabled={busy}
+                autoFocus={!busy && !accepted}
                 autoComplete="off"
                 spellCheck={false}
                 aria-label={inputMode === "answer" ? "Твой вариант фразы" : "Вопрос репетитору"}
