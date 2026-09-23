@@ -29,8 +29,19 @@ function helpSuggestions(values: string[] | undefined): string[] {
 }
 
 function messageForReply(reply: VerbPhraseTutorReply): VerbPhraseTutorMessage | null {
-  const text = reply.reply.trim();
+  const text = (reply.reply.trim() || reply.hint?.trim() || "").trim();
   return text ? { role: "model", text } : null;
+}
+
+function ensureReplyIsUsable(reply: VerbPhraseTutorReply, action: "start" | "answer" | "hint" | "question") {
+  if (action === "start" && !reply.challenge?.nativePrompt?.trim()) {
+    throw new Error("ИИ не создал задание. Нажмите «Повторить».");
+  }
+  if (action === "start" || reply.status === "accepted") return;
+  const hasCorrection = Boolean(reply.correction?.target?.trim() || reply.correction?.translation?.trim() || reply.correction?.explanation?.trim());
+  if (!messageForReply(reply) && !hasCorrection) {
+    throw new Error("ИИ не вернул проверку фразы. Нажмите «Повторить».");
+  }
 }
 
 export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccepted, onFinish }: Props) {
@@ -69,6 +80,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
       nativeLanguage,
     }).then((reply) => {
       if (cancelled) return;
+      ensureReplyIsUsable(reply, "start");
       const initialMessage = messageForReply(reply);
       const nextMessages = initialMessage ? [initialMessage] : [];
       messagesRef.current = nextMessages;
@@ -95,7 +107,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, busy, correction]);
 
-  async function send(action: "answer" | "hint" | "question", value: string) {
+  async function send(action: "answer" | "hint" | "question", value: string, replaceLastUserMessage = false) {
     if (busy || accepted) return;
     const text = value.trim();
     if (!text && action !== "hint") return;
@@ -103,7 +115,10 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
     const visibleText = action === "hint" ? "Дай небольшую подсказку" : text;
     lastMessageRef.current = visibleText;
     const previousMessages = messagesRef.current;
-    const nextMessages = [...previousMessages, { role: "user" as const, text: visibleText }];
+    const historyMessages = replaceLastUserMessage && previousMessages.at(-1)?.role === "user"
+      ? previousMessages.slice(0, -1)
+      : previousMessages;
+    const nextMessages = [...historyMessages, { role: "user" as const, text: visibleText }];
     messagesRef.current = nextMessages;
     setMessages(nextMessages);
     setInput("");
@@ -121,9 +136,10 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
         targetLanguage,
         nativeLanguage,
         challenge: challengeRef.current,
-        history: previousMessages,
+        history: historyMessages,
         message: visibleText,
       });
+      ensureReplyIsUsable(reply, action);
       const modelMessage = messageForReply(reply);
       const withReply = modelMessage ? [...messagesRef.current, modelMessage] : messagesRef.current;
       messagesRef.current = withReply;
@@ -156,7 +172,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
       return;
     }
     const retryText = lastAction === "hint" ? "" : lastMessageRef.current;
-    void send(lastAction, retryText);
+    void send(lastAction, retryText, true);
   }
 
   return (
@@ -188,7 +204,10 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
         {busy && (
           <div className="verb-phrase-tutor-message model typing">
             <span className="verb-phrase-tutor-message-role">AI-репетитор</span>
-            <span className="verb-phrase-tutor-typing"><Loader2 size={14} className="spin" /> Думаю над ответом…</span>
+            <span className="verb-phrase-tutor-typing" role="status">
+              <Loader2 size={14} className="spin" />
+              ИИ проверяет фразу… это может занять до минуты
+            </span>
           </div>
         )}
         <div ref={endRef} />
