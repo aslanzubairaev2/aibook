@@ -24,6 +24,7 @@ export type VerbPhraseTutorReply = {
 
 export type VerbPhraseTutorCall = Omit<VerbPhraseTutorRequest, "action"> & {
   action: VerbPhraseTutorRequest["action"];
+  signal?: AbortSignal;
 };
 
 export async function fetchVerbPhraseTutor(request: VerbPhraseTutorCall): Promise<VerbPhraseTutorReply> {
@@ -40,10 +41,12 @@ export async function fetchVerbPhraseTutor(request: VerbPhraseTutorCall): Promis
     if (session?.access_token) headers.Authorization = "Bearer " + session.access_token;
   }
 
+  const { signal, ...requestBody } = request;
   const response = await fetchWithTimeout("/api/ai/verb-phrase-tutor", {
     method: "POST",
     headers,
-    body: JSON.stringify(request),
+    body: JSON.stringify(requestBody),
+    signal,
   }, AI_REQUEST_TIMEOUT_MS);
 
   if (!response.ok) {

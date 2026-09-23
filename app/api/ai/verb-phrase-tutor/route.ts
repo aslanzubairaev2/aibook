@@ -83,6 +83,18 @@ function parseReply(raw: string, request: VerbPhraseTutorRequest) {
   };
 }
 
+function hasUsableReply(reply: ReturnType<typeof parseReply>, action: VerbPhraseTutorRequest["action"]): boolean {
+  if (action === "start") return Boolean(reply.challenge?.nativePrompt);
+  if (reply.status === "accepted") return true;
+  return Boolean(
+    reply.reply
+    || reply.hint
+    || reply.correction?.target
+    || reply.correction?.translation
+    || reply.correction?.explanation,
+  );
+}
+
 export async function POST(req: Request) {
   let apiKey: string;
   try {
@@ -132,7 +144,11 @@ export async function POST(req: Request) {
 
     let raw = "";
     try { raw = result.text ?? ""; } catch { raw = ""; }
-    return NextResponse.json(parseReply(raw, body));
+    const parsedReply = parseReply(raw, body);
+    if (!hasUsableReply(parsedReply, body.action)) {
+      return NextResponse.json({ error: "ИИ не вернул проверку фразы. Попробуйте ещё раз." }, { status: 502 });
+    }
+    return NextResponse.json(parsedReply);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Не удалось получить ответ ИИ." }, { status: 500 });
   }

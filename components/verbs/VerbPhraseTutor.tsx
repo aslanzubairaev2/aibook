@@ -62,6 +62,9 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
   const onAcceptedRef = useRef(onAccepted);
   const lastMessageRef = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const nextButtonRef = useRef<HTMLButtonElement>(null);
+  const requestAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     onAcceptedRef.current = onAccepted;
@@ -69,6 +72,8 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
     messagesRef.current = [];
     challengeRef.current = undefined;
     void fetchVerbPhraseTutor({
@@ -78,6 +83,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
       translation: entry.translation,
       targetLanguage,
       nativeLanguage,
+      signal: controller.signal,
     }).then((reply) => {
       if (cancelled) return;
       ensureReplyIsUsable(reply, "start");
@@ -98,14 +104,27 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
     }).catch((reason: unknown) => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : "Не удалось запустить практику.");
     }).finally(() => {
+      if (requestAbortRef.current === controller) requestAbortRef.current = null;
       if (!cancelled) setBusy(false);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (requestAbortRef.current === controller) requestAbortRef.current = null;
+    };
   }, [entry.id, entry.lemma, entry.headword, entry.translation, targetLanguage, nativeLanguage, startAttempt]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, busy, correction]);
+
+  useEffect(() => {
+    if (accepted) {
+      nextButtonRef.current?.focus();
+    } else if (!busy && challenge && !error) {
+      inputRef.current?.focus();
+    }
+  }, [accepted, busy, challenge, error]);
 
   async function send(action: "answer" | "hint" | "question", value: string, replaceLastUserMessage = false) {
     if (busy || accepted) return;
@@ -126,6 +145,8 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
     setError(null);
     setCorrection(null);
     setLastAction(action);
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
 
     try {
       const reply = await fetchVerbPhraseTutor({
@@ -138,6 +159,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
         challenge: challengeRef.current,
         history: historyMessages,
         message: visibleText,
+        signal: controller.signal,
       });
       ensureReplyIsUsable(reply, action);
       const modelMessage = messageForReply(reply);
@@ -160,8 +182,15 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "Не удалось получить ответ репетитора.");
     } finally {
+      if (requestAbortRef.current === controller) requestAbortRef.current = null;
       setBusy(false);
     }
+  }
+
+  function skipPhrase() {
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
+    onFinish();
   }
 
   function retryRequest() {
@@ -208,6 +237,9 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
               <Loader2 size={14} className="spin" />
               ИИ проверяет фразу… это может занять до минуты
             </span>
+            <button type="button" className="verb-phrase-tutor-skip" onClick={skipPhrase}>
+              Пропустить фразу
+            </button>
           </div>
         )}
         <div ref={endRef} />
@@ -233,9 +265,14 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
       {error && (
         <div className="verb-phrase-tutor-error" role="alert">
           <span>{error}</span>
-          <button type="button" onClick={retryRequest} disabled={busy}>
-            <RotateCcw size={14} /> Повторить
-          </button>
+          <div className="verb-phrase-tutor-error-actions">
+            <button type="button" onClick={retryRequest} disabled={busy}>
+              <RotateCcw size={14} /> Повторить
+            </button>
+            <button type="button" onClick={skipPhrase} disabled={busy}>
+              Следующая фраза
+            </button>
+          </div>
         </div>
       )}
 
@@ -273,6 +310,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
             </div>
             <div className="verb-phrase-tutor-input-row">
               <textarea
+                ref={inputRef}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
@@ -304,7 +342,7 @@ export function VerbPhraseTutor({ entry, targetLanguage, nativeLanguage, onAccep
       )}
 
       {accepted && (
-        <button type="button" className="primary-btn verb-phrase-tutor-next" onClick={onFinish}>
+        <button ref={nextButtonRef} type="button" className="primary-btn verb-phrase-tutor-next" onClick={onFinish}>
           Следующая фраза <ArrowRight size={17} />
         </button>
       )}

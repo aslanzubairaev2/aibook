@@ -2652,7 +2652,11 @@ textarea,
 .verb-phrase-tutor-send:disabled { cursor: default; opacity: 0.45; }
 .verb-phrase-tutor-error { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid rgba(196, 106, 106, 0.45); border-radius: 10px; color: var(--red); font-size: 12px; line-height: 1.35; }
 .verb-phrase-tutor-error span { flex: 1; }
-.verb-phrase-tutor-error button { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; border: 0; color: var(--red); background: transparent; cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; }
+.verb-phrase-tutor-error-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.verb-phrase-tutor-error button,
+.verb-phrase-tutor-skip { display: inline-flex; align-items: center; gap: 5px; border: 0; color: var(--red); background: transparent; cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; }
+.verb-phrase-tutor-skip { align-self: flex-start; margin-top: 6px; padding: 3px 0; color: var(--text-muted); font-weight: 600; }
+.verb-phrase-tutor-error button:disabled { cursor: default; opacity: 0.55; }
 .verb-phrase-tutor-next { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; }
 @media (max-width: 420px) {
   .verb-phrase-tutor-message { max-width: 96%; }
