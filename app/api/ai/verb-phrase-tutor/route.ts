@@ -83,6 +83,28 @@ function parseReply(raw: string, request: VerbPhraseTutorRequest) {
   };
 }
 
+/** Turn an SDK/transport error into something a learner can actually read. */
+function describeThrow(error: unknown): { error: string; status: number } {
+  const raw = error instanceof Error ? error.message : String(error);
+  const lower = raw.toLowerCase();
+  if (lower.includes("api key") || lower.includes("api_key") || lower.includes("401") || lower.includes("403")) {
+    return { error: "Ключ Gemini не принят. Проверьте его в настройках.", status: 403 };
+  }
+  if (lower.includes("429") || lower.includes("quota") || lower.includes("resource_exhausted")) {
+    return { error: "Google временно ограничил запросы (превышена квота). Подождите минуту и попробуйте снова.", status: 429 };
+  }
+  if (lower.includes("503") || lower.includes("unavailable") || lower.includes("overloaded")) {
+    return { error: "Сервис Gemini сейчас перегружен. Подождите минуту и нажмите «Повторить».", status: 503 };
+  }
+  if (lower.includes("timeout") || lower.includes("aborted") || lower.includes("fetch failed")) {
+    return { error: "Не дождались ответа модели. Проверьте связь и попробуйте ещё раз.", status: 504 };
+  }
+  if (lower.includes("not found") || lower.includes("404")) {
+    return { error: `Модель ${AI_CONFIG.discussModel} недоступна для этого ключа.`, status: 502 };
+  }
+  return { error: raw || "Не удалось получить ответ ИИ.", status: 500 };
+}
+
 function hasUsableReply(reply: ReturnType<typeof parseReply>, action: VerbPhraseTutorRequest["action"]): boolean {
   if (action === "start") return Boolean(reply.challenge?.nativePrompt);
   if (reply.status === "accepted") return true;
@@ -150,6 +172,7 @@ export async function POST(req: Request) {
     }
     return NextResponse.json(parsedReply);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Не удалось получить ответ ИИ." }, { status: 500 });
+    const failure = describeThrow(error);
+    return NextResponse.json({ error: failure.error }, { status: failure.status });
   }
 }
