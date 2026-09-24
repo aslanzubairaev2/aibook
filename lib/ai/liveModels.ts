@@ -6,7 +6,12 @@
 // models support bidiGenerateContent — and the constant below is only the
 // fallback for when that list cannot be fetched.
 
-export const DEFAULT_LIVE_MODEL = "gemini-3.1-flash-live-preview";
+// Bumped 2026-09-24: gemini-3.8-live is out, and the per-minute audio rate is
+// unchanged from gemini-3.1-flash-live-preview (see lib/ai/costs.ts), so this
+// is a pure quality upgrade with no cost impact. pickLiveModel() below picks
+// the best model the account actually has access to anyway — this constant
+// only matters as the fallback when that discovery call fails.
+export const DEFAULT_LIVE_MODEL = "gemini-3.8-live";
 export const LIVE_TRANSLATE_MODEL = "gemini-3.5-live-translate-preview";
 
 export type ListedModel = {

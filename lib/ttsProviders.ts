@@ -406,8 +406,15 @@ export function isValidModelRef(model: string) {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model.trim());
 }
 
-/** The Gemini speech model this app was built against. */
-export const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
+/**
+ * The Gemini speech model this app targets.
+ *
+ * Bumped 2026-09-24 from `gemini-3.1-flash-tts-preview` to the newly released
+ * `gemini-3.8-flash-tts`: same request shape (generateContent, AUDIO modality,
+ * prebuiltVoiceConfig), roughly half the per-token price. See lib/ai/costs.ts
+ * for the rate change.
+ */
+export const GEMINI_TTS_MODEL = "gemini-3.8-flash-tts";
 
 /**
  * The other Gemini speech models, tried when the chosen one runs out of quota.
@@ -417,8 +424,12 @@ export const GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
  * it the right thing to reach for before any of the paid engines. A model id
  * that has since been retired simply 404s and the next one is tried, so a stale
  * entry here costs a round trip and nothing else.
+ *
+ * The previous default sits first: if a Gemini project hasn't been granted
+ * access to the just-released 3.8 model yet, this is the closest fallback.
  */
 export const GEMINI_TTS_FALLBACK_MODELS = [
+  "gemini-3.1-flash-tts-preview",
   "gemini-2.5-flash-preview-tts",
   "gemini-2.5-pro-preview-tts",
 ];
