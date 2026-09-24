@@ -19,11 +19,11 @@ export type Rates = {
   textInputPerMTok: number;
   textOutputPerMTok: number;
 
-  /** gemini-3.1-flash-tts-preview — narration. */
+  /** gemini-3.8-flash-tts — narration. Standard rate through 2026-12-31, then doubles. */
   ttsInputPerMTok: number;
   ttsOutputPerMTok: number;
 
-  /** gemini-3.1-flash-live-preview — voice chat, billed per minute of audio. */
+  /** gemini-3.8-live (or gemini-3.1-flash-live-preview) — voice chat, billed per minute of audio. */
   liveAudioInPerMin: number;
   liveAudioOutPerMin: number;
 };
@@ -32,8 +32,11 @@ export const RATES: Rates = {
   currency: "$",
   textInputPerMTok: 0.25,
   textOutputPerMTok: 1.50,
-  ttsInputPerMTok: 1.00,
-  ttsOutputPerMTok: 20.00,
+  // gemini-3.8-flash-tts, checked 2026-09-24 against ai.google.dev/gemini-api/docs/pricing.
+  // Was 1.00 / 20.00 for the previous gemini-3.1-flash-tts-preview default.
+  ttsInputPerMTok: 0.50,
+  ttsOutputPerMTok: 9.00,
+  // Unchanged between gemini-3.1-flash-live-preview and gemini-3.8-live.
   liveAudioInPerMin: 0.005,
   liveAudioOutPerMin: 0.018,
 };

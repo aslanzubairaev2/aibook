@@ -56,13 +56,14 @@ test("a price too small to round is spelled out, not shown as $0.00", () => {
 });
 
 test("narration is billed by duration, not by text length", () => {
-  // 25 audio tokens per second at $20/1M means $0.03 for a minute of speech.
-  // Deriving it from characters alone understated it by about half.
+  // 25 audio tokens per second at $9/1M (gemini-3.8-flash-tts) means about
+  // $0.0135 for a minute of speech. Deriving it from characters alone
+  // understated it by about half.
   const oneMinute = estimateAudioCost("x".repeat(900));
   assert.equal(oneMinute.minutes, 1);
   assert.ok(
-    Math.abs(oneMinute.amount - 0.03) < 0.005,
-    `a minute of speech should cost about $0.03, got ${oneMinute.amount.toFixed(4)}`,
+    Math.abs(oneMinute.amount - 0.0135) < 0.003,
+    `a minute of speech should cost about $0.0135, got ${oneMinute.amount.toFixed(4)}`,
   );
 });
 
