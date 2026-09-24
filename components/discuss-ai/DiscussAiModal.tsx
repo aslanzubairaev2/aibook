@@ -257,6 +257,19 @@ export function DiscussAiModal({
     setInput("");
     setIsSending(true);
 
+    // The opening answer is stored as a bare "model" message — the hidden
+    // request that produced it (INITIAL_DISCUSS_REQUEST) is never shown in the
+    // chat and so never lands in `previousMessages`. Sent to the model as-is,
+    // every follow-up turn would start with an unanchored "model" turn instead
+    // of alternating user/model, which a fast model with no thinking budget
+    // reads as "carry on in the same vein" rather than "answer the new
+    // question" — producing exactly the near-repeat-of-the-opener behaviour
+    // reported by learners. Re-attach that anchor for the API call only, so
+    // the transcript we send is always a real conversation.
+    const historyForApi: DiscussMessage[] = previousMessages.length > 0
+      ? [{ role: "user", text: INITIAL_DISCUSS_REQUEST }, ...previousMessages]
+      : previousMessages;
+
     try {
       const response = await discussWithAi({
         mode,
@@ -270,7 +283,7 @@ export function DiscussAiModal({
         wordProfile,
         homeworkContext,
         grammarContext: grammarContextRef.current,
-        history: previousMessages,
+        history: historyForApi,
         message: fullText,
       });
       if (response.grammarPatterns?.length) {
