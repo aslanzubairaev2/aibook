@@ -35,6 +35,8 @@ const NOUNS_HIDE_FORMS_KEY = "aibook_nouns_hide_forms";
 const NOUNS_HIDE_ARTICLES_KEY = "aibook_nouns_hide_articles";
 const NOUNS_QUIZ_MODES_KEY = "aibook_nouns_quiz_modes";
 const NOUNS_QUIZ_PRESENTATIONS_KEY = "aibook_nouns_quiz_presentations";
+const OTHERPOS_DICT_CACHE_KEY = "aibook_otherpos_dict_cache";
+const OTHERPOS_OPEN_GROUPS_KEY = "aibook_otherpos_open_groups";
 const PACK_PROGRESS_KEY = "aibook_pack_progress";
 const TRAINING_FILTER_KEY = "aibook_training_filter";
 const GENDER_RULE_STATS_KEY = "aibook_gender_rule_stats";
@@ -1021,6 +1023,55 @@ export function getLocalNounsOpenGroups(): Set<string> {
 export function saveLocalNounsOpenGroups(keys: Set<string>): void {
   try {
     localStorage.setItem(getNsKey(NOUNS_OPEN_GROUPS_KEY), JSON.stringify([...keys]));
+  } catch {
+    // silently fail
+  }
+}
+
+// ─── Other parts of speech module (Предлоги / Прилагательные) ────────────────
+//
+// Same cached-dictionary-read shape as Nouns/Verbs, minus the extra table
+// toggles those screens carry — this screen has no self-test eye button.
+
+type OtherPosDictCache = { language: string; entries: DictionaryEntry[]; batches: DictionaryBatch[] };
+
+export function getLocalOtherPosDict(language: string): { entries: DictionaryEntry[]; batches: DictionaryBatch[] } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(getNsKey(OTHERPOS_DICT_CACHE_KEY));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as OtherPosDictCache;
+    if (parsed.language !== language) return null;
+    return { entries: parsed.entries ?? [], batches: parsed.batches ?? [] };
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalOtherPosDict(language: string, entries: DictionaryEntry[], batches: DictionaryBatch[]): void {
+  try {
+    const payload: OtherPosDictCache = { language, entries, batches };
+    localStorage.setItem(getNsKey(OTHERPOS_DICT_CACHE_KEY), JSON.stringify(payload));
+  } catch {
+    // silently fail
+  }
+}
+
+export function getLocalOtherPosOpenGroups(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(getNsKey(OTHERPOS_OPEN_GROUPS_KEY));
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveLocalOtherPosOpenGroups(keys: Set<string>): void {
+  try {
+    localStorage.setItem(getNsKey(OTHERPOS_OPEN_GROUPS_KEY), JSON.stringify([...keys]));
   } catch {
     // silently fail
   }

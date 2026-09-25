@@ -2722,6 +2722,13 @@ textarea,
 .action-card.nouns .action-card-icon { background: rgba(110, 168, 224, 0.15); color: #8bbdea; }
 .action-card.nouns .action-card-label { color: #8bbdea; }
 .action-card.nouns .action-card-arrow { color: #8bbdea; }
+.action-card.otherpos {
+  background: linear-gradient(135deg, rgba(186, 133, 224, 0.18) 0%, var(--bg-elevated) 60%);
+  border-color: rgba(186, 133, 224, 0.25);
+}
+.action-card.otherpos .action-card-icon { background: rgba(186, 133, 224, 0.15); color: #c79bea; }
+.action-card.otherpos .action-card-label { color: #c79bea; }
+.action-card.otherpos .action-card-arrow { color: #c79bea; }
 
 /* The dictionary is its own screen now, not the last tab of Каталог. */
 .dictionary-view { padding-bottom: 120px; }
