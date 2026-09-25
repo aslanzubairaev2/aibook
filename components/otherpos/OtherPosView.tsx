@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, Dumbbell, Loader2, RotateCcw } from "lucide-react";
+import { ArrowLeft, ChevronDown, Dumbbell, Loader2, RotateCcw, SlidersHorizontal } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { PrepositionQuiz } from "@/components/otherpos/PrepositionQuiz";
@@ -13,9 +13,13 @@ import { OTHER_POS_CATEGORY_LABEL, OTHER_POS_CATEGORY_ORDER, type OtherPosCatego
 import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
-import { getLocalOtherPosDict, getLocalOtherPosOpenGroups, saveLocalOtherPosDict, saveLocalOtherPosOpenGroups } from "@/lib/db/local";
+import {
+  getLocalOtherPosDict, getLocalOtherPosOpenGroups, getLocalTrainingFilter,
+  saveLocalOtherPosDict, saveLocalOtherPosOpenGroups, saveLocalTrainingFilter,
+} from "@/lib/db/local";
 import { usePackProgress } from "@/lib/srs/usePackProgress";
-import { formatTrainedAt, packCoverage } from "@/lib/srs/packProgress";
+import { formatTrainedAt, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
+import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
 
@@ -52,6 +56,8 @@ export function OtherPosView({ profile, onBack }: Props) {
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => getLocalOtherPosOpenGroups());
   const [quizEntries, setQuizEntries] = useState<DictionaryEntry[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [trainingFilter, setTrainingFilter] = useState<TrainingFilter>(() => getLocalTrainingFilter("otherpos"));
 
   const { progress, startSession, record, reset, resetAll } = usePackProgress("otherpos");
 
@@ -131,6 +137,19 @@ export function OtherPosView({ profile, onBack }: Props) {
 
   const activeEntries = category === "prepositions" ? prepositionEntries : adjectiveEntries;
 
+  const trainableEntries = useMemo(
+    () => activeEntries.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
+    [activeEntries, progress.words, trainingFilter],
+  );
+  const unfamiliarCount = useMemo(
+    () => activeEntries.filter((entry) => isUnfamiliarWord(progress.words[entry.id])).length,
+    [activeEntries, progress.words],
+  );
+  const difficultCount = useMemo(
+    () => activeEntries.filter((entry) => isDifficultWord(progress.words[entry.id])).length,
+    [activeEntries, progress.words],
+  );
+
   const groups = useMemo<OtherPosGroup[]>(() => {
     const byBatch = new Map<string, DictionaryEntry[]>();
     const loose: DictionaryEntry[] = [];
@@ -153,6 +172,11 @@ export function OtherPosView({ profile, onBack }: Props) {
     if (loose.length > 0) result.push({ key: "loose", title: "Без пачки", createdAt: 0, entries: loose });
     return result;
   }, [activeEntries, batches]);
+
+  function chooseTrainingFilter(filter: TrainingFilter) {
+    setTrainingFilter(filter);
+    saveLocalTrainingFilter("otherpos", filter);
+  }
 
   const toggleGroup = (key: string) =>
     setOpenGroups((prev) => {
@@ -237,11 +261,43 @@ export function OtherPosView({ profile, onBack }: Props) {
             ))}
           </div>
 
-          {Object.keys(progress.words).length > 0 && (
-            <div className="verbs-toolbar">
-              <button type="button" className="icon-btn training-reset-all-btn" onClick={resetAllTrainingProgress} aria-label="Сбросить прогресс всех пачек" title="Сбросить прогресс всех пачек">
-                <RotateCcw size={15} />
+          <div className="verbs-toolbar">
+            <button
+              type="button"
+              className={`all-filter-toggle dict-filter-toggle ${filtersOpen || trainingFilter !== "all" ? "active" : ""}`}
+              onClick={() => setFiltersOpen((v) => !v)}
+            >
+              <SlidersHorizontal size={15} /> Фильтр
+              {trainingFilter !== "all" && <span className="all-filter-count">1</span>}
+              <ChevronDown size={12} />
+            </button>
+            {activeEntries.length > 0 && (
+              <button
+                type="button"
+                className="dict-train-btn verbs-train-all-btn"
+                disabled={trainableEntries.length === 0}
+                onClick={() => trainPack(`${category}:__all__`, trainableEntries)}
+                title={trainableEntries.length === 0 ? "Для этого фильтра пока нет слов" : undefined}
+              >
+                <Dumbbell size={14} /> {trainingFilter === "all" ? "Тренировать всё" : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"}`}
               </button>
+            )}
+            <button type="button" className="icon-btn training-reset-all-btn" onClick={resetAllTrainingProgress} aria-label="Сбросить прогресс всех пачек" title="Сбросить прогресс всех пачек">
+              <RotateCcw size={15} />
+            </button>
+          </div>
+
+          {filtersOpen && (
+            <div className="all-filter-panel">
+              <div className="filter-group">
+                <div className="filter-group-label">Фильтр слов для тренировки</div>
+                <div className="filter-chips">
+                  <button type="button" className={`filter-chip ${trainingFilter === "all" ? "active" : ""}`} onClick={() => chooseTrainingFilter("all")}>Все</button>
+                  <button type="button" className={`filter-chip ${trainingFilter === "unfamiliar" ? "active" : ""}`} onClick={() => chooseTrainingFilter("unfamiliar")}>Незнакомые ({unfamiliarCount})</button>
+                  <button type="button" className={`filter-chip ${trainingFilter === "difficult" ? "active" : ""}`} onClick={() => chooseTrainingFilter("difficult")}>Сложные ({difficultCount})</button>
+                </div>
+                <p className="verb-modes-hint">«Незнакомые» — последняя попытка с ошибкой. «Сложные» — слова с повторными ошибками, рассчитанные по вашей локальной истории.</p>
+              </div>
             </div>
           )}
 
@@ -252,6 +308,8 @@ export function OtherPosView({ profile, onBack }: Props) {
               const open = openGroups.has(group.key);
               const coverage = packCoverage(progress, `${category}:${group.key}`, group.entries.map((e) => e.id));
               const trainedAt = formatTrainedAt(coverage.lastTrainedAt);
+              const trainable = group.entries.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter));
+              const sessionEntries = trainingFilter === "all" ? group.entries : trainable;
               return (
                 <section key={group.key} className="dict-batch">
                   <button type="button" className="dict-batch-head" onClick={() => toggleGroup(group.key)}>
@@ -272,22 +330,24 @@ export function OtherPosView({ profile, onBack }: Props) {
                     <button
                       type="button"
                       className="dict-train-btn"
-                      onClick={() => trainPack(`${category}:${group.key}`, group.entries)}
+                      disabled={sessionEntries.length === 0}
+                      onClick={() => trainPack(`${category}:${group.key}`, sessionEntries)}
+                      title={sessionEntries.length === 0 ? "Для этого фильтра пока нет слов" : undefined}
                     >
                       <Dumbbell size={14} />
-                      {coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
+                      {trainingFilter !== "all"
+                        ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${trainable.length})`
+                        : coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
                     </button>
-                    {coverage.learned + coverage.seen > 0 && (
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        aria-label="Сбросить прогресс пачки"
-                        title="Сбросить прогресс этой пачки"
-                        onClick={() => reset(group.entries.map((e) => e.id), `${category}:${group.key}`)}
-                      >
-                        <RotateCcw size={15} />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      aria-label="Сбросить прогресс пачки"
+                      title="Сбросить прогресс этой пачки"
+                      onClick={() => reset(group.entries.map((e) => e.id), `${category}:${group.key}`)}
+                    >
+                      <RotateCcw size={15} />
+                    </button>
                   </div>
 
                   {open && (
