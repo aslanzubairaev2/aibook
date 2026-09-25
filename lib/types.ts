@@ -1,7 +1,7 @@
 export type AppSection =
   | "home" | "discover" | "dictionary" | "practice"
   | "books" | "reader" | "homework"
-  | "cards" | "verbs" | "nouns"
+  | "cards" | "verbs" | "nouns" | "otherpos"
   | "settings" | "auth" | "live-translate";
 
 export type SelectionType = "word" | "phrase" | "sentence";

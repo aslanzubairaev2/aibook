@@ -30,6 +30,7 @@ const NAV_PARENT: Partial<Record<AppSection, AppSection>> = {
   cards: "practice",
   verbs: "practice",
   nouns: "practice",
+  otherpos: "practice",
   books: "home",
   reader: "home",
   homework: "discover",
