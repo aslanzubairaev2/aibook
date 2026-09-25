@@ -120,6 +120,7 @@ export async function POST(req: Request) {
     wordProfile: body.wordProfile,
     homeworkContext: body.homeworkContext,
     grammarContext: body.grammarContext,
+    isFollowUp: body.history.length > 0,
   });
 
   const contents = [

@@ -52,6 +52,17 @@ export type DiscussPromptInput = {
    * Used to let the tutor reference earlier explanations.
    */
   grammarContext?: GrammarEncounter[];
+  /**
+   * True once the chat already has at least one exchange. The "explain this
+   * item" instructions below (restate the meaning, run the per-part-of-speech
+   * phrase template, repeat a memory-hook line at the end) are written for
+   * opening an item cold — sent unconditionally on every turn, they make the
+   * model re-run that same opening on a genuine follow-up question instead of
+   * answering it, which is what a small no-thinking-budget model reliably
+   * does when instructions conflict. Gating them on this flag is what keeps a
+   * follow-up a follow-up.
+   */
+  isFollowUp?: boolean;
 };
 
 /**
@@ -77,6 +88,17 @@ const FAMILIARITY_COACHING: Record<DiscussFamiliarity, string> = {
     "They know this well. Skip the beginner layer entirely — no basic definition, no elementary examples. Go straight to the interesting part: idioms and fixed expressions, figurative senses, contrast with close synonyms, and the natural but less obvious uses. Keep it tight; they do not need padding.",
 };
 
+/** Same familiarity levels, but for a message that is not the opening explanation. */
+const FOLLOWUP_FAMILIARITY_COACHING: Record<DiscussFamiliarity, string> = {
+  unseen: "",
+  new: "This item is still new to them, so keep this answer plain and concrete too — but it answers their actual question below, it does not reopen the item from scratch.",
+  struggling:
+    "This item keeps being forgotten, so keep this answer short and concrete like the first one — but do NOT restate the meaning line or the memory hook again, and do NOT repeat it at the end either; that routine was for opening the item, not for this question.",
+  learning: "",
+  familiar: "",
+  mastered: "",
+};
+
 function describeLearner(input: DiscussPromptInput): string {
   const lines: string[] = [];
   lines.push(input.learnerLevel?.trim() || "Their overall level is unknown — aim at an early-intermediate learner.");
@@ -95,7 +117,8 @@ function describeLearner(input: DiscussPromptInput): string {
     lines.push(`This exact item is in their flashcard deck (${facts.join(", ")}).`);
   }
 
-  lines.push(FAMILIARITY_COACHING[familiarity]);
+  const coaching = input.isFollowUp ? FOLLOWUP_FAMILIARITY_COACHING[familiarity] : FAMILIARITY_COACHING[familiarity];
+  if (coaching) lines.push(coaching);
   // Never let the schedule leak into the answer: the learner asked about a
   // word, not about their own statistics.
   lines.push("Never mention the deck, the schedule, review counts, or how hard you think this is for them. Just adjust what you say.");
@@ -189,11 +212,16 @@ export function buildDiscussSystemPrompt(input: DiscussPromptInput): string {
     ? `They are deciding whether to listen to this audiobook, or are already listening to it, and want to know what it is about (no spoilers), whether it fits their level, and what to expect from the narration — not vocabulary drilling.`
     : `They want to be able to SAY things, not to pass a grammar exam. They tapped this while reading or revising, and the question behind the tap is always "what does this mean, and how would I use it myself?".`;
 
+  const followUpDirective = input.isFollowUp && mode !== "homework" && mode !== "audiobook" ? `
+THIS IS A FOLLOW-UP MESSAGE, NOT THE OPENING EXPLANATION — READ THIS FIRST:
+You already opened this item once; the learner's latest message (sent to you separately, below the conversation) is a real, specific question of its own. Answer THAT question, directly and completely, before anything else. Do NOT restate the item's basic meaning, do NOT repeat an example or memory hook you already gave earlier in this chat, and do NOT reopen with the "meaning + template examples" pattern from the WHAT TO COVER section below — that pattern is for introducing a NEW item, not for this turn. If their question is about a different word, a category of related words, a comparison, or a grammar point that has nothing to do with the originally selected item, follow them there.
+` : "";
+
   return `You are a warm, practical language tutor talking to an adult learner inside a mobile app. They speak ${nativeLanguage} and are learning ${targetLanguage}.
 ${mode === "homework" ? `
 CRITICAL RULE — read this first, it overrides everything else below:
 NEVER state, spell out, or strongly imply the specific word(s) that fill any blank in the exercise items listed below. Not the target word, not its exact form, not "the first letter is...". Do not construct any of the items' sentences completed, not even partially. If asked directly for an answer, decline warmly and point back at the rule instead. This holds for every message in this conversation, not only the first one.
-` : ""}
+` : ""}${followUpDirective}
 WHO YOU ARE TALKING TO
 ${describeLearner(input)}
 
@@ -220,7 +248,9 @@ HOW TO WRITE
 - Every example must be a whole sentence a real person would say, and must carry a translation.
 
 WHAT TO COVER
-${MODE_FOCUS[mode]}
+${input.isFollowUp && mode !== "homework" && mode !== "audiobook"
+  ? `Answer their latest message specifically — that is the whole job on a follow-up turn. Match the tone and depth of your first answer, but use the pattern below only if they are actually asking for more of the same kind of examples for this same item; otherwise ignore it and answer what they asked.\nOpening-item pattern, for reference:\n${MODE_FOCUS[mode]}`
+  : MODE_FOCUS[mode]}
 
 FOLLOW-UP CHIPS
 Also return 3 short follow-up questions, written in ${nativeLanguage} AS THE LEARNER WOULD ASK THEM, first person, casual ("а как сказать «мне надо это убрать»?", "чем отличается от wegräumen?"). Each under 32 characters. They must be about THIS item, must not repeat what you have just answered, and must be things this particular learner would plausibly want next given how well they know it. Never generic filler like "Подробнее" or "Ещё примеры".
