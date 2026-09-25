@@ -4,7 +4,8 @@ import {
   CARTESIA_MODEL,
   DEEPGRAM_TTS_SAMPLE_RATE,
   ELEVENLABS_DEFAULT_VOICE,
-  GEMINI_SPEECH_STYLE_VERSION,
+  GEMINI_TTS_MODEL,
+  geminiSpeechStyleVersion,
   getDeepgramTtsModel,
   isCartesiaTtsSupported,
   isElevenLabsTtsSupported,
@@ -329,7 +330,7 @@ function ttsCacheKey(text: string, provider: string, lang: string, cacheScope: T
   // The rest make the same sound they always did, and expiring their recordings
   // would spend quota to hear something identical.
   const style = isPromptDirectedTts(provider)
-    ? `-${provider === "gemini" ? GEMINI_SPEECH_STYLE_VERSION : SPEECH_STYLE_VERSION}`
+    ? `-${provider === "gemini" ? geminiSpeechStyleVersion(model || GEMINI_TTS_MODEL) : SPEECH_STYLE_VERSION}`
     : "";
   const scope = cacheScope === "default" ? "" : `-${cacheScope}`;
   return `tts-${engine}${style}${scope}-${voiceKeyFor(provider, lang)}-${normalizeLanguageCode(lang)}-${encodeURIComponent(text)}`;

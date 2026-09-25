@@ -133,6 +133,39 @@ export const SPEECH_STYLE_VERSION = "s2";
 // Gemini now receives a structured locale. Older short-word recordings may
 // have guessed the wrong language despite the prose prompt.
 export const GEMINI_SPEECH_STYLE_VERSION = "s3";
+/** Recordings from the models that are sent the bare text, with no direction at all. */
+export const GEMINI_TRANSCRIPT_STYLE_VERSION = "t1";
+
+/**
+ * Gemini 3.8 TTS reads its input as a verbatim transcript: direction written in
+ * front of the word is spoken aloud rather than obeyed — a fifteen-second
+ * reading of the instruction instead of a one-second word. The earlier models
+ * took the same prose as direction, so which prompt a model gets depends on this.
+ */
+export function isVerbatimGeminiTtsModel(model: string): boolean {
+  const version = /gemini-(\d+)\.(\d+)/.exec(model);
+  if (!version) return false;
+  const major = Number(version[1]);
+  const minor = Number(version[2]);
+  return major > 3 || (major === 3 && minor >= 8);
+}
+
+export function geminiSpeechStyleVersion(model: string): string {
+  return isVerbatimGeminiTtsModel(model) ? GEMINI_TRANSCRIPT_STYLE_VERSION : GEMINI_SPEECH_STYLE_VERSION;
+}
+
+/**
+ * The model whose recordings sit in the shared cache under keys with no model
+ * name in them — everything recorded before a model could be chosen. Every
+ * other model is named in its key, so no two models ever share a recording.
+ */
+export const GEMINI_TTS_LEGACY_CACHE_MODEL = "gemini-3.1-flash-tts-preview";
+
+export function geminiTtsCacheKey(model: string, voiceName: string): string {
+  return model === GEMINI_TTS_LEGACY_CACHE_MODEL
+    ? `${voiceName}:${GEMINI_SPEECH_STYLE_VERSION}`
+    : `${model}:${voiceName}:${geminiSpeechStyleVersion(model)}`;
+}
 
 /** Widen a bare language code to the BCP-47 tag the voice APIs expect. */
 export function getBcp47Locale(lang: string) {
@@ -409,10 +442,9 @@ export function isValidModelRef(model: string) {
 /**
  * The Gemini speech model this app targets.
  *
- * Bumped 2026-09-24 from `gemini-3.1-flash-tts-preview` to the newly released
- * `gemini-3.8-flash-tts`: same request shape (generateContent, AUDIO modality,
- * prebuiltVoiceConfig), roughly half the per-token price. See lib/ai/costs.ts
- * for the rate change.
+ * It differs from the 3.1 preview it replaced in two ways the route has to
+ * handle: it reads its input verbatim (see isVerbatimGeminiTtsModel), and it
+ * answers with a WAV file rather than headerless PCM.
  */
 export const GEMINI_TTS_MODEL = "gemini-3.8-flash-tts";
 
@@ -492,7 +524,10 @@ export function teacherInstructions(lang: string) {
  * settled both open questions itself: which language a word like "so" is in,
  * and whether "lacht" is a word to pronounce or a laugh to perform.
  */
-export function buildGeminiSpeechPrompt(text: string, lang: string) {
+export function buildGeminiSpeechPrompt(text: string, lang: string, model?: string) {
+  // The language still reaches these models, through speechConfig.languageCode.
+  if (model && isVerbatimGeminiTtsModel(model)) return text;
+
   const language = getLanguageName(lang);
   return [
     language ? `Say the following standalone vocabulary item in ${language}` : "Say the following vocabulary item",

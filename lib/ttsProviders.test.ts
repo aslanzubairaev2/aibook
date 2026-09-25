@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildGeminiSpeechPrompt,
+  geminiSpeechStyleVersion,
+  geminiTtsCacheKey,
+  isVerbatimGeminiTtsModel,
   getElevenLabsLanguageCode,
   getGeminiTtsLanguageCode,
   getLanguageName,
@@ -202,6 +205,36 @@ test("the Gemini prompt forbids acting the word out", () => {
 
   assert.match(prompt, /without acting it out/);
   assert.match(prompt, /sound effects/);
+});
+
+test("a verbatim-transcript model is sent the word and nothing else", () => {
+  // Gemini 3.8 speaks whatever it is given: the prose direction the older
+  // models obeyed came back as a fifteen-second reading of the instruction.
+  assert.equal(buildGeminiSpeechPrompt("berühmt", "de", "gemini-3.8-flash-tts"), "berühmt");
+  assert.equal(buildGeminiSpeechPrompt("die", "de", "gemini-3.8-flash-lite-tts"), "die");
+  // The older models still get their direction.
+  assert.ok(buildGeminiSpeechPrompt("lacht", "de", "gemini-3.1-flash-tts-preview").endsWith(": lacht"));
+});
+
+test("only Gemini 3.8 and later read their input verbatim", () => {
+  assert.equal(isVerbatimGeminiTtsModel("gemini-3.8-flash-tts"), true);
+  assert.equal(isVerbatimGeminiTtsModel("gemini-3.8-flash-lite-tts"), true);
+  assert.equal(isVerbatimGeminiTtsModel("gemini-4.0-flash-tts"), true);
+  assert.equal(isVerbatimGeminiTtsModel("gemini-3.1-flash-tts-preview"), false);
+  assert.equal(isVerbatimGeminiTtsModel("gemini-2.5-pro-preview-tts"), false);
+  assert.equal(isVerbatimGeminiTtsModel("not-a-gemini-id"), false);
+});
+
+test("every Gemini model keeps its recordings apart from every other", () => {
+  // The un-prefixed key holds everything the 3.1 preview ever recorded; it
+  // must stay that model's, whatever the default model becomes.
+  assert.equal(geminiTtsCacheKey("gemini-3.1-flash-tts-preview", "Algenib"), "Algenib:s3");
+  assert.equal(geminiTtsCacheKey("gemini-3.8-flash-tts", "Algenib"), "gemini-3.8-flash-tts:Algenib:t1");
+  assert.equal(
+    geminiTtsCacheKey("gemini-2.5-flash-preview-tts", "Charon"),
+    "gemini-2.5-flash-preview-tts:Charon:s3",
+  );
+  assert.notEqual(geminiSpeechStyleVersion("gemini-3.8-flash-tts"), geminiSpeechStyleVersion("gemini-3.1-flash-tts-preview"));
 });
 
 test("a language with no name still gets a usable prompt", () => {

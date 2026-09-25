@@ -12,9 +12,10 @@ import {
   ELEVENLABS_PCM_FORMAT,
   ELEVENLABS_PCM_SAMPLE_RATE,
   GEMINI_MALE_VOICES,
-  GEMINI_SPEECH_STYLE_VERSION,
   GEMINI_TTS_FALLBACK_MODELS,
+  GEMINI_TTS_LEGACY_CACHE_MODEL,
   GEMINI_TTS_MODEL,
+  geminiTtsCacheKey,
   getBcp47Locale,
   getElevenLabsVoiceIdByName,
   getGeminiTtsLanguageCode,
@@ -207,22 +208,13 @@ export async function POST(req: Request) {
       : "Algenib";
 
     const geminiModel = chosenModel || GEMINI_TTS_MODEL;
-    // Only a model other than the usual one joins the key: everything recorded
-    // before models could be chosen was recorded with that one, and re-earning
-    // a full cache costs quota a preview model counts by the request.
-    //
-    // The style version does join it, though, and knowingly costs that quota.
-    // Every recording made before the model was told anything is in whichever
-    // language it guessed, acted out or not — which is the thing being fixed,
-    // so serving those again would be serving the bug.
-    const geminiCacheKey = geminiModel === GEMINI_TTS_MODEL
-      ? `${voiceName}:${GEMINI_SPEECH_STYLE_VERSION}`
-      : `${geminiModel}:${voiceName}:${GEMINI_SPEECH_STYLE_VERSION}`;
+    const geminiCacheKey = geminiTtsCacheKey(geminiModel, voiceName);
 
     // 1. Check database cache
     const cachedAudio = fresh ? null : await sbGetCachedTts(text, lang, geminiCacheKey, [], cacheScope);
-    if (cachedAudio) {
-      return NextResponse.json({ audioBase64: cachedAudio, source: "db_cache", provider: "gemini", model: geminiModel });
+    const cached = cachedAudio ? readCachedGeminiAudio(geminiModel, cachedAudio) : null;
+    if (cached) {
+      return NextResponse.json({ ...cached, source: "db_cache", provider: "gemini", model: geminiModel });
     }
 
     const makeRequest = (inputText: string) => geminiTtsRequest(apiKey, geminiModel, voiceName, inputText, lang);
@@ -302,10 +294,11 @@ export async function POST(req: Request) {
       }
     }
 
-    if (inlineData?.data) {
-      // 2. Save to database cache
+    const generated = inlineData?.data ? decodeGeminiAudio(inlineData.data) : null;
+    if (generated) {
+      // 2. Save to database cache — as received, so a WAV keeps its sample rate.
       await sbSaveCachedTts(text, lang, geminiCacheKey, inlineData.data, cacheScope);
-      return NextResponse.json({ audioBase64: inlineData.data, source: "api", provider: "gemini", model: geminiModel });
+      return NextResponse.json({ ...generated, source: "api", provider: "gemini", model: geminiModel });
     }
 
     const reason = "Gemini TTS не вернул аудио.";
@@ -479,7 +472,7 @@ function geminiTtsRequest(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: buildGeminiSpeechPrompt(inputText, lang) }] }],
+      contents: [{ parts: [{ text: buildGeminiSpeechPrompt(inputText, lang, model) }] }],
       safetySettings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
         { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -514,12 +507,11 @@ async function speakWithGeminiModel(
   cacheScope: TtsCacheScope = "default",
 ): Promise<Spoken> {
   // Matches the main path's key exactly, so the two share their recordings.
-  const cacheKey = model === GEMINI_TTS_MODEL
-    ? `${voiceName}:${GEMINI_SPEECH_STYLE_VERSION}`
-    : `${model}:${voiceName}:${GEMINI_SPEECH_STYLE_VERSION}`;
+  const cacheKey = geminiTtsCacheKey(model, voiceName);
 
-  const cached = fresh ? null : await sbGetCachedTts(text, lang, cacheKey, [], cacheScope);
-  if (cached) return { audioBase64: cached, source: "db_cache" };
+  const cachedAudio = fresh ? null : await sbGetCachedTts(text, lang, cacheKey, [], cacheScope);
+  const cached = cachedAudio ? readCachedGeminiAudio(model, cachedAudio) : null;
+  if (cached) return { ...cached, source: "db_cache" };
 
   const response = await geminiTtsRequest(apiKey, model, voiceName, text, lang);
   if (!response.ok) {
@@ -527,11 +519,41 @@ async function speakWithGeminiModel(
   }
 
   const data = await response.json();
-  const audioBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!audioBase64) return { error: `Gemini ${model} returned no audio`, status: 502 };
+  const raw = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  const audio = raw ? decodeGeminiAudio(raw) : null;
+  if (!audio) return { error: `Gemini ${model} returned no audio`, status: 502 };
 
-  await sbSaveCachedTts(text, lang, cacheKey, audioBase64, cacheScope);
-  return { audioBase64, source: "api" };
+  await sbSaveCachedTts(text, lang, cacheKey, raw, cacheScope);
+  return { ...audio, source: "api" };
+}
+
+function isWavBase64(audioBase64: string): boolean {
+  return Buffer.from(audioBase64.slice(0, 8), "base64").toString("latin1", 0, 4) === "RIFF";
+}
+
+/**
+ * Gemini audio as the player takes it: headerless PCM, with its rate when known.
+ *
+ * The 3.1 preview answers with bare PCM; 3.8 with a WAV file. The header is
+ * stripped rather than played — read as samples it is a click, and its rate
+ * is the one thing about the recording the player cannot guess.
+ */
+function decodeGeminiAudio(audioBase64: string): { audioBase64: string; sampleRate?: number } | null {
+  if (!isWavBase64(audioBase64)) return { audioBase64 };
+  return decodeWavBase64(audioBase64);
+}
+
+/**
+ * A cached Gemini recording, or null when it has to be made again.
+ *
+ * The key with no model name in it belongs to the 3.1 preview, which only ever
+ * writes bare PCM. A WAV under that key was written by a verbatim-transcript
+ * model reading its prose prompt aloud, so it is a recording of the
+ * instruction, not of the word — treated as a miss and overwritten.
+ */
+function readCachedGeminiAudio(model: string, audioBase64: string) {
+  if (model === GEMINI_TTS_LEGACY_CACHE_MODEL && isWavBase64(audioBase64)) return null;
+  return decodeGeminiAudio(audioBase64);
 }
 
 /**
@@ -1097,7 +1119,7 @@ function decodeWavBase64(wavBase64: string): { audioBase64: string; sampleRate: 
       sampleRate: wav.sampleRate,
     };
   } catch (err) {
-    console.error("Speechify WAV parse failed:", err);
+    console.error("WAV parse failed:", err);
     return null;
   }
 }

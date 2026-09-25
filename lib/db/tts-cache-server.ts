@@ -4,7 +4,9 @@ import { normalizeTtsCacheScope, type TtsCacheScope } from "@/lib/ttsCacheScope"
 
 const BUCKET = "tts-audio";
 
-type CacheRow = { audio_base64: string | null; storage_path: string | null };
+// The audio lives in Storage only: the table's old audio_base64 column has been
+// dropped, and naming it in a select or upsert fails the whole query.
+type CacheRow = { storage_path: string | null };
 
 export function cacheVoiceNameCandidates(voiceName: string, legacyVoiceNames: string[] = []): string[] {
   return [voiceName, ...legacyVoiceNames].filter((name, index, names) => name && names.indexOf(name) === index);
@@ -44,35 +46,33 @@ export async function sbGetCachedTtsServer(
   for (const candidate of candidates) {
     const { data, error } = await supabaseAdmin
       .from("ai_tts_cache")
-      .select("audio_base64, storage_path")
+      .select("storage_path")
       .eq("text", text)
       .eq("lang", lang)
       .eq("voice_name", candidate)
       .maybeSingle<CacheRow>();
 
-    if (error || !data) continue;
-
-    if (data.storage_path) {
-      const { data: object, error: downloadError } = await supabaseAdmin.storage
-        .from(BUCKET)
-        .download(data.storage_path);
-      if (!downloadError && object) {
-        return Buffer.from(await object.arrayBuffer()).toString("base64");
-      }
-      console.warn("TTS Storage read failed; trying legacy Base64:", downloadError?.message ?? "empty object");
+    if (error) {
+      console.error("sbGetCachedTtsServer error:", error.message);
+      continue;
     }
+    if (!data?.storage_path) continue;
 
-    // Keep old rows readable while migration is staged. This path is server-only.
-    if (data.audio_base64) return data.audio_base64;
+    const { data: object, error: downloadError } = await supabaseAdmin.storage
+      .from(BUCKET)
+      .download(data.storage_path);
+    if (!downloadError && object) {
+      return Buffer.from(await object.arrayBuffer()).toString("base64");
+    }
+    console.warn("TTS Storage read failed:", downloadError?.message ?? "empty object");
   }
 
   return null;
 }
 
 /**
- * Store new audio privately. Legacy Base64 is kept only when Storage upload
- * fails, so a transient Storage problem never makes a generated recording
- * disappear. The old column is retained for rollback and staged migration.
+ * Store new audio privately. A row is written only once its audio is safely in
+ * Storage — a row pointing at nothing would be a permanent cache miss.
  */
 export async function sbSaveCachedTtsServer(
   text: string,
@@ -92,23 +92,17 @@ export async function sbSaveCachedTtsServer(
     upsert: true,
   });
 
-  const payload: {
-    text: string;
-    lang: string;
-    voice_name: string;
-    audio_base64: string;
-    storage_path?: string;
-  } = uploadError
-    ? { text, lang, voice_name: cacheVoiceName, audio_base64: audioBase64 }
-    : { text, lang, voice_name: cacheVoiceName, audio_base64: "", storage_path: path };
-
   if (uploadError) {
-    console.error("TTS Storage upload failed; retaining legacy Base64:", uploadError.message);
+    console.error("TTS Storage upload failed; recording not cached:", uploadError.message);
+    return;
   }
 
   const { error } = await supabaseAdmin
     .from("ai_tts_cache")
-    .upsert(payload, { onConflict: "text,lang,voice_name" });
+    .upsert(
+      { text, lang, voice_name: cacheVoiceName, storage_path: path },
+      { onConflict: "text,lang,voice_name" },
+    );
   if (error) console.error("sbSaveCachedTtsServer error:", error.message);
 }
 
