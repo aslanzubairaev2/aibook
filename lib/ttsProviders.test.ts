@@ -60,24 +60,25 @@ test("reports no support for a language with no locale mapping", () => {
 test("offers every voice that can speak German, best first and browser last", () => {
   assert.deepEqual(
     getAvailableTtsProviders("de"),
-    ["gemini", "openai", "cartesia", "elevenlabs", "deepgram", "speechify", "inworld", "local"],
+    ["gemini", "inworld", "elevenlabs", "cartesia", "deepgram", "speechify", "local"],
   );
 
   // Polish has a locale for the paid voices but no Deepgram model.
   assert.deepEqual(
     getAvailableTtsProviders("pl"),
-    ["gemini", "openai", "cartesia", "elevenlabs", "speechify", "inworld", "local"],
+    ["gemini", "inworld", "elevenlabs", "cartesia", "speechify", "local"],
   );
 
   // Greek is outside Sonic's language list but ElevenLabs and Speechify have it.
   assert.deepEqual(
     getAvailableTtsProviders("el"),
-    ["gemini", "openai", "elevenlabs", "speechify", "inworld", "local"],
+    ["gemini", "inworld", "elevenlabs", "speechify", "local"],
   );
 
-  // A language nobody maps leaves the browser, Gemini, and GPT-4o — the last of
-  // which reads the language off the text and so never opts out.
-  assert.deepEqual(getAvailableTtsProviders("xx"), ["gemini", "openai", "local"]);
+  // A language nobody maps leaves just the browser behind Gemini. OpenAI used
+  // to fill this gap (it reads the language off the text) but is deliberately
+  // no longer offered.
+  assert.deepEqual(getAvailableTtsProviders("xx"), ["gemini", "local"]);
 });
 
 test("labels the new providers", () => {
@@ -159,12 +160,15 @@ test("Inworld takes the same locale tags, since one voice covers many languages"
 test("builds the automatic Gemini fallback chain in preference order", () => {
   assert.deepEqual(
     getTtsProviderChain(undefined, "de"),
-    ["gemini", "openai", "cartesia", "elevenlabs", "speechify", "inworld"],
+    ["gemini", "inworld", "elevenlabs", "cartesia", "speechify"],
   );
-  // Even with no locale mapping, GPT-4o can still answer for Gemini.
-  assert.deepEqual(getTtsProviderChain("gemini", "xx"), ["gemini", "openai"]);
+  // With no locale mapping, nothing else can answer for Gemini any more —
+  // OpenAI used to fill this gap but is deliberately excluded.
+  assert.deepEqual(getTtsProviderChain("gemini", "xx"), ["gemini"]);
   assert.deepEqual(getTtsProviderChain("speechify", "de"), ["speechify"]);
-  assert.deepEqual(getTtsProviderChain("openai", "de"), ["openai"]);
+  // OpenAI is no longer an available provider at all, so an explicit request
+  // for it resolves to the browser voice rather than being honoured.
+  assert.deepEqual(getTtsProviderChain("openai", "de"), ["local"]);
   assert.deepEqual(getTtsProviderChain("cartesia", "de"), ["cartesia"]);
 });
 

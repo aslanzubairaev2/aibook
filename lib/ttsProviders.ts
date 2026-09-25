@@ -518,16 +518,16 @@ export function normalizeTtsProvider(provider: unknown): TtsProvider {
 }
 
 export function getAvailableTtsProviders(lang: string): TtsProvider[] {
-  // Ordered by preference: Gemini, GPT-4o, Cartesia, ElevenLabs, then the rest.
-  // The browser's own voice goes last — it is the thing to reach for when every
-  // real voice has failed, not the first offer.
+  // Ordered by preference: Gemini (3.8, falling back to 3.1 internally — see
+  // GEMINI_TTS_FALLBACK_MODELS), Inworld, ElevenLabs, then the rest. OpenAI is
+  // deliberately not offered. The browser's own voice goes last — it is the
+  // thing to reach for when every real voice has failed, not the first offer.
   const providers: TtsProvider[] = ["gemini"];
-  if (isOpenAiTtsSupported(lang)) providers.push("openai");
-  if (isCartesiaTtsSupported(lang)) providers.push("cartesia");
+  if (isInworldTtsSupported(lang)) providers.push("inworld");
   if (isElevenLabsTtsSupported(lang)) providers.push("elevenlabs");
+  if (isCartesiaTtsSupported(lang)) providers.push("cartesia");
   if (isDeepgramTtsSupported(lang)) providers.push("deepgram");
   if (isSpeechifyTtsSupported(lang)) providers.push("speechify");
-  if (isInworldTtsSupported(lang)) providers.push("inworld");
   providers.push("local");
   return providers;
 }
@@ -540,12 +540,14 @@ export function getTtsProviderChain(provider: unknown, lang: string): TtsProvide
   const primary = resolveTtsProvider(provider, lang);
   if (primary !== "gemini") return [primary];
 
+  // Gemini 3.8 → 3.1 is handled inside speakWithAutomaticFallback via
+  // GEMINI_TTS_FALLBACK_MODELS before this chain is even consulted. From here:
+  // Inworld, then ElevenLabs, then the rest. OpenAI is deliberately excluded.
   const chain: TtsProvider[] = ["gemini"];
-  if (isOpenAiTtsSupported(lang)) chain.push("openai");
-  if (isCartesiaTtsSupported(lang)) chain.push("cartesia");
-  if (isElevenLabsTtsSupported(lang)) chain.push("elevenlabs");
-  if (isSpeechifyTtsSupported(lang)) chain.push("speechify");
   if (isInworldTtsSupported(lang)) chain.push("inworld");
+  if (isElevenLabsTtsSupported(lang)) chain.push("elevenlabs");
+  if (isCartesiaTtsSupported(lang)) chain.push("cartesia");
+  if (isSpeechifyTtsSupported(lang)) chain.push("speechify");
   return chain;
 }
 
