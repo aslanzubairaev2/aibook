@@ -12,7 +12,7 @@
 // (nothing is taken away), it simply is not counted yet; answering it right on
 // the retry fills that slot. A pack at 100% has been genuinely worked through.
 
-export type PackModule = "verbs" | "nouns";
+export type PackModule = "verbs" | "nouns" | "otherpos";
 
 /** Which subset the next training session should use. */
 export type TrainingFilter = "all" | "unfamiliar" | "difficult";

@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BookA, ChevronRight, Flame, Repeat } from "lucide-react";
+import { BookA, ChevronRight, Flame, Link2, Repeat } from "lucide-react";
 import { computeDeckStats } from "@/lib/cards";
-import { getCardVariantProgressMap, getLocalNounsDict, getLocalVerbsDict } from "@/lib/db/local";
+import { getCardVariantProgressMap, getLocalNounsDict, getLocalOtherPosDict, getLocalVerbsDict } from "@/lib/db/local";
 import { isNounEntry, nounGender } from "@/lib/nounForms";
+import { isPrepositionEntry, prepositionCaseFor } from "@/lib/prepositionForms";
+import { isAdjectiveEntry } from "@/lib/adjectiveEndings";
 import { normalizePos } from "@/lib/verbForms";
 import type { Flashcard, UserProfile } from "@/lib/types";
 
@@ -14,6 +16,7 @@ type Props = {
   onOpenCards: () => void;
   onOpenVerbs: () => void;
   onOpenNouns: () => void;
+  onOpenOtherPos: () => void;
 };
 
 /**
@@ -25,7 +28,7 @@ type Props = {
  * material it currently has, read from the caches the screens themselves keep
  * — so the numbers are there instantly and cost no network call.
  */
-export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenNouns }: Props) {
+export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenNouns, onOpenOtherPos }: Props) {
   // The card module's own boundary for "due today", so this tile and the
   // trainer can never disagree about the number.
   const todayEndTime = useMemo(() => {
@@ -44,9 +47,11 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
   const counts = useState(() => {
     const verbs = getLocalVerbsDict(profile.targetLanguage)?.entries ?? [];
     const nouns = getLocalNounsDict(profile.targetLanguage)?.entries ?? [];
+    const otherPos = getLocalOtherPosDict(profile.targetLanguage)?.entries ?? [];
     return {
       verbs: verbs.filter((e) => normalizePos(e.part_of_speech).includes("глагол")).length,
       nouns: nouns.filter((e) => isNounEntry(e) && nounGender(e) !== null).length,
+      otherPos: otherPos.filter((e) => (isPrepositionEntry(e) && prepositionCaseFor(e) !== null) || isAdjectiveEntry(e)).length,
     };
   })[0];
 
@@ -93,6 +98,18 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
             <strong className="action-card-title">Род и артикли</strong>
             <span className="action-card-sub">
               {counts.nouns > 0 ? `${counts.nouns} существительных из словаря` : "der · die · das и множественное число"}
+            </span>
+          </span>
+          <ChevronRight size={20} className="action-card-arrow" />
+        </button>
+
+        <button className="action-card otherpos glass-card" onClick={onOpenOtherPos} type="button">
+          <span className="action-card-icon"><Link2 size={24} /></span>
+          <span>
+            <span className="action-card-label">Другие части речи</span>
+            <strong className="action-card-title">Предлоги и прилагательные</strong>
+            <span className="action-card-sub">
+              {counts.otherPos > 0 ? `${counts.otherPos} слов из словаря` : "Падеж предлога · окончания прилагательных"}
             </span>
           </span>
           <ChevronRight size={20} className="action-card-arrow" />
