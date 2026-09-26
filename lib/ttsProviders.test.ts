@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildGeminiSpeechPrompt,
+  buildGeminiSpeechStyle,
   geminiSpeechStyleVersion,
   geminiTtsCacheKey,
   isVerbatimGeminiTtsModel,
@@ -216,6 +217,16 @@ test("a verbatim-transcript model is sent the word and nothing else", () => {
   assert.ok(buildGeminiSpeechPrompt("lacht", "de", "gemini-3.1-flash-tts-preview").endsWith(": lacht"));
 });
 
+test("a verbatim-transcript model is told the language in its style annotation", () => {
+  // It takes no language code: without this a lone "so" is read as English.
+  const style = buildGeminiSpeechStyle("de-AT");
+  assert.match(style ?? "", /Native German speaker/);
+  assert.match(style ?? "", /standard German pronunciation/);
+  assert.match(style ?? "", /no laughter or sound effects/);
+  // No name, no claim: the model guesses rather than being told something wrong.
+  assert.equal(buildGeminiSpeechStyle("xx"), null);
+});
+
 test("only Gemini 3.8 and later read their input verbatim", () => {
   assert.equal(isVerbatimGeminiTtsModel("gemini-3.8-flash-tts"), true);
   assert.equal(isVerbatimGeminiTtsModel("gemini-3.8-flash-lite-tts"), true);
@@ -229,7 +240,7 @@ test("every Gemini model keeps its recordings apart from every other", () => {
   // The un-prefixed key holds everything the 3.1 preview ever recorded; it
   // must stay that model's, whatever the default model becomes.
   assert.equal(geminiTtsCacheKey("gemini-3.1-flash-tts-preview", "Algenib"), "Algenib:s3");
-  assert.equal(geminiTtsCacheKey("gemini-3.8-flash-tts", "Algenib"), "gemini-3.8-flash-tts:Algenib:t1");
+  assert.equal(geminiTtsCacheKey("gemini-3.8-flash-tts", "Algenib"), "gemini-3.8-flash-tts:Algenib:t2");
   assert.equal(
     geminiTtsCacheKey("gemini-2.5-flash-preview-tts", "Charon"),
     "gemini-2.5-flash-preview-tts:Charon:s3",

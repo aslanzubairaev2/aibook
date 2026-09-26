@@ -19,6 +19,8 @@ import {
   getBcp47Locale,
   getElevenLabsVoiceIdByName,
   getGeminiTtsLanguageCode,
+  buildGeminiSpeechStyle,
+  isVerbatimGeminiTtsModel,
   isCartesiaTtsSupported,
   isCartesiaVoiceId,
   isElevenLabsTtsSupported,
@@ -282,22 +284,22 @@ export async function POST(req: Request) {
     }
 
     let data = await response.json();
-    let inlineData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+    let audioData = extractGeminiAudio(data);
 
     // Fallback: If blocked due to safety/PROHIBITED_CONTENT (especially for short words like "Sie", "-", "kill")
-    if (!inlineData && data.promptFeedback?.blockReason === "PROHIBITED_CONTENT") {
+    if (!audioData && data.promptFeedback?.blockReason === "PROHIBITED_CONTENT") {
       console.log(`TTS blocked for "${text}", retrying with quotes...`);
       response = await makeRequest(`"${text}"`);
       if (response.ok) {
         data = await response.json();
-        inlineData = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+        audioData = extractGeminiAudio(data);
       }
     }
 
-    const generated = inlineData?.data ? decodeGeminiAudio(inlineData.data) : null;
-    if (generated) {
+    const generated = audioData ? decodeGeminiAudio(audioData) : null;
+    if (audioData && generated) {
       // 2. Save to database cache — as received, so a WAV keeps its sample rate.
-      await sbSaveCachedTts(text, lang, geminiCacheKey, inlineData.data, cacheScope);
+      await sbSaveCachedTts(text, lang, geminiCacheKey, audioData, cacheScope);
       return NextResponse.json({ ...generated, source: "api", provider: "gemini", model: geminiModel });
     }
 
@@ -467,6 +469,28 @@ function geminiTtsRequest(
   inputText: string,
   lang: string,
 ) {
+  if (isVerbatimGeminiTtsModel(model)) {
+    const style = buildGeminiSpeechStyle(lang);
+    return fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        model,
+        input: [{
+          type: "user_input",
+          content: [{
+            type: "text",
+            text: buildGeminiSpeechPrompt(inputText, lang, model),
+            ...(style ? { annotations: [{ type: "speech_metadata", style }] } : {}),
+          }],
+        }],
+        // Headerless PCM, the shape the 3.1 preview always answered with.
+        response_format: { type: "audio", mime_type: "audio/l16", sample_rate: 24000 },
+        generation_config: { speech_config: [{ voice: voiceName }] },
+      }),
+    });
+  }
+
   const languageCode = getGeminiTtsLanguageCode(lang);
   return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
     method: "POST",
@@ -518,13 +542,23 @@ async function speakWithGeminiModel(
     return { error: `Gemini ${model}: ${response.status}`, status: response.status };
   }
 
-  const data = await response.json();
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  const raw = extractGeminiAudio(await response.json());
   const audio = raw ? decodeGeminiAudio(raw) : null;
-  if (!audio) return { error: `Gemini ${model} returned no audio`, status: 502 };
+  if (!raw || !audio) return { error: `Gemini ${model} returned no audio`, status: 502 };
 
   await sbSaveCachedTts(text, lang, cacheKey, raw, cacheScope);
   return { ...audio, source: "api" };
+}
+
+type GeminiSpeechResponse = {
+  candidates?: { content?: { parts?: { inlineData?: { data?: string } }[] } }[];
+  steps?: { content?: { type?: string; data?: string }[] }[];
+};
+
+/** The base64 audio from either a generateContent or an Interactions answer. */
+function extractGeminiAudio(response: GeminiSpeechResponse): string | undefined {
+  return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data
+    ?? response.steps?.flatMap((step) => step.content ?? []).find((part) => part.type === "audio")?.data;
 }
 
 function isWavBase64(audioBase64: string): boolean {

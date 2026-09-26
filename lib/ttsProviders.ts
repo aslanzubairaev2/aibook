@@ -133,14 +133,20 @@ export const SPEECH_STYLE_VERSION = "s2";
 // Gemini now receives a structured locale. Older short-word recordings may
 // have guessed the wrong language despite the prose prompt.
 export const GEMINI_SPEECH_STYLE_VERSION = "s3";
-/** Recordings from the models that are sent the bare text, with no direction at all. */
-export const GEMINI_TRANSCRIPT_STYLE_VERSION = "t1";
+/**
+ * Recordings from the models that are sent the bare text, with their direction
+ * in a separate style annotation (see buildGeminiSpeechStyle).
+ */
+export const GEMINI_TRANSCRIPT_STYLE_VERSION = "t2";
 
 /**
  * Gemini 3.8 TTS reads its input as a verbatim transcript: direction written in
  * front of the word is spoken aloud rather than obeyed — a fifteen-second
- * reading of the instruction instead of a one-second word. The earlier models
- * took the same prose as direction, so which prompt a model gets depends on this.
+ * reading of the instruction instead of a one-second word. It also ignores
+ * speechConfig.languageCode and guesses the language from the text alone, which
+ * for a lone "so", "hat" or "See" means English. These models are therefore
+ * called through the Interactions API, where direction travels as a style
+ * annotation that is heard but not spoken.
  */
 export function isVerbatimGeminiTtsModel(model: string): boolean {
   const version = /gemini-(\d+)\.(\d+)/.exec(model);
@@ -442,9 +448,8 @@ export function isValidModelRef(model: string) {
 /**
  * The Gemini speech model this app targets.
  *
- * It differs from the 3.1 preview it replaced in two ways the route has to
- * handle: it reads its input verbatim (see isVerbatimGeminiTtsModel), and it
- * answers with a WAV file rather than headerless PCM.
+ * It is called differently from the 3.1 preview it replaced — see
+ * isVerbatimGeminiTtsModel.
  */
 export const GEMINI_TTS_MODEL = "gemini-3.8-flash-tts";
 
@@ -524,8 +529,23 @@ export function teacherInstructions(lang: string) {
  * settled both open questions itself: which language a word like "so" is in,
  * and whether "lacht" is a word to pronounce or a laugh to perform.
  */
+/**
+ * The style annotation a verbatim-transcript model is given alongside the text.
+ *
+ * Naming the language is what makes a lone German "so" come out as [zoː]
+ * rather than [soʊ]: these models take no language code. Null when we have no
+ * name for the language — better to let the model guess than to say something
+ * wrong.
+ */
+export function buildGeminiSpeechStyle(lang: string): string | null {
+  const language = getLanguageName(lang);
+  if (!language) return null;
+  return `Native ${language} speaker reading ${language} text aloud with standard ${language} pronunciation. `
+    + "Calm, clear teacher's voice; speak only the words, with no laughter or sound effects.";
+}
+
 export function buildGeminiSpeechPrompt(text: string, lang: string, model?: string) {
-  // The language still reaches these models, through speechConfig.languageCode.
+  // Their direction travels separately, in buildGeminiSpeechStyle.
   if (model && isVerbatimGeminiTtsModel(model)) return text;
 
   const language = getLanguageName(lang);
