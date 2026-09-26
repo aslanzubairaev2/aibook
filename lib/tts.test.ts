@@ -83,6 +83,7 @@ function serve(server: Server) {
 const {
   speak, respeak, getTTSState, getLastTtsError,
   prefetchSpeech, prefetchSpeechAhead, SPEECH_PREFETCH_AHEAD,
+  GEMINI_PREFETCH_RPM_BUDGET, resetGeminiPrefetchPacing,
 } = await import("./tts.ts");
 const { saveLocalProfile } = await import("./db/local.ts");
 
@@ -91,9 +92,23 @@ async function settle() {
   for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/**
+ * The pacing tests mock `setTimeout` (to fast-forward the per-minute wait
+ * without a real minute passing), which leaves `settle()`'s own timer paused
+ * too. Draining plain microtasks instead reaches the same place: every step
+ * before a paced wait is `.then()` chaining, not a timer.
+ */
+async function flushMicrotasks(rounds = 200) {
+  for (let i = 0; i < rounds; i++) await Promise.resolve();
+}
+
 function useProvider(ttsProvider: string) {
   cacheStore.clear();
   localStore.clear();
+  // Otherwise whatever an earlier case spent of the per-minute Gemini budget
+  // is still spent, and a later case that never touches pacing on purpose
+  // could find itself waiting out a real minute for a slot.
+  resetGeminiPrefetchPacing();
   saveLocalProfile({
     nativeLanguage: "ru", targetLanguage: "de", uiLanguage: "ru",
     readingMinutes: 0, booksStarted: 0, booksFinished: 0, savedItems: 0,
@@ -369,6 +384,57 @@ test("the noun drill prefetches four recordings one at a time", async () => {
 
   assert.deepEqual(asked, ["eins", "zwei", "drei", "vier"]);
   assert.equal(peakRequestsInFlight, 1);
+});
+
+test("prefetch paces itself under Gemini's 10-per-minute limit", async (t) => {
+  useProvider("gemini");
+  const asked: string[] = [];
+  g.fetch = async (_url: string, init: { body: string }) => {
+    asked.push(JSON.parse(init.body).text);
+    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  };
+
+  // Date is mocked alongside setTimeout: the limiter reads Date.now() to size
+  // its wait, and ticking the clock without moving Date.now() with it would
+  // have the limiter see almost no time passed and reschedule itself forever.
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+
+  const words = Array.from({ length: GEMINI_PREFETCH_RPM_BUDGET + 1 }, (_, i) => `wort${i}`);
+  const done = prefetchSpeechAhead(words, "de", "default", words.length);
+
+  // Nothing here waits on a real timer yet — every dispatch up to the budget
+  // is pure microtask chaining — so flushing the microtask queue is enough.
+  await flushMicrotasks();
+  assert.equal(asked.length, GEMINI_PREFETCH_RPM_BUDGET, "the word past the budget should still be waiting");
+
+  t.mock.timers.tick(60_100);
+  await flushMicrotasks();
+  await done;
+
+  assert.equal(asked.length, GEMINI_PREFETCH_RPM_BUDGET + 1);
+});
+
+test("an on-demand play never waits behind the prefetch pacing queue", async (t) => {
+  useProvider("gemini");
+  const asked: string[] = [];
+  g.fetch = async (_url: string, init: { body: string }) => {
+    asked.push(JSON.parse(init.body).text);
+    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  };
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+
+  // Exhaust the per-minute budget with background prefetches, without waiting
+  // for the one behind it.
+  const words = Array.from({ length: GEMINI_PREFETCH_RPM_BUDGET }, (_, i) => `wort${i}`);
+  void prefetchSpeechAhead(words, "de", "default", words.length);
+  await flushMicrotasks();
+  assert.equal(asked.length, GEMINI_PREFETCH_RPM_BUDGET);
+
+  // The word the learner is looking at right now must still speak at once —
+  // pacing is for background work, never for what is on screen.
+  await speak("Jetzt", "de");
+  assert.ok(asked.includes("Jetzt"));
 });
 
 test("a prefetch that fails does not caption the card played next", async () => {

@@ -70,6 +70,43 @@ test("a spent day outranks a per-minute violation in the same response", () => {
   assert.equal(diagnoseQuotaError(body).limit, "100");
 });
 
+test("reads the flat rate-limit shape the Interactions API answers with (no details array)", () => {
+  // Captured verbatim from a real 429 against gemini-3.8-flash-tts.
+  const body = JSON.stringify({
+    error: {
+      message: "Rate limit exceeded for model gemini-3.8-flash-tts (limit: 10 requests per minute on Tier 1). "
+        + "Please retry in 54s or upgrade your tier at https://ai.dev/rate-limit.",
+      code: "too_many_requests",
+    },
+  });
+  const d = diagnoseQuotaError(body);
+  assert.equal(d.window, "minute");
+  assert.equal(d.freeTier, false);
+  assert.equal(d.limit, "10");
+  assert.equal(d.retryAfterSeconds, 54);
+  assert.equal(d.quotaId, null);
+});
+
+test("a flat per-day message is read the same way", () => {
+  const body = JSON.stringify({
+    error: {
+      message: "Rate limit exceeded for model gemini-3.8-flash-tts (limit: 100 requests per day on Tier 1).",
+      code: "too_many_requests",
+    },
+  });
+  const d = diagnoseQuotaError(body);
+  assert.equal(d.window, "day");
+  assert.equal(d.limit, "100");
+  assert.equal(d.retryAfterSeconds, null);
+});
+
+test("a flat message naming the free tier is still recognised as one", () => {
+  const body = JSON.stringify({
+    error: { message: "Rate limit exceeded for model x (limit: 10 requests per minute on Free Tier).", code: "too_many_requests" },
+  });
+  assert.equal(diagnoseQuotaError(body).freeTier, true);
+});
+
 test("survives a body that is not the JSON we expect", () => {
   const html = diagnoseQuotaError("<html>429 Too Many Requests</html>");
   assert.equal(html.window, "unknown");

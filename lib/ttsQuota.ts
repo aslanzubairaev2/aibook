@@ -67,13 +67,41 @@ export function diagnoseQuotaError(rawBody: string): QuotaDiagnosis {
     (d) => typeof d?.["@type"] === "string" && d["@type"].includes("RetryInfo"),
   );
 
+  const message = typeof error?.message === "string" ? error.message : null;
+
+  // The Interactions API (gemini-3.8-flash-tts and later) reports a 429 as a
+  // flat { error: { message, code } } with no `details` array at all — none of
+  // the parsing above finds anything, but the numbers are right there in the
+  // sentence: "Rate limit exceeded for model gemini-3.8-flash-tts (limit: 10
+  // requests per minute on Tier 1). Please retry in 54s [...]".
+  if (!chosen) {
+    const flat = message ? parseFlatRateLimitMessage(message) : null;
+    if (flat) return { ...flat, message, quotaId: null };
+  }
+
   return {
     window: chosen ? describesWindow(chosen) : "unknown",
     freeTier: violations.some((v) => /free[_ ]?tier/i.test(`${v.quotaId ?? ""}${v.quotaMetric ?? ""}`)),
     limit: chosen?.quotaValue ?? null,
     retryAfterSeconds: parseRetryDelay(retryInfo?.retryDelay),
-    message: typeof error?.message === "string" ? error.message : null,
+    message,
     quotaId: chosen?.quotaId ?? null,
+  };
+}
+
+function parseFlatRateLimitMessage(
+  message: string,
+): Pick<QuotaDiagnosis, "window" | "freeTier" | "limit" | "retryAfterSeconds"> | null {
+  const limitMatch = /limit:\s*(\d+)\s*requests?\s*per\s*(minute|day)/i.exec(message);
+  if (!limitMatch) return null;
+
+  const retryMatch = /retry in\s*(\d+)\s*s\b/i.exec(message);
+  return {
+    window: limitMatch[2].toLowerCase() === "day" ? "day" : "minute",
+    // These bodies name the tier explicitly ("on Tier 1"); nothing to guess.
+    freeTier: /free[_ ]?tier/i.test(message),
+    limit: limitMatch[1],
+    retryAfterSeconds: retryMatch ? Number(retryMatch[1]) : null,
   };
 }
 

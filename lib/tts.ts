@@ -426,6 +426,45 @@ async function requestTts(
 }
 
 /**
+ * Client-side pacing for Gemini's real-time rate limit.
+ *
+ * Confirmed against the live API in September 2026: 10 requests/minute per
+ * TTS model on this app's tier (Gemini also caps each model at 100/day, but
+ * no amount of pacing gets around that one — see GEMINI_TTS_FALLBACK_MODELS,
+ * which spends a second model's day rather than waiting out the first's).
+ *
+ * Only prefetch is paced. An on-demand play is a word the learner is looking
+ * at right now, so it always fires immediately and takes its chances with the
+ * 429-and-fall-back path that already existed — the same as always. Prefetch
+ * has nothing but time: waiting a few seconds for a slot costs it nothing,
+ * where tripping the limit spends a paid fallback provider's quota on a word
+ * nobody has asked to hear yet. The budget sits under 10 so an on-demand play
+ * always has room in the same window.
+ */
+export const GEMINI_PREFETCH_RPM_BUDGET = 6;
+const geminiPrefetchRequestTimes: number[] = [];
+
+/** Test-only: start a case with a clean budget rather than whatever earlier cases spent. */
+export function resetGeminiPrefetchPacing(): void {
+  geminiPrefetchRequestTimes.length = 0;
+}
+
+async function waitForGeminiPrefetchSlot(): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    while (geminiPrefetchRequestTimes.length && now - geminiPrefetchRequestTimes[0] >= 60_000) {
+      geminiPrefetchRequestTimes.shift();
+    }
+    if (geminiPrefetchRequestTimes.length < GEMINI_PREFETCH_RPM_BUDGET) {
+      geminiPrefetchRequestTimes.push(now);
+      return;
+    }
+    const waitMs = 60_000 - (now - geminiPrefetchRequestTimes[0]) + 100;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+}
+
+/**
  * How many upcoming recordings to fetch before they are needed.
  *
  * One would cover a learner working steadily through a session. Two covers the
@@ -505,6 +544,7 @@ export async function prefetchSpeech(text: string, lang: string, cacheScope: Tts
     } catch {
       return null;
     }
+    if (provider === "gemini") await waitForGeminiPrefetchSlot();
     return requestTts(text, lang, provider, cacheKey, cacheScope, { silent: true });
   })();
   inFlight.set(cacheKey, pending);
