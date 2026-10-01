@@ -437,6 +437,43 @@ test("an on-demand play never waits behind the prefetch pacing queue", async (t)
   assert.ok(asked.includes("Jetzt"));
 });
 
+test("an on-demand play for the exact word still stuck in the prefetch queue speaks immediately", async (t) => {
+  // The real bug, not a nearby one: a card's own word was already queued for
+  // prefetch and is still waiting for a rate-limit slot when the card
+  // appears. The reservation prefetchSpeech makes for that word must not
+  // exist yet while it is only waiting — otherwise `play()` finds it, joins
+  // it instead of asking fresh, and sits out the same minute-long wait the
+  // background queue is sitting out. Shipped broken once; this is the case
+  // the previous test's distinct word didn't exercise.
+  useProvider("gemini");
+  const asked: string[] = [];
+  g.fetch = async (_url: string, init: { body: string }) => {
+    asked.push(JSON.parse(init.body).text);
+    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
+  };
+
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+
+  const words = Array.from({ length: GEMINI_PREFETCH_RPM_BUDGET }, (_, i) => `wort${i}`);
+  const stuckWord = "Jetzt";
+  const prefetching = prefetchSpeechAhead([...words, stuckWord], "de", "default", words.length + 1);
+  await flushMicrotasks();
+  assert.equal(asked.length, GEMINI_PREFETCH_RPM_BUDGET);
+  assert.ok(!asked.includes(stuckWord), "its prefetch should still be waiting for a slot, not sent");
+
+  // The learner reaches exactly this card right now.
+  const playing = speak(stuckWord, "de");
+  await flushMicrotasks();
+  assert.ok(asked.includes(stuckWord), "an on-demand play must not wait behind its own queued prefetch");
+  await playing;
+
+  // Drain the still-pending prefetch so it doesn't leak a dangling mocked
+  // timer into tests that run after this one.
+  t.mock.timers.tick(60_100);
+  await flushMicrotasks();
+  await prefetching;
+});
+
 test("a prefetch that fails does not caption the card played next", async () => {
   // `lastTtsError` explains the voice coming out of the speaker right now. A
   // request made ahead of time is not about anything the learner is hearing, so

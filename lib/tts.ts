@@ -440,6 +440,13 @@ async function requestTts(
  * where tripping the limit spends a paid fallback provider's quota on a word
  * nobody has asked to hear yet. The budget sits under 10 so an on-demand play
  * always has room in the same window.
+ *
+ * Called from enqueueSpeechPrefetch, strictly before prefetchSpeech reserves
+ * the cache key — not from inside prefetchSpeech itself. A card that needs
+ * this exact word right now must see no reservation at all while this is
+ * waiting, so it starts its own request rather than queuing behind a wait
+ * that has nothing to do with it (this shipped once already — see the 2026-10
+ * fix and the comment at prefetchSpeech's reservation).
  */
 export const GEMINI_PREFETCH_RPM_BUDGET = 6;
 const geminiPrefetchRequestTimes: number[] = [];
@@ -494,6 +501,13 @@ function enqueueSpeechPrefetch(text: string, lang: string, cacheScope: TtsCacheS
   if (queued) return queued;
 
   const job = prefetchTail
+    .then(async () => {
+      // Paced here, strictly before prefetchSpeech reserves the cache key —
+      // see the comment at that reservation for why the order matters.
+      const profile = getLocalProfile();
+      const provider = resolveProvider(profile.ttsProvider ?? "local", lang);
+      if (provider === "gemini") await waitForGeminiPrefetchSlot();
+    })
     .then(() => prefetchSpeech(text, lang, cacheScope))
     .catch((error) => { console.warn("TTS prefetch failed", error); });
   // A failed background request must never block the words behind it.
@@ -537,6 +551,11 @@ export async function prefetchSpeech(text: string, lang: string, cacheScope: Tts
   // Reserve the key before the first await. Otherwise two prefetches (or a
   // play during cache lookup) can both miss inFlight and request the same
   // recording from the provider.
+  //
+  // Pacing happens one layer up, in enqueueSpeechPrefetch, strictly before
+  // this reservation — never here. A key reserved while only waiting for a
+  // rate-limit slot is a key `speak()` would find and wait behind for the
+  // same reason, and the word on screen right now must never wait on that.
   const pending = (async (): Promise<Recording | null> => {
     try {
       const cache = await caches.open("aibook-tts-cache");
@@ -544,7 +563,6 @@ export async function prefetchSpeech(text: string, lang: string, cacheScope: Tts
     } catch {
       return null;
     }
-    if (provider === "gemini") await waitForGeminiPrefetchSlot();
     return requestTts(text, lang, provider, cacheKey, cacheScope, { silent: true });
   })();
   inFlight.set(cacheKey, pending);
