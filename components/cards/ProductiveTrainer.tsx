@@ -125,12 +125,16 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
   // arrival, the others when the answer is revealed — so both waits are worth
   // getting out of the way while the learner is still typing. This one's word
   // goes first, since its reveal is only a few seconds off.
+  //
+  // The whole rest of the queue, not a fixed few: this session's round-robin
+  // queue is already the committed, capped set the learner is about to train
+  // (see buildActiveQueue's session cap), not an open-ended deck.
   useEffect(() => {
     const upcoming = queue
       .slice(index)
       .filter((next, offset) => offset > 0 || shouldSpeakOnReveal(next.skill))
       .map((next) => next.card.front);
-    void prefetchSpeechAhead(upcoming, targetLanguage);
+    void prefetchSpeechAhead(upcoming, targetLanguage, "default", upcoming.length);
   }, [queue, index, targetLanguage]);
 
   function restart() {

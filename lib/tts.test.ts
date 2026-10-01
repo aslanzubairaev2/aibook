@@ -83,32 +83,19 @@ function serve(server: Server) {
 const {
   speak, respeak, getTTSState, getLastTtsError,
   prefetchSpeech, prefetchSpeechAhead, SPEECH_PREFETCH_AHEAD,
-  GEMINI_PREFETCH_RPM_BUDGET, resetGeminiPrefetchPacing,
+  ttsCacheKey,
 } = await import("./tts.ts");
 const { saveLocalProfile } = await import("./db/local.ts");
+const { GEMINI_TTS_MODEL } = await import("./ttsProviders.ts");
 
 /** Let the prefetches started without awaiting actually reach the network. */
 async function settle() {
   for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/**
- * The pacing tests mock `setTimeout` (to fast-forward the per-minute wait
- * without a real minute passing), which leaves `settle()`'s own timer paused
- * too. Draining plain microtasks instead reaches the same place: every step
- * before a paced wait is `.then()` chaining, not a timer.
- */
-async function flushMicrotasks(rounds = 200) {
-  for (let i = 0; i < rounds; i++) await Promise.resolve();
-}
-
 function useProvider(ttsProvider: string) {
   cacheStore.clear();
   localStore.clear();
-  // Otherwise whatever an earlier case spent of the per-minute Gemini budget
-  // is still spent, and a later case that never touches pacing on purpose
-  // could find itself waiting out a real minute for a slot.
-  resetGeminiPrefetchPacing();
   saveLocalProfile({
     nativeLanguage: "ru", targetLanguage: "de", uiLanguage: "ru",
     readingMinutes: 0, booksStarted: 0, booksFinished: 0, savedItems: 0,
@@ -202,6 +189,35 @@ test("switching the chosen voice does not play the previous one back", async () 
   await speak("Guten Tag!", "de");
 
   assert.equal(server.calls, 2);
+});
+
+// ─── The cache key names the model, not just the engine ─────────────────────
+//
+// Gemini's default model has moved more than once (3.1 → 3.8, and it will
+// move again). Nothing in Settings changes when that happens — the learner
+// never touched "chosen model" — so if the cache key only named the engine
+// ("gemini") a swap would be invisible to it, and whichever model answered
+// first would keep being served under a name indistinguishable from any
+// later default.
+
+test("the cache key names Gemini's actual default model, not a bare 'gemini' bucket", () => {
+  useProvider("gemini");
+  assert.match(ttsCacheKey("Hallo", "gemini", "de"), new RegExp(`^tts-gemini-${GEMINI_TTS_MODEL}\\b`));
+});
+
+test("choosing a model in Settings still overrides the app's default in the key", () => {
+  useProvider("gemini");
+  const defaultKey = ttsCacheKey("Hallo", "gemini", "de");
+
+  saveLocalProfile({
+    nativeLanguage: "ru", targetLanguage: "de", uiLanguage: "ru",
+    readingMinutes: 0, booksStarted: 0, booksFinished: 0, savedItems: 0,
+    ttsProvider: "gemini", ttsModels: { gemini: "gemini-2.5-pro-preview-tts" },
+  } as never);
+  const chosenKey = ttsCacheKey("Hallo", "gemini", "de");
+
+  assert.notEqual(defaultKey, chosenKey);
+  assert.match(chosenKey, /gemini-2\.5-pro-preview-tts/);
 });
 
 // ─── Fetching ahead ──────────────────────────────────────────────────────────
@@ -384,94 +400,6 @@ test("the noun drill prefetches four recordings one at a time", async () => {
 
   assert.deepEqual(asked, ["eins", "zwei", "drei", "vier"]);
   assert.equal(peakRequestsInFlight, 1);
-});
-
-test("prefetch paces itself under Gemini's 10-per-minute limit", async (t) => {
-  useProvider("gemini");
-  const asked: string[] = [];
-  g.fetch = async (_url: string, init: { body: string }) => {
-    asked.push(JSON.parse(init.body).text);
-    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
-  };
-
-  // Date is mocked alongside setTimeout: the limiter reads Date.now() to size
-  // its wait, and ticking the clock without moving Date.now() with it would
-  // have the limiter see almost no time passed and reschedule itself forever.
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
-
-  const words = Array.from({ length: GEMINI_PREFETCH_RPM_BUDGET + 1 }, (_, i) => `wort${i}`);
-  const done = prefetchSpeechAhead(words, "de", "default", words.length);
-
-  // Nothing here waits on a real timer yet — every dispatch up to the budget
-  // is pure microtask chaining — so flushing the microtask queue is enough.
-  await flushMicrotasks();
-  assert.equal(asked.length, GEMINI_PREFETCH_RPM_BUDGET, "the word past the budget should still be waiting");
-
-  t.mock.timers.tick(60_100);
-  await flushMicrotasks();
-  await done;
-
-  assert.equal(asked.length, GEMINI_PREFETCH_RPM_BUDGET + 1);
-});
-
-test("an on-demand play never waits behind the prefetch pacing queue", async (t) => {
-  useProvider("gemini");
-  const asked: string[] = [];
-  g.fetch = async (_url: string, init: { body: string }) => {
-    asked.push(JSON.parse(init.body).text);
-    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
-  };
-
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-
-  // Exhaust the per-minute budget with background prefetches, without waiting
-  // for the one behind it.
-  const words = Array.from({ length: GEMINI_PREFETCH_RPM_BUDGET }, (_, i) => `wort${i}`);
-  void prefetchSpeechAhead(words, "de", "default", words.length);
-  await flushMicrotasks();
-  assert.equal(asked.length, GEMINI_PREFETCH_RPM_BUDGET);
-
-  // The word the learner is looking at right now must still speak at once —
-  // pacing is for background work, never for what is on screen.
-  await speak("Jetzt", "de");
-  assert.ok(asked.includes("Jetzt"));
-});
-
-test("an on-demand play for the exact word still stuck in the prefetch queue speaks immediately", async (t) => {
-  // The real bug, not a nearby one: a card's own word was already queued for
-  // prefetch and is still waiting for a rate-limit slot when the card
-  // appears. The reservation prefetchSpeech makes for that word must not
-  // exist yet while it is only waiting — otherwise `play()` finds it, joins
-  // it instead of asking fresh, and sits out the same minute-long wait the
-  // background queue is sitting out. Shipped broken once; this is the case
-  // the previous test's distinct word didn't exercise.
-  useProvider("gemini");
-  const asked: string[] = [];
-  g.fetch = async (_url: string, init: { body: string }) => {
-    asked.push(JSON.parse(init.body).text);
-    return { ok: true, json: async () => ({ audioBase64: SILENCE, provider: "gemini" }) };
-  };
-
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
-
-  const words = Array.from({ length: GEMINI_PREFETCH_RPM_BUDGET }, (_, i) => `wort${i}`);
-  const stuckWord = "Jetzt";
-  const prefetching = prefetchSpeechAhead([...words, stuckWord], "de", "default", words.length + 1);
-  await flushMicrotasks();
-  assert.equal(asked.length, GEMINI_PREFETCH_RPM_BUDGET);
-  assert.ok(!asked.includes(stuckWord), "its prefetch should still be waiting for a slot, not sent");
-
-  // The learner reaches exactly this card right now.
-  const playing = speak(stuckWord, "de");
-  await flushMicrotasks();
-  assert.ok(asked.includes(stuckWord), "an on-demand play must not wait behind its own queued prefetch");
-  await playing;
-
-  // Drain the still-pending prefetch so it doesn't leak a dangling mocked
-  // timer into tests that run after this one.
-  t.mock.timers.tick(60_100);
-  await flushMicrotasks();
-  await prefetching;
 });
 
 test("a prefetch that fails does not caption the card played next", async () => {

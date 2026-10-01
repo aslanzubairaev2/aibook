@@ -321,10 +321,16 @@ function chosenModelFor(provider: string): string | undefined {
 }
 
 /** Cache key for one recording. Shared by `speak()` and the whole-text narration. */
-function ttsCacheKey(text: string, provider: string, lang: string, cacheScope: TtsCacheScope = "default"): string {
+export function ttsCacheKey(text: string, provider: string, lang: string, cacheScope: TtsCacheScope = "default"): string {
   // The model belongs in the key for the same reason the voice does: switching
-  // it must not play back what the previous one recorded.
-  const model = chosenModelFor(provider);
+  // it must not play back what the previous one recorded. Falling back to
+  // "no model" when the learner hasn't chosen one in Settings would be wrong
+  // for Gemini specifically — its default has moved more than once, and a key
+  // that ignores the model would keep serving whichever model's recording got
+  // there first, indistinguishably from any later default. GEMINI_TTS_MODEL is
+  // what the server actually uses when no model was chosen, so that is what
+  // goes in the key too.
+  const model = chosenModelFor(provider) ?? (provider === "gemini" ? GEMINI_TTS_MODEL : undefined);
   const engine = model ? `${provider}-${model}` : provider;
   // And so does the direction, for the engines that take one — but only those.
   // The rest make the same sound they always did, and expiring their recordings
@@ -426,57 +432,17 @@ async function requestTts(
 }
 
 /**
- * Client-side pacing for Gemini's real-time rate limit.
+ * How many upcoming recordings to fetch before they are needed, when a caller
+ * does not already know its own queue is short and fully committed.
  *
- * Confirmed against the live API in September 2026: 10 requests/minute per
- * TTS model on this app's tier (Gemini also caps each model at 100/day, but
- * no amount of pacing gets around that one — see GEMINI_TTS_FALLBACK_MODELS,
- * which spends a second model's day rather than waiting out the first's).
- *
- * Only prefetch is paced. An on-demand play is a word the learner is looking
- * at right now, so it always fires immediately and takes its chances with the
- * 429-and-fall-back path that already existed — the same as always. Prefetch
- * has nothing but time: waiting a few seconds for a slot costs it nothing,
- * where tripping the limit spends a paid fallback provider's quota on a word
- * nobody has asked to hear yet. The budget sits under 10 so an on-demand play
- * always has room in the same window.
- *
- * Called from enqueueSpeechPrefetch, strictly before prefetchSpeech reserves
- * the cache key — not from inside prefetchSpeech itself. A card that needs
- * this exact word right now must see no reservation at all while this is
- * waiting, so it starts its own request rather than queuing behind a wait
- * that has nothing to do with it (this shipped once already — see the 2026-10
- * fix and the comment at prefetchSpeech's reservation).
- */
-export const GEMINI_PREFETCH_RPM_BUDGET = 6;
-const geminiPrefetchRequestTimes: number[] = [];
-
-/** Test-only: start a case with a clean budget rather than whatever earlier cases spent. */
-export function resetGeminiPrefetchPacing(): void {
-  geminiPrefetchRequestTimes.length = 0;
-}
-
-async function waitForGeminiPrefetchSlot(): Promise<void> {
-  for (;;) {
-    const now = Date.now();
-    while (geminiPrefetchRequestTimes.length && now - geminiPrefetchRequestTimes[0] >= 60_000) {
-      geminiPrefetchRequestTimes.shift();
-    }
-    if (geminiPrefetchRequestTimes.length < GEMINI_PREFETCH_RPM_BUDGET) {
-      geminiPrefetchRequestTimes.push(now);
-      return;
-    }
-    const waitMs = 60_000 - (now - geminiPrefetchRequestTimes[0]) + 100;
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-  }
-}
-
-/**
- * How many upcoming recordings to fetch before they are needed.
- *
- * One would cover a learner working steadily through a session. Two covers the
- * one moving quickly, without turning a session they abandon halfway into a
- * pile of recordings nobody ever hears.
+ * Tried pacing this against Gemini's per-minute cap instead, once (2026-09 to
+ * 2026-10, since reverted): it made every background fetch queue behind a
+ * wait meant to protect a quota that four fallback models and two further
+ * providers already protect well enough on their own (see
+ * GEMINI_TTS_FALLBACK_MODELS and getTtsProviderChain), and the learner felt
+ * it as the app going slow on every card rather than just the rare one. The
+ * single lane below already keeps requests to one at a time, in order, which
+ * is the pacing that actually matters here.
  */
 export const SPEECH_PREFETCH_AHEAD = 2;
 
@@ -501,13 +467,6 @@ function enqueueSpeechPrefetch(text: string, lang: string, cacheScope: TtsCacheS
   if (queued) return queued;
 
   const job = prefetchTail
-    .then(async () => {
-      // Paced here, strictly before prefetchSpeech reserves the cache key —
-      // see the comment at that reservation for why the order matters.
-      const profile = getLocalProfile();
-      const provider = resolveProvider(profile.ttsProvider ?? "local", lang);
-      if (provider === "gemini") await waitForGeminiPrefetchSlot();
-    })
     .then(() => prefetchSpeech(text, lang, cacheScope))
     .catch((error) => { console.warn("TTS prefetch failed", error); });
   // A failed background request must never block the words behind it.
@@ -551,11 +510,6 @@ export async function prefetchSpeech(text: string, lang: string, cacheScope: Tts
   // Reserve the key before the first await. Otherwise two prefetches (or a
   // play during cache lookup) can both miss inFlight and request the same
   // recording from the provider.
-  //
-  // Pacing happens one layer up, in enqueueSpeechPrefetch, strictly before
-  // this reservation — never here. A key reserved while only waiting for a
-  // rate-limit slot is a key `speak()` would find and wait behind for the
-  // same reason, and the word on screen right now must never wait on that.
   const pending = (async (): Promise<Recording | null> => {
     try {
       const cache = await caches.open("aibook-tts-cache");

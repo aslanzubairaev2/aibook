@@ -708,12 +708,16 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // plays, so its fetch cannot begin until the learner is already looking at a
   // blank prompt waiting for sound. Asking for the ones further down the queue
   // while this card is being answered means each arrives already fetched.
+  //
+  // The whole rest of trainQueue, not a fixed few: every card in it already
+  // cleared the session's filters and is going to be trained, so none of this
+  // is a guess spent on a card the learner might not reach.
   useEffect(() => {
     const upcoming = trainQueue
       .slice(currentTrainIndex + 1)
       .filter((item) => item.variant === "audio")
       .map((item) => item.card.front);
-    void prefetchSpeechAhead(upcoming, targetLanguage);
+    void prefetchSpeechAhead(upcoming, targetLanguage, "default", upcoming.length);
   }, [trainQueue, currentTrainIndex, targetLanguage]);
 
   // Switching tabs starts its list from the top again.

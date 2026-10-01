@@ -53,7 +53,6 @@ type AnsweredStep = {
 /** The three articles a German noun can take — the whole decision space, so the whole option list. */
 const ARTICLE_CHOICES = ["der", "die", "das"];
 const ARTICLE_SHORTCUT_LABEL: Record<string, string> = { der: "8", die: "5", das: "2" };
-const NOUN_ARTICLE_PREFETCH_AHEAD = 4;
 
 type NounQuizStep = {
   /** `${entry.id}:${mode}` — stable across reshuffles, so React keys track the right step. */
@@ -230,13 +229,15 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
     if (regenerationAttemptRef.current?.key === step?.key) regenerationAttemptRef.current.cancelled = true;
   }, [step?.key]);
 
-  // While the current answer is being chosen, fetch the next four audio
-  // prompts. The player uses this same article-free cache scope on arrival.
+  // While the current answer is being chosen, fetch every remaining audio
+  // prompt in this quiz. The player uses this same article-free cache scope
+  // on arrival. The whole rest of the queue, not a fixed few: it is this
+  // quiz's already-built, already-committed step list, not an open deck.
   useEffect(() => {
-    const upcoming = queue.slice(index + 1, index + 1 + NOUN_ARTICLE_PREFETCH_AHEAD)
+    const upcoming = queue.slice(index + 1)
       .filter((next) => next.mode === "article" && next.presentation === "audio")
       .map((next) => bareNoun(next.entry));
-    void prefetchSpeechAhead(upcoming, targetLanguage, NOUN_ARTICLE_TTS_CACHE_SCOPE, NOUN_ARTICLE_PREFETCH_AHEAD);
+    void prefetchSpeechAhead(upcoming, targetLanguage, NOUN_ARTICLE_TTS_CACHE_SCOPE, upcoming.length);
   }, [queue, index, targetLanguage]);
 
   // A fresh step: cursor straight into the first field on a computer, so
