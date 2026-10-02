@@ -107,7 +107,7 @@ test("dictionary-made card backs give their forms and drop them from details", (
   const { forms, rest } = extractVerbFormsFromDetails("Präteritum: backte · Partizip II: gebacken · вспом. глагол: haben · отделяемая: нет\nпримечание");
   assert.deepEqual(forms, { praeteritum: "backte", partizip2: "gebacken", hilfsverb: "haben", trennbar: "нет" });
   assert.equal(rest, "примечание");
-  assert.deepEqual(extractVerbFormsFromDetails("мн. ч.: Häuser"), { forms: {}, rest: "мн. ч.: Häuser" });
+  assert.deepEqual(extractVerbFormsFromDetails("примечание · род: m"), { forms: {}, rest: "примечание · род: m" });
 });
 
 test("raw storage keys and empty placeholders are cleaned from card backs too", () => {
@@ -117,4 +117,10 @@ test("raw storage keys and empty placeholders are cleaned from card backs too", 
   const b = extractVerbFormsFromDetails("мн. ч.: нет данных для глагола · hilfsverb: sein · partizip2: geworden · praeteritum: wurde");
   assert.deepEqual(b.forms, { hilfsverb: "sein", partizip2: "geworden", praeteritum: "wurde" });
   assert.equal(b.rest, "");
+});
+
+test("a verb back drops the bogus plural", () => {
+  const r = extractVerbFormsFromDetails("мн. ч.: sollen · Präteritum: sollte");
+  assert.deepEqual(r.forms, { praeteritum: "sollte" });
+  assert.equal(r.rest, "");
 });
