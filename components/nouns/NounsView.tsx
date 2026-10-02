@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
 import {
+  clearLocalNounQuizSessions,
   getLocalNounsDict, getLocalNounsHideArticles, getLocalNounsHideForms, getLocalNounsOpenGroups, getLocalNounsQuizModes, getLocalNounsQuizPresentations, getLocalTrainingFilter,
   saveLocalNounsDict, saveLocalNounsHideArticles, saveLocalNounsHideForms, saveLocalNounsOpenGroups, saveLocalNounsQuizModes, saveLocalNounsQuizPresentations, saveLocalTrainingFilter,
 } from "@/lib/db/local";
@@ -99,7 +100,8 @@ export function NounsView({ profile, onBack }: Props) {
   const [fillingIds, setFillingIds] = useState<Set<string>>(new Set());
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
-  const { progress, startSession, record, reset, resetAll } = usePackProgress("nouns");
+  const { progress, startSession, markSeen, record, reset, resetAll } = usePackProgress("nouns");
+  const [quizSessionKey, setQuizSessionKey] = useState("");
 
   const loadDictionary = useCallback(async () => {
     if (!userId) { setEntries([]); setBatches([]); setIsLoading(false); return; }
@@ -277,15 +279,25 @@ export function NounsView({ profile, onBack }: Props) {
     });
 
   /** Starts a session on one pack — stamps it, then hands the words to the quiz. */
-  function trainPack(packKey: string, packNouns: DictionaryEntry[]) {
+  function trainPack(packKey: string, packNouns: DictionaryEntry[], variant: TrainingFilter) {
     if (packNouns.length === 0) return;
     startSession(packKey);
+    // The whole pack and its «Незнакомые»/«Сложные» subsets are different
+    // rounds; each resumes where it was left without overwriting the other.
+    setQuizSessionKey(`${packKey}|${variant}`);
     setQuizNouns(packNouns);
+  }
+
+  /** A pack reset is also the way to start its quiz from the beginning. */
+  function resetPack(packKey: string, packNouns: DictionaryEntry[]) {
+    reset(packNouns.map((n) => n.id), packKey);
+    clearLocalNounQuizSessions(packKey);
   }
 
   function resetAllTrainingProgress() {
     if (typeof window !== "undefined" && !window.confirm("Сбросить прогресс всех пачек существительных?")) return;
     resetAll();
+    clearLocalNounQuizSessions();
     setToast("Прогресс всех пачек сброшен");
   }
 
@@ -399,8 +411,10 @@ export function NounsView({ profile, onBack }: Props) {
         canRegenerateAudio={profile.ttsProvider !== "local"}
         modes={quizModes}
         presentations={quizPresentations}
+        sessionKey={quizSessionKey}
         onExit={onBack}
         onRecord={record}
+        onResume={markSeen}
       />
     );
   }
@@ -527,7 +541,7 @@ export function NounsView({ profile, onBack }: Props) {
                 type="button"
                 className="dict-train-btn verbs-train-all-btn"
                 disabled={trainingNouns.length === 0}
-                onClick={() => trainPack("__all__", trainingNouns)}
+                onClick={() => trainPack("__all__", trainingNouns, trainingFilter)}
                 title={trainingNouns.length === 0 ? "Для этого фильтра пока нет слов" : undefined}
               >
                 <Dumbbell size={14} /> {trainingFilter === "all" ? "Тренировать всё" : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"}`}
@@ -656,7 +670,7 @@ export function NounsView({ profile, onBack }: Props) {
                     <PackBar coverage={coverage} />
 
                     <div className="dict-batch-actions">
-                      <button type="button" className="dict-train-btn" disabled={sessionNouns.length === 0} onClick={() => trainPack(group.key, sessionNouns)}>
+                      <button type="button" className="dict-train-btn" disabled={sessionNouns.length === 0} onClick={() => trainPack(group.key, sessionNouns, trainingFilter)}>
                         <Dumbbell size={14} />
                         {trainingFilter !== "all" ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${trainable.length})` : coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
                       </button>
@@ -664,7 +678,7 @@ export function NounsView({ profile, onBack }: Props) {
                         <button
                           type="button"
                           className="dict-train-btn"
-                          onClick={() => trainPack(group.key, unfamiliar)}
+                          onClick={() => trainPack(group.key, unfamiliar, "unfamiliar")}
                         >
                           Незнакомые ({unfamiliar.length})
                         </button>
@@ -675,7 +689,7 @@ export function NounsView({ profile, onBack }: Props) {
                           className="icon-btn"
                           aria-label="Сбросить прогресс пачки"
                           title="Сбросить прогресс этой пачки"
-                          onClick={() => reset(group.nouns.map((n) => n.id), group.key)}
+                          onClick={() => resetPack(group.key, group.nouns)}
                         >
                           <RotateCcw size={15} />
                         </button>

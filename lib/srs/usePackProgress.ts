@@ -27,6 +27,11 @@ export function usePackProgress(module: PackModule) {
     });
   }, [module]);
 
+  /** A resumed session: these words were already answered in it before the page closed. */
+  const markSeen = useCallback((entryIds: string[]) => {
+    for (const id of entryIds) seenRef.current.add(id);
+  }, []);
+
   const record = useCallback((entryId: string, correct: boolean) => {
     const first = !seenRef.current.has(entryId);
     seenRef.current.add(entryId);
@@ -61,5 +66,5 @@ export function usePackProgress(module: PackModule) {
     });
   }, [module]);
 
-  return { progress, startSession, record, completeWord, reset, resetAll };
+  return { progress, startSession, markSeen, record, completeWord, reset, resetAll };
 }

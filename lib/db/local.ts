@@ -11,6 +11,7 @@ import {
 } from "@/lib/nounsQuizModes";
 import { emptyModuleProgress, type ModuleProgress, type PackModule, type TrainingFilter } from "@/lib/srs/packProgress";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
+import type { SavedNounQuizSession } from "@/lib/nounQuizSession";
 
 const BOOKS_KEY = "aibook_books";
 const CARDS_KEY = "aibook_cards";
@@ -40,6 +41,7 @@ const OTHERPOS_OPEN_GROUPS_KEY = "aibook_otherpos_open_groups";
 const PACK_PROGRESS_KEY = "aibook_pack_progress";
 const TRAINING_FILTER_KEY = "aibook_training_filter";
 const GENDER_RULE_STATS_KEY = "aibook_gender_rule_stats";
+const NOUN_QUIZ_SESSIONS_KEY = "aibook_noun_quiz_sessions";
 
 let activeNamespace = "guest";
 // The stored namespace is read once. Re-reading it inside getNsKey meant a
@@ -1171,4 +1173,54 @@ export function saveLocalGenderRuleStats(stats: Record<string, GenderRuleStat>):
   } catch {
     // silently fail
   }
+}
+
+// An unfinished noun quiz, per pack session ("<packKey>|<variant>"), so
+// closing the page mid-pack resumes on the next question instead of dealing
+// the whole pack again. All in one record so a pack reset can clear every
+// variant of that pack in one write.
+
+function readNounQuizSessions(): Record<string, SavedNounQuizSession<unknown>> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(getNsKey(NOUN_QUIZ_SESSIONS_KEY));
+    const parsed = raw ? JSON.parse(raw) as Record<string, SavedNounQuizSession<unknown>> : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeNounQuizSessions(sessions: Record<string, SavedNounQuizSession<unknown>>): void {
+  try {
+    localStorage.setItem(getNsKey(NOUN_QUIZ_SESSIONS_KEY), JSON.stringify(sessions));
+  } catch {
+    // silently fail
+  }
+}
+
+export function getLocalNounQuizSession<A>(sessionKey: string): SavedNounQuizSession<A> | null {
+  const saved = readNounQuizSessions()[sessionKey];
+  return saved && Array.isArray(saved.stepKeys) ? saved as SavedNounQuizSession<A> : null;
+}
+
+/** null forgets the session — a finished round must not be resumed. */
+export function saveLocalNounQuizSession<A>(sessionKey: string, session: SavedNounQuizSession<A> | null): void {
+  const sessions = readNounQuizSessions();
+  if (session) sessions[sessionKey] = session;
+  else delete sessions[sessionKey];
+  writeNounQuizSessions(sessions);
+}
+
+/** Forgets the unfinished sessions of one pack, or of every pack when no key is given. */
+export function clearLocalNounQuizSessions(packKey?: string): void {
+  if (packKey === undefined) {
+    writeNounQuizSessions({});
+    return;
+  }
+  const sessions = readNounQuizSessions();
+  for (const key of Object.keys(sessions)) {
+    if (key.startsWith(`${packKey}|`)) delete sessions[key];
+  }
+  writeNounQuizSessions(sessions);
 }

@@ -5,7 +5,8 @@ import { ArrowLeft, Check, ChevronLeft, Eye, EyeOff, Lightbulb, RotateCcw } from
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
 import { bareNoun, genderRuleExplanation, genderRuleHint, nounArticle, nounGender, suffixRuleFor, GENDER_ARTICLE } from "@/lib/nounForms";
-import { getLocalGenderRuleStats, saveLocalGenderRuleStats } from "@/lib/db/local";
+import { getLocalGenderRuleStats, getLocalNounQuizSession, saveLocalGenderRuleStats, saveLocalNounQuizSession } from "@/lib/db/local";
+import { restoreNounQuizSession } from "@/lib/nounQuizSession";
 import {
   NOUN_QUIZ_MODE_LABEL,
   NOUN_QUIZ_MODE_ORDER,
@@ -28,9 +29,13 @@ type Props = {
   canRegenerateAudio: boolean;
   modes: Set<NounQuizMode>;
   presentations: NounQuizPresentation[];
+  /** Where this session is saved between visits — one slot per pack and session kind. */
+  sessionKey: string;
   onExit: () => void;
   /** Reports one answered step so the pack's coverage bar can move. */
   onRecord: (entryId: string, correct: boolean) => void;
+  /** A saved session was picked up: these words were already answered in it. */
+  onResume: (entryIds: string[]) => void;
 };
 
 type QuizField = { key: string; label: string; expected: string };
@@ -160,19 +165,27 @@ function buildQueue(
  * Like the verb trainer this is deliberately outside the SM-2 flashcard
  * schedule; what it does feed is the pack's coverage bar, through `onRecord`.
  */
-export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerateAudio, modes, presentations, onExit, onRecord }: Props) {
-  const [queue, setQueue] = useState<NounQuizStep[]>(() => buildQueue(nouns, modes, presentations));
-  const [index, setIndex] = useState(0);
+export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerateAudio, modes, presentations, sessionKey, onExit, onRecord, onResume }: Props) {
+  // Closing the page mid-pack must not throw the session away: pick up the
+  // saved one when there is one, laid over today's dictionary.
+  const [initial] = useState(() => {
+    const fresh = buildQueue(nouns, modes, presentations);
+    const restored = restoreNounQuizSession(fresh, getLocalNounQuizSession<AnsweredStep>(sessionKey));
+    return restored ?? { queue: fresh, index: 0, answers: {}, mistakes: [], correctCount: 0, retry: false };
+  });
+  const [queue, setQueue] = useState<NounQuizStep[]>(initial.queue);
+  const [index, setIndex] = useState(initial.index);
+  const [retryRound, setRetryRound] = useState(initial.retry);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [hintOpen, setHintOpen] = useState(false);
   // Fields peeked at before submitting — a look, not a graded answer.
   const [peeked, setPeeked] = useState<Set<string>>(new Set());
-  const [mistakes, setMistakes] = useState<NounQuizStep[]>([]);
-  const [correctCount, setCorrectCount] = useState(0);
+  const [mistakes, setMistakes] = useState<NounQuizStep[]>(initial.mistakes);
+  const [correctCount, setCorrectCount] = useState(initial.correctCount);
   // Every question already answered, by step key. The tick/cross strip reads
   // it, "Назад" replays it, and its presence is what "revealed" means — so a
   // question can never be scored twice.
-  const [answers, setAnswers] = useState<Record<string, AnsweredStep>>({});
+  const [answers, setAnswers] = useState<Record<string, AnsweredStep>>(initial.answers);
   // The translation is a hint, not the question in this card. Keep the
   // learner's choice for the whole session so one tap on the eye is enough.
   const [translationVisible, setTranslationVisible] = useState(true);
@@ -200,6 +213,25 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
   const inputs = answered?.inputs ?? draft;
   const results = answered?.results ?? {};
   const choice = answered?.choice ?? null;
+
+  // The words a resumed session already answered must count as "seen this
+  // session" for the pack bar, or the next drill on them would be scored as
+  // a first attempt again.
+  useEffect(() => {
+    const seen = initial.queue.filter((s) => initial.answers[s.key]).map((s) => s.entry.id);
+    if (seen.length) onResume([...new Set(seen)]);
+    // Once, for the session this component was opened with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Saved after every answer, so the page can close at any moment. A finished
+  // round is forgotten — opening the pack again deals a new one.
+  useEffect(() => {
+    if (done) saveLocalNounQuizSession(sessionKey, null);
+    else if (retryRound || Object.keys(answers).length > 0) {
+      saveLocalNounQuizSession(sessionKey, { stepKeys: queue.map((s) => s.key), answers, retry: retryRound });
+    }
+  }, [sessionKey, queue, answers, retryRound, done]);
 
   // Audio prompts behave like flashcard audio directions: start as the next
   // noun arrives, while the replay button remains available for a second listen.
@@ -386,6 +418,7 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
 
   function retryMistakes() {
     setAnswers({});
+    setRetryRound(true);
     setQueue(scheduleNounQuizSteps(mistakes));
     setMistakes([]);
     setCorrectCount(0);
