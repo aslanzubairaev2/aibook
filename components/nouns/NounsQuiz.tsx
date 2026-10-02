@@ -448,6 +448,21 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
   const showTranslation = entry.translation && step.mode !== "translation" && !isProduction
     && (!isArticleStep || presentation === "target");
 
+  const translationRow = showTranslation && (
+    <div className="verb-quiz-translation-row">
+      <p className={`verb-quiz-translation${translationVisible ? "" : " quiz-translation-hidden"}`}>{entry.translation}</p>
+      <button
+        type="button"
+        className="quiz-translation-toggle"
+        onClick={() => setTranslationVisible((visible) => !visible)}
+        aria-label={translationVisible ? "Скрыть перевод" : "Показать перевод"}
+        title={translationVisible ? "Скрыть перевод" : "Показать перевод"}
+      >
+        {translationVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+
   return (
     <section className="screen verbs-view verb-quiz noun-quiz">
       <header className="screen-header">
@@ -524,7 +539,10 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
                 />
               </div>
             )}
-            {presentation !== "native" && canRegenerateAudio && (
+            {presentation === "target" && translationRow}
+            {/* Only the audio card depends on the recording being right; when
+                the word is on screen as text, a bad take costs nothing. */}
+            {presentation === "audio" && canRegenerateAudio && (
               <button type="button" className="noun-quiz-regenerate" disabled={regeneratingAudio} onClick={() => void regenerateArticleAudio()}>
                 <RotateCcw size={14} className={regeneratingAudio ? "animate-spin" : undefined} />
                 {regeneratingAudio ? "Озвучиваю заново…" : "Переозвучить"}
@@ -537,20 +555,7 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
               <span>{entry.headword}</span>
               <SpeakButton text={entry.headword} lang={targetLanguage} size={16} />
             </div>
-            {showTranslation && (
-              <div className="verb-quiz-translation-row">
-                <p className={`verb-quiz-translation${translationVisible ? "" : " quiz-translation-hidden"}`}>{entry.translation}</p>
-                <button
-                  type="button"
-                  className="quiz-translation-toggle"
-                  onClick={() => setTranslationVisible((visible) => !visible)}
-                  aria-label={translationVisible ? "Скрыть перевод" : "Показать перевод"}
-                  title={translationVisible ? "Скрыть перевод" : "Показать перевод"}
-                >
-                  {translationVisible ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-            )}
+            {translationRow}
           </>
         )}
 
