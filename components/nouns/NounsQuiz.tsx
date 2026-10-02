@@ -258,7 +258,10 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
   }, [step, targetLanguage]);
 
   useEffect(() => () => {
-    if (regenerationAttemptRef.current?.key === step?.key) regenerationAttemptRef.current.cancelled = true;
+    // On the summary there is no step and usually no attempt either — both
+    // keys are undefined, so compare only when an attempt really exists.
+    const attempt = regenerationAttemptRef.current;
+    if (attempt && attempt.key === step?.key) attempt.cancelled = true;
   }, [step?.key]);
 
   // While the current answer is being chosen, fetch every remaining audio

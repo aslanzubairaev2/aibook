@@ -12,6 +12,21 @@ export interface SrsResult {
 }
 
 /**
+ * The longest a card may wait. Without a ceiling, each «Легко» multiplies the
+ * interval by ~3, and a card answered easily a dozen times got due dates in
+ * the year 197416 — which Postgres refuses, failing the whole sync batch.
+ */
+export const MAX_INTERVAL_DAYS = 3650;
+
+/** Pulls an overgrown due date (from before the ceiling existed) back within it. */
+export function clampDueAt(dueAt: string, now = new Date()): string {
+  const limit = new Date(now);
+  limit.setDate(limit.getDate() + MAX_INTERVAL_DAYS);
+  const due = Date.parse(dueAt);
+  return Number.isFinite(due) && due <= limit.getTime() ? dueAt : limit.toISOString();
+}
+
+/**
  * Calculates new Spaced Repetition System (SRS) values based on the SM-2 algorithm.
  * 
  * @param score User rating from 1 to 4:
@@ -74,6 +89,7 @@ export function calculateSM2(
       intervalDays = Math.max(1, Math.round(intervalDays * multiplier));
     }
   }
+  intervalDays = Math.min(intervalDays, MAX_INTERVAL_DAYS);
 
   // Calculate next due date
   const due = new Date();

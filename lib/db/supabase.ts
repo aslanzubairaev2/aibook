@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { ReaderSelectionSnapshot, DiscussMessage, CardFilters, LearningItemType, SkillProgress, TrainVariant } from "@/lib/types";
 import type { VideoItem } from "@/lib/videos/types";
+import { clampDueAt, MAX_INTERVAL_DAYS } from "@/lib/srs/sm2";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -388,9 +389,11 @@ export async function sbUpsertCardVariantProgress(
     status: progress.status,
     repetitions: progress.repetitions,
     lapses: progress.lapses,
-    interval_days: progress.intervalDays,
+    interval_days: Math.min(progress.intervalDays, MAX_INTERVAL_DAYS),
     easiness_factor: progress.easeFactor,
-    next_review_at: progress.dueAt,
+    // Local progress saved before the interval ceiling can hold dates far past
+    // what Postgres accepts; one such row would fail the whole batch.
+    next_review_at: clampDueAt(progress.dueAt),
     last_reviewed_at: progress.lastReviewedAt,
     updated_at: updatedAt,
   }));
