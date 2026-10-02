@@ -4,16 +4,24 @@
 // computed when asked for, never stored, so a teacher's review or a corrected
 // rule can never leave a stale score behind.
 //
-// The rule the whole module bends around: a typo is not a wrong answer. An
-// answer that means the right thing but is misspelt keeps half its points, is
-// marked as a spelling error rather than a meaning error, and is flagged for
-// the teacher to confirm — because "einen" for "einem" is one letter too, and
-// only a human (or the teacher agent) can tell a slip from a case error.
+// The rules the module bends around:
+//  - writing «ae/oe/ue/ss» for «ä/ö/ü/ß» is not an error at all (unless the item
+//    is a spelling task, focus: "spelling");
+//  - a typo is not a wrong answer: it keeps half its points, is marked as
+//    spelling rather than meaning, and is flagged for the teacher, because
+//    "einen" for "einem" is one letter too and only a human can tell a slip from
+//    a case error;
+//  - «не знаю», a skipped item, a wrong answer and a technical failure (a silent
+//    recording, Azure down) are four different things and are kept apart;
+//  - a skipped item counts in the total score but is not evidence of a weak
+//    skill: skill percentages are over attempted items, with the skipped count
+//    reported beside them.
 
 import {
   DIMENSIONS,
   SKILLS,
   allItems,
+  isSpeakingType,
   itemSkill,
   needsTeacher,
   type AssessmentContent,
@@ -23,6 +31,7 @@ import {
   type Section,
   type Skill,
 } from "./model";
+import type { SpeechScores, SpeechWord, TechnicalReason } from "./azureSpeech";
 
 export type AnswerValue = string | string[] | Record<string, string>;
 
@@ -42,6 +51,36 @@ export type AnswerRecord = {
 /** A record can hold nothing but an autosaved draft; that is not an answer. */
 export function isAnswered(record: AnswerRecord | undefined): boolean {
   return Boolean(record && (record.status === "dont_know" || record.value !== null));
+}
+
+/** One sent recording of a speaking item. */
+export type SpeechRecording = {
+  id: string;
+  storage_path: string;
+  duration_ms: number;
+  created_at: string;
+  status: "done" | "technical_error";
+  technical_reason: TechnicalReason | null;
+  transcript: string | null;
+  scores: SpeechScores | null;
+  words: SpeechWord[];
+  /** Azure's answer exactly as received. */
+  raw: unknown;
+  analyzed_at: string | null;
+};
+
+export type SpeechItemState = { recordings: SpeechRecording[] };
+export type SpeechState = Record<string, SpeechItemState>;
+
+/** Recordings that count against max_recordings: technical failures do not. */
+export function countedRecordings(state: SpeechItemState | undefined): number {
+  return (state?.recordings ?? []).filter((r) => r.status === "done").length;
+}
+
+/** The recording that stands as the answer: the latest one that was analyzed. */
+export function answerRecording(state: SpeechItemState | undefined): SpeechRecording | null {
+  const done = (state?.recordings ?? []).filter((r) => r.status === "done");
+  return done.at(-1) ?? null;
 }
 
 export type DimensionMark = "ok" | "minor" | "error";
@@ -67,14 +106,27 @@ export type ItemStatus =
   | "incorrect"
   | "dont_know"
   | "unanswered"
-  | "pending_review";
+  | "pending_review"
+  | "technical_issue";
+
+/** What kind of shortfall a result is — kept apart on purpose. */
+export type ErrorKind = "typo" | "error" | "dont_know" | "skipped" | "technical" | null;
+
+export type SpeechResult = {
+  transcript: string;
+  scores: SpeechScores;
+  words: SpeechWord[];
+  recordings_sent: number;
+  technical_failures: number;
+};
 
 export type ItemResult = {
   item_id: string;
   status: ItemStatus;
-  /** null while it waits for the teacher. */
+  /** null while it waits for the teacher, or after a technical failure. */
   score: number | null;
   max: number;
+  error_kind: ErrorKind;
   dimensions: Partial<Record<Dimension, DimensionMark>>;
   notes: string[];
   /** Auto-check is unsure (a near miss); the teacher agent should confirm. */
@@ -84,6 +136,7 @@ export type ItemResult = {
   graded_by: "auto" | "teacher" | "none";
   teacher_comment: string;
   corrected: string;
+  speech: SpeechResult | null;
 };
 
 // ─── Text comparison ─────────────────────────────────────────────────────────
@@ -102,11 +155,16 @@ export function normalizeAnswer(value: string): string {
     .trim();
 }
 
-function foldUmlauts(value: string): string {
+/** ä → ae and friends: the spelling a keyboard without umlauts produces. */
+function transliterate(value: string): string {
   return value
-    .toLowerCase()
-    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
-    .normalize("NFD").replace(/[̀-ͯ]/g, "");
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue")
+    .replace(/Ä/g, "Ae").replace(/Ö/g, "Oe").replace(/Ü/g, "Ue")
+    .replace(/ß/g, "ss");
+}
+
+function foldAll(value: string): string {
+  return transliterate(value).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
 export function editDistance(a: string, b: string): number {
@@ -129,18 +187,20 @@ export type Match = "exact" | "near" | "none";
 /**
  * How close a typed answer is to any accepted one.
  *
- * near = only case, umlaut spelling (ae for ä) or a slip of one letter (two in
- * a long answer). With tolerance off — a gap that tests an ending — only case
- * and umlaut spelling count as near: one letter there IS the grammar.
+ * exact also covers «ae/oe/ue/ss» for «ä/ö/ü/ß», unless strictSpelling.
+ * near = only case, or a slip of one letter (two in a long answer). With
+ * tolerance off — a gap that tests an ending — only case counts as near: one
+ * letter there IS the grammar.
  */
-export function compareText(given: string, accepted: string[], tolerance = true): Match {
+export function compareText(given: string, accepted: string[], tolerance = true, strictSpelling = false): Match {
   const g = normalizeAnswer(given);
   if (!g) return "none";
   const targets = accepted.map(normalizeAnswer).filter(Boolean);
   if (targets.includes(g)) return "exact";
-  const gf = foldUmlauts(g);
+  if (!strictSpelling && targets.some((t) => transliterate(t) === transliterate(g))) return "exact";
+  const gf = foldAll(g);
   for (const t of targets) {
-    const tf = foldUmlauts(t);
+    const tf = foldAll(t);
     if (gf === tf) return "near";
     if (!tolerance) continue;
     const allowed = tf.length >= 9 ? 2 : tf.length >= 4 ? 1 : 0;
@@ -160,6 +220,7 @@ function defaultFocus(section: Section, item: Item): Dimension {
   const skill = itemSkill(section, item);
   if (skill === "grammar") return "grammar";
   if (skill === "vocabulary") return "vocabulary";
+  if (skill === "speaking") return "pronunciation";
   return "meaning";
 }
 
@@ -178,8 +239,13 @@ export function expectedAnswer(item: Item): string {
     case "word_order":
       return item.words.join(" ");
     case "short_answer":
+    case "translation":
       return item.accepted[0] ?? "";
+    case "read_aloud":
+    case "repeat":
+      return item.text;
     case "writing":
+    case "spoken_response":
       return "";
   }
 }
@@ -188,13 +254,26 @@ function gapAnswers(gap: Gap): string[] {
   return [gap.answer, ...gap.accepted];
 }
 
+const TYPO_NOTE = "Похоже на опечатку: смысл верный, написание — нет.";
+
+function speechMark(score: number | null): DimensionMark {
+  if (score === null) return "minor";
+  return score >= 80 ? "ok" : score >= 60 ? "minor" : "error";
+}
+
 /** Auto-check one item against one answer; the teacher review is layered on later. */
-export function autoGrade(section: Section, item: Item, record: AnswerRecord | undefined): ItemResult {
+export function autoGrade(
+  section: Section,
+  item: Item,
+  record: AnswerRecord | undefined,
+  speech?: SpeechItemState,
+): ItemResult {
   const base: ItemResult = {
     item_id: item.id,
     status: "unanswered",
     score: 0,
     max: item.points,
+    error_kind: "skipped",
     dimensions: {},
     notes: [],
     needs_teacher_check: false,
@@ -202,14 +281,58 @@ export function autoGrade(section: Section, item: Item, record: AnswerRecord | u
     graded_by: "auto",
     teacher_comment: "",
     corrected: "",
+    speech: null,
   };
-  if (!record || record.value === null && record.status !== "dont_know") return base;
-  if (record.status === "dont_know") return { ...base, status: "dont_know" };
+  if (record?.status === "dont_know") return { ...base, status: "dont_know", error_kind: "dont_know" };
 
   const focus = defaultFocus(section, item);
+  const strict = focus === "spelling";
+  const right = (): ItemResult => ({ ...base, status: "correct", score: item.points, error_kind: null, dimensions: { [focus]: "ok", instruction: "ok" } });
+  const wrong = (): ItemResult => ({ ...base, status: "incorrect", score: 0, error_kind: "error", dimensions: { [focus]: "error" } });
+  const typo = (score: number): ItemResult => ({
+    ...base, status: "partial", score: round(score), error_kind: "typo", needs_teacher_check: true,
+    dimensions: { [focus === "spelling" ? "meaning" : focus]: "ok", spelling: "error" }, notes: [TYPO_NOTE],
+  });
+
+  if (isSpeakingType(item.type)) {
+    const recordings = speech?.recordings ?? [];
+    const failures = recordings.filter((r) => r.status === "technical_error").length;
+    const used = answerRecording(speech);
+    if (!used) {
+      if (failures > 0) {
+        return { ...base, status: "technical_issue", score: null, error_kind: "technical", notes: ["Запись не удалось оценить по техническим причинам — это не учебная ошибка."] };
+      }
+      return base;
+    }
+    const result: SpeechResult = {
+      transcript: used.transcript ?? "",
+      scores: used.scores ?? { pronunciation: null, accuracy: null, fluency: null, completeness: null, prosody: null },
+      words: used.words,
+      recordings_sent: recordings.filter((r) => r.status === "done").length,
+      technical_failures: failures,
+    };
+    const pron = result.scores.pronunciation;
+    if (item.type === "spoken_response") {
+      // Pronunciation is measured; the content is the teacher's to grade.
+      return { ...base, status: "pending_review", score: null, error_kind: null, graded_by: "none", speech: result, dimensions: { pronunciation: speechMark(pron) } };
+    }
+    if (pron === null) {
+      return { ...base, status: "pending_review", score: null, error_kind: null, graded_by: "none", speech: result };
+    }
+    const score = Math.round(item.points * (pron / 100) * 4) / 4;
+    const status: ItemStatus = pron >= 85 ? "correct" : pron >= 50 ? "partial" : "incorrect";
+    return {
+      ...base,
+      status,
+      score,
+      error_kind: status === "correct" ? null : "error",
+      speech: result,
+      dimensions: { pronunciation: speechMark(pron), ...(result.scores.completeness !== null && result.scores.completeness < 90 ? { instruction: "minor" as const } : {}) },
+    };
+  }
+
+  if (!record || record.value === null) return base;
   const value = record.value;
-  const right = (): ItemResult => ({ ...base, status: "correct", score: item.points, dimensions: { [focus]: "ok", instruction: "ok" } });
-  const wrong = (): ItemResult => ({ ...base, status: "incorrect", score: 0, dimensions: { [focus]: "error" } });
 
   switch (item.type) {
     case "single_choice":
@@ -222,7 +345,7 @@ export function autoGrade(section: Section, item: Item, record: AnswerRecord | u
       if (hits === item.correct.length && misses === 0) return right();
       const share = Math.max(0, (hits - misses) / item.correct.length);
       if (share === 0) return wrong();
-      return { ...base, status: "partial", score: round(item.points * share), dimensions: { [focus]: "error" } };
+      return { ...base, status: "partial", score: round(item.points * share), error_kind: "error", dimensions: { [focus]: "error" } };
     }
 
     case "gap_select":
@@ -236,21 +359,15 @@ export function autoGrade(section: Section, item: Item, record: AnswerRecord | u
         const answer = String(given[gap.id] ?? "");
         const match = item.type === "gap_select"
           ? (answer === gap.answer ? "exact" : "none")
-          : compareText(answer, gapAnswers(gap), item.typo_tolerance && focus !== "grammar");
+          : compareText(answer, gapAnswers(gap), item.typo_tolerance && focus !== "grammar", strict);
         if (match === "exact") { exact++; score += per; }
         if (match === "near") { near++; score += per / 2; }
       }
       if (exact === item.gaps.length) return right();
-      if (exact + near === item.gaps.length) {
-        return {
-          ...base, status: "partial", score: round(score), needs_teacher_check: true,
-          dimensions: { [focus]: "ok", spelling: "error" },
-          notes: ["Похоже на опечатку: смысл верный, написание — нет."],
-        };
-      }
+      if (exact + near === item.gaps.length) return typo(score);
       if (score === 0) return wrong();
       return {
-        ...base, status: "partial", score: round(score), needs_teacher_check: near > 0,
+        ...base, status: "partial", score: round(score), error_kind: "error", needs_teacher_check: near > 0,
         dimensions: { [focus]: "error", ...(near > 0 ? { spelling: "error" as const } : {}) },
       };
     }
@@ -259,27 +376,22 @@ export function autoGrade(section: Section, item: Item, record: AnswerRecord | u
       const words = Array.isArray(value) ? value.map(String) : [];
       if (words.length === 0) return base;
       const sentence = words.join(" ");
-      const match = compareText(sentence, [item.words.join(" "), ...item.accepted], false);
+      const match = compareText(sentence, [item.words.join(" "), ...item.accepted], false, strict);
       return match === "none" ? wrong() : right();
     }
 
-    case "short_answer": {
+    case "short_answer":
+    case "translation": {
       const text = typeof value === "string" ? value : "";
       if (!text.trim()) return base;
       if (item.accepted.length > 0) {
-        const match = compareText(text, item.accepted, item.typo_tolerance);
+        const match = compareText(text, item.accepted, item.type === "short_answer" ? item.typo_tolerance : true, strict);
         if (match === "exact") return right();
-        if (match === "near") {
-          return {
-            ...base, status: "partial", score: round(item.points / 2), needs_teacher_check: true,
-            dimensions: { [focus]: "ok", spelling: "error" },
-            notes: ["Похоже на опечатку: смысл верный, написание — нет."],
-          };
-        }
+        if (match === "near") return typo(item.points / 2);
       }
       // A free answer worded differently from the key may still be right:
       // that is the teacher's call, not a string comparison's.
-      return { ...base, status: "pending_review", score: null, graded_by: "none" };
+      return { ...base, status: "pending_review", score: null, error_kind: null, graded_by: "none" };
     }
 
     case "writing": {
@@ -289,9 +401,10 @@ export function autoGrade(section: Section, item: Item, record: AnswerRecord | u
       const notes: string[] = [];
       if (item.min_words && words < item.min_words) notes.push(`${words} слов при минимуме ${item.min_words}.`);
       if (item.max_words && words > item.max_words) notes.push(`${words} слов при максимуме ${item.max_words}.`);
-      return { ...base, status: "pending_review", score: null, graded_by: "none", notes };
+      return { ...base, status: "pending_review", score: null, error_kind: null, graded_by: "none", notes };
     }
   }
+  return base;
 }
 
 export function countWords(text: string): number {
@@ -309,7 +422,8 @@ export function applyReview(result: ItemResult, review: TeacherItemReview | unde
     ...result,
     status,
     score: round(score),
-    dimensions: Object.keys(review.dimensions).length > 0 ? review.dimensions : result.dimensions,
+    error_kind: result.status === "dont_know" ? "dont_know" : status === "correct" ? null : result.error_kind === "typo" ? "typo" : "error",
+    dimensions: Object.keys(review.dimensions).length > 0 ? { ...result.dimensions, ...review.dimensions } : result.dimensions,
     needs_teacher_check: false,
     graded_by: "teacher",
     teacher_comment: review.comment,
@@ -321,11 +435,29 @@ export function gradeAll(
   content: AssessmentContent,
   answers: Record<string, AnswerRecord>,
   review: TeacherReview | null,
+  speech: SpeechState = {},
 ): ItemResult[] {
   const byItem = new Map((review?.items ?? []).map((r) => [r.item_id, r]));
   return allItems(content).map(({ section, item }) =>
-    applyReview(autoGrade(section, item, answers[item.id]), byItem.get(item.id)),
+    applyReview(autoGrade(section, item, answers[item.id], speech[item.id]), byItem.get(item.id)),
   );
+}
+
+/**
+ * Items that wait for the teacher: answered manual items (an empty, never-sent
+ * essay is not one) without a review. When this is empty an after_review test
+ * has nothing left to wait for.
+ */
+export function pendingTeacherItems(
+  content: AssessmentContent,
+  answers: Record<string, AnswerRecord>,
+  review: TeacherReview | null,
+  speech: SpeechState = {},
+): string[] {
+  const reviewed = new Set((review?.items ?? []).map((r) => r.item_id));
+  return gradeAll(content, answers, null, speech)
+    .filter((r) => r.status === "pending_review" && !reviewed.has(r.item_id))
+    .map((r) => r.item_id);
 }
 
 // ─── Summaries ───────────────────────────────────────────────────────────────
@@ -334,17 +466,23 @@ export type SkillSummary = {
   skill: Skill;
   score: number;
   max: number;
+  /** Over the items attempted; null when nothing was attempted. */
   percent: number | null;
   items: number;
   pending_review: number;
+  /** Not attempted (no answer at all). Counted in totals, not in this percent. */
+  skipped: number;
+  dont_know: number;
+  technical_issues: number;
+  /** «not_done» when every item of the skill was skipped. */
+  state: "graded" | "partly_pending" | "pending" | "not_done";
 };
 
 /**
- * Score by skill: reading, listening, writing, grammar, vocabulary.
- *
- * Items still waiting for the teacher are left out of both sides of the sum,
- * so a pending essay reads as «not graded yet», not as zero. A written
- * dialogue is a writing item: nothing here claims to measure speaking.
+ * Score by skill. Items still waiting for the teacher, skipped items and
+ * technical failures are left out of the percentage, so a pending essay reads
+ * as «not graded yet» and a skipped one as «not done» — not as a weak skill.
+ * «Не знаю» does count: it is an answer about what the learner knows.
  */
 export function summarizeSkills(content: AssessmentContent, results: ItemResult[]): SkillSummary[] {
   const byId = new Map(results.map((r) => [r.item_id, r]));
@@ -353,19 +491,40 @@ export function summarizeSkills(content: AssessmentContent, results: ItemResult[
     let max = 0;
     let items = 0;
     let pending = 0;
+    let skipped = 0;
+    let dontKnow = 0;
+    let technical = 0;
     for (const { section, item } of allItems(content)) {
       if (itemSkill(section, item) !== skill) continue;
       items++;
       const r = byId.get(item.id);
-      if (!r || r.score === null) { pending++; continue; }
+      if (!r) continue;
+      if (r.status === "unanswered") { skipped++; continue; }
+      if (r.status === "technical_issue") { technical++; continue; }
+      if (r.score === null) { pending++; continue; }
+      if (r.status === "dont_know") dontKnow++;
       score += r.score;
       max += r.max;
     }
-    return { skill, score: round(score), max, percent: max > 0 ? Math.round((score / max) * 100) : null, items, pending_review: pending };
+    const state: SkillSummary["state"] = skipped === items
+      ? "not_done"
+      : max === 0 ? "pending" : pending > 0 ? "partly_pending" : "graded";
+    return {
+      skill,
+      score: round(score),
+      max,
+      percent: max > 0 ? Math.round((score / max) * 100) : null,
+      items,
+      pending_review: pending,
+      skipped,
+      dont_know: dontKnow,
+      technical_issues: technical,
+      state,
+    };
   }).filter((s) => s.items > 0);
 }
 
-/** How many errors of each kind — meaning, grammar, vocabulary, spelling, instruction. */
+/** How many errors of each kind — meaning, grammar, vocabulary, spelling, instruction, pronunciation. */
 export function summarizeDimensions(results: ItemResult[]): Record<Dimension, { errors: number; minor: number; ok: number }> {
   const out = Object.fromEntries(DIMENSIONS.map((d) => [d, { errors: 0, minor: 0, ok: 0 }])) as Record<Dimension, { errors: number; minor: number; ok: number }>;
   for (const r of results) {
@@ -379,18 +538,31 @@ export function summarizeDimensions(results: ItemResult[]): Record<Dimension, { 
   return out;
 }
 
+/**
+ * The overall score counts every item, skipped ones as zero — and says how
+ * much of the gap is skipping, so the number is never read as pure weakness.
+ */
 export function totals(results: ItemResult[]) {
   const graded = results.filter((r) => r.score !== null);
   const score = round(graded.reduce((n, r) => n + (r.score ?? 0), 0));
   const max = graded.reduce((n, r) => n + r.max, 0);
+  const skipped = results.filter((r) => r.status === "unanswered");
+  const attempted = graded.filter((r) => r.status !== "unanswered");
+  const attemptedMax = attempted.reduce((n, r) => n + r.max, 0);
+  const attemptedScore = round(attempted.reduce((n, r) => n + (r.score ?? 0), 0));
   return {
     score,
     max,
     percent: max > 0 ? Math.round((score / max) * 100) : null,
+    /** The same, over attempted items only. */
+    percent_of_attempted: attemptedMax > 0 ? Math.round((attemptedScore / attemptedMax) * 100) : null,
+    skipped_points: skipped.reduce((n, r) => n + r.max, 0),
     pending_review: results.filter((r) => r.status === "pending_review").length,
     needs_teacher_check: results.filter((r) => r.needs_teacher_check).length,
-    unanswered: results.filter((r) => r.status === "unanswered").length,
+    unanswered: skipped.length,
     dont_know: results.filter((r) => r.status === "dont_know").length,
+    typos: results.filter((r) => r.error_kind === "typo").length,
+    technical_issues: results.filter((r) => r.status === "technical_issue").length,
   };
 }
 

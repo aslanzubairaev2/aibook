@@ -31,6 +31,7 @@ import {
   updateAssessment,
 } from "@/lib/assessments/store";
 import { assessmentTtsModels } from "@/lib/assessments/speech";
+import { checkSpeechService, GERMAN_CAPABILITIES, speechConfig } from "@/lib/assessments/azureSpeech";
 import type { McpToolDef } from "@/lib/mcp/tools";
 
 export type AssessmentCtx = { admin: SupabaseClient; userId: string; origin: string };
@@ -59,9 +60,9 @@ function requireId(args: Args, key = "assessment_id"): string {
 // ─── Capabilities ────────────────────────────────────────────────────────────
 
 const EXAMPLE = {
-  client_key: "de-a2-check-2026-10-02",
+  client_key: "de-a2-check-2026-10-03",
   title: "Проверка A2: вокзал и выходные",
-  description: "Чтение, аудирование и письмо по теме «путешествия».",
+  description: "Чтение, аудирование, перевод, письмо и говорение по теме «путешествия».",
   mode: "diagnostic",
   language: "de",
   settings: { results_release: "after_review", section_order: "sequential" },
@@ -83,7 +84,6 @@ const EXAMPLE = {
       stimulus: {
         type: "audio",
         max_plays: 2,
-        unlock_questions: "immediately",
         audio: {
           kind: "dialogue",
           pace: "normal",
@@ -95,7 +95,21 @@ const EXAMPLE = {
         },
       },
       items: [
-        { id: "l1", type: "multiple_choice", prompt: "Was stimmt?", options: [{ id: "a", text: "Ben war am See." }, { id: "b", text: "Ben war allein." }, { id: "c", text: "Ben war mit seinem Bruder unterwegs." }], correct: ["a", "c"] },
+        { id: "l1", type: "multiple_choice", prompt: "Was stimmt? (несколько вариантов)", options: [{ id: "a", text: "Ben war am See." }, { id: "b", text: "Ben war allein." }, { id: "c", text: "Ben war mit seinem Bruder unterwegs." }], correct: ["a", "c"] },
+      ],
+    },
+    {
+      id: "translate",
+      title: "Перевод",
+      instructions: "Переведите текст на немецкий. Пишите полными предложениями; можно по-разному, главное — смысл и грамматика.",
+      items: [
+        {
+          id: "t1",
+          type: "translation",
+          source: "В субботу я поехал с другом в Гамбург. Мы долго гуляли по порту. Вечером мы ели рыбу в маленьком ресторане. Было холодно, но очень красиво.",
+          points: 10,
+          criteria: "Перфект: bin gefahren / sind gelaufen (или haben … gemacht), haben gegessen; предлог mit + Dativ (mit einem Freund); порядок слов после Am Samstag / Am Abend (глагол на втором месте). Передан смысл всех 4 предложений.",
+        },
       ],
     },
     {
@@ -103,44 +117,71 @@ const EXAMPLE = {
       title: "Письмо",
       skill: "writing",
       items: [
-        { id: "w1", type: "writing", prompt: "Schreiben Sie Anna eine kurze Nachricht über Ihr Wochenende (40–60 Wörter).", min_words: 40, max_words: 60, points: 10, criteria: "Перфект с haben/sein; 3 пункта: где, с кем, что понравилось; приветствие и прощание." },
-        { id: "w2", type: "word_order", prompt: "Составьте предложение.", words: ["Am", "Samstag", "bin", "ich", "ins", "Kino", "gegangen"] },
+        {
+          id: "w1",
+          type: "writing",
+          // Every content requirement is in the prompt the learner sees; criteria is only the rubric.
+          prompt: "Напишите Анне короткое сообщение о своих выходных (40–60 слов). Обязательно: где вы были, с кем, что вам понравилось. В конце задайте Анне один вопрос.",
+          min_words: 40,
+          max_words: 60,
+          points: 10,
+          criteria: "4 пункта из инструкции (где, с кем, что понравилось, вопрос) — по 1 баллу; перфект с haben/sein — 3; порядок слов — 2; лексика и орфография — 2.",
+        },
+        { id: "w2", type: "word_order", prompt: "Составьте предложение.", meaning: "В субботу я ходил в кино.", words: ["Am", "Samstag", "bin", "ich", "ins", "Kino", "gegangen"], accepted: ["Ich bin am Samstag ins Kino gegangen"] },
+      ],
+    },
+    {
+      id: "speak",
+      title: "Говорение",
+      instructions: "Запишите ответы голосом. Можно прослушать себя перед отправкой.",
+      items: [
+        { id: "s1", type: "read_aloud", prompt: "Прочитайте вслух.", text: "Der Zug nach Köln hat heute fünfzehn Minuten Verspätung.", max_seconds: 20, max_recordings: 2 },
+        { id: "s2", type: "repeat", prompt: "Прослушайте и повторите.", text: "Ich hätte gern eine Fahrkarte nach Hamburg.", voice: "Charon", pace: "slow", sample_max_plays: 3, max_recordings: 2 },
+        { id: "s3", type: "spoken_response", prompt: "Расскажите (по-немецки), как вы обычно проводите выходные. 3–5 предложений.", criteria: "3–5 связных предложений; настоящее время; минимум 2 конкретных занятия; слова-связки (und, aber, dann).", max_seconds: 50, min_seconds: 15, max_recordings: 2 },
       ],
     },
   ],
 };
 
 function getCapabilities(): unknown {
+  const speech = speechConfig();
   return {
     flow: [
       "create_assessment (with a client_key, so a retry never duplicates) → draft",
-      "prepare_assessment_audio → the app records every listening passage itself with Gemini TTS; call again until all are 'ready' (already-recorded audio is never paid twice)",
+      "prepare_assessment_audio → the app records every listening passage and repeat sample itself with Gemini TTS; call again until all are 'ready' (already-recorded audio is never paid twice)",
       "publish_assessment → link for the learner (the test also appears on the app's home screen)",
-      "the learner takes it in the app; answers autosave; listenings are counted on the server",
-      "get_assessment_results → raw answers, first answers and changes, auto-scores, listenings, unfinished items",
-      "submit_assessment_review → your scores and comments for writing and free answers, a summary, and the gaps you found",
-      "get_learning_gaps → error list for building a review pack; check_dictionary_words + add_word_batch to make it",
+      "the learner takes it in the app: choices save on tap, typed text saves as they go, recordings are assessed by Azure on the server; listenings and recordings are counted on the server",
+      "get_assessment_results → raw answers, first answers and changes, auto-scores, words the learner marked or looked up, listenings, recordings with transcripts, Azure scores, per-word errors and private links",
+      "submit_assessment_review → your scores and comments for writing, translation, free and spoken answers (content), a summary, and the gaps you found",
+      "get_learning_gaps → errors, unknown words, pronunciation problems; check_dictionary_words + add_word_batch for a pack, or a new create_assessment for follow-up practice",
+    ],
+    rules_for_clear_tasks: [
+      "Everything the answer must contain goes in the prompt the learner sees. 'criteria' is only your grading rubric and is hidden from the learner.",
+      "word_order: if a specific thought must be built, give its Russian sense in 'meaning'; otherwise the learner is told «Соберите грамматически правильное предложение из всех слов». List other correct orders in 'accepted'. Repeated words are separate tiles.",
+      "The learner finds it hard to invent a story and write it in German at the same time: for practice writing prefer 'translation' with a ready Russian text (one phrase or a 4–8 sentence story). Translation and own writing are separate kinds of work (skills 'translation' and 'writing').",
     ],
     modes: {
-      learning: "Hints, explanations and retries; with results_release 'immediate' each «Ответить» is checked at once and the answer shows after a correct reply, «Не знаю», or settings.max_tries wrong ones (default 3).",
-      diagnostic: "No hints, translations, right answers or corrections until the release point. First answer and every change are kept. Sections default to sequential; each listening defaults to max 2 plays.",
+      learning: "Hints, explanations and retries; with results_release 'immediate' each answer is checked at once (choices on tap, typed items with «Проверить»); the right answer shows after a correct reply, «Не знаю», or settings.max_tries wrong ones (default 3). Speaking: Azure feedback shown right after each recording.",
+      diagnostic: "No hints, translations, right answers, transcripts or pronunciation feedback until the release point. First answer and every change are kept. Sections default to sequential; listenings default to max 2 plays, recordings to max 2.",
     },
     settings: {
-      results_release: `${RESULTS_RELEASE.join(" | ")} — when right answers/explanations/scores become visible. 'immediate' is learning-only (diagnostic turns it into 'after_section'). 'after_review' holds everything until you call submit_assessment_review (or until submit if nothing needs manual grading).`,
+      results_release: `${RESULTS_RELEASE.join(" | ")} — when right answers/explanations/scores become visible. 'immediate' is learning-only (diagnostic turns it into 'after_section'). 'after_review' holds everything until you call submit_assessment_review — but only if something actually needs your grading: a writing task left empty does not keep results locked.`,
       section_order: "sequential | free — sequential opens a section only after the previous one is finished with «Завершить блок».",
-      max_tries: "learning mode: «Ответить» presses per item before the answer is shown (default 3).",
+      max_tries: "learning mode: checks per item before the answer is shown (default 3).",
       allow_retake: "boolean, default false.",
+      allow_word_lookup: "boolean, default true. The learner can tap any word in a task for «Показать перевод» or «Не знаю это слово». Both are always reported to you (results → word_marks, get_learning_gaps → words_the_learner_did_not_know), in diagnostic mode too. Set false to forbid lookups in a strict test.",
     },
     section: {
-      fields: "id, title, instructions, skill (reading|listening|writing|grammar|vocabulary; defaults from the stimulus), stimulus (optional), items",
-      advice: "A section is one screen: a reading text with its questions, one recording with its questions, or a short run (3–8) of grammar items. Results in diagnostic mode are released per section if results_release is 'after_section'.",
-      stimulus_text: "{ type: 'text', title?, paragraphs: string[], translation?: string[] (learning mode only) } — shown next to the questions.",
+      fields: "id, title, instructions, skill (reading|listening|writing|translation|speaking|grammar|vocabulary; defaults from the stimulus), stimulus (optional), items",
+      advice: "A section is one screen: a reading text with its questions, one recording with its questions, a translation, or a short run (3–8) of grammar items.",
+      stimulus_text: "{ type: 'text', title?, paragraphs: string[], translation?: string[] (learning mode only) } — kept in view above the questions.",
       stimulus_audio: "{ type: 'audio', audio: AUDIO, max_plays (1–10; diagnostic default 2; omit in learning for unlimited), unlock_questions: 'immediately' | 'after_first_play', show_transcript: 'never' | 'after_section' | 'after_results' }",
     },
     audio: {
       monologue: "{ kind: 'monologue', text, voice?, pace?: 'slow'|'normal'|'fast', language?, style? }",
       dialogue: "{ kind: 'dialogue', speakers: [{ name, voice }], lines: [{ speaker, text }], pace?, language?, style? } — up to 4 speakers, 40 lines. Two speakers are recorded in one request; more are recorded line by line and joined.",
-      style: "Optional direction in English: 'a tired ticket clerk', 'radio announcement with background urgency'. Speaker names are never read aloud.",
+      style: "Optional direction in English: 'a tired ticket clerk', 'radio announcement'. Speaker names are never read aloud.",
+      learner_speed: "The learner can slow any recording down to 0.85× or 0.7× in the player (pitch kept). Use pace: 'slow' when the recording itself should be slow.",
       voices: ASSESSMENT_VOICES,
       model: assessmentTtsModels()[0],
       limits: `${LIMITS.audioChars} characters per passage. Each Gemini speech model allows about 100 recordings a day for the whole app, so keep passages to what the test needs.`,
@@ -152,28 +193,57 @@ function getCapabilities(): unknown {
         "This is control inside the app, not protection against recording the sound.",
       ],
     },
+    speaking: {
+      service: {
+        provider: "Azure AI Speech — Pronunciation Assessment",
+        configured: Boolean(speech),
+        region: speech?.region ?? null,
+        check_live: "get_speech_service_status (no secrets are ever returned)",
+      },
+      verified_for_german: GERMAN_CAPABILITIES,
+      item_types: {
+        read_aloud: "{ type:'read_aloud', prompt?, text (target language, shown), max_seconds (3–55, default 30), max_recordings (1–10; diagnostic default 2, learning 5), points (default 3) } — auto-scored: points × Azure pronunciation score / 100.",
+        repeat: "{ type:'repeat', prompt?, text (recorded by the app, NOT shown before feedback), voice?, pace?, sample_max_plays (separate from max_recordings; diagnostic default 2), max_seconds, max_recordings, points (default 3) } — auto-scored like read_aloud.",
+        spoken_response: "{ type:'spoken_response', prompt (question or situation), criteria (required), min_seconds?, max_seconds (default 45), max_recordings, points (default 5) } — unscripted: Azure measures pronunciation and fluency only; you grade the content from the transcript. No single reference sentence is required.",
+      },
+      learner_flow: "record → stop → listen to yourself → send. The latest analyzed recording is the answer; earlier ones stay in history.",
+      technical_statuses: "Silence, unreadable audio, too long/short, or Azure failure are technical statuses (technical_issue), never a low score, and do not use up a recording. A retried upload of the same recording is not analyzed (or paid) twice.",
+      separation: [
+        "Azure measures pronunciation: accuracy, fluency, completeness (scripted only), per-word errors. Prosody is null for German. No phoneme names exist for German — never name sounds.",
+        "You grade meaning, grammar, vocabulary and task completion from the transcript in submit_assessment_review.",
+        "The transcript is what the recognizer heard, not proof of correct pronunciation.",
+        "An Azure score is not a CEFR level.",
+        "A written dialogue is writing, not speaking.",
+      ],
+    },
     item_types: {
-      common: "id (unique in the test), prompt, points (default 1; gaps 2; writing 10), skill?, focus? (meaning|grammar|vocabulary|spelling|instruction — what a wrong answer is an error of), hint? (learning only), explanation? (shown when results are released), criteria? (your rubric, never shown)",
-      single_choice: "options: string[] or [{id, text}], correct: option id or exact text",
+      common: "id (unique in the test), prompt, points (default 1; gaps 2; writing/translation 10; spoken_response 5; read_aloud/repeat 3), skill?, focus? (meaning|grammar|vocabulary|spelling|instruction|pronunciation — what a wrong answer is an error of; 'spelling' makes umlaut spelling strict), hint? (learning only), explanation? (shown when results are released), criteria? (your rubric, never shown)",
+      single_choice: "options: string[] or [{id, text}], correct: option id or exact text — saved the moment it is tapped",
       multiple_choice: "options, correct: array of ids/texts. Partial credit: (right − wrong picks) / right.",
       gap_select: "text with {{1}}, {{2}}…; gaps: [{ id, options: string[], answer }] — a dropdown in each gap",
       gap_text: "text with {{1}}…; gaps: [{ id, answer, accepted?: string[] }]; typo_tolerance (default true; off automatically when focus is 'grammar')",
-      word_order: "words: string[] in the correct order (shown shuffled); accepted?: other full correct sentences",
+      word_order: "words: string[] in the correct order (shown shuffled); meaning?: Russian sense; accepted?: other full correct sentences",
       short_answer: "accepted?: string[] — matched ignoring case/punctuation with typo tolerance; anything else waits for your review (never auto-wrong)",
-      writing: "min_words?, max_words?, criteria (required) — always graded by you",
+      writing: "min_words?, max_words?, criteria (required) — always graded by you. Put every content requirement in the prompt.",
+      translation: "source (ready text in the learner's native language, always visible next to the answer), criteria (required unless accepted), accepted?: string[] (short phrases only; anything else waits for your review). Many correct translations exist — grade meaning and grammar, not a match.",
+      read_aloud: "see speaking.item_types",
+      repeat: "see speaking.item_types",
+      spoken_response: "see speaking.item_types",
     },
     grading: {
       auto: "Closed items are checked on the server. Text answers ignore spacing, quotes and final punctuation.",
-      typos: "A near miss (case, ae/oe/ue/ss for ä/ö/ü/ß, one wrong letter; two in long words) keeps half the points, is marked meaning: ok + spelling: error, and is listed in awaiting_your_review so you can confirm or override.",
+      umlauts: "«ae/oe/ue/ss» for «ä/ö/ü/ß» is accepted as fully correct — unless the item has focus: 'spelling'.",
+      typos: "A near miss (case, one wrong letter; two in long words) keeps half the points, error_kind 'typo', meaning: ok + spelling: error, and is listed in awaiting_your_review so you can confirm or override.",
+      error_kinds: "typo | error | dont_know | skipped | technical — kept apart in results; «Не знаю» is its own status, not a skipped item.",
+      skipped: "A skipped item counts as 0 in the total, but skill percentages are over attempted items, with 'skipped' and state 'not_done' reported — a skipped essay is not evidence of weak writing. totals.percent_of_attempted and skipped_points explain the difference.",
       dimensions: DIMENSIONS,
       skills: SKILLS,
-      dont_know: "«Не знаю» is its own status (dont_know), not a skipped item.",
-      speaking: "Nothing here measures pronunciation or spoken fluency; a written dialogue is writing.",
     },
     learner_preferences: [
       "Only single words and fixed expressions go into the dictionary and flashcards. Ordinary practice sentences stay in tests, never become cards.",
       "Do not add personal names or organisation names automatically.",
-      "A wrong answer does not mean every word in it is unknown — choose review material explicitly.",
+      "A wrong answer does not mean every word in it is unknown — choose review material explicitly; words the learner marked «не знаю» or looked up are the strongest evidence.",
+      "For practice writing, give a ready Russian text to translate rather than asking to invent a story.",
     ],
     limits: LIMITS,
     item_type_list: ITEM_TYPES,
@@ -246,10 +316,28 @@ async function prepare(ctx: AssessmentCtx, args: Args) {
 
 async function status(ctx: AssessmentCtx, args: Args) {
   try {
-    return await assessmentStatus(ctx.admin, ctx.userId, requireId(args), ctx.origin);
+    const result = await assessmentStatus(ctx.admin, ctx.userId, requireId(args), ctx.origin);
+    const config = speechConfig();
+    return {
+      ...result,
+      speech_service: result.speaking_items.length > 0
+        ? { configured: Boolean(config), region: config?.region ?? null, live_check: "get_speech_service_status" }
+        : null,
+    };
   } catch (error) {
     rethrow(error);
   }
+}
+
+async function speechStatus() {
+  const live = await checkSpeechService();
+  return {
+    ...live,
+    german: GERMAN_CAPABILITIES,
+    note: live.ok
+      ? "Speaking tasks will be assessed. Keys are never returned by this connection."
+      : "Speaking tasks can still be created, but recordings will come back as a technical status until the server's AZURE_SPEECH_KEY / AZURE_SPEECH_REGION are fixed.",
+  };
 }
 
 async function publish(ctx: AssessmentCtx, args: Args) {
@@ -388,7 +476,7 @@ export const ASSESSMENT_TOOLS: McpToolDef[] = [
     name: "create_assessment",
     title: "Создать тест",
     description:
-      "Create a draft interactive test the learner takes inside aibook («проверь мой немецкий»): reading texts with questions, listening (monologue or dialogue — send only the words, the app records them itself), choice, gaps, word order, short answers and writing. Idempotent with 'client_key': repeating the call after a failure returns the same test. Every problem in the input is listed in one error. Then: prepare_assessment_audio (if there is audio) → publish_assessment.",
+      "Create a draft interactive test the learner takes inside aibook («проверь мой немецкий»): reading texts with questions, listening (monologue or dialogue — send only the words, the app records them itself), choice, gaps, word order, short answers, translation of a ready Russian text, writing, and speaking (read aloud, listen-and-repeat, free spoken answer — assessed by Azure pronunciation assessment). Idempotent with 'client_key': repeating the call after a failure returns the same test. Every problem in the input is listed in one error. Then: prepare_assessment_audio (if there is audio) → publish_assessment.",
     inputSchema: {
       type: "object",
       properties: {
@@ -487,7 +575,7 @@ export const ASSESSMENT_TOOLS: McpToolDef[] = [
     name: "get_assessment_results",
     title: "Результаты теста",
     description:
-      "One attempt in full: for every item the exact raw answer and a readable version, the first answer and every change, «не знаю» marks, auto-score with error dimensions (meaning, grammar, vocabulary, spelling, instruction), the expected answer and your criteria; listenings used per section with timestamps and the transcript; reading texts; unfinished items; scores by skill; and awaiting_your_review — the writing, free answers and typo-near-misses you need to grade with submit_assessment_review.",
+      "One attempt in full: for every item the exact raw answer and a readable version, the first answer and every change, «не знаю» marks, error kind (typo / error / dont_know / skipped / technical), dimensions (meaning, grammar, vocabulary, spelling, instruction, pronunciation), the expected answer and your criteria; words the learner tapped as unknown or looked up; listenings per section with timestamps and the transcript; for speaking items every recording with transcript, Azure scores, per-word errors, the raw Azure answer and a private 1-hour link; unfinished items; scores by skill (skipped items reported separately); and awaiting_your_review — the writing, translation, free and spoken answers and typo-near-misses you need to grade with submit_assessment_review.",
     inputSchema: {
       type: "object",
       properties: {
@@ -561,6 +649,14 @@ export const ASSESSMENT_TOOLS: McpToolDef[] = [
     annotations: { ...READ_ONLY, title: "Пробелы по тестам" },
   },
   {
+    name: "get_speech_service_status",
+    title: "Проверка оценки произношения",
+    description:
+      "Is speaking assessment ready: checks the server's Azure Speech key and region with a free token request and reports configured / ok / region / the error, plus what was verified for German (which scores exist, that prosody and phoneme names do not). Never returns a key.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: { ...READ_ONLY, openWorldHint: true, title: "Проверка оценки произношения" },
+  },
+  {
     name: "check_dictionary_words",
     title: "Есть ли уже эти слова",
     description:
@@ -587,4 +683,5 @@ export const ASSESSMENT_HANDLERS: Record<string, (ctx: AssessmentCtx, args: Args
   submit_assessment_review: review,
   get_learning_gaps: gaps,
   check_dictionary_words: checkWords,
+  get_speech_service_status: speechStatus,
 };

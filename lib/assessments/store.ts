@@ -5,6 +5,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   allItems,
+  audioTargets,
+  isSpeakingType,
   normalizeAssessmentInput,
   needsTeacher,
   DIMENSIONS,
@@ -17,10 +19,14 @@ import {
   type Section,
 } from "./model";
 import {
+  answerRecording,
   countWords,
+  countedRecordings,
   gradeAll,
-  hasManualItems,
   isAnswered,
+  pendingTeacherItems,
+  type SpeechRecording,
+  type SpeechState,
   summarizeDimensions,
   summarizeSkills,
   totals,
@@ -40,7 +46,10 @@ import {
   type AttemptRow,
   type AttemptSnapshot,
   type AudioState,
+  type WordMark,
+  wordMarkKey,
 } from "./publicView";
+import { assessPronunciation, inspectWav, speechRemarks, TECHNICAL_REASON_RU } from "./azureSpeech";
 import { assessmentTtsModels, audioSpecHash, synthesizeListening } from "./speech";
 
 const AUDIO_BUCKET = "tts-audio";
@@ -111,10 +120,9 @@ function audioStates(rows: AudioRow[]): Record<string, AudioState> {
   return Object.fromEntries(rows.map((r) => [r.section_id, { status: r.status, duration_ms: r.duration_ms }]));
 }
 
-function audioSections(content: AssessmentContent): { section: Section; spec: AudioSpec }[] {
-  return content.sections.flatMap((section) =>
-    section.stimulus?.type === "audio" ? [{ section, spec: section.stimulus.audio }] : [],
-  );
+/** Recordings the app makes: section listenings (key = section id) and repeat samples (key = item:<id>). */
+function audioSections(content: AssessmentContent): { key: string; spec: AudioSpec }[] {
+  return audioTargets(content).map(({ key, spec }) => ({ key, spec }));
 }
 
 // ─── Teacher: create / update ────────────────────────────────────────────────
@@ -127,8 +135,8 @@ function audioSections(content: AssessmentContent): { section: Section; spec: Au
 async function syncAudioRows(admin: SupabaseClient, userId: string, assessmentId: string, content: AssessmentContent) {
   const existing = await getAudioRows(admin, assessmentId);
   const model = assessmentTtsModels()[0];
-  const wanted = audioSections(content).map(({ section, spec }) => ({
-    section_id: section.id,
+  const wanted = audioSections(content).map(({ key, spec }) => ({
+    section_id: key,
     spec,
     spec_hash: audioSpecHash(spec, model),
   }));
@@ -277,7 +285,7 @@ export async function prepareAudio(
   // No new recording starts past this point, so the call ends inside the
   // route's 60-second limit even when the last one takes twenty seconds.
   const budget = opts.budgetMs ?? 25000;
-  const specs = new Map(audioSections(assessment.content).map(({ section, spec }) => [section.id, spec]));
+  const specs = new Map(audioSections(assessment.content).map(({ key, spec }) => [key, spec]));
 
   const rows = await getAudioRows(admin, id);
   const todo = rows.filter((r) =>
@@ -364,6 +372,7 @@ export async function assessmentStatus(admin: SupabaseClient, userId: string, id
     items: items.length,
     max_score: items.reduce((n, { item }) => n + item.points, 0),
     manual_items: items.filter(({ item }) => needsTeacher(item)).map(({ item }) => item.id),
+    speaking_items: items.filter(({ item }) => isSpeakingType(item.type)).map(({ item }) => item.id),
     audio,
     ready_to_publish: notReady.length === 0,
     link: a.status === "published" ? testLink(origin, a.id) : null,
@@ -413,7 +422,7 @@ export async function listAssessments(admin: SupabaseClient, userId: string, opt
   const ids = (data ?? []).map((a) => a.id as string);
   const { data: attempts } = ids.length
     ? await admin.from("assessment_attempts")
-      .select("id, assessment_id, status, started_at, submitted_at, reviewed_at, answers, snapshot, review")
+      .select("id, assessment_id, status, started_at, submitted_at, reviewed_at, answers, snapshot, review, speech")
       .in("assessment_id", ids)
       .order("started_at", { ascending: false })
     : { data: [] };
@@ -429,7 +438,7 @@ export async function listAssessments(admin: SupabaseClient, userId: string, opt
     published_at: a.published_at,
     items: allItems(a.content as AssessmentContent).length,
     attempts: (attempts ?? []).filter((t) => t.assessment_id === a.id).map((t) => {
-      const results = gradeAll((t.snapshot as AttemptSnapshot).content, (t.answers ?? {}) as Record<string, AnswerRecord>, t.review as TeacherReview | null);
+      const results = gradeAll((t.snapshot as AttemptSnapshot).content, (t.answers ?? {}) as Record<string, AnswerRecord>, t.review as TeacherReview | null, (t.speech ?? {}) as SpeechState);
       return {
         attempt_id: t.id,
         status: t.status,
@@ -485,9 +494,18 @@ export function readableAnswer(item: Item, value: AnswerValue | null): string {
 }
 
 export async function assessmentResults(admin: SupabaseClient, userId: string, args: Record<string, unknown>) {
-  const attempt = await resolveAttempt(admin, userId, args);
+  let attempt = await resolveAttempt(admin, userId, args);
+  attempt = await settleIfNothingToReview(admin, attempt);
   const { content, mode, settings, title } = attempt.snapshot;
-  const results = gradeAll(content, attempt.answers ?? {}, attempt.review);
+  const speechState = attempt.speech ?? {};
+  const results = gradeAll(content, attempt.answers ?? {}, attempt.review, speechState);
+  // Short-lived private links to each recording, for listening to the learner.
+  const links = new Map<string, string>();
+  const paths = Object.values(speechState).flatMap((s) => s.recordings.map((r) => r.storage_path));
+  if (paths.length > 0) {
+    const { data } = await admin.storage.from(AUDIO_BUCKET).createSignedUrls(paths, 3600);
+    for (const entry of data ?? []) if (entry.path && entry.signedUrl) links.set(entry.path, entry.signedUrl);
+  }
   const byItem = new Map(results.map((r) => [r.item_id, r]));
 
   const sections = content.sections.map((section) => ({
@@ -504,6 +522,7 @@ export async function assessmentResults(admin: SupabaseClient, userId: string, a
         }
       : null,
     reading_text: section.stimulus?.type === "text" ? section.stimulus.paragraphs : null,
+    words_marked_in_text: wordMarksFor(attempt, section.id, null),
     items: section.items.map((item) => {
       const record = attempt.answers?.[item.id];
       const r = byItem.get(item.id)!;
@@ -512,7 +531,10 @@ export async function assessmentResults(admin: SupabaseClient, userId: string, a
         type: item.type,
         prompt: item.prompt,
         ...(item.type === "single_choice" || item.type === "multiple_choice" ? { options: item.options } : {}),
-        ...(item.type === "gap_select" || item.type === "gap_text" ? { text: item.text } : {}),
+        ...(item.type === "gap_select" || item.type === "gap_text" || item.type === "read_aloud" || item.type === "repeat" ? { text: item.text } : {}),
+        ...(item.type === "translation" ? { source: item.source } : {}),
+        ...(item.type === "word_order" ? { meaning: item.meaning || null } : {}),
+        ...(isSpeakingType(item.type) ? { speech: speechReport(item, speechState[item.id], links, attempt.listens) } : {}),
         expected: r.expected,
         criteria: item.criteria || null,
         // Exactly what the learner gave, plus how a person would read it.
@@ -522,18 +544,21 @@ export async function assessmentResults(admin: SupabaseClient, userId: string, a
         answer_status: (record && isAnswered(record) ? record.status : "unanswered") as
           "answered" | "dont_know" | "unanswered",
         unsent_draft: record?.draft && !record.value ? readableAnswer(item, record.draft) : null,
-        first_answer: record ? readableAnswer(item, record.first_value) : null,
-        changes: record ? record.history.length - 1 : 0,
+        first_answer: record && isAnswered(record) ? readableAnswer(item, record.first_value) : null,
+        // Changes after the first answer; a record holding only a draft has none.
+        changes: Math.max(0, (record?.history.length ?? 0) - 1),
         history: record?.history.map((h) => ({ answer: readableAnswer(item, h.value), status: h.status, at: h.at })) ?? [],
         tries: record?.tries ?? 0,
-        word_count: item.type === "writing" && typeof record?.value === "string" ? countWords(record.value) : undefined,
+        word_count: (item.type === "writing" || item.type === "translation") && typeof record?.value === "string" ? countWords(record.value) : undefined,
+        words_marked: wordMarksFor(attempt, section.id, item.id),
         result: r,
-        needs_your_review: needsTeacher(item) && r.graded_by !== "teacher" && r.status === "pending_review",
+        needs_your_review: r.graded_by !== "teacher" && r.status === "pending_review",
       };
     }),
   }));
 
-  const unfinished = sections.flatMap((s) => s.items.filter((i) => i.answer_status === "unanswered").map((i) => i.item_id));
+  const unfinished = results.filter((r) => r.status === "unanswered").map((r) => r.item_id);
+  const pending = pendingTeacherItems(content, attempt.answers ?? {}, attempt.review, speechState);
   return {
     attempt_id: attempt.id,
     assessment_id: attempt.assessment_id,
@@ -548,13 +573,16 @@ export async function assessmentResults(admin: SupabaseClient, userId: string, a
     skills: summarizeSkills(content, results),
     dimensions: summarizeDimensions(results),
     unfinished_items: unfinished,
-    awaiting_your_review: sections.flatMap((s) => s.items.filter((i) => i.needs_your_review || i.result.needs_teacher_check).map((i) => i.item_id)),
+    awaiting_your_review: [...new Set([...pending, ...results.filter((r) => r.needs_teacher_check).map((r) => r.item_id)])],
+    word_marks: Object.values(attempt.word_marks ?? {}),
     learner_sees_results: resultsReleased(attempt),
     sections,
     review: attempt.review,
     note: attempt.status === "in_progress"
       ? "The attempt is still open: answers can change until the learner submits."
-      : "Grade every item in awaiting_your_review with submit_assessment_review. Typos are already scored as half points with spelling marked; confirm or override them.",
+      : pending.length === 0 && attempt.status === "reviewed"
+        ? "Nothing waits for manual grading; the learner already sees the results. You may still call submit_assessment_review to add comments, a summary or gaps."
+        : "Grade every item in awaiting_your_review with submit_assessment_review. Typos are already scored as half points with spelling marked; confirm or override them. Speaking: Azure measures pronunciation only — grade content from the transcript, and never read the transcript as proof of correct pronunciation.",
   };
 }
 
@@ -617,10 +645,7 @@ export async function submitReview(admin: SupabaseClient, userId: string, args: 
     reviewed_at: new Date().toISOString(),
   };
 
-  const stillPending = allItems(attempt.snapshot.content)
-    .filter(({ item }) => needsTeacher(item) && attempt.answers?.[item.id]?.status === "answered"
-      && !mergedItems.some((r) => r.item_id === item.id))
-    .map(({ item }) => item.id);
+  const stillPending = pendingTeacherItems(attempt.snapshot.content, attempt.answers ?? {}, review, attempt.speech ?? {});
   const finished = args.final !== false && stillPending.length === 0;
 
   const { error } = await admin.from("assessment_attempts").update({
@@ -631,7 +656,7 @@ export async function submitReview(admin: SupabaseClient, userId: string, args: 
   }).eq("id", attempt.id).eq("user_id", userId);
   if (error) throw new AssessmentError(`review save failed: ${error.message}`, 500);
 
-  const results = gradeAll(attempt.snapshot.content, attempt.answers ?? {}, review);
+  const results = gradeAll(attempt.snapshot.content, attempt.answers ?? {}, review, attempt.speech ?? {});
   return {
     attempt_id: attempt.id,
     status: finished ? "reviewed" : attempt.status,
@@ -655,11 +680,11 @@ export async function learningGaps(admin: SupabaseClient, userId: string, args: 
   }
 
   const errors = attempts.flatMap((attempt) => {
-    const results = gradeAll(attempt.snapshot.content, attempt.answers ?? {}, attempt.review);
+    const results = gradeAll(attempt.snapshot.content, attempt.answers ?? {}, attempt.review, attempt.speech ?? {});
     const byItem = new Map(results.map((r) => [r.item_id, r]));
     return allItems(attempt.snapshot.content).flatMap(({ section, item }) => {
       const r = byItem.get(item.id)!;
-      if (r.status === "correct" || r.status === "unanswered" || r.status === "pending_review") return [];
+      if (["correct", "unanswered", "pending_review", "technical_issue"].includes(r.status)) return [];
       return [{
         attempt_id: attempt.id,
         test: attempt.snapshot.title,
@@ -668,7 +693,8 @@ export async function learningGaps(admin: SupabaseClient, userId: string, args: 
         item_id: item.id,
         prompt: item.prompt || (item.type === "gap_text" || item.type === "gap_select" ? item.text : ""),
         status: r.status,
-        learner_answer: readableAnswer(item, attempt.answers?.[item.id]?.value ?? null),
+        error_kind: r.error_kind,
+        learner_answer: isSpeakingType(item.type) ? r.speech?.transcript ?? "" : readableAnswer(item, attempt.answers?.[item.id]?.value ?? null),
         expected: r.expected,
         error_in: Object.entries(r.dimensions).filter(([, m]) => m !== "ok").map(([d]) => d),
         teacher_comment: r.teacher_comment,
@@ -677,6 +703,15 @@ export async function learningGaps(admin: SupabaseClient, userId: string, args: 
   });
 
   const teacherGaps = attempts.flatMap((a) => (a.review?.gaps ?? []).map((g) => ({ ...g, attempt_id: a.id, test: a.snapshot.title })));
+  const unknownWords = attempts.flatMap((a) => Object.values(a.word_marks ?? {})
+    .filter((m) => m.unknown || m.translation)
+    .map((m) => ({ word: m.word, marked_unknown: m.unknown, looked_up_translation: m.translation, context: m.context, test: a.snapshot.title })));
+  const pronunciation = attempts.flatMap((a) => {
+    const results = gradeAll(a.snapshot.content, a.answers ?? {}, a.review, a.speech ?? {});
+    return results.flatMap((r) => (r.speech?.words ?? [])
+      .filter((w) => w.error_type !== "None" || (w.accuracy !== null && w.accuracy < 60))
+      .map((w) => ({ word: w.word, error_type: w.error_type, accuracy: w.accuracy, item_id: r.item_id, test: a.snapshot.title })));
+  });
   const byDimension: Record<string, number> = {};
   for (const e of errors) for (const d of e.error_in.length ? e.error_in : ["unknown"]) byDimension[d] = (byDimension[d] ?? 0) + 1;
 
@@ -685,10 +720,15 @@ export async function learningGaps(admin: SupabaseClient, userId: string, args: 
     errors,
     errors_by_dimension: byDimension,
     teacher_gaps: teacherGaps,
+    /** Words the learner tapped as unknown or looked up: the most direct evidence there is. */
+    words_the_learner_did_not_know: unknownWords,
+    /** Words Azure heard as mispronounced, left out or added — pronunciation, not vocabulary. */
+    pronunciation_problems: pronunciation,
     how_to_build_a_review_pack: [
       "Choose the material yourself: a wrong answer does not mean every word in it is unknown.",
       "Run check_dictionary_words on your candidates first and leave out what the learner already has.",
       "Only single words and fixed expressions (content_type 'word' or 'expression') go into the dictionary and cards — never ordinary practice sentences, names of people or organisations.",
+      "Words the learner marked as unknown or looked up are strong candidates; mispronounced words are pronunciation practice (a read_aloud or repeat test), not new vocabulary.",
       "Create the pack with add_word_batch (article, plural, verb forms, translation, example), describe it with 'description' and 'instruction', and set 'training' if it should be drilled a particular way.",
     ],
   };
@@ -786,7 +826,11 @@ export function cleanValue(item: Item, value: unknown): AnswerValue | null {
     case "short_answer":
       return typeof value === "string" ? value.slice(0, 2000) : null;
     case "writing":
+    case "translation":
       return typeof value === "string" ? value.slice(0, 10000) : null;
+    default:
+      // Speaking items are answered by recordings, never by a value.
+      return null;
   }
 }
 
@@ -804,22 +848,91 @@ export type LearnerAction =
   | { action: "answer"; item_id: string; value: unknown }
   | { action: "dont_know"; item_id: string }
   | { action: "complete_section"; section_id: string }
-  | { action: "submit" };
+  | { action: "submit" }
+  | { action: "word_mark"; section_id: string; item_id: string | null; word: string; context: string; unknown?: boolean; translation?: string | null };
+
+/**
+ * Typed-but-not-sent text becomes the answer when its block closes: with no
+ * «Ответить» button, leaving a field without blurring it must not lose it.
+ */
+function promoteDrafts(attempt: AttemptRow, sectionIds: string[], now: string): Record<string, AnswerRecord> {
+  const answers = { ...(attempt.answers ?? {}) };
+  for (const section of attempt.snapshot.content.sections) {
+    if (!sectionIds.includes(section.id)) continue;
+    for (const item of section.items) {
+      const record = answers[item.id];
+      if (!record || isAnswered(record) || record.draft == null) continue;
+      const value = cleanValue(item, record.draft);
+      if (value === null || isEmpty(value)) continue;
+      answers[item.id] = {
+        ...record,
+        value,
+        status: "answered",
+        draft: null,
+        first_value: value,
+        first_status: "answered",
+        first_at: now,
+        history: [...record.history, { value, status: "answered", at: now }],
+        updated_at: now,
+      };
+    }
+  }
+  return answers;
+}
+
+/** Submitted, and nothing a teacher has to grade: the attempt is final as it stands. */
+function nothingToReview(attempt: AttemptRow, answers = attempt.answers ?? {}): boolean {
+  return pendingTeacherItems(attempt.snapshot.content, answers, attempt.review, attempt.speech ?? {}).length === 0;
+}
+
+/**
+ * An attempt submitted before this rule existed, with nothing left to grade,
+ * would otherwise wait for a review that can never come.
+ */
+async function settleIfNothingToReview(admin: SupabaseClient, attempt: AttemptRow): Promise<AttemptRow> {
+  if (attempt.status !== "submitted" || !nothingToReview(attempt)) return attempt;
+  return saveAttempt(admin, attempt, { status: "reviewed", reviewed_at: new Date().toISOString() });
+}
 
 export async function applyLearnerAction(admin: SupabaseClient, attempt: AttemptRow, input: LearnerAction): Promise<AttemptRow> {
-  if (isClosed(attempt)) throw new AssessmentError("The test has already been submitted.", 409);
   const now = new Date().toISOString();
+
+  if (input.action === "word_mark") {
+    // Allowed after submission too: reading the results is where words get looked up.
+    if (attempt.snapshot.settings.allow_word_lookup === false) throw new AssessmentError("Word lookup is off for this test.", 403);
+    const word = String(input.word ?? "").trim().slice(0, 80);
+    if (!word || !/\p{L}/u.test(word)) throw new AssessmentError("No word.");
+    const sectionId = String(input.section_id ?? "").slice(0, 60);
+    const itemId = input.item_id ? String(input.item_id).slice(0, 60) : null;
+    const key = wordMarkKey(sectionId, itemId, word);
+    const previous = attempt.word_marks?.[key];
+    const mark: WordMark = {
+      word,
+      section_id: sectionId,
+      item_id: itemId,
+      context: String(input.context ?? "").slice(0, 300) || previous?.context || "",
+      unknown: typeof input.unknown === "boolean" ? input.unknown : previous?.unknown ?? false,
+      translation: typeof input.translation === "string" ? input.translation.slice(0, 300) : previous?.translation ?? null,
+      looked_up_at: typeof input.translation === "string" ? now : previous?.looked_up_at ?? null,
+      marked_at: typeof input.unknown === "boolean" ? now : previous?.marked_at ?? null,
+    };
+    return saveAttempt(admin, attempt, { word_marks: { ...(attempt.word_marks ?? {}), [key]: mark } });
+  }
+
+  if (isClosed(attempt)) throw new AssessmentError("The test has already been submitted.", 409);
 
   if (input.action === "submit") {
     const sections = { ...(attempt.sections ?? {}) };
     for (const s of attempt.snapshot.content.sections) sections[s.id] ??= { completed_at: now };
-    const manual = hasManualItems(attempt.snapshot.content);
+    const open = attempt.snapshot.content.sections.filter((s) => !attempt.sections?.[s.id]).map((s) => s.id);
+    const answers = promoteDrafts(attempt, open, now);
+    const final = nothingToReview(attempt, answers);
     return saveAttempt(admin, attempt, {
       sections,
-      status: "submitted",
+      answers,
+      status: final ? "reviewed" : "submitted",
       submitted_at: now,
-      // Nothing for a teacher to grade: the test is final the moment it is in.
-      ...(manual ? {} : { status: "reviewed" as const, reviewed_at: now }),
+      ...(final ? { reviewed_at: now } : {}),
     });
   }
 
@@ -827,13 +940,17 @@ export async function applyLearnerAction(admin: SupabaseClient, attempt: Attempt
     const section = attempt.snapshot.content.sections.find((s) => s.id === input.section_id);
     if (!section) throw new AssessmentError("No such section.", 404);
     if (!sectionAvailable(attempt, section.id)) throw new AssessmentError("Finish the earlier sections first.", 409);
-    return saveAttempt(admin, attempt, { sections: { ...(attempt.sections ?? {}), [section.id]: { completed_at: now } } });
+    return saveAttempt(admin, attempt, {
+      sections: { ...(attempt.sections ?? {}), [section.id]: { completed_at: now } },
+      answers: promoteDrafts(attempt, [section.id], now),
+    });
   }
 
   const { section, item } = findItem(attempt, input.item_id);
   if (!sectionAvailable(attempt, section.id)) throw new AssessmentError("This section is not open yet.", 409);
-  const results = gradeAll(attempt.snapshot.content, attempt.answers ?? {}, attempt.review);
+  const results = gradeAll(attempt.snapshot.content, attempt.answers ?? {}, attempt.review, attempt.speech ?? {});
   const result = results.find((r) => r.item_id === item.id)!;
+  if (isSpeakingType(item.type) && input.action !== "dont_know") throw new AssessmentError("A speaking task is answered with a recording.");
   if (itemLocked(attempt, section, item, result)) throw new AssessmentError("This answer is final.", 409);
   if (section.stimulus?.type === "audio" && section.stimulus.unlock_questions === "after_first_play" && listensUsed(attempt, section.id) === 0) {
     throw new AssessmentError("Listen to the recording first.", 409);
@@ -853,6 +970,10 @@ export async function applyLearnerAction(admin: SupabaseClient, attempt: Attempt
   const status = input.action === "dont_know" ? "dont_know" as const : "answered" as const;
   const value = status === "dont_know" ? null : cleanValue(item, (input as { value: unknown }).value);
   if (status === "answered" && (value === null || isEmpty(value))) throw new AssessmentError("The answer is empty.");
+  // Saving the same answer again (a blur after an autosave) is not a change.
+  if (previous && isAnswered(previous) && previous.status === status && JSON.stringify(previous.value) === JSON.stringify(value)) {
+    return attempt;
+  }
   const hadAnswer = isAnswered(previous) && Boolean(previous!.first_at);
   record = {
     value,
@@ -874,36 +995,45 @@ function isEmpty(value: AnswerValue): boolean {
   return Object.values(value).every((v) => !String(v).trim());
 }
 
+/** The play limit of a recording the app made: a section's listening or a repeat sample. */
+function playLimit(attempt: AttemptRow, key: string): { found: boolean; max: number | null; sectionId: string } {
+  for (const section of attempt.snapshot.content.sections) {
+    if (key === section.id && section.stimulus?.type === "audio") return { found: true, max: section.stimulus.max_plays, sectionId: section.id };
+    const item = section.items.find((i) => `item:${i.id}` === key);
+    if (item?.type === "repeat") return { found: true, max: item.sample_max_plays, sectionId: section.id };
+  }
+  return { found: false, max: null, sectionId: "" };
+}
+
 /**
- * The recording for one section, as a short-lived link. Fetching it is free;
- * only an actual start of playback (startListen) spends a listening, so a
- * failed download never costs the learner one.
+ * The recording for one section (or repeat sample), as a short-lived link.
+ * Fetching it is free; only an actual start of playback (startListen) spends a
+ * listening, so a failed download never costs the learner one.
  */
-export async function audioLink(admin: SupabaseClient, attempt: AttemptRow, sectionId: string) {
-  const section = attempt.snapshot.content.sections.find((s) => s.id === sectionId);
-  if (section?.stimulus?.type !== "audio") throw new AssessmentError("This section has no recording.", 404);
-  const max = section.stimulus.max_plays;
-  if (!isClosed(attempt) && max !== null && listensUsed(attempt, sectionId) >= max) {
+export async function audioLink(admin: SupabaseClient, attempt: AttemptRow, key: string) {
+  const limit = playLimit(attempt, key);
+  if (!limit.found) throw new AssessmentError("This section has no recording.", 404);
+  if (!isClosed(attempt) && limit.max !== null && listensUsed(attempt, key) >= limit.max) {
     throw new AssessmentError("No listenings left.", 403);
   }
-  if (isClosed(attempt) && max !== null) throw new AssessmentError("The test is finished.", 403);
+  if (isClosed(attempt) && limit.max !== null) throw new AssessmentError("The test is finished.", 403);
   const { data: row } = await admin.from("assessment_audio").select("status, storage_path")
-    .eq("assessment_id", attempt.assessment_id).eq("section_id", sectionId).maybeSingle();
+    .eq("assessment_id", attempt.assessment_id).eq("section_id", key).maybeSingle();
   if (!row || row.status !== "ready" || !row.storage_path) throw new AssessmentError("The recording is still being prepared.", 425);
   const { data, error } = await admin.storage.from(AUDIO_BUCKET).createSignedUrl(row.storage_path as string, 300);
   if (error || !data) throw new AssessmentError(`audio link failed: ${error?.message ?? "no url"}`, 500);
   return data.signedUrl;
 }
 
-export async function startListen(admin: SupabaseClient, userId: string, attempt: AttemptRow, sectionId: string) {
-  const section = attempt.snapshot.content.sections.find((s) => s.id === sectionId);
-  if (section?.stimulus?.type !== "audio") throw new AssessmentError("This section has no recording.", 404);
-  if (isSectionDone(attempt, sectionId)) throw new AssessmentError("This section is finished.", 409);
+export async function startListen(admin: SupabaseClient, userId: string, attempt: AttemptRow, key: string) {
+  const limit = playLimit(attempt, key);
+  if (!limit.found) throw new AssessmentError("This section has no recording.", 404);
+  if (isSectionDone(attempt, limit.sectionId)) throw new AssessmentError("This section is finished.", 409);
   const { data, error } = await admin.rpc("assessment_start_listen", {
     p_attempt: attempt.id,
     p_user: userId,
-    p_section: sectionId,
-    p_max: section.stimulus.max_plays,
+    p_section: key,
+    p_max: limit.max,
   });
   if (error) throw new AssessmentError(`listen count failed: ${error.message}`, 500);
   const result = data as { ok: boolean; used?: number; reason?: string };
@@ -913,4 +1043,133 @@ export async function startListen(admin: SupabaseClient, userId: string, attempt
 
 export async function getLearnerAttempt(admin: SupabaseClient, userId: string, assessmentId: string): Promise<AttemptRow | null> {
   return latestAttempt(admin, userId, assessmentId);
+}
+
+// ─── Speaking ────────────────────────────────────────────────────────────────
+
+const RECORDING_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * One recording sent for a speaking item: stored first, then analyzed.
+ *
+ * The client names the recording (a uuid made when it was recorded), so a
+ * retried upload finds the analysis already done and pays Azure nothing. A
+ * recording that failed for a technical reason — silence, unreadable audio,
+ * Azure down — does not count against the item's allowance and is never a low
+ * score; a service failure can be re-analyzed from the stored file.
+ */
+export async function submitSpeech(
+  admin: SupabaseClient,
+  attempt: AttemptRow,
+  itemId: string,
+  recordingId: string,
+  wav: Buffer,
+): Promise<{ attempt: AttemptRow; recording: SpeechRecording }> {
+  if (isClosed(attempt)) throw new AssessmentError("The test has already been submitted.", 409);
+  if (!RECORDING_ID.test(recordingId)) throw new AssessmentError("Bad recording id.");
+  const { section, item } = findItem(attempt, itemId);
+  if (!isSpeakingType(item.type) || (item.type !== "read_aloud" && item.type !== "repeat" && item.type !== "spoken_response")) {
+    throw new AssessmentError("This task is not a speaking task.");
+  }
+  if (!sectionAvailable(attempt, section.id) || isSectionDone(attempt, section.id)) throw new AssessmentError("This section is closed.", 409);
+
+  const state = attempt.speech?.[item.id] ?? { recordings: [] };
+  const existing = state.recordings.find((r) => r.id === recordingId);
+  if (existing && (existing.status === "done" || existing.technical_reason !== "service_unavailable")) {
+    return { attempt, recording: existing };
+  }
+  if (!existing && countedRecordings(state) >= item.max_recordings) throw new AssessmentError("No recordings left for this task.", 403);
+
+  const now = new Date().toISOString();
+  const path = existing?.storage_path ?? `speech/${attempt.id}/${item.id}/${recordingId}.wav`;
+  const info = inspectWav(wav);
+  let recording: SpeechRecording;
+  const technical = (reason: SpeechRecording["technical_reason"], durationMs = 0): SpeechRecording => ({
+    id: recordingId, storage_path: path, duration_ms: durationMs, created_at: existing?.created_at ?? now,
+    status: "technical_error", technical_reason: reason, transcript: null, scores: null, words: [], raw: null, analyzed_at: now,
+  });
+
+  if (!info || info.sampleRate !== 16000 || info.channels !== 1 || info.bitsPerSample !== 16) {
+    recording = technical("unsupported_format");
+  } else if (info.durationMs > (item.max_seconds + 2) * 1000) {
+    recording = technical("too_long", info.durationMs);
+  } else if (info.durationMs < 400) {
+    recording = technical("too_short", info.durationMs);
+  } else {
+    if (!existing) {
+      const { error } = await admin.storage.from(AUDIO_BUCKET).upload(path, wav, { contentType: "audio/wav", upsert: true });
+      if (error) throw new AssessmentError(`recording upload failed: ${error.message}`, 500);
+    }
+    const reference = item.type === "spoken_response" ? "" : item.text;
+    const analysis = await assessPronunciation(wav, attempt.snapshot.language, reference);
+    recording = analysis.status === "done"
+      ? {
+          id: recordingId, storage_path: path, duration_ms: info.durationMs, created_at: existing?.created_at ?? now,
+          status: "done", technical_reason: null, transcript: analysis.transcript, scores: analysis.scores,
+          words: analysis.words, raw: analysis.raw, analyzed_at: now,
+        }
+      : { ...technical(analysis.reason, info.durationMs), raw: analysis.raw };
+  }
+
+  // Read again just before writing: another tab may have sent a recording meanwhile.
+  const fresh = (await getAttemptById(admin, attempt)) ?? attempt;
+  const freshState = fresh.speech?.[item.id] ?? { recordings: [] };
+  const recordings = [...freshState.recordings.filter((r) => r.id !== recordingId), recording].slice(-20);
+  const saved = await saveAttempt(admin, fresh, { speech: { ...(fresh.speech ?? {}), [item.id]: { recordings } } });
+  return { attempt: saved, recording };
+}
+
+async function getAttemptById(admin: SupabaseClient, attempt: AttemptRow): Promise<AttemptRow | null> {
+  const { data } = await admin.from("assessment_attempts").select("*").eq("id", attempt.id).eq("user_id", attempt.user_id).maybeSingle();
+  return (data as AttemptRow | null) ?? null;
+}
+
+/** The learner's own recording, to listen back to (a 5-minute private link). */
+export async function speechLink(admin: SupabaseClient, attempt: AttemptRow, itemId: string, recordingId: string) {
+  const recording = attempt.speech?.[itemId]?.recordings.find((r) => r.id === recordingId);
+  if (!recording) throw new AssessmentError("No such recording.", 404);
+  const { data, error } = await admin.storage.from(AUDIO_BUCKET).createSignedUrl(recording.storage_path, 300);
+  if (error || !data) throw new AssessmentError("The recording is not available.", 404);
+  return data.signedUrl;
+}
+
+/** Everything the teacher needs about one speaking item. */
+function speechReport(
+  item: Item,
+  state: { recordings: SpeechRecording[] } | undefined,
+  links: Map<string, string>,
+  listens: AttemptRow["listens"],
+) {
+  const recordings = state?.recordings ?? [];
+  const used = answerRecording(state);
+  const scripted = item.type !== "spoken_response";
+  return {
+    max_recordings: (item as { max_recordings?: number }).max_recordings ?? null,
+    recordings_counted: countedRecordings(state),
+    sample_plays: item.type === "repeat" ? { used: listens?.[`item:${item.id}`]?.used ?? 0, max: item.sample_max_plays } : null,
+    graded_recording_id: used?.id ?? null,
+    transcript: used?.transcript ?? null,
+    transcript_note: "What the recognizer heard. It is not proof that the words were pronounced correctly.",
+    scores: used?.scores ?? null,
+    words: used?.words ?? [],
+    remarks_shown_to_learner: used ? speechRemarks(used.words, scripted) : [],
+    recordings: recordings.map((r) => ({
+      id: r.id,
+      created_at: r.created_at,
+      duration_ms: r.duration_ms,
+      status: r.status,
+      technical_reason: r.technical_reason,
+      technical_reason_ru: r.technical_reason ? TECHNICAL_REASON_RU[r.technical_reason] : null,
+      transcript: r.transcript,
+      scores: r.scores,
+      link: links.get(r.storage_path) ?? null,
+      azure_raw: r.raw,
+    })),
+  };
+}
+
+function wordMarksFor(attempt: AttemptRow, sectionId: string, itemId: string | null) {
+  return Object.values(attempt.word_marks ?? {})
+    .filter((m) => m.section_id === sectionId && (m.item_id ?? null) === itemId)
+    .map((m) => ({ word: m.word, unknown: m.unknown, looked_up: Boolean(m.translation), translation_shown: m.translation, context: m.context }));
 }

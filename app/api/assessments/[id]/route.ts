@@ -14,6 +14,7 @@ import {
   learnerView,
   openAttempt,
   prepareAudio,
+  speechLink,
   startListen,
   type LearnerAction,
 } from "@/lib/assessments/store";
@@ -27,6 +28,11 @@ type Body = {
   section_id?: string;
   value?: unknown;
   retake?: boolean;
+  recording_id?: string;
+  word?: string;
+  context?: string;
+  unknown?: boolean;
+  translation?: string | null;
 };
 
 function fail(error: unknown) {
@@ -69,6 +75,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ used, view: await learnerView(admin, user.id, id, fresh ?? attempt) });
     }
 
+    if (body.action === "speech_link") {
+      const url = await speechLink(admin, attempt, String(body.item_id ?? ""), String(body.recording_id ?? ""));
+      return NextResponse.json({ url });
+    }
+
     if (body.action === "retry_audio") {
       // The learner's screen found a recording still pending: give it another
       // push. Claims are atomic, so this never doubles the teacher's call.
@@ -76,13 +87,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ view: await learnerView(admin, user.id, id, attempt) });
     }
 
-    const allowed = ["draft", "answer", "dont_know", "complete_section", "submit"];
+    const allowed = ["draft", "answer", "dont_know", "complete_section", "submit", "word_mark"];
     if (!allowed.includes(String(body.action))) throw new AssessmentError("Unknown action.");
     const updated = await applyLearnerAction(admin, attempt, {
       action: body.action,
-      item_id: String(body.item_id ?? ""),
+      item_id: body.action === "word_mark" ? (body.item_id ? String(body.item_id) : null) : String(body.item_id ?? ""),
       section_id: String(body.section_id ?? ""),
       value: body.value,
+      word: body.word,
+      context: body.context,
+      unknown: body.unknown,
+      translation: body.translation,
     } as LearnerAction);
     return NextResponse.json({ view: await learnerView(admin, user.id, id, updated) });
   } catch (error) {

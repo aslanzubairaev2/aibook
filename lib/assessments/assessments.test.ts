@@ -113,7 +113,10 @@ test("diagnostic mode cannot release answers immediately", () => {
 
 test("text comparison: exact, typo, umlaut spelling, and grammar strictness", () => {
   assert.equal(compareText(" Köln. ", ["Köln"]), "exact");
-  assert.equal(compareText("Koeln", ["Köln"]), "near");
+  assert.equal(compareText("Koeln", ["Köln"]), "exact", "ae/oe/ue/ss for umlauts is not an error");
+  assert.equal(compareText("Strasse", ["Straße"]), "exact");
+  assert.equal(compareText("Koeln", ["Köln"], true, true), "near", "unless the item is a spelling task");
+  assert.equal(compareText("Koln", ["Köln"]), "near", "a missing umlaut is still a typo");
   assert.equal(compareText("Haltestele", ["Haltestelle"]), "near");
   assert.equal(compareText("Bahnhof", ["Haltestelle"]), "none");
   assert.equal(compareText("dem", ["den"]), "none", "short words get no typo slack");
@@ -146,13 +149,21 @@ test("multiple choice gives partial credit; «не знаю» is its own status;
   assert.equal(autoGrade(s3, s3.items[1], answer(["Ich", "bin", "müde"])).status, "correct");
 });
 
-test("skills leave pending items out of the sum instead of counting them as zero", () => {
+test("skills leave pending and skipped items out of the percentage, and say so", () => {
   const d = draft();
-  const results = gradeAll(d.content, { r1: answer("b"), w1: answer("Ich bin heute müde.") }, null);
+  const results = gradeAll(d.content, { r1: answer("b"), w1: answer("Ich bin heute müde."), w2: answer(["Ich", "bin", "müde"]) }, null);
   const writing = summarizeSkills(d.content, results).find((s) => s.skill === "writing")!;
   assert.equal(writing.pending_review, 1);
   assert.equal(writing.max, 1, "only the word-order item counts until the essay is graded");
   assert.equal(totals(results).pending_review, 1);
+
+  const skipped = gradeAll(d.content, { r1: answer("b") }, null);
+  const w = summarizeSkills(d.content, skipped).find((s) => s.skill === "writing")!;
+  assert.equal(w.state, "not_done", "a skipped essay is «not done», not weak writing");
+  assert.equal(w.percent, null);
+  const t = totals(skipped);
+  assert.ok(t.skipped_points > 0);
+  assert.equal(t.percent_of_attempted, 100);
 });
 
 test("diagnostic view leaks no answers, hints, translations or transcripts while in progress", () => {
@@ -206,10 +217,17 @@ test("learning mode: feedback after a correct answer, «try again» before, answ
 
 test("after_review holds results until the teacher has graded, unless nothing needs grading", () => {
   const d = draft({ ...INPUT, settings: { results_release: "after_review" } });
-  const submitted = buildPublicView(attemptOf(d, { status: "submitted" }), {}, { assessmentId: "a" });
-  assert.equal(submitted.results, null);
-  assert.equal(submitted.awaiting_review, true);
-  assert.equal(submitted.sections[0].items[0].feedback, null);
+  const withEssay = buildPublicView(attemptOf(d, { status: "submitted", answers: { w1: answer("Ich bin müde.") } }), {}, { assessmentId: "a" });
+  assert.equal(withEssay.results, null);
+  assert.equal(withEssay.awaiting_review, true);
+  assert.equal(withEssay.sections[0].items[0].feedback, null);
+
+  // The bug that left an attempt locked forever: the essay was never written,
+  // so nothing waits for the teacher, and results must be released.
+  const draftOnly: AnswerRecord = { ...answer(null), draft: "", tries: 0, first_at: "", history: [] };
+  const emptyEssay = buildPublicView(attemptOf(d, { status: "submitted", answers: { w1: draftOnly } }), {}, { assessmentId: "a" });
+  assert.ok(emptyEssay.results);
+  assert.equal(emptyEssay.awaiting_review, false);
 });
 
 test("a draft is not an answer", () => {

@@ -13,11 +13,13 @@
 export const ASSESSMENT_MODES = ["learning", "diagnostic"] as const;
 export type AssessmentMode = typeof ASSESSMENT_MODES[number];
 
-export const SKILLS = ["reading", "listening", "writing", "grammar", "vocabulary"] as const;
+// translation is its own kind of work: rendering a given Russian text is not the
+// same skill as writing one's own. speaking is measured only by speaking items.
+export const SKILLS = ["reading", "listening", "writing", "translation", "speaking", "grammar", "vocabulary"] as const;
 export type Skill = typeof SKILLS[number];
 
 /** What an error is an error *of*. Results are broken down by these. */
-export const DIMENSIONS = ["meaning", "grammar", "vocabulary", "spelling", "instruction"] as const;
+export const DIMENSIONS = ["meaning", "grammar", "vocabulary", "spelling", "instruction", "pronunciation"] as const;
 export type Dimension = typeof DIMENSIONS[number];
 
 export const ITEM_TYPES = [
@@ -28,7 +30,18 @@ export const ITEM_TYPES = [
   "word_order",
   "short_answer",
   "writing",
+  "translation",
+  "read_aloud",
+  "repeat",
+  "spoken_response",
 ] as const;
+
+/** Items answered by recording the learner's voice. */
+export const SPEAKING_TYPES = ["read_aloud", "repeat", "spoken_response"] as const;
+export type SpeakingType = typeof SPEAKING_TYPES[number];
+export function isSpeakingType(type: string): type is SpeakingType {
+  return (SPEAKING_TYPES as readonly string[]).includes(type);
+}
 export type ItemType = typeof ITEM_TYPES[number];
 
 export const RESULTS_RELEASE = ["immediate", "after_section", "after_submit", "after_review"] as const;
@@ -86,6 +99,9 @@ export const LIMITS = {
   dialogueLines: 40,
   speakers: 4,
   maxPlays: 10,
+  /** Azure's short-audio endpoint takes 60 s; a margin keeps uploads inside it. */
+  maxSeconds: 55,
+  maxRecordings: 10,
 } as const;
 
 export type MonologueSpec = {
@@ -149,9 +165,32 @@ export type SingleChoiceItem = ItemCommon & { type: "single_choice"; options: Ch
 export type MultipleChoiceItem = ItemCommon & { type: "multiple_choice"; options: ChoiceOption[]; correct: string[] };
 export type GapSelectItem = ItemCommon & { type: "gap_select"; text: string; gaps: Gap[] };
 export type GapTextItem = ItemCommon & { type: "gap_text"; text: string; gaps: Gap[]; typo_tolerance: boolean };
-export type WordOrderItem = ItemCommon & { type: "word_order"; words: string[]; accepted: string[] };
+/** meaning: the Russian sense of the sentence, when a specific thought must be built. */
+export type WordOrderItem = ItemCommon & { type: "word_order"; words: string[]; accepted: string[]; meaning: string };
 export type ShortAnswerItem = ItemCommon & { type: "short_answer"; accepted: string[]; typo_tolerance: boolean };
 export type WritingItem = ItemCommon & { type: "writing"; min_words: number | null; max_words: number | null };
+/** A ready native-language text to render in the target language; stays visible beside the answer. */
+export type TranslationItem = ItemCommon & { type: "translation"; source: string; accepted: string[] };
+
+type SpeakingCommon = {
+  /** Longest recording accepted, in seconds. */
+  max_seconds: number;
+  /** Recordings that may be sent (technical failures do not count). */
+  max_recordings: number;
+};
+/** Read a given target-language text aloud. */
+export type ReadAloudItem = ItemCommon & SpeakingCommon & { type: "read_aloud"; text: string };
+/** Hear a phrase (recorded by the app) and say it back. */
+export type RepeatItem = ItemCommon & SpeakingCommon & {
+  type: "repeat";
+  text: string;
+  audio: MonologueSpec;
+  /** Plays of the sample: a separate limit from max_recordings. */
+  sample_max_plays: number | null;
+};
+/** Answer a question or a situation freely, by voice. */
+export type SpokenResponseItem = ItemCommon & SpeakingCommon & { type: "spoken_response"; min_seconds: number | null };
+export type SpeakingItem = ReadAloudItem | RepeatItem | SpokenResponseItem;
 
 export type Item =
   | SingleChoiceItem
@@ -160,7 +199,11 @@ export type Item =
   | GapTextItem
   | WordOrderItem
   | ShortAnswerItem
-  | WritingItem;
+  | WritingItem
+  | TranslationItem
+  | ReadAloudItem
+  | RepeatItem
+  | SpokenResponseItem;
 
 export type Section = {
   id: string;
@@ -178,6 +221,8 @@ export type AssessmentSettings = {
   /** Learning mode: how many times «Ответить» may be pressed per item (null = no limit). */
   max_tries: number | null;
   allow_retake: boolean;
+  /** The learner may tap a word for «перевод» / «не знаю это слово»; every use is reported. */
+  allow_word_lookup: boolean;
 };
 
 export type AssessmentContent = { sections: Section[] };
@@ -224,6 +269,10 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback
 function safeId(value: unknown, fallback: string): string {
   const id = str(value, 40).replace(/[^A-Za-z0-9_.-]/g, "");
   return id || fallback;
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : fallback;
 }
 
 export function resolveVoice(value: unknown, fallback: string): string {
@@ -373,6 +422,7 @@ function normalizeItem(
   fallbackId: string,
   path: string,
   problems: string[],
+  language = "de",
 ): Item | null {
   const type = raw.type as ItemType;
   if (!(ITEM_TYPES as readonly string[]).includes(String(raw.type))) {
@@ -391,7 +441,7 @@ function normalizeItem(
     explanation: str(raw.explanation, 1500),
     criteria: str(raw.criteria, 2000),
   };
-  if (!common.prompt && type !== "gap_select" && type !== "gap_text") {
+  if (!common.prompt && !["gap_select", "gap_text", "read_aloud", "repeat", "translation"].includes(type)) {
     problems.push(`${path}.prompt: every item needs a prompt (the question or the task)`);
   }
 
@@ -416,7 +466,57 @@ function normalizeItem(
     case "word_order": {
       const words = strList(raw.words, LIMITS.words, 60);
       if (words.length < 2) problems.push(`${path}.words: the sentence's words in the correct order (at least two)`);
-      return { ...common, type, words, accepted: strList(raw.accepted, 10, 500) };
+      return { ...common, type, words, accepted: strList(raw.accepted, 10, 500), meaning: str(raw.meaning, 500) };
+    }
+    case "translation": {
+      const source = str(raw.source ?? raw.source_text, LIMITS.textChars);
+      if (!source) problems.push(`${path}.source: the ready text to translate, in the learner's native language`);
+      const accepted = strList(raw.accepted, 20, 2000);
+      if (!common.criteria && accepted.length === 0) {
+        problems.push(`${path}: a translation needs 'criteria' (what must be conveyed, which grammar) or 'accepted' translations`);
+      }
+      return { ...common, type, source, accepted };
+    }
+    case "read_aloud":
+    case "repeat":
+    case "spoken_response": {
+      const speaking = {
+        max_seconds: clampInt(raw.max_seconds, 3, LIMITS.maxSeconds, type === "spoken_response" ? 45 : 30),
+        max_recordings: clampInt(raw.max_recordings, 1, LIMITS.maxRecordings, mode === "diagnostic" ? 2 : 5),
+      };
+      if (type === "spoken_response") {
+        if (!common.prompt) problems.push(`${path}.prompt: the question or situation to answer`);
+        if (!common.criteria) problems.push(`${path}.criteria: what a good answer must contain (you grade it from the transcript)`);
+        const min = typeof raw.min_seconds === "number" && raw.min_seconds > 0 ? Math.round(raw.min_seconds) : null;
+        return { ...common, ...speaking, type, min_seconds: min };
+      }
+      const text = str(raw.text, 1000);
+      if (!text) problems.push(`${path}.text: the target-language text to ${type === "repeat" ? "say and have repeated" : "read aloud"}`);
+      if (type === "read_aloud") return { ...common, ...speaking, type, text };
+      const voiceRaw = obj(raw.audio) ?? raw;
+      if (voiceRaw.voice && !VOICE_IDS.has(str(voiceRaw.voice, 40).toLowerCase())) {
+        problems.push(`${path}.voice: unknown voice «${str(voiceRaw.voice, 40)}»`);
+      }
+      const rawMax = raw.sample_max_plays;
+      let samplePlays: number | null = typeof rawMax === "number" && Number.isFinite(rawMax)
+        ? Math.max(1, Math.min(LIMITS.maxPlays, Math.round(rawMax)))
+        : null;
+      if (mode === "diagnostic" && samplePlays === null) samplePlays = 2;
+      return {
+        ...common,
+        ...speaking,
+        type,
+        text,
+        audio: {
+          kind: "monologue",
+          text,
+          voice: resolveVoice(voiceRaw.voice, "Kore"),
+          pace: oneOf(voiceRaw.pace, PACES, "normal"),
+          language: str(voiceRaw.language, 10) || language,
+          style: str(voiceRaw.style, 300),
+        },
+        sample_max_plays: samplePlays,
+      };
     }
     case "short_answer":
       return { ...common, type, accepted: strList(raw.accepted, 20, 500), typo_tolerance: raw.typo_tolerance !== false };
@@ -430,7 +530,9 @@ function normalizeItem(
 }
 
 function defaultPoints(type: ItemType): number {
-  if (type === "writing") return 10;
+  if (type === "writing" || type === "translation") return 10;
+  if (type === "spoken_response") return 5;
+  if (type === "read_aloud" || type === "repeat") return 3;
   if (type === "gap_select" || type === "gap_text") return 2;
   return 1;
 }
@@ -448,6 +550,7 @@ export function normalizeSettings(raw: unknown, mode: AssessmentMode): Assessmen
     section_order: oneOf(s.section_order, ["sequential", "free"] as const, mode === "diagnostic" ? "sequential" : "free"),
     max_tries: mode === "learning" ? tries : 1,
     allow_retake: s.allow_retake === true,
+    allow_word_lookup: s.allow_word_lookup !== false,
   };
 }
 
@@ -480,21 +583,26 @@ export function normalizeAssessmentInput(args: Raw, fallbackLanguage: string): A
 
     const stimulusRaw = obj(raw.stimulus);
     const stimulus = stimulusRaw ? normalizeStimulus(stimulusRaw, mode, language, `${path}.stimulus`, problems) : null;
-    const skill = raw.skill
-      ? oneOf(raw.skill, SKILLS, "grammar")
-      : stimulus ? DEFAULT_SKILL_FOR_STIMULUS[stimulus.type] : "grammar";
+    const explicitSkill = raw.skill ? oneOf(raw.skill, SKILLS, "grammar") : null;
 
     const rawItems = Array.isArray(raw.items) ? raw.items.map(obj).filter((i): i is Raw => !!i) : [];
     if (rawItems.length === 0) problems.push(`${path}.items: at least one item`);
     if (rawItems.length > LIMITS.itemsPerSection) problems.push(`${path}.items: at most ${LIMITS.itemsPerSection} per section`);
     const items = rawItems.slice(0, LIMITS.itemsPerSection).map((rawItem, ii) => {
-      const item = normalizeItem(rawItem, mode, `${id}.${ii + 1}`, `${path}.items[${ii}]`, problems);
+      const item = normalizeItem(rawItem, mode, `${id}.${ii + 1}`, `${path}.items[${ii}]`, problems, language);
       if (item) {
         if (seenItemIds.has(item.id)) problems.push(`${path}.items[${ii}].id: «${item.id}» is used twice in the test`);
         seenItemIds.add(item.id);
       }
       return item;
     }).filter((i): i is Item => !!i);
+
+    // No skill given and no stimulus: a block of speaking, translation or
+    // writing items is that skill, not «grammar».
+    const implied = new Set(items.map((i) => (isSpeakingType(i.type) ? "speaking" : i.type === "translation" ? "translation" : i.type === "writing" ? "writing" : "other")));
+    const skill: Skill = explicitSkill
+      ?? (stimulus ? DEFAULT_SKILL_FOR_STIMULUS[stimulus.type]
+        : implied.size === 1 && !implied.has("other") ? [...implied][0] as Skill : "grammar");
 
     return {
       id,
@@ -525,12 +633,29 @@ export function allItems(content: AssessmentContent): { section: Section; item: 
 }
 
 export function itemSkill(section: Section, item: Item): Skill {
-  return item.skill ?? section.skill;
+  if (item.skill) return item.skill;
+  if (item.type === "translation") return "translation";
+  if (isSpeakingType(item.type)) return "speaking";
+  return section.skill;
 }
 
 /** Items no auto-check can settle: the teacher agent grades these. */
 export function needsTeacher(item: Item): boolean {
-  return item.type === "writing" || (item.type === "short_answer" && item.accepted.length === 0);
+  return item.type === "writing"
+    || item.type === "spoken_response"
+    || ((item.type === "short_answer" || item.type === "translation") && item.accepted.length === 0);
+}
+
+/** Every recording the app makes for a test: section stimuli and repeat samples. */
+export function audioTargets(content: AssessmentContent): { key: string; spec: AudioSpec; maxPlays: number | null }[] {
+  return content.sections.flatMap((section) => [
+    ...(section.stimulus?.type === "audio"
+      ? [{ key: section.id, spec: section.stimulus.audio, maxPlays: section.stimulus.max_plays }]
+      : []),
+    ...section.items.flatMap((item) =>
+      item.type === "repeat" ? [{ key: `item:${item.id}`, spec: item.audio as AudioSpec, maxPlays: item.sample_max_plays }] : [],
+    ),
+  ]);
 }
 
 /** The words of a word_order item, shuffled the same way every time for one attempt. */

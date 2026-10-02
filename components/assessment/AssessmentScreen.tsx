@@ -11,13 +11,16 @@ import { AuthScreen } from "@/components/auth/AuthScreen";
 import { useAuth } from "@/lib/auth/useAuth";
 import { AssessmentItem } from "./AssessmentItem";
 import { ListeningPlayer } from "./ListeningPlayer";
+import { TappableText, WordToolsProvider } from "./WordTools";
 import {
   DIMENSION_NAMES,
   SKILL_NAMES,
   assessmentApi,
+  isEmptyAnswer,
   type AnswerValue,
   type View,
   type ViewSection,
+  type ViewWordMark,
 } from "./types";
 
 type Confirm = { kind: "section"; section: ViewSection } | { kind: "submit" } | null;
@@ -70,6 +73,25 @@ export function AssessmentScreen({ id }: { id: string }) {
   const onAnswer = useCallback(async (itemId: string, value: AnswerValue) => { await run({ action: "answer", item_id: itemId, value }); }, [run]);
   const onDontKnow = useCallback(async (itemId: string) => { await run({ action: "dont_know", item_id: itemId }); }, [run]);
 
+  // Word marks are applied locally at once, then saved; the reply carries the truth.
+  const [localMarks, setLocalMarks] = useState<Record<string, ViewWordMark>>({});
+  const marks = useMemo(() => {
+    const map = new Map<string, ViewWordMark>((view?.word_marks ?? []).map((m) => [m.key, m]));
+    for (const [key, m] of Object.entries(localMarks)) map.set(key, { ...map.get(key), ...m });
+    return map;
+  }, [view?.word_marks, localMarks]);
+  const markWord = useCallback(async (sectionId: string, itemId: string | null, word: string, context: string, patch: { unknown?: boolean; translation?: string }) => {
+    const key = `${sectionId}|${itemId ?? ""}|${word.toLocaleLowerCase()}`;
+    setLocalMarks((current) => {
+      const previous = current[key] ?? { key, word, section_id: sectionId, item_id: itemId, unknown: false, translation: null };
+      return { ...current, [key]: { ...previous, ...(patch.unknown !== undefined ? { unknown: patch.unknown } : {}), ...(patch.translation ? { translation: patch.translation } : {}) } };
+    });
+    try {
+      const { view: fresh } = await assessmentApi(id, { action: "word_mark", section_id: sectionId, item_id: itemId, word, context, ...patch });
+      setView(fresh);
+    } catch { /* the local mark stays; it is retried with the next one */ }
+  }, [id]);
+
   const active = useMemo(() => view?.sections.find((s) => s.id === activeId) ?? view?.sections[0] ?? null, [view, activeId]);
   const closed = view ? view.attempt.status !== "in_progress" : false;
   const totalItems = view?.sections.reduce((n, s) => n + s.item_count, 0) ?? 0;
@@ -91,8 +113,13 @@ export function AssessmentScreen({ id }: { id: string }) {
   const nextSection = view.sections[sectionIndex + 1];
   const unansweredAll = view.sections.flatMap((s) => (s.questions_locked ? [] : s.items)
     .map((item, i) => ({ s, item, i }))
-    .filter(({ item }) => item.answer.status === null || (item.answer.value === null && item.answer.status !== "dont_know")));
-  const unansweredHere = active.item_count - active.answered;
+    .filter(({ item }) => {
+      if (item.answer.status === "dont_know") return false;
+      if (item.recordings_used !== undefined) return !(item.last_recording?.status === "done" || (item.recordings_used ?? 0) > 0);
+      // A draft counts: finishing the block turns it into the answer.
+      return item.answer.value === null && (item.answer.draft === null || isEmptyAnswer(item.answer.draft));
+    }));
+  const unansweredHere = active.questions_locked ? active.item_count : unansweredAll.filter(({ s }) => s.id === active.id).length;
 
   const completeSection = async (section: ViewSection) => {
     setBusy(true);
@@ -116,7 +143,11 @@ export function AssessmentScreen({ id }: { id: string }) {
 
   const allOthersDone = view.sections.every((s) => s.id === active.id || s.completed);
 
+  const checkMode = view.assessment.mode === "learning" && view.assessment.results_release === "immediate";
+  const wordTools = { enabled: view.assessment.allow_word_lookup, language: view.assessment.language, marks, mark: markWord };
+
   return (
+    <WordToolsProvider value={wordTools}>
     <main className="asm-screen">
       <header className="asm-header">
         <Link href="/" className="asm-back" aria-label="На главную"><ArrowLeft size={18} /></Link>
@@ -155,7 +186,7 @@ export function AssessmentScreen({ id }: { id: string }) {
         {active.stimulus?.type === "text" && (
           <details className="asm-reading" open>
             <summary>{active.stimulus.title || "Текст"}</summary>
-            {active.stimulus.paragraphs.map((p, i) => <p key={i}>{p}</p>)}
+            {active.stimulus.paragraphs.map((p, i) => <p key={i}><TappableText text={p} sectionId={active.id} /></p>)}
             {active.stimulus.translation.length > 0 && (
               <details className="asm-translation">
                 <summary>Перевод</summary>
@@ -182,9 +213,14 @@ export function AssessmentScreen({ id }: { id: string }) {
             : active.items.map((item, i) => (
                 <AssessmentItem
                   key={`${view.attempt.id}:${item.id}`}
+                  assessmentId={id}
+                  sectionId={active.id}
                   item={item}
                   index={i}
                   mode={view.assessment.mode}
+                  checkMode={checkMode}
+                  language={view.assessment.language}
+                  onView={setView}
                   disabled={closed || active.completed}
                   onDraft={onDraft}
                   onAnswer={onAnswer}
@@ -261,6 +297,7 @@ export function AssessmentScreen({ id }: { id: string }) {
         </div>
       )}
     </main>
+    </WordToolsProvider>
   );
 }
 
@@ -286,12 +323,23 @@ function Results({ view }: { view: View }) {
         {r.totals.percent !== null && <span>{r.totals.percent}%</span>}
         {r.totals.pending_review > 0 && <span className="asm-muted">ждёт проверки: {r.totals.pending_review}</span>}
       </div>
+      {r.totals.skipped_points > 0 && (
+        <p className="asm-muted asm-small">
+          {r.totals.skipped_points} б. из {r.totals.max} — пропущенные задания{r.totals.percent_of_attempted !== null ? `; по выполненным заданиям — ${r.totals.percent_of_attempted}%` : ""}.
+        </p>
+      )}
+      {r.totals.technical_issues > 0 && <p className="asm-muted asm-small">Не оценено по техническим причинам: {r.totals.technical_issues} (не влияет на баллы).</p>}
       <ul className="asm-skill-rows">
         {r.skills.map((s) => (
           <li key={s.skill}>
             <span>{SKILL_NAMES[s.skill]}</span>
-            <span className="asm-progress"><span style={{ width: `${s.percent ?? 0}%` }} /></span>
-            <span>{s.percent === null ? "—" : `${s.percent}%`}</span>
+            {s.state === "not_done"
+              ? <span className="asm-muted asm-small">не выполнено</span>
+              : <span className="asm-progress"><span style={{ width: `${s.percent ?? 0}%` }} /></span>}
+            <span>
+              {s.state === "not_done" ? "" : s.percent === null ? "ждёт" : `${s.percent}%`}
+              {s.state !== "not_done" && s.skipped > 0 && <span className="asm-muted asm-small"> · пропущено {s.skipped}</span>}
+            </span>
           </li>
         ))}
       </ul>

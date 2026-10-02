@@ -1,7 +1,9 @@
 /* Interactive tests from the teacher agent (components/assessment). */
 
 .asm-screen {
-  max-width: 1080px;
+  /* One reading column, the width of a page: wide screens get margins, not a
+     stretched two-column layout with half of it empty. */
+  max-width: 760px;
   margin: 0 auto;
   padding: 12px 16px calc(40px + env(safe-area-inset-bottom));
   min-height: 100dvh;
@@ -48,12 +50,12 @@
 .asm-reading p { font-family: var(--font-reading); font-size: 16px; line-height: 1.6; margin: 8px 0; }
 .asm-translation summary { font-weight: 500; color: var(--text-muted); }
 
+/* The text stays in view while scrolling through its questions. */
+.asm-section.has-text .asm-reading { position: sticky; top: 0; z-index: 5; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35); }
 @media (min-width: 900px) {
-  /* Reading: the text stays beside the questions. */
-  .asm-section.has-text { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
-  .asm-section.has-text .asm-section-head { grid-column: 1 / -1; }
-  .asm-section.has-text .asm-reading { position: sticky; top: 12px; max-height: calc(100dvh - 40px); margin: 0; }
-  .asm-questions { max-width: 720px; }
+  .asm-screen { padding-top: 24px; }
+  .asm-header h1 { font-size: 20px; }
+  .asm-reading { max-height: 38vh; }
 }
 
 .asm-questions { display: flex; flex-direction: column; gap: 10px; }
@@ -177,3 +179,69 @@
 .asm-home-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; color: var(--text-primary); text-decoration: none; background: var(--bg-secondary); }
 .asm-home-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .asm-home-row.is-new .asm-small, .asm-home-row.is-reviewed .asm-small { color: var(--accent); }
+
+/* Tappable words: a quiet dotted underline only once a word has been marked. */
+.asm-word { cursor: pointer; border-radius: 3px; }
+.asm-word:hover { background: var(--accent-glow); }
+.asm-word.is-unknown { text-decoration: underline dotted var(--red); text-underline-offset: 3px; }
+.asm-word.is-looked-up { text-decoration: underline dotted var(--accent); text-underline-offset: 3px; }
+.asm-word-menu {
+  position: fixed; z-index: 1100; background: var(--bg-elevated); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-md); padding: 10px; display: flex; flex-direction: column; gap: 6px;
+  font-family: var(--font-ui);
+}
+.asm-word-menu-head { display: flex; align-items: center; justify-content: space-between; font-size: 15px; }
+.asm-word-translation { margin: 0; font-size: 15px; color: var(--accent-bright); }
+.asm-word-menu p { font-family: var(--font-ui); line-height: 1.35; margin: 0; }
+.asm-menu-btn {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); font-size: 14px; cursor: pointer; text-align: left;
+}
+.asm-menu-btn.is-on { border-color: var(--red); }
+.asm-icon-btn { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; }
+.asm-spin { animation: asm-spin 1s linear infinite; }
+@keyframes asm-spin { to { transform: rotate(360deg); } }
+
+.asm-dont-know { color: var(--text-muted); }
+.asm-status svg { vertical-align: -2px; }
+
+/* Translation: the source stays in view right above the answer. */
+.asm-source { border-left: 3px solid var(--blue); padding: 4px 0 4px 10px; margin-bottom: 8px; }
+.asm-source p { margin: 2px 0 0; font-size: 15px; line-height: 1.5; white-space: pre-wrap; }
+.asm-order-meaning { margin: 0; font-size: 14px; }
+
+/* Speaking */
+.asm-speaking { display: flex; flex-direction: column; gap: 10px; }
+.asm-read-text { font-family: var(--font-reading); font-size: 18px; line-height: 1.6; margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-card); }
+.asm-recorder { display: flex; flex-direction: column; gap: 6px; }
+.asm-rec-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.asm-rec-btn {
+  width: 64px; height: 64px; border-radius: 50%; border: none; cursor: pointer; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: var(--text-dark);
+}
+.asm-rec-btn.is-recording { background: var(--red); color: #fff; animation: asm-pulse 1.4s ease-in-out infinite; }
+.asm-rec-btn:disabled { opacity: 0.4; cursor: default; }
+@keyframes asm-pulse { 50% { box-shadow: 0 0 0 10px rgba(196, 106, 106, 0.18); } }
+.asm-self-audio { height: 38px; max-width: 100%; }
+.asm-rec-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.asm-speech { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-card); font-size: 14px; line-height: 1.45; }
+.asm-speech p { margin: 4px 0 0; }
+.asm-speech-scores { display: flex; gap: 14px; flex-wrap: wrap; }
+.asm-speech-scores strong { color: var(--accent-bright); }
+.asm-speech-words { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.asm-speech-word {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px 3px 8px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); font-family: var(--font-reading);
+}
+.asm-speech-word.is-mispronunciation, .asm-speech-word.is-none { border-color: rgba(212, 168, 71, 0.6); }
+.asm-speech-word.is-omission { border-color: rgba(196, 106, 106, 0.7); text-decoration: line-through; }
+.asm-speech-word.is-insertion { border-style: dashed; }
+.asm-sample-btn { display: inline-flex; }
+.asm-btn-plain { cursor: default; }
+
+/* Playback speed */
+.asm-player-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.asm-rate {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text-primary); cursor: pointer;
+}

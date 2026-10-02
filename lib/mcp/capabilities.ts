@@ -88,11 +88,11 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
   {
     area: "Interactive tests («тесты»)",
     summary:
-      "Tests and lessons you build and the learner takes inside the app instead of in chat: reading texts and listening passages with questions, single/multiple choice, gaps with a dropdown or typed in, word order, short answers and writing. Listening is recorded by the app itself with its own Gemini voices — you send the text (a monologue, or a dialogue with speakers and voices) and prepare_assessment_audio records it; you never send audio or need a key. A listening can be limited to N plays, counted on the server. Two modes: learning (hints, instant feedback, retries) and diagnostic (nothing revealed until the release point you choose; first answers and every change kept; «не знаю» is its own status). Closed items are graded automatically with typo tolerance; writing and free answers come to you through get_assessment_results and go back with submit_assessment_review. Results are broken down by skill (reading, listening, writing, grammar, vocabulary) and by what an error is an error of (meaning, grammar, vocabulary, spelling, instruction). get_learning_gaps turns the errors into material for a review pack. Start with get_assessment_capabilities: it has every field and a full example.",
+      "Tests and lessons you build and the learner takes inside the app instead of in chat: reading texts and listening passages with questions, single/multiple choice, gaps with a dropdown or typed in, word order, short answers, translation of a ready Russian text, writing, and speaking — read aloud, listen-and-repeat and free spoken answers, recorded in the app and assessed by Azure pronunciation assessment (pronunciation only; you grade the content from the transcript). The learner can tap any word for a translation or mark it unknown, and you see every such word. Listening is recorded by the app itself with its own Gemini voices — you send the text (a monologue, or a dialogue with speakers and voices) and prepare_assessment_audio records it; you never send audio or need a key. A listening can be limited to N plays, counted on the server. Two modes: learning (hints, instant feedback, retries) and diagnostic (nothing revealed until the release point you choose; first answers and every change kept; «не знаю» is its own status). Closed items are graded automatically with typo tolerance; writing and free answers come to you through get_assessment_results and go back with submit_assessment_review. Results are broken down by skill (reading, listening, writing, grammar, vocabulary) and by what an error is an error of (meaning, grammar, vocabulary, spelling, instruction). get_learning_gaps turns the errors into material for a review pack. Start with get_assessment_capabilities: it has every field and a full example.",
     tools: [
       "get_assessment_capabilities", "create_assessment", "update_assessment", "prepare_assessment_audio",
       "get_assessment_status", "publish_assessment", "list_assessments", "get_assessment_results",
-      "submit_assessment_review", "get_learning_gaps",
+      "submit_assessment_review", "get_learning_gaps", "get_speech_service_status",
     ],
     say: [
       "«проверь мой немецкий»",
@@ -101,6 +101,8 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
       "«я прошёл тест, проверь»",
       "«что у меня плохо по результатам теста?»",
       "«сделай пачку слов по моим ошибкам»",
+      "«проверь моё произношение»",
+      "«дай текст на перевод»",
     ],
   },
 ];

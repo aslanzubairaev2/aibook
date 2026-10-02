@@ -7,8 +7,24 @@ import type { ItemType, Skill } from "@/lib/assessments/model";
 
 export type AnswerValue = string | string[] | Record<string, string>;
 
+export type SpeechScoresView = {
+  pronunciation: number | null;
+  accuracy: number | null;
+  fluency: number | null;
+  completeness: number | null;
+  prosody: number | null;
+};
+
+export type SpeechWordView = {
+  word: string;
+  accuracy: number | null;
+  error_type: string;
+  offset_ms: number | null;
+  duration_ms: number | null;
+};
+
 export type ViewFeedback = {
-  status: "correct" | "partial" | "incorrect" | "dont_know" | "unanswered" | "pending_review";
+  status: "correct" | "partial" | "incorrect" | "dont_know" | "unanswered" | "pending_review" | "technical_issue";
   score: number | null;
   max: number;
   expected: string;
@@ -16,6 +32,24 @@ export type ViewFeedback = {
   notes: string[];
   teacher_comment: string;
   corrected: string;
+  speech: {
+    transcript: string;
+    scores: SpeechScoresView;
+    words: SpeechWordView[];
+    remarks: string[];
+    recording_id: string | null;
+    recordings_sent: number;
+    technical_failures: number;
+  } | null;
+};
+
+export type SampleView = {
+  key: string;
+  max_plays: number | null;
+  used: number;
+  remaining: number | null;
+  audio_status: "pending" | "ready" | "error";
+  duration_ms: number | null;
 };
 
 export type ViewItem = {
@@ -28,28 +62,46 @@ export type ViewItem = {
   text?: string;
   gaps?: { id: string; options?: string[] }[];
   words?: string[];
+  meaning?: string;
+  order_instruction?: string;
   min_words?: number | null;
   max_words?: number | null;
+  source?: string;
+  max_seconds?: number;
+  max_recordings?: number;
+  min_seconds?: number | null;
+  recordings_used?: number;
+  last_recording?: {
+    id: string;
+    status: "done" | "technical_error";
+    technical_reason: string | null;
+    technical_message: string | null;
+    duration_ms: number;
+    created_at: string;
+  } | null;
+  sample?: SampleView | null;
   answer: { value: AnswerValue | null; draft: AnswerValue | null; status: "answered" | "dont_know" | null; tries: number };
   locked: boolean;
   feedback: ViewFeedback | null;
   try_again: boolean;
 };
 
+export type AudioStimulusView = {
+  type: "audio";
+  kind: "monologue" | "dialogue";
+  speakers: string[];
+  max_plays: number | null;
+  used: number;
+  remaining: number | null;
+  unlock_questions: "immediately" | "after_first_play";
+  audio_status: "pending" | "ready" | "error";
+  duration_ms: number | null;
+  transcript: { speaker: string; text: string }[] | null;
+};
+
 export type ViewStimulus =
   | { type: "text"; title: string; paragraphs: string[]; translation: string[] }
-  | {
-      type: "audio";
-      kind: "monologue" | "dialogue";
-      speakers: string[];
-      max_plays: number | null;
-      used: number;
-      remaining: number | null;
-      unlock_questions: "immediately" | "after_first_play";
-      audio_status: "pending" | "ready" | "error";
-      duration_ms: number | null;
-      transcript: { speaker: string; text: string }[] | null;
-    };
+  | AudioStimulusView;
 
 export type ViewSection = {
   id: string;
@@ -65,6 +117,15 @@ export type ViewSection = {
   available: boolean;
 };
 
+export type ViewWordMark = {
+  key: string;
+  word: string;
+  section_id: string;
+  item_id: string | null;
+  unknown: boolean;
+  translation: string | null;
+};
+
 export type View = {
   assessment: {
     id: string;
@@ -74,13 +135,37 @@ export type View = {
     language: string;
     results_release: string;
     section_order: "sequential" | "free";
+    allow_word_lookup: boolean;
   };
   attempt: { id: string; status: "in_progress" | "submitted" | "reviewed"; started_at: string; submitted_at: string | null };
   current_section_id: string | null;
   sections: ViewSection[];
+  word_marks: ViewWordMark[];
   results: {
-    totals: { score: number; max: number; percent: number | null; pending_review: number; unanswered: number; dont_know: number };
-    skills: { skill: Skill; score: number; max: number; percent: number | null; items: number; pending_review: number }[];
+    totals: {
+      score: number;
+      max: number;
+      percent: number | null;
+      percent_of_attempted: number | null;
+      skipped_points: number;
+      pending_review: number;
+      unanswered: number;
+      dont_know: number;
+      typos: number;
+      technical_issues: number;
+    };
+    skills: {
+      skill: Skill;
+      score: number;
+      max: number;
+      percent: number | null;
+      items: number;
+      pending_review: number;
+      skipped: number;
+      dont_know: number;
+      technical_issues: number;
+      state: "graded" | "partly_pending" | "pending" | "not_done";
+    }[];
     dimensions: Record<string, { errors: number; minor: number; ok: number }>;
     summary: string;
     gaps: { topic: string; description: string }[];
@@ -92,6 +177,8 @@ export const SKILL_NAMES: Record<Skill, string> = {
   reading: "Чтение",
   listening: "Аудирование",
   writing: "Письмо",
+  translation: "Перевод",
+  speaking: "Говорение",
   grammar: "Грамматика",
   vocabulary: "Словарь",
 };
@@ -102,6 +189,7 @@ export const DIMENSION_NAMES: Record<string, string> = {
   vocabulary: "Словарь",
   spelling: "Орфография",
   instruction: "Выполнение инструкции",
+  pronunciation: "Произношение",
 };
 
 export class ApiError extends Error {
@@ -128,4 +216,8 @@ export function isEmptyAnswer(value: AnswerValue | null | undefined): boolean {
   if (typeof value === "string") return !value.trim();
   if (Array.isArray(value)) return value.length === 0;
   return Object.values(value).every((v) => !String(v).trim());
+}
+
+export function wordKey(sectionId: string, itemId: string | null, word: string): string {
+  return `${sectionId}|${itemId ?? ""}|${word.toLocaleLowerCase()}`;
 }

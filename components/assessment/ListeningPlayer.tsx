@@ -12,18 +12,33 @@
 //    other devices because it lives on the server.
 
 import { useEffect, useRef, useState } from "react";
-import { Lock, Pause, Play, RotateCcw } from "lucide-react";
-import { ApiError, assessmentApi, type View, type ViewStimulus } from "./types";
-
-type AudioStimulus = Extract<ViewStimulus, { type: "audio" }>;
+import { Gauge, Lock, Pause, Play, RotateCcw } from "lucide-react";
+import { ApiError, assessmentApi, type AudioStimulusView, type View } from "./types";
 
 type Props = {
   assessmentId: string;
+  /** A section id, or item:<id> for a repeat task's sample. */
   sectionId: string;
-  stimulus: AudioStimulus;
+  stimulus: AudioStimulusView;
   closed: boolean;
   onView: (view: View) => void;
+  /** Overrides «Монолог» / «Диалог…». */
+  label?: string;
 };
+
+// Slower playback is the learner's own aid: the recording is the same, only
+// played slower, with the pitch kept (preservesPitch is the browsers' default).
+const RATES = [1, 0.85, 0.7];
+const RATE_KEY = "aibook:assessment-playback-rate";
+
+function savedRate(): number {
+  try {
+    const value = Number(window.localStorage.getItem(RATE_KEY));
+    return RATES.includes(value) ? value : 1;
+  } catch {
+    return 1;
+  }
+}
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -31,7 +46,7 @@ function formatTime(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-export function ListeningPlayer({ assessmentId, sectionId, stimulus, closed, onView }: Props) {
+export function ListeningPlayer({ assessmentId, sectionId, stimulus, closed, onView, label }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
   // Set once the current play has been counted on the server; cleared at the end.
@@ -41,6 +56,14 @@ export function ListeningPlayer({ assessmentId, sectionId, stimulus, closed, onV
   const [error, setError] = useState<string | null>(null);
   const [time, setTime] = useState({ current: 0, total: (stimulus.duration_ms ?? 0) / 1000 });
   const [pollTick, setPollTick] = useState(0);
+  const [rate, setRate] = useState<number>(() => (typeof window === "undefined" ? 1 : savedRate()));
+
+  const changeRate = () => {
+    const next = RATES[(RATES.indexOf(rate) + 1) % RATES.length];
+    setRate(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+    try { window.localStorage.setItem(RATE_KEY, String(next)); } catch { /* the choice just is not remembered */ }
+  };
 
   const limited = stimulus.max_plays !== null;
   const midPlay = state === "playing" || state === "paused";
@@ -78,6 +101,7 @@ export function ListeningPlayer({ assessmentId, sectionId, stimulus, closed, onV
     blobUrlRef.current = URL.createObjectURL(blob);
     const audio = new Audio(blobUrlRef.current);
     audio.preload = "auto";
+    audio.playbackRate = rate;
     audio.addEventListener("timeupdate", () => {
       allowedTimeRef.current = audio.currentTime;
       setTime({ current: audio.currentTime, total: audio.duration || 0 });
@@ -131,6 +155,7 @@ export function ListeningPlayer({ assessmentId, sectionId, stimulus, closed, onV
     try {
       setState((s) => (s === "paused" ? s : "loading"));
       const audio = await ensureAudio();
+      audio.playbackRate = rate;
       await audio.play();
     } catch (err) {
       setState(countedRef.current ? "paused" : "idle");
@@ -159,7 +184,12 @@ export function ListeningPlayer({ assessmentId, sectionId, stimulus, closed, onV
           {exhausted ? <Lock size={30} /> : state === "playing" ? <Pause size={34} /> : state === "idle" && stimulus.used > 0 ? <RotateCcw size={30} /> : <Play size={34} />}
         </button>
         <div className="asm-player-info">
-          <strong>{stimulus.kind === "dialogue" ? `Диалог${stimulus.speakers.length ? `: ${stimulus.speakers.join(", ")}` : ""}` : "Монолог"}</strong>
+          <div className="asm-player-title">
+            <strong>{label ?? (stimulus.kind === "dialogue" ? `Диалог${stimulus.speakers.length ? `: ${stimulus.speakers.join(", ")}` : ""}` : "Монолог")}</strong>
+            <button type="button" className="asm-rate" onClick={changeRate} aria-label="Скорость воспроизведения" title="Скорость воспроизведения">
+              <Gauge size={14} /> {rate === 1 ? "1×" : `${String(rate).replace(".", ",")}×`}
+            </button>
+          </div>
           <span className={exhausted ? "asm-status is-wrong" : "asm-muted"}>
             {!ready
               ? stimulus.audio_status === "error" ? "Запись не получилась, пробуем снова…" : "Аудио готовится…"

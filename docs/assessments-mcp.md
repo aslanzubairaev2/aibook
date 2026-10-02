@@ -18,10 +18,21 @@ publish_assessment(id)                 → ссылка https://…/test/<id>  (
    … ученик проходит тест …
 get_assessment_results(assessment_id)  ← сырые ответы, история изменений, прослушивания
 submit_assessment_review(attempt_id, items[], summary, gaps[])
-get_learning_gaps(attempt_id)          ← ошибки + ваши пробелы
+get_learning_gaps(attempt_id)          ← ошибки, слова «не знаю»/переведённые, проблемы произношения, ваши пробелы
 check_dictionary_words(words[])        ← убрать уже известные слова
 add_word_batch(title, words[], …)      ← пачка только из новых слов и устойчивых выражений
 ```
+
+## Понятность заданий (обязательно)
+
+* Всё, что должен содержать ответ, пишите в `prompt` — его видит ученик. `criteria` — только ваша
+  рубрика, ученику не показывается. (В старом демо пункты «где, с кем, что понравилось» были спрятаны в
+  `criteria` — так делать нельзя.)
+* `word_order`: если нужно собрать конкретную мысль — дайте `meaning` (русский смысл); иначе ученик видит
+  «Соберите грамматически правильное предложение из всех слов». Другие верные порядки — в `accepted`.
+  Повторяющиеся слова — отдельные плитки.
+* Ученику трудно одновременно придумывать сюжет и писать по-немецки: для письменной практики давайте
+  `translation` с готовым русским текстом (фраза или история из 4–8 предложений).
 
 ## Режимы
 
@@ -103,11 +114,24 @@ Umbriel, Algieba, Algenib, Rasalgethi, Alnilam, Schedar, Achird, Zubenelgenubi, 
 | `word_order` | `words[]` в правильном порядке (ученику — перемешанные), `accepted?[]` | авто |
 | `short_answer` | `accepted?[]` | авто при совпадении, иначе — на вашу проверку (не «неверно»!) |
 | `writing` | `criteria` (обязательно), `min_words?`, `max_words?` | только вы |
+| `translation` | `source` (готовый русский текст, всегда виден над полем ответа), `criteria`, `accepted?[]` (только короткие фразы) | авто при совпадении, иначе вы; разные верные переводы допустимы |
+| `read_aloud` | `text` (немецкий, виден), `max_seconds` (3–55), `max_recordings` | Azure: произношение → баллы |
+| `repeat` | `text` (озвучивает приложение; **не показывается** до обратной связи), `voice?`, `pace?`, `sample_max_plays` (лимит образца — отдельно от записей), `max_seconds`, `max_recordings` | Azure: произношение → баллы |
+| `spoken_response` | `prompt` (вопрос/ситуация), `criteria` (обязательно), `min_seconds?`, `max_seconds`, `max_recordings` | Azure — только произношение и беглость; содержание — вы по транскрипции |
 
-**Опечатки.** Ответ, отличающийся регистром, написанием умлаутов (ae/oe/ue/ss) или одной буквой (двумя в
-длинных словах), получает половину баллов, отмечается как `meaning: ok, spelling: error` и попадает в
-`awaiting_your_review` — подтвердите или переоцените. Если `focus: "grammar"`, допуск по буквам
-отключается (там одна буква — это окончание).
+**Умлауты.** `ae/oe/ue/ss` вместо `ä/ö/ü/ß` засчитывается полностью, без штрафа — кроме заданий с
+`focus: "spelling"`.
+
+**Опечатки.** Ответ, отличающийся регистром или одной буквой (двумя в длинных словах), получает половину
+баллов, `error_kind: "typo"`, отмечается как `meaning: ok, spelling: error` и попадает в
+`awaiting_your_review`. Если `focus: "grammar"`, допуск по буквам отключается (там одна буква — это
+окончание).
+
+**Типы недочётов** (`error_kind`) различаются: `typo` · `error` · `dont_know` · `skipped` · `technical`.
+
+**Пропуски.** Пропущенное задание даёт 0 в общем балле, но не считается слабым навыком: процент по навыку
+считается по выполненным заданиям, рядом — `skipped` и `state: "not_done"`, в итогах —
+`percent_of_attempted` и `skipped_points` («столько баллов потеряно на пропусках»).
 
 ## Аудио: генерация, кэш, повтор
 
@@ -137,6 +161,44 @@ Umbriel, Algieba, Algenib, Rasalgethi, Alnilam, Schedar, Achird, Zubenelgenubi, 
   `show_transcript`.
 * Это контроль внутри приложения, а не защита от записи звука.
 
+## Говорение (Azure Pronunciation Assessment)
+
+Проверено живыми запросами 2026-10-02 (ресурс Speech, тариф F0, регион из `AZURE_SPEECH_REGION`):
+
+| Для `de-DE` возвращается | Не возвращается (`null`) |
+|---|---|
+| произношение (PronScore), точность, беглость, полнота (только по тексту) | просодия/интонация |
+| по словам: точность, тип ошибки `Mispronunciation` / `Omission` / `Insertion`, таймкоды | названия фонем и слогов (Azure отдаёт пустые) — звуки никогда не называются |
+| оценка без эталона (свободный ответ) | полнота для свободного ответа |
+
+* Ученик: **записать → остановить → прослушать себя → отправить**. Браузер перекодирует запись (webm/opus
+  в Chrome, mp4/aac в Safari) в WAV 16 кГц моно — единственный формат, который отправляется в Azure.
+  Проверено в Chromium: настоящая запись `MediaRecorder` → WAV → Azure → оценка.
+* Ответом считается последняя оценённая запись; предыдущие — в истории. Лимит записей (`max_recordings`)
+  и лимит прослушиваний образца (`sample_max_plays`) — разные настройки.
+* **Технический статус, а не оценка:** тишина (включая ответ Azure «Success» с текстом «.» и всеми
+  словами `Omission`), нераспознанная речь, шум, неверный формат, слишком длинная/короткая запись, сбой
+  Azure. Такие записи не тратят попытку и не дают низкий балл (`status: "technical_issue"`).
+* Повторная отправка той же записи (тот же `recording_id`, генерируется при записи) не вызывает Azure
+  второй раз. Сбой сервиса можно отправить повторно — запись уже сохранена.
+* `read_aloud`/`repeat`: балл = баллы × произношение / 100 (с шагом 0,25). `spoken_response`: всегда
+  ваша проверка содержания; произношение — информация.
+* Распознанный текст — это то, что услышала система, **не доказательство правильного произношения**.
+  Балл Azure — не уровень CEFR. Письменный диалог — это письмо, не говорение.
+* Обучение: сразу после записи — оценки, транскрипт, замечания по-русски («неточно произнесено:
+  «Köln» (45)», «пропущено: …», «лишнее: …»), кнопки «как сказали вы» (фрагмент своей записи по таймкоду)
+  и «образец». Диагностика: только «запись отправлена» до момента раскрытия.
+* `get_speech_service_status` — проверка ключа и региона бесплатным запросом токена; ключ никогда не
+  возвращается.
+
+## Слова, которые ученик не знает
+
+Ученик может нажать на любое слово в тексте или задании: **«Показать перевод»** (быстрый перевод слова
+приложения) или **«Не знаю это слово»**. Оба действия сохраняются и всегда видны вам — в
+`get_assessment_results` (`word_marks`, `words_marked` у задания, `words_marked_in_text` у блока) и в
+`get_learning_gaps` (`words_the_learner_did_not_know`). В диагностике поиск разрешён, но отображается вам;
+`settings.allow_word_lookup: false` его отключает.
+
 ## Результаты
 
 `get_assessment_results({ assessment_id })` или `({ attempt_id })` возвращает:
@@ -147,7 +209,13 @@ Umbriel, Algieba, Algenib, Rasalgethi, Alnilam, Schedar, Achird, Zubenelgenubi, 
   (`answered | dont_know | unanswered`), `first_answer`, `history`, `changes`, `tries`, `unsent_draft`
   (то, что ученик напечатал, но не отправил), `word_count`, `expected`, `criteria`, `result`;
 * по блокам: `completed`, прослушивания `used/max_plays` с временем каждого, транскрипт, текст чтения;
-* `unfinished_items`, `awaiting_your_review`, `learner_sees_results`.
+* для голосовых: все записи с транскрипцией, оценками, ошибками по словам, исходным ответом Azure
+  (`azure_raw`) и приватной ссылкой на 1 час; лимиты записей и прослушиваний образца;
+* `unfinished_items`, `awaiting_your_review`, `learner_sees_results`, `word_marks`.
+
+`after_review` ждёт только того, что действительно нужно проверять: пустое (ненаписанное) письмо не
+блокирует результаты, а такая попытка сама переходит в `reviewed`. `changes` никогда не бывает
+отрицательным.
 
 ### Проверка
 
@@ -180,6 +248,18 @@ Umbriel, Algieba, Algenib, Rasalgethi, Alnilam, Schedar, Achird, Zubenelgenubi, 
    * заполняйте артикль, мн. число, формы глагола, перевод, пример, `description` и `instruction` пачки,
      при необходимости `training`.
 
+## Переменные окружения (значения не приводятся)
+
+| Переменная | Где | Зачем |
+|---|---|---|
+| `AZURE_SPEECH_KEY` | Vercel + `.env.local` | ключ ресурса Azure Speech |
+| `AZURE_SPEECH_REGION` | Vercel + `.env.local` | регион ресурса (сейчас `eastus`) |
+| `GEMINI_API_KEY` | уже был | озвучка аудирования и образцов |
+| `ASSESSMENT_TTS_MODEL` | необязательно | модель озвучки тестов (по умолчанию `gemini-3.8-flash-tts`) |
+
+Строку в `.env` пишите без пробелов вокруг `=` (`AZURE_SPEECH_KEY=…`); сервер дополнительно обрезает
+пробелы.
+
 ## Хранение и безопасность
 
 * Таблицы `assessments`, `assessment_audio`, `assessment_attempts` — RLS без политик: доступ только
@@ -189,6 +269,9 @@ Umbriel, Algieba, Algenib, Rasalgethi, Alnilam, Schedar, Achird, Zubenelgenubi, 
   ученик проходит и по чему его оценивают.
 * Аудио — приватный бакет `tts-audio/assessments/<sha256>.wav`, ученику выдаётся подписанная ссылка на
   5 минут и только пока остались прослушивания.
+* Записи ученика — `tts-audio/speech/<attempt>/<item>/<recording>.wav`, приватно; ученик получает ссылку
+  на свою запись на 5 минут, преподаватель — на 1 час через `get_assessment_results`. Ключ Azure читается
+  только на сервере и не попадает ни в ответы, ни в логи.
 
 ## Где код
 
@@ -198,8 +281,12 @@ Umbriel, Algieba, Algenib, Rasalgethi, Alnilam, Schedar, Achird, Zubenelgenubi, 
 | Проверка, опечатки, сводки | `lib/assessments/grading.ts` |
 | Что видит браузер | `lib/assessments/publicView.ts` |
 | Озвучка | `lib/assessments/speech.ts` |
+| Azure: оценка произношения | `lib/assessments/azureSpeech.ts` |
+| Загрузка записи | `app/api/assessments/[id]/speech/route.ts` |
+| Запись в браузере, разбор | `components/assessment/SpeechRecorder.tsx`, `wavEncode.ts` |
+| Меню слова | `components/assessment/WordTools.tsx` |
 | БД-операции | `lib/assessments/store.ts` |
 | MCP-инструменты | `lib/mcp/assessmentTools.ts` |
 | API ученика | `app/api/assessments/route.ts`, `app/api/assessments/[id]/route.ts` |
 | Экран теста | `app/test/[id]/page.tsx`, `components/assessment/*` |
-| Миграция | `supabase/migrations/20261002120000_assessments.sql` |
+| Миграции | `supabase/migrations/20261002120000_assessments.sql`, `20261003090000_assessment_speech_and_word_marks.sql` |
