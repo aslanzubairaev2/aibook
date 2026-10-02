@@ -13,6 +13,8 @@ interface AnalyzeParams {
   sentenceBefore: string;
   sentenceAfter: string;
   targetSentence?: string;
+  /** Set when the word was tapped on a flashcard, so its reading is fixed by the card. */
+  cardContext?: { front: string; back: string };
   nativeLanguage: string;
   targetLanguage: string;
   skipWord?: boolean;

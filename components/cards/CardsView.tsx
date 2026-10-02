@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
-import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard, EyeOff } from "lucide-react";
+import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard, EyeOff, ShieldCheck } from "lucide-react";
 import { CEFR_LEVELS, LEARNING_ITEM_TYPES, type AiAnalysis, type CardFilters, type CardSkillState, type CefrLevel, type DiscussMessage, type Flashcard, type LearningItemType, type ReverseWordAnalysis, type TrainVariant, type TtsProvider } from "@/lib/types";
 import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
 import {
@@ -43,7 +43,9 @@ import { getTTSState, prefetchSpeechAhead, respeak, speak, stopTTS, subscribeTTS
 import { RespeakButton } from "@/components/ui/RespeakButton";
 import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProviders";
 import { analyzeSelection } from "@/lib/ai/analyze";
-import { makeAiCacheKey, makeDiscussCacheKey } from "@/lib/ai/cacheKeys";
+import { makeAiCacheKey, makeDiscussCacheKey, makeWordContextCacheKey } from "@/lib/ai/cacheKeys";
+import type { CardVerifyDictionaryEntry } from "@/lib/ai/cardVerify";
+import { CardFixModal } from "@/components/cards/CardFixModal";
 import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardSkillProgressMap, getCardVariantProgressMap, saveCardVariantProgress } from "@/lib/db/local";
 import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertCardVariantProgress, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -267,13 +269,16 @@ type AllCardRowProps = {
   card: Flashcard;
   facts: WordFacts | undefined;
   targetLanguage: string;
-  onWordTap: (word: string, e: React.MouseEvent) => void;
+  /** `card` is passed for words of the front, so their reading is fixed by the card. */
+  onWordTap: (word: string, e: React.MouseEvent, card?: Flashcard | null) => void;
   onDiscuss: (card: Flashcard) => void;
+  onFix: (card: Flashcard) => void;
   onDelete: (id: string) => void;
 };
 
-const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWordTap, onDiscuss, onDelete }: AllCardRowProps) {
+const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWordTap, onDiscuss, onFix, onDelete }: AllCardRowProps) {
   const color = STATUS_COLORS[card.status] ?? "var(--accent)";
+  const tapFront = useCallback((word: string, e: React.MouseEvent) => onWordTap(word, e, card), [onWordTap, card]);
   return (
     <div className="flash-card" style={{ display: "flex", gap: 12, alignItems: "flex-start", justifyContent: "space-between" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -288,7 +293,7 @@ const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWor
         </div>
         {/* Front is spoken and word-tappable, like text everywhere else in the app. */}
         <div className="flash-card-front" style={{ fontSize: 15, display: "flex", alignItems: "flex-start", gap: 6 }}>
-          <TokenizedText text={card.front} style={{ flex: 1 }} onWordTap={onWordTap} />
+          <TokenizedText text={card.front} style={{ flex: 1 }} onWordTap={tapFront} />
           <SpeakButton text={card.front} lang={targetLanguage} size={15} />
         </div>
         <TokenizedText text={card.back} style={{ fontSize: 13, color: "var(--text-muted)" }} onWordTap={onWordTap} />
@@ -304,6 +309,16 @@ const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWor
           title="Обсудить с AI"
         >
           <MessageCircle size={16} />
+        </button>
+        <button
+          className="card-row-delete-btn"
+          style={{ color: "var(--text-muted)" }}
+          onClick={() => onFix(card)}
+          type="button"
+          aria-label="Проверить и исправить карточку"
+          title="Проверить и исправить карточку"
+        >
+          <ShieldCheck size={16} />
         </button>
         <button
           className="card-row-delete-btn"
@@ -622,6 +637,10 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     loading: boolean;
   }>({ open: false, word: "", analysis: null, loading: false });
 
+  // The card being checked by the AI. While set, a blocking modal sits over
+  // everything else.
+  const [fixCard, setFixCard] = useState<Flashcard | null>(null);
+
   // The other direction's lookup. A reverse card shows the learner's own
   // language, so a word tapped there is not a word to be explained — it is a
   // word they cannot yet say, and the answer is the target-language form.
@@ -800,21 +819,47 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // front, so a card made from a photographed page shows «сущ. · A1» without a
   // schema change. Cards from the reader fall back to the heuristic below.
   const [wordFacts, setWordFacts] = useState<Map<string, WordFacts>>(new Map());
+  // The full dictionary row behind a card, handed to the AI that checks it.
+  const [dictionaryEntries, setDictionaryEntries] = useState<Map<string, CardVerifyDictionaryEntry>>(new Map());
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const res = await fetch("/api/dictionary", { headers: await sbAuthHeaders() });
         if (!res.ok) return;
-        const data = await res.json() as { entries?: { headword: string; lemma: string; part_of_speech: string; cefr: string }[] };
+        const data = await res.json() as { entries?: {
+          headword: string; lemma: string; part_of_speech: string; cefr: string;
+          translation?: string; gender?: string; article?: string; plural?: string;
+          forms?: Record<string, string>; note?: string; example?: string; example_translation?: string;
+        }[] };
         if (cancelled) return;
         const map = new Map<string, WordFacts>();
+        const full = new Map<string, CardVerifyDictionaryEntry>();
         for (const e of data.entries ?? []) {
           const fact = { pos: e.part_of_speech ?? "", cefr: e.cefr ?? "" };
           map.set(normalizeFront(e.headword), fact);
           map.set(normalizeFront(e.lemma), fact);
+          const entry: CardVerifyDictionaryEntry = {
+            headword: e.headword ?? "",
+            lemma: e.lemma ?? "",
+            translation: e.translation ?? "",
+            partOfSpeech: e.part_of_speech ?? "",
+            gender: e.gender ?? "",
+            article: e.article ?? "",
+            plural: e.plural ?? "",
+            forms: e.forms ?? {},
+            cefr: e.cefr ?? "",
+            note: e.note ?? "",
+            example: e.example ?? "",
+            exampleTranslation: e.example_translation ?? "",
+          };
+          // Headword first: the entry a card was made from beats one that
+          // merely shares its bare lemma.
+          full.set(normalizeFront(e.headword), entry);
+          if (!full.has(normalizeFront(e.lemma))) full.set(normalizeFront(e.lemma), entry);
         }
         setWordFacts(map);
+        setDictionaryEntries(full);
       } catch {
         // Chips simply fall back to the heuristic.
       }
@@ -1240,14 +1285,24 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     }
   }
 
-  const openWordModalFor = useCallback(async (word: string) => {
+  /**
+   * `card` is the flashcard the word was tapped on, when there is one. The
+   * bare spelling is ambiguous — "Stelle" is a noun on «die Stelle» but also
+   * a form of «stellen» — so the lookup is given the card's front and meaning
+   * and cached per card rather than per spelling: a spelling-only cache entry
+   * made by one reading would otherwise be served to every other card.
+   */
+  const openWordModalFor = useCallback(async (word: string, card?: Flashcard | null) => {
     const norm = normalizeToken(word);
     if (!norm) return;
 
     // Open modal immediately with loading state
     setWordModal({ open: true, word: norm, analysis: null, loading: true });
 
-    const cacheKey = makeAiCacheKey("word", norm, targetLanguage, nativeLanguage);
+    const cardContext = card ? { front: card.front, back: card.back } : undefined;
+    const cacheKey = cardContext
+      ? makeWordContextCacheKey(norm, cardContext.front, splitCardBack(cardContext.back).meaning, "", targetLanguage, nativeLanguage)
+      : makeAiCacheKey("word", norm, targetLanguage, nativeLanguage);
     const cached = getLocalAiAnalysis(cacheKey);
     if (cached?.word?.translation) {
       setWordModal({ open: true, word: norm, analysis: cached, loading: false });
@@ -1259,9 +1314,10 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         mode: "word",
         word: norm,
         text: norm,
-        sentence: norm,
+        sentence: cardContext?.front ?? norm,
         sentenceBefore: "",
         sentenceAfter: "",
+        cardContext,
         nativeLanguage,
         targetLanguage,
       });
@@ -1272,9 +1328,32 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     }
   }, [targetLanguage, nativeLanguage]);
 
-  const handleWordTap = useCallback((word: string, e: React.MouseEvent) => {
+  const openFixCallback = useCallback((card: Flashcard) => setFixCard(card), []);
+
+  /**
+   * Saves the AI's corrected card. Progress, schedule and id stay as they
+   * were: the card is the same card, only its text changed. Refuses a front
+   * that another card already has, so a fix cannot create a duplicate.
+   */
+  const applyCardFix = useCallback((front: string, back: string): string | null => {
+    if (!fixCard) return "Карточка не найдена.";
+    const clash = findDuplicateCard(front, cards);
+    if (clash && clash.id !== fixCard.id) {
+      return `Исправленная карточка «${front}» совпала бы с уже существующей. Объедините или удалите дубликат вручную.`;
+    }
+    onUpdateCard({ ...fixCard, front, back });
+    // The session holds snapshots of its cards, so the card on screen (and in
+    // the review history) would keep its old text until the session restarted.
+    const refresh = (item: TrainQueueItem): TrainQueueItem =>
+      item.card.id === fixCard.id ? { ...item, card: { ...item.card, front, back } } : item;
+    setTrainQueue((queue) => queue.map(refresh));
+    setReviewHistory((history) => history.map(refresh));
+    return null;
+  }, [fixCard, cards, onUpdateCard]);
+
+  const handleWordTap = useCallback((word: string, e: React.MouseEvent, card?: Flashcard | null) => {
     e.stopPropagation();
-    void openWordModalFor(word);
+    void openWordModalFor(word, card);
   }, [openWordModalFor]);
 
   /**
@@ -1439,6 +1518,15 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const historyItem = historyPosition ? reviewHistory[historyPosition.index] : null;
   const historyCard = historyItem?.card;
   const historyBackParts = splitCardBack(historyCard?.back ?? "");
+  // Memoized per card so the tokenized spans are not rebuilt on every render.
+  const handleCurrentWordTap = useCallback(
+    (word: string, e: React.MouseEvent) => handleWordTap(word, e, currentCard),
+    [handleWordTap, currentCard],
+  );
+  const handleHistoryWordTap = useCallback(
+    (word: string, e: React.MouseEvent) => handleWordTap(word, e, historyCard),
+    [handleWordTap, historyCard],
+  );
 
   // Zen only takes over while there is a card to sit alone on the screen. The
   // finished-session summary, an empty queue and the productive trainer all
@@ -1470,6 +1558,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     && !reverseWord.open
     && !showKeysModal
     && !discuss.open
+    && !fixCard
     && (Boolean(currentCard) || Boolean(historyPosition));
 
   useEffect(() => {
@@ -1869,6 +1958,20 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
         onClose={() => setReverseWord((s) => ({ ...s, open: false }))}
         onAddCard={(front, back) => void addCard(front, back, "word", currentCard ?? null)}
       />
+
+      {fixCard && (
+        <CardFixModal
+          key={fixCard.id}
+          card={fixCard}
+          entry={dictionaryEntries.get(normalizeFront(fixCard.front))
+            ?? dictionaryEntries.get(normalizeFront(fixCard.front.replace(/^(der|die|das)s+/i, "")))
+            ?? null}
+          targetLanguage={targetLanguage}
+          nativeLanguage={nativeLanguage}
+          onApply={applyCardFix}
+          onClose={() => setFixCard(null)}
+        />
+      )}
 
       {showKeysModal && <TrainerKeysModal onClose={() => setShowKeysModal(false)} />}
 
@@ -2315,9 +2418,18 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
 
                 <div className="srs-history-word-row">
                   <div className="srs-history-word">
-                    <TokenizedText text={historyCard.front} style={{ fontSize: "inherit", fontWeight: "inherit", lineHeight: "inherit" }} onWordTap={handleWordTap} />
+                    <TokenizedText text={historyCard.front} style={{ fontSize: "inherit", fontWeight: "inherit", lineHeight: "inherit" }} onWordTap={handleHistoryWordTap} />
                   </div>
                   <SpeakButton text={historyCard.front} lang={targetLanguage} size={19} />
+                  <button
+                    className="srs-history-close"
+                    type="button"
+                    aria-label="Проверить и исправить карточку"
+                    title="Проверить и исправить карточку"
+                    onClick={() => setFixCard(historyCard)}
+                  >
+                    <ShieldCheck size={17} />
+                  </button>
                 </div>
                 <div className="srs-history-divider" />
                 <div className="srs-history-label">Перевод</div>
@@ -2451,6 +2563,15 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                       <button
                         className="card-action-btn"
                         type="button"
+                        aria-label="Проверить и исправить карточку"
+                        title="Проверить и исправить карточку"
+                        onClick={(e) => { e.stopPropagation(); setFixCard(currentCard); }}
+                      >
+                        <ShieldCheck size={22} />
+                      </button>
+                      <button
+                        className="card-action-btn"
+                        type="button"
                         aria-label="Обсудить с AI"
                         title="Обсудить с AI"
                         onClick={(e) => { e.stopPropagation(); void openDiscussForCard(currentCard); }}
@@ -2525,7 +2646,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                         <TokenizedText
                           text={promptText}
                           style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
-                          onWordTap={handleWordTap}
+                          onWordTap={handleCurrentWordTap}
                         />
                       )}
                     </div>
@@ -2554,7 +2675,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                           <TokenizedText
                             text={currentCard.front}
                             style={{ fontSize: cardFontSize(currentCard.front), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3, textAlign: "center" }}
-                            onWordTap={handleWordTap}
+                            onWordTap={handleCurrentWordTap}
                           />
                           <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center" }}>{currentCard.back}</div>
                         </div>
@@ -2563,7 +2684,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                           <TokenizedText
                             text={answerText}
                             style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}
-                            onWordTap={handleWordTap}
+                            onWordTap={handleCurrentWordTap}
                           />
                           {backParts.details && (
                             <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
@@ -2774,6 +2895,7 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                   targetLanguage={targetLanguage}
                   onWordTap={handleWordTap}
                   onDiscuss={openDiscussCallback}
+                  onFix={openFixCallback}
                   onDelete={onDeleteCard}
                 />
               ))}
