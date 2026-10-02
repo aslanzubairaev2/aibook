@@ -48,6 +48,7 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
     tools: [
       "list_word_batches", "list_batch_words", "search_dictionary",
       "add_word_batch", "add_words_to_batch", "update_batch_training", "update_pack_details", "delete_pack",
+      "check_dictionary_words",
     ],
     say: [
       "«сохрани слова по сегодняшней теме»",
@@ -58,6 +59,7 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
       "«что это была за пачка? для чего я её собирал?»",
       "«удали эту пачку»",
       "«убери пустые пачки»",
+      "«каких из этих слов у меня ещё нет?»",
     ],
   },
   {
@@ -83,6 +85,24 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
       "«сделай урок по теме “врач”»",
     ],
   },
+  {
+    area: "Interactive tests («тесты»)",
+    summary:
+      "Tests and lessons you build and the learner takes inside the app instead of in chat: reading texts and listening passages with questions, single/multiple choice, gaps with a dropdown or typed in, word order, short answers and writing. Listening is recorded by the app itself with its own Gemini voices — you send the text (a monologue, or a dialogue with speakers and voices) and prepare_assessment_audio records it; you never send audio or need a key. A listening can be limited to N plays, counted on the server. Two modes: learning (hints, instant feedback, retries) and diagnostic (nothing revealed until the release point you choose; first answers and every change kept; «не знаю» is its own status). Closed items are graded automatically with typo tolerance; writing and free answers come to you through get_assessment_results and go back with submit_assessment_review. Results are broken down by skill (reading, listening, writing, grammar, vocabulary) and by what an error is an error of (meaning, grammar, vocabulary, spelling, instruction). get_learning_gaps turns the errors into material for a review pack. Start with get_assessment_capabilities: it has every field and a full example.",
+    tools: [
+      "get_assessment_capabilities", "create_assessment", "update_assessment", "prepare_assessment_audio",
+      "get_assessment_status", "publish_assessment", "list_assessments", "get_assessment_results",
+      "submit_assessment_review", "get_learning_gaps",
+    ],
+    say: [
+      "«проверь мой немецкий»",
+      "«сделай мне тест на аудирование»",
+      "«дай задание: прочитать текст и ответить»",
+      "«я прошёл тест, проверь»",
+      "«что у меня плохо по результатам теста?»",
+      "«сделай пачку слов по моим ошибкам»",
+    ],
+  },
 ];
 
 /**
@@ -92,7 +112,7 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
 export const AGENT_LIMITS: string[] = [
   "Grading reviews: only the learner can answer a card. You add and edit cards; the app schedules them.",
   "The active trainer («Активно» — the written test over вспоминаю / слушаю / говорю) keeps its record on the learner's own device. Nothing about it reaches this connection; what you can read is the «Повторение» deck.",
-  "Audio: the app speaks cards and texts itself, through whichever voice engine the learner has chosen in their settings. You cannot make it speak, and no audio comes back through this connection.",
+  "Audio: the app speaks cards and texts itself, through whichever voice engine the learner has chosen in their settings, and no audio comes back through this connection. The one place you direct speech is a test's listening passage: you send its text and voices, and prepare_assessment_audio has the app record it.",
   "The live voice tutor, photo recognition of coursebook pages and in-app AI analysis run inside the app on the learner's own AI budget; this connection is plain data and costs them nothing.",
   "Deleting a text, or a single dictionary entry on its own: still the learner's own action in the app. Packs and flashcards are different — delete_pack and delete_flashcards are both available here, for a pack that turned out wrong or empty and for cleaning up mistakes you made.",
 ];
@@ -106,7 +126,8 @@ export const AGENT_TIPS: string[] = [
   "Counts here are counted the way the app counts them: a card is due if it falls before the end of today, and every card is three prompts, so «сегодня» is both a number of words and a larger number of repetitions. Quote both, or the learner's screen will contradict you.",
   "Practise a new grammar point with words the learner already knows, so the sentence tests the construction and not the vocabulary.",
   "Everything you write lands in the learner's own app, under «Мои уроки» or «Словарь». It shows up after they refresh.",
-  "Nothing here spends the learner's AI budget; these tools are plain database reads and writes.",
+  "Nothing here spends the learner's AI budget; these tools are plain database reads and writes — except prepare_assessment_audio, which records listening passages with the app's Gemini speech quota (about 100 recordings a day per model for the whole app), so record only what a test needs.",
+  "When asked to test the learner, build a test with create_assessment and send them the link — do not run the test question by question in chat. Only single words and fixed expressions go into the dictionary and cards: practice sentences stay in tests, and personal or organisation names are never added on their own.",
 ];
 
 /** The short version, for `initialize`'s instructions field. */

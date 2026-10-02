@@ -96,6 +96,13 @@ the words, and these tools store them exactly the way the in-app generator does.
 | Dictionary & batches | `list_word_batches`, `list_batch_words`, `search_dictionary`, `add_word_batch`, `add_words_to_batch` |
 | Learning quality | `get_progress` |
 | Texts | `create_lesson`, `list_texts`, `get_text`, `list_catalogue` |
+| Interactive tests | `get_assessment_capabilities`, `create_assessment`, `update_assessment`, `prepare_assessment_audio`, `get_assessment_status`, `publish_assessment`, `list_assessments`, `get_assessment_results`, `submit_assessment_review`, `get_learning_gaps`, `check_dictionary_words` |
+
+Interactive tests are taken by the learner at `/test/<id>` (and listed on the home
+screen): reading, listening (recorded by the app itself with Gemini TTS, with a
+server-side play limit), choice, gaps, word order, short answers and writing, in a
+learning or a diagnostic mode. Schemas, rules and examples for the teacher agent:
+[`docs/assessments-mcp.md`](docs/assessments-mcp.md).
 
 Beyond tools, the server also serves **prompts** (ready-made flows the learner
 can pick from a menu: «рассказ из моих слов», «что я забываю») and **resources**

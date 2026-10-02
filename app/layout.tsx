@@ -6,6 +6,7 @@ import "../styles/reader.css";
 import "../styles/panel.css";
 import "../styles/modal.css";
 import "../styles/videos.css";
+import "../styles/assessment.css";
 
 export const metadata: Metadata = {
   title: "AIBook — Language Learning Reader",

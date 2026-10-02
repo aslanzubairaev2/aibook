@@ -57,7 +57,9 @@ test("write tools are named as writes, and only deletion is destructive", () => 
     if (tool.annotations?.readOnlyHint) continue;
     assert.match(
       tool.name,
-      /^(add|create|update|delete)_/,
+      // prepare/publish/submit: the test workflow's own verbs — recording audio,
+      // releasing a test, handing in a grade — every one of them a change.
+      /^(add|create|update|delete|prepare|publish|submit)_/,
       `${tool.name}: a tool that changes the learner's data should say so in its name`,
     );
   }

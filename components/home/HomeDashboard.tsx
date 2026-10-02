@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronRight, Languages, Phone } from "lucide-react";
+import { TestsList } from "@/components/assessment/TestsList";
 
 type Props = {
   onOpenLiveChat: () => void;
@@ -34,6 +35,8 @@ export function HomeDashboard({ onOpenLiveChat, onOpenLiveTranslate }: Props) {
         </span>
         <ChevronRight size={20} className="action-card-arrow" />
       </button>
+
+      <TestsList />
     </section>
   );
 }

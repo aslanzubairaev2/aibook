@@ -32,6 +32,7 @@ import { buildKnownWordSet, buildWordCounts, computeCoverage } from "@/lib/text/
 import type { GeneratedLesson } from "@/lib/ai/buildLessonPrompt";
 import { LEARNING_ITEM_TYPES, type CefrLevel } from "@/lib/types";
 import { AGENT_LIMITS, AGENT_TIPS, CAPABILITY_AREAS } from "@/lib/mcp/capabilities";
+import { ASSESSMENT_HANDLERS, ASSESSMENT_TOOLS } from "@/lib/mcp/assessmentTools";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
@@ -90,7 +91,10 @@ const READ_ONLY: McpToolAnnotations = { readOnlyHint: true, openWorldHint: false
 const WRITES: McpToolAnnotations = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const DESTRUCTIVE: McpToolAnnotations = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 
-type Ctx = { admin: SupabaseClient; userId: string };
+type Ctx = { admin: SupabaseClient; userId: string; origin: string };
+
+/** Where links to this app point when the request did not say. */
+const DEFAULT_ORIGIN = "https://aibook-liart.vercel.app";
 type Args = Record<string, unknown>;
 
 // ─── Shared lookups ──────────────────────────────────────────────────────────
@@ -2123,6 +2127,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     },
     annotations: { ...DESTRUCTIVE, title: "Удалить пачку" },
   },
+  ...ASSESSMENT_TOOLS,
 ];
 
 const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
@@ -2147,6 +2152,7 @@ const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
   update_flashcard: updateFlashcard,
   delete_flashcards: deleteFlashcards,
   delete_pack: deletePack,
+  ...ASSESSMENT_HANDLERS,
 };
 
 /** Every tool that is advertised must be callable, and vice versa. */
@@ -2251,6 +2257,7 @@ export async function callMcpTool(
   userId: string,
   name: string,
   args: Args,
+  origin: string = DEFAULT_ORIGIN,
 ): Promise<unknown> {
   const handler = HANDLERS[name];
   if (!handler) {
@@ -2258,10 +2265,10 @@ export async function callMcpTool(
   }
 
   const readOnly = MCP_TOOLS.find((t) => t.name === name)?.annotations?.readOnlyHint === true;
-  if (readOnly) return handler({ admin, userId }, args);
+  if (readOnly) return handler({ admin, userId, origin }, args);
 
   try {
-    const result = await handler({ admin, userId }, args);
+    const result = await handler({ admin, userId, origin }, args);
     await logAction(admin, userId, name, args, result, true, null);
     return result;
   } catch (err) {

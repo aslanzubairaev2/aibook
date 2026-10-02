@@ -100,7 +100,7 @@ function json(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: CORS_HEADERS });
 }
 
-async function handleMessage(msg: JsonRpcRequest, userId: string): Promise<unknown | null> {
+async function handleMessage(msg: JsonRpcRequest, userId: string, origin: string): Promise<unknown | null> {
   const id = msg.id ?? null;
   const method = msg.method ?? "";
 
@@ -129,7 +129,7 @@ async function handleMessage(msg: JsonRpcRequest, userId: string): Promise<unkno
       const name = String(msg.params?.name ?? "");
       const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
       try {
-        const result = await callMcpTool(supabaseAdmin!, userId, name, args);
+        const result = await callMcpTool(supabaseAdmin!, userId, name, args, origin);
         return rpcResult(id, {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         });
@@ -160,7 +160,7 @@ async function handleMessage(msg: JsonRpcRequest, userId: string): Promise<unkno
       const tool = toolForUri[uri];
       if (!tool) return rpcError(id, -32602, `Unknown resource: ${uri}`);
       try {
-        const data = await callMcpTool(supabaseAdmin!, userId, tool, {});
+        const data = await callMcpTool(supabaseAdmin!, userId, tool, {}, origin);
         return rpcResult(id, {
           contents: [{ uri, mimeType: "application/json", text: JSON.stringify(data, null, 2) }],
         });
@@ -216,9 +216,14 @@ export async function POST(
 
   // Old-spec clients may still send batches; answer them item by item.
   const messages: JsonRpcRequest[] = Array.isArray(body) ? body : [body as JsonRpcRequest];
+  // Links handed to the learner (a published test) point back at this deployment.
+  const forwardedHost = req.headers.get("x-forwarded-host");
+  const origin = forwardedHost
+    ? `${req.headers.get("x-forwarded-proto") ?? "https"}://${forwardedHost}`
+    : new URL(req.url).origin;
   const responses: unknown[] = [];
   for (const msg of messages) {
-    const response = await handleMessage(msg, userId);
+    const response = await handleMessage(msg, userId, origin);
     if (response !== null) responses.push(response);
   }
 
