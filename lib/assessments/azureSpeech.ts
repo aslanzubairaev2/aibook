@@ -61,8 +61,38 @@ export const TECHNICAL_REASON_RU: Record<TechnicalReason, string> = {
   not_configured: "Оценка произношения не настроена на сервере.",
 };
 
+/** One recognized phrase, with how sure the recognizer was of it. */
+export type PhraseInfo = {
+  text: string;
+  from_ms: number | null;
+  to_ms: number | null;
+  /** Azure's recognition confidence for the phrase, 0–1; null when not returned. */
+  confidence: number | null;
+  /** Below LOW_CONFIDENCE: what was heard may not be what was said. */
+  low_confidence: boolean;
+};
+
+/**
+ * How the answer was delivered as a whole. Azure's fluency is measured inside
+ * a phrase; the pauses between phrases are only visible here.
+ */
+export type Delivery = {
+  phrases: number;
+  speech_ms: number;
+  pause_ms: number;
+  longest_pause_ms: number;
+  pauses_over_2s: number;
+  /** Share of the answer, first word to last, that was speech. */
+  speech_ratio: number | null;
+  /** Azure's fluency inside the phrases, weighted by their length. */
+  fluency_within_phrases: number | null;
+};
+
+/** Phrases recognized with less confidence than this are flagged. */
+export const LOW_CONFIDENCE = 0.75;
+
 export type SpeechAnalysis =
-  | { status: "done"; transcript: string; scores: SpeechScores; words: SpeechWord[]; raw: unknown }
+  | { status: "done"; transcript: string; scores: SpeechScores; words: SpeechWord[]; phrases: PhraseInfo[]; delivery: Delivery; raw: unknown }
   | { status: "technical_error"; reason: TechnicalReason; detail: string; raw: unknown };
 
 export function speechConfig(): { key: string; region: string } | null {
@@ -157,6 +187,7 @@ type AzureWord = {
 };
 type AzureBest = {
   Display?: string;
+  Confidence?: number;
   AccuracyScore?: number;
   FluencyScore?: number;
   CompletenessScore?: number;
@@ -203,17 +234,33 @@ export function normalizeAzureAnswer(raw: unknown, scripted: boolean): SpeechAna
     offset_ms: ticksToMs(w.Offset),
     duration_ms: ticksToMs(w.Duration),
   }));
+  const spoken = words.filter((w) => w.error_type !== "Omission" && w.offset_ms !== null && w.duration_ms !== null);
+  const from = spoken[0]?.offset_ms ?? null;
+  const last = spoken.at(-1);
+  const to = last ? (last.offset_ms as number) + (last.duration_ms as number) : null;
+  const confidence = typeof best.Confidence === "number" ? Math.round(best.Confidence * 100) / 100 : null;
+  const fluency = num(pa.FluencyScore ?? best.FluencyScore);
   return {
     status: "done",
     transcript,
     scores: {
       pronunciation: num(pa.PronScore ?? best.PronScore),
       accuracy: num(pa.AccuracyScore ?? best.AccuracyScore),
-      fluency: num(pa.FluencyScore ?? best.FluencyScore),
+      fluency,
       completeness: scripted ? num(pa.CompletenessScore ?? best.CompletenessScore) : null,
       prosody: num(pa.ProsodyScore ?? best.ProsodyScore),
     },
     words,
+    phrases: [{ text: transcript, from_ms: from, to_ms: to, confidence, low_confidence: confidence !== null && confidence < LOW_CONFIDENCE }],
+    delivery: {
+      phrases: 1,
+      speech_ms: from !== null && to !== null ? to - from : 0,
+      pause_ms: 0,
+      longest_pause_ms: 0,
+      pauses_over_2s: 0,
+      speech_ratio: from !== null && to !== null ? 1 : null,
+      fluency_within_phrases: fluency,
+    },
     raw,
   };
 }
@@ -280,6 +327,7 @@ export async function assessPronunciation(wav: Buffer, lang: string, referenceTe
       transcript: a.transcript,
       scores: a.scores,
       words: a.words,
+      confidence: a.phrases[0]?.confidence ?? null,
       referenceWords: references[i].split(" ").filter(Boolean).length,
     };
     if (phraseCutShort(phrase)) {

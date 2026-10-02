@@ -31,7 +31,7 @@ import {
   type Section,
   type Skill,
 } from "./model";
-import type { SpeechScores, SpeechWord, TechnicalReason } from "./azureSpeech";
+import type { Delivery, PhraseInfo, SpeechScores, SpeechWord, TechnicalReason } from "./azureSpeech";
 
 export type AnswerValue = string | string[] | Record<string, string>;
 
@@ -64,6 +64,10 @@ export type SpeechRecording = {
   transcript: string | null;
   scores: SpeechScores | null;
   words: SpeechWord[];
+  /** Per phrase, with recognition confidence (recordings analyzed from 2026-10-03). */
+  phrases?: PhraseInfo[];
+  /** Pauses between phrases and fluency inside them. */
+  delivery?: Delivery;
   /** Azure's answer exactly as received. */
   raw: unknown;
   analyzed_at: string | null;
@@ -116,6 +120,8 @@ export type SpeechResult = {
   transcript: string;
   scores: SpeechScores;
   words: SpeechWord[];
+  phrases: PhraseInfo[];
+  delivery: Delivery | null;
   recordings_sent: number;
   technical_failures: number;
 };
@@ -308,6 +314,8 @@ export function autoGrade(
       transcript: used.transcript ?? "",
       scores: used.scores ?? { pronunciation: null, accuracy: null, fluency: null, completeness: null, prosody: null },
       words: used.words,
+      phrases: used.phrases ?? [],
+      delivery: used.delivery ?? null,
       recordings_sent: recordings.filter((r) => r.status === "done").length,
       technical_failures: failures,
     };

@@ -1141,7 +1141,7 @@ export async function submitSpeech(
       ? {
           id: recordingId, storage_path: path, duration_ms: info.durationMs, created_at: existing?.created_at ?? now,
           status: "done", technical_reason: null, transcript: analysis.transcript, scores: analysis.scores,
-          words: analysis.words, raw: analysis.raw, analyzed_at: now,
+          words: analysis.words, phrases: analysis.phrases, delivery: analysis.delivery, raw: analysis.raw, analyzed_at: now,
         }
       : { ...technical(analysis.reason, info.durationMs), raw: analysis.raw };
   }
@@ -1184,8 +1184,11 @@ function speechReport(
     sample_plays: item.type === "repeat" ? { used: listens?.[`item:${item.id}`]?.used ?? 0, max: item.sample_max_plays } : null,
     graded_recording_id: used?.id ?? null,
     transcript: used?.transcript ?? null,
-    transcript_note: "What the recognizer heard. It is not proof that the words were pronounced correctly.",
+    transcript_note: "What the recognizer heard. It is not proof that the words were pronounced correctly. Phrases with low_confidence may not be what was said — do not grade them as the learner's error without listening.",
+    phrases: used?.phrases ?? null,
     scores: used?.scores ?? null,
+    delivery: used?.delivery ?? null,
+    delivery_note: "scores.fluency is null for an answer of several phrases: Azure measures fluency inside a phrase only. Judge the whole answer from delivery (pauses between phrases, speech_ratio) and fluency_within_phrases.",
     words: used?.words ?? [],
     remarks_shown_to_learner: used ? speechRemarks(used.words, scripted) : [],
     recordings: recordings.map((r) => ({

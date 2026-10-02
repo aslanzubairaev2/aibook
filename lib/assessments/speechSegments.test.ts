@@ -66,6 +66,21 @@ test("merged phrases keep every word in place and weight the scores", () => {
   assert.equal(mergePhrases([a], false).scores.completeness, null);
 });
 
+test("pauses between phrases are measured; whole-answer fluency is not invented from within-phrase scores", () => {
+  // The real answer: phrases fluent inside (98–100), separated by pauses up to 6.7 s.
+  const a = { ...phrase(0, [["Heute", 200, 400]], { fluency: 98 }), confidence: 0.92 };
+  const b = { ...phrase(0, [["Sill", 100, 300]], { fluency: 99 }), confidence: 0.66 };
+  b.segment = { startMs: 7000, endMs: 9000, voicedStartMs: 7300, voicedEndMs: 8800 };
+  const merged = mergePhrases([a, b], false);
+  assert.equal(merged.scores.fluency, null, "one number would read a 6-second silence as fluent");
+  assert.equal(merged.delivery.phrases, 2);
+  assert.equal(merged.delivery.longest_pause_ms, 7300 - a.segment.voicedEndMs);
+  assert.equal(merged.delivery.pauses_over_2s, 1);
+  assert.ok(merged.delivery.speech_ratio !== null && merged.delivery.speech_ratio < 0.5);
+  assert.ok(merged.delivery.fluency_within_phrases !== null && merged.delivery.fluency_within_phrases > 98);
+  assert.deepEqual(merged.phrases.map((p) => p.low_confidence), [false, true], "the unsure ending is flagged");
+});
+
 test("speech running on after the last recognized word is flagged as cut short", () => {
   const p = phrase(0, [["Heute", 200, 400]], { pronunciation: 90 });
   assert.equal(phraseCutShort(p), false);

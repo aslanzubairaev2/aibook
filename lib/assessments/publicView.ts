@@ -324,7 +324,7 @@ export function buildPublicView(
               teacher_comment: result.teacher_comment,
               corrected: result.corrected,
               speech: result.speech
-                ? { ...result.speech, remarks: speechRemarks(result.speech.words, item.type !== "spoken_response"), recording_id: used?.id ?? null }
+                ? { ...result.speech, remarks: [...speechRemarks(result.speech.words, item.type !== "spoken_response"), ...deliveryRemarks(result.speech)], recording_id: used?.id ?? null }
                 : null,
             }
           : null,
@@ -387,3 +387,16 @@ export function buildPublicView(
 }
 
 export type PublicAssessmentView = ReturnType<typeof buildPublicView>;
+
+/** Pauses and unsure recognition, said plainly — facts measured, no verdicts invented. */
+export function deliveryRemarks(speech: NonNullable<ItemResult["speech"]>): string[] {
+  const out: string[] = [];
+  const d = speech.delivery;
+  if (d && d.phrases > 1) {
+    const sec = (ms: number) => (ms / 1000).toFixed(1).replace(".", ",");
+    out.push(`Фраз: ${d.phrases}; пауз между ними — ${d.phrases - 1}, самая длинная ${sec(d.longest_pause_ms)} с${d.pauses_over_2s ? `, длиннее 2 с — ${d.pauses_over_2s}` : ""}.`);
+  }
+  const unsure = speech.phrases.filter((p) => p.low_confidence);
+  if (unsure.length) out.push(`Распознано неуверенно: ${unsure.map((p) => `«${p.text}»`).join(", ")} — возможно, сказано иначе.`);
+  return out;
+}

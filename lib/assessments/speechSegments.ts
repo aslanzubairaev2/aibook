@@ -10,7 +10,7 @@
 // their place in the recording, and scores weighted by how much each phrase
 // carried. Pure functions here; the network part is in azureSpeech.ts.
 
-import type { SpeechScores, SpeechWord } from "./azureSpeech";
+import { LOW_CONFIDENCE, type Delivery, type PhraseInfo, type SpeechScores, type SpeechWord } from "./azureSpeech";
 
 export const SAMPLE_RATE = 16000;
 const FRAME_MS = 20;
@@ -144,6 +144,8 @@ export type PhraseResult = {
   words: SpeechWord[];
   /** Reference words this phrase was assessed against (scripted only). */
   referenceWords: number;
+  /** Azure's recognition confidence for the phrase, 0–1. */
+  confidence?: number | null;
 };
 
 function weighted(parts: { value: number | null; weight: number }[]): number | null {
@@ -159,20 +161,43 @@ function weighted(parts: { value: number | null; weight: number }[]): number | n
  * contained, fluency by how long it was spoken, completeness by the reference
  * words it covered. Prosody stays null when no phrase had it.
  */
-export function mergePhrases(phrases: PhraseResult[], scripted: boolean): { transcript: string; scores: SpeechScores; words: SpeechWord[] } {
+export function mergePhrases(phrases: PhraseResult[], scripted: boolean): { transcript: string; scores: SpeechScores; words: SpeechWord[]; phrases: PhraseInfo[]; delivery: Delivery } {
   const words = phrases.flatMap((p) => p.words.map((w) => ({
     ...w,
     // An omitted word was never said, so it has no place in the recording.
     offset_ms: w.error_type === "Omission" || w.offset_ms === null ? null : w.offset_ms + p.segment.startMs,
   })));
   const spoken = (p: PhraseResult) => p.words.filter((w) => w.error_type !== "Omission").length;
+  const length = (p: PhraseResult) => p.segment.voicedEndMs - p.segment.voicedStartMs;
+  const pauses = phrases.slice(1).map((p, i) => Math.max(0, p.segment.voicedStartMs - phrases[i].segment.voicedEndMs));
+  const speechMs = phrases.reduce((n, p) => n + length(p), 0);
+  const pauseMs = pauses.reduce((n, x) => n + x, 0);
   return {
     transcript: phrases.map((p) => p.transcript).filter(Boolean).join(" "),
     words,
+    phrases: phrases.map((p) => ({
+      text: p.transcript,
+      from_ms: p.segment.voicedStartMs,
+      to_ms: p.segment.voicedEndMs,
+      confidence: p.confidence ?? null,
+      low_confidence: typeof p.confidence === "number" && p.confidence < LOW_CONFIDENCE,
+    })),
+    delivery: {
+      phrases: phrases.length,
+      speech_ms: speechMs,
+      pause_ms: pauseMs,
+      longest_pause_ms: pauses.length ? Math.max(...pauses) : 0,
+      pauses_over_2s: pauses.filter((x) => x >= 2000).length,
+      speech_ratio: speechMs + pauseMs > 0 ? Math.round((speechMs / (speechMs + pauseMs)) * 100) / 100 : null,
+      fluency_within_phrases: weighted(phrases.map((p) => ({ value: p.scores.fluency, weight: length(p) }))),
+    },
     scores: {
       pronunciation: weighted(phrases.map((p) => ({ value: p.scores.pronunciation, weight: Math.max(1, spoken(p)) }))),
       accuracy: weighted(phrases.map((p) => ({ value: p.scores.accuracy, weight: Math.max(1, spoken(p)) }))),
-      fluency: weighted(phrases.map((p) => ({ value: p.scores.fluency, weight: p.segment.voicedEndMs - p.segment.voicedStartMs }))),
+      // Azure measures fluency inside one phrase; the pauses between phrases
+      // never reach it. A merged number would read as «fluent» an answer full
+      // of long silences, so the whole answer gets none — see delivery.
+      fluency: phrases.length > 1 ? null : phrases[0]?.scores.fluency ?? null,
       completeness: scripted ? weighted(phrases.map((p) => ({ value: p.scores.completeness, weight: p.referenceWords }))) : null,
       prosody: weighted(phrases.map((p) => ({ value: p.scores.prosody, weight: Math.max(1, spoken(p)) }))),
     },
