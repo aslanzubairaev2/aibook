@@ -273,7 +273,7 @@ export function shouldSpeakOnReveal(skill: ProductiveSkill): boolean {
 
 export function previewIntervalDays(score: SrsScore, progress?: SkillProgress): number {
   const prev = progress ?? createDefaultSkillProgress();
-  return calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor).intervalDays;
+  return calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor, prev).intervalDays;
 }
 
 /** "сегодня" / "завтра" / "через N дн." — a plain answer to "what does this button do?". */

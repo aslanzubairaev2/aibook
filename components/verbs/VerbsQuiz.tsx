@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { logTrainingEvent, newId, outcomeFromVerdict } from "@/lib/training/client";
 import { ArrowLeft, Eye, EyeOff, Loader2, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
@@ -141,6 +142,9 @@ function buildQueue(verbs: DictionaryEntry[], modes: Set<QuizMode>, conjugationT
  */
 export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, onExit, onRecord, onComplete }: Props) {
   const [queue, setQueue] = useState<QuizStep[]>(() => buildQueue(verbs, modes, conjugationTenses));
+  const [sessionId] = useState(newId);
+  // 1 on the first pass, 2+ on each «повторить ошибки» round.
+  const roundRef = useRef(1);
   const [index, setIndex] = useState(0);
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState(false);
@@ -283,9 +287,27 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
     let allGood = true;
     for (const field of step.fields) {
       if (field.locked) continue;
-      const check = checkTypedAnswer(fieldAnswer(field, inputs[field.key] ?? ""), field.expected);
+      const given = fieldAnswer(field, inputs[field.key] ?? "");
+      const check = checkTypedAnswer(given, field.expected);
       next[field.key] = { verdict: check.verdict, expected: field.expected };
       if (check.verdict === "wrong") allGood = false;
+      logTrainingEvent({
+        trainer: "verbs",
+        mode: step.mode,
+        sessionId,
+        entryId: step.entry.id,
+        word: step.entry.lemma || step.entry.headword,
+        checks: step.mode === "conjugation" ? "conjugation" : step.mode === "forms" ? "form" : step.mode === "phrase" ? "sentence" : "translation",
+        form: step.mode === "forms" ? field.key : null,
+        pronoun: step.mode === "conjugation" ? field.label : null,
+        tense: step.mode === "conjugation" ? (step.tense ?? "present") : null,
+        prompt: step.promptText ?? step.entry.headword,
+        answer: given,
+        expected: field.expected,
+        outcome: outcomeFromVerdict(check.verdict, given),
+        attemptNo: roundRef.current,
+        answerShown: peeked.has(field.key),
+      });
     }
     onRecord?.(step.entry.id, allGood);
     if (allGood) {
@@ -314,6 +336,12 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
   function acceptPhrase() {
     if (!step) return;
     onRecord?.(step.entry.id, true);
+    // The tutor accepted a sentence using the verb: evidence of use, not of a form.
+    logTrainingEvent({
+      trainer: "verbs", mode: "phrase", sessionId, entryId: step.entry.id,
+      word: step.entry.lemma || step.entry.headword, checks: "sentence", outcome: "correct", attemptNo: roundRef.current,
+      meta: { judged_by: "ai_tutor" },
+    });
     setCorrectCount((count) => count + 1);
     const hasLaterStepForEntry = queue.some((candidate, candidateIndex) => candidateIndex > index && candidate.entry.id === step.entry.id);
     const hasUnresolvedMistakeForEntry = mistakes.some((mistake) => mistake.entry.id === step.entry.id);
@@ -321,6 +349,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
   }
 
   function retryMistakes() {
+    roundRef.current += 1;
     setQueue(shuffle(mistakes));
     setMistakes([]);
     setCorrectCount(0);

@@ -2,12 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import {
-  ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen,
-  GraduationCap, Server, Loader2, BookMarked,
-  Sparkles, CheckCircle2, PlayCircle, Clock, Circle, Headphones,
-  Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, ClipboardList, Tv,
-} from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Globe, Search, X, BookOpen, GraduationCap, Server, Loader2, BookMarked, Sparkles, CheckCircle2, PlayCircle, Clock, Circle, Headphones, Wand2, Trash2, ExternalLink, Pencil, Plus, Target, ListRestart, Camera, ClipboardList, Tv, ClipboardCheck } from "lucide-react";
+import { TestsTab } from "@/components/assessment/TestsList";
 import { VideosView } from "@/components/videos/VideosView";
 import type { Book, LessonContext, CefrLevel, Flashcard, UserProfile, Audiobook } from "@/lib/types";
 import { BookDetailModal } from "./BookDetailModal";
@@ -109,7 +105,11 @@ type SharedBook = {
   created_at: string;
 };
 
-type TabKey = "classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons";
+type TabKey = "classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons" | "tests";
+
+// The order the owner asked for: own material first, then tests, then the
+// shelves used most, then the rest.
+const TAB_ORDER: TabKey[] = ["lessons", "tests", "cefr", "videos", "audio", "classic", "klexikon"];
 
 // Each tab is one source. The name carries it; the source and its licence show
 // up per item (the "Оригинал · CC BY-SA" link, the "≈" on estimated levels)
@@ -121,6 +121,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   cefr: "CEFR тексты",
   videos: "Видео",
   lessons: "Мои уроки",
+  tests: "Тесты",
 };
 
 type LessonProgressMap = Record<string, {
@@ -1068,7 +1069,7 @@ export function DiscoverView({
 
       {/* One tab per source — the source note below spells out which is which */}
       <div className="discover-tabs">
-        {(["classic", "audio", "klexikon", "cefr", "videos", "lessons"] as const).map((tab) => (
+        {TAB_ORDER.map((tab) => (
           <button
             key={tab}
             type="button"
@@ -1082,10 +1083,13 @@ export function DiscoverView({
             {tab === "cefr" && <BookMarked size={15} />}
             {tab === "videos" && <Tv size={15} />}
             {tab === "lessons" && <Wand2 size={15} />}
+            {tab === "tests" && <ClipboardCheck size={15} />}
             {TAB_LABELS[tab]}
           </button>
         ))}
       </div>
+
+      {activeTab === "tests" && <TestsTab />}
 
       {/* ── Classic (Gutenberg) ─────────────────────────────────────────────── */}
       {activeTab === "classic" && (

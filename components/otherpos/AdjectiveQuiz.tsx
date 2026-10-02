@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ChevronLeft } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
+import { logTrainingEvent, newId, outcomeFromVerdict } from "@/lib/training/client";
 import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
 import { ARTICLE_TYPE_LABEL, CASE_LABEL_FULL, adjectiveEnding, adjectiveEndingHint } from "@/lib/adjectiveEndings";
 import { GENDER_LABEL, type NounGender } from "@/lib/nounForms";
@@ -52,6 +53,9 @@ export function AdjectiveQuiz({ entries, nounsByGender, onExit, onRecord }: Prop
   const [draft, setDraft] = useState("");
   const [mistakes, setMistakes] = useState<AdjectiveStep[]>([]);
   const [correctCount, setCorrectCount] = useState(0);
+  const [sessionId] = useState(newId);
+  // 1 on the first pass, 2+ on each «повторить ошибки» round.
+  const roundRef = useRef(1);
   const [answers, setAnswers] = useState<Record<string, AnsweredStep>>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const primaryButtonRef = useRef<HTMLButtonElement>(null);
@@ -73,6 +77,13 @@ export function AdjectiveQuiz({ entries, nounsByGender, onExit, onRecord }: Prop
     if (!step || revealed) return;
     const check = checkTypedAnswer(draft, step.expected);
     const ok = check.verdict !== "wrong";
+    logTrainingEvent({
+      trainer: "adjectives", mode: "ending", sessionId, entryId: step.entry.id,
+      word: step.entry.lemma || step.entry.headword, checks: "adjective_ending",
+      form: `${step.frame.articleType} · ${step.frame.grammCase} · ${step.frame.gender}`,
+      answer: draft, expected: step.expected,
+      outcome: outcomeFromVerdict(check.verdict, draft), attemptNo: roundRef.current,
+    });
     setAnswers((prev) => ({ ...prev, [step.key]: { ok, input: draft, verdict: check.verdict } }));
     onRecord(step.entry.id, ok);
     if (ok) setCorrectCount((c) => c + 1);
@@ -94,6 +105,7 @@ export function AdjectiveQuiz({ entries, nounsByGender, onExit, onRecord }: Prop
   }
 
   function retryMistakes() {
+    roundRef.current += 1;
     setAnswers({});
     setQueue(shuffled(mistakes));
     setMistakes([]);

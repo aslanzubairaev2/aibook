@@ -33,6 +33,7 @@ import type { GeneratedLesson } from "@/lib/ai/buildLessonPrompt";
 import { LEARNING_ITEM_TYPES, type CefrLevel } from "@/lib/types";
 import { AGENT_LIMITS, AGENT_TIPS, CAPABILITY_AREAS } from "@/lib/mcp/capabilities";
 import { ASSESSMENT_HANDLERS, ASSESSMENT_TOOLS } from "@/lib/mcp/assessmentTools";
+import { TRAINING_HANDLERS, TRAINING_TOOLS } from "@/lib/mcp/trainingTools";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
@@ -2128,6 +2129,7 @@ export const MCP_TOOLS: McpToolDef[] = [
     annotations: { ...DESTRUCTIVE, title: "Удалить пачку" },
   },
   ...ASSESSMENT_TOOLS,
+  ...TRAINING_TOOLS,
 ];
 
 const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
@@ -2153,6 +2155,7 @@ const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
   delete_flashcards: deleteFlashcards,
   delete_pack: deletePack,
   ...ASSESSMENT_HANDLERS,
+  ...TRAINING_HANDLERS,
 };
 
 /** Every tool that is advertised must be callable, and vice versa. */

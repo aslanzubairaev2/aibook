@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowLeft, ChevronLeft, Lightbulb, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
+import { logTrainingEvent, newId } from "@/lib/training/client";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import {
   CASE_LABEL,
@@ -53,6 +54,9 @@ export function PrepositionQuiz({ entries, targetLanguage, onExit, onRecord }: P
   const [hintOpen, setHintOpen] = useState(false);
   const [mistakes, setMistakes] = useState<PrepositionStep[]>([]);
   const [correctCount, setCorrectCount] = useState(0);
+  const [sessionId] = useState(newId);
+  // 1 on the first pass, 2+ on each «повторить ошибки» round.
+  const roundRef = useRef(1);
   const [answers, setAnswers] = useState<Record<string, AnsweredStep>>({});
 
   const step = queue[index];
@@ -63,6 +67,12 @@ export function PrepositionQuiz({ entries, targetLanguage, onExit, onRecord }: P
   function choose(option: PrepositionCase) {
     if (!step || revealed) return;
     const ok = option === step.answer;
+    logTrainingEvent({
+      trainer: "prepositions", mode: "case", sessionId, entryId: step.entry.id,
+      word: step.entry.lemma || step.entry.headword, checks: "preposition_case",
+      answer: option, expected: step.answer, outcome: ok ? "correct" : "incorrect",
+      attemptNo: roundRef.current, hintUsed: hintOpen,
+    });
     setAnswers((prev) => ({ ...prev, [step.key]: { ok, choice: option } }));
     onRecord(step.entry.id, ok);
     if (ok) {
@@ -84,6 +94,7 @@ export function PrepositionQuiz({ entries, targetLanguage, onExit, onRecord }: P
   }
 
   function retryMistakes() {
+    roundRef.current += 1;
     setAnswers({});
     setQueue(shuffled(mistakes));
     setMistakes([]);

@@ -12,6 +12,7 @@ import {
   audioLink,
   getLearnerAttempt,
   learnerView,
+  markResultsSeen,
   openAttempt,
   prepareAudio,
   speechLink,
@@ -58,6 +59,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     if (body.action === "open" || !body.action) {
       const attempt = await openAttempt(admin, user.id, id, body.retake === true);
+      // Opening a test with results out means they have been seen.
+      await markResultsSeen(admin, attempt).catch(() => {});
       return NextResponse.json({ view: await learnerView(admin, user.id, id, attempt) });
     }
 

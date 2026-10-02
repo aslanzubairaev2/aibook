@@ -4,11 +4,12 @@ import { ChevronRight, Languages, Phone } from "lucide-react";
 import { TestsList } from "@/components/assessment/TestsList";
 
 type Props = {
+  onOpenTests: () => void;
   onOpenLiveChat: () => void;
   onOpenLiveTranslate: () => void;
 };
 
-export function HomeDashboard({ onOpenLiveChat, onOpenLiveTranslate }: Props) {
+export function HomeDashboard({ onOpenTests, onOpenLiveChat, onOpenLiveTranslate }: Props) {
   return (
     <section className="screen home-screen">
       <header className="home-header">
@@ -36,7 +37,7 @@ export function HomeDashboard({ onOpenLiveChat, onOpenLiveTranslate }: Props) {
         <ChevronRight size={20} className="action-card-arrow" />
       </button>
 
-      <TestsList />
+      <TestsList onOpenAll={onOpenTests} />
     </section>
   );
 }

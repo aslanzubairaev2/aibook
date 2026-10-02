@@ -245,3 +245,24 @@
   display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; font-size: 12px;
   border: 1px solid var(--border-strong); background: transparent; color: var(--text-primary); cursor: pointer;
 }
+
+/* Home: news only. */
+.asm-home-title { justify-content: flex-start; }
+.asm-home-all { margin-left: auto; background: none; border: none; color: var(--accent); font-size: 13px; cursor: pointer; padding: 0; }
+.asm-home-badge { font-size: 12px; color: var(--accent); white-space: nowrap; }
+.asm-home-row.is-results .asm-home-badge { color: var(--green); }
+
+/* Каталог → Тесты */
+.asm-tests-tab { display: flex; flex-direction: column; gap: 16px; padding-bottom: 24px; }
+.asm-tab-empty { padding: 16px 0; }
+.asm-group-title { font-size: 13px; font-weight: 600; color: var(--text-muted); margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+.asm-test-rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+.asm-test-rows li + li { border-top: 1px solid var(--border); }
+.asm-test-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--bg-secondary); color: var(--text-primary); text-decoration: none; }
+.asm-test-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.asm-test-main strong { font-size: 15px; }
+.asm-test-progress { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.asm-test-progress .asm-progress { flex: 1; max-width: 220px; }
+.asm-test-side { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.asm-test-side strong { color: var(--accent-bright); }
+.asm-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }

@@ -21,6 +21,10 @@ import { getLastTtsError, prefetchSpeechAhead, respeak, speak, stopTTS } from "@
 import { NOUN_ARTICLE_TTS_CACHE_SCOPE } from "@/lib/ttsCacheScope";
 import { scheduleNounQuizSteps } from "@/lib/nounQuizQueue";
 import { isTypingTarget, nounArticleHotkey } from "@/lib/srs/trainerHotkeys";
+import { logTrainingEvent, newId, outcomeFromVerdict } from "@/lib/training/client";
+import type { Check as TrainingCheck } from "@/lib/training/events";
+
+const NOUN_FIELD_CHECKS: Record<string, TrainingCheck> = { translation: "translation", plural: "plural", word: "word_with_article" };
 
 type Props = {
   nouns: DictionaryEntry[];
@@ -174,6 +178,8 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
     return restored ?? { queue: fresh, index: 0, answers: {}, mistakes: [], correctCount: 0, retry: false };
   });
   const [queue, setQueue] = useState<NounQuizStep[]>(initial.queue);
+  // One id per sitting, so the teacher can tell a session from the next one.
+  const [sessionId] = useState(newId);
   const [index, setIndex] = useState(initial.index);
   const [retryRound, setRetryRound] = useState(initial.retry);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -305,6 +311,41 @@ export function NounsQuiz({ nouns, targetLanguage, nativeLanguage, canRegenerate
   function finishStep(allGood: boolean, record: Omit<AnsweredStep, "ok">) {
     if (!step) return;
     setAnswers((prev) => ({ ...prev, [step.key]: { ok: allGood, ...record } }));
+    // One event per thing checked: the article, or each typed field.
+    const word = bareNoun(step.entry) || step.entry.headword;
+    const common = {
+      trainer: "nouns" as const,
+      mode: step.mode,
+      sessionId,
+      entryId: step.entry.id,
+      word,
+      attemptNo: retryRound ? 2 : 1,
+      hintUsed: hintOpen,
+      meta: step.presentation ? { presentation: step.presentation } : undefined,
+    };
+    if (step.mode === "article") {
+      logTrainingEvent({
+        ...common,
+        checks: "article",
+        prompt: step.presentation === "native" ? step.entry.translation ?? null : word,
+        answer: record.choice,
+        expected: step.answer ?? null,
+        outcome: record.choice === step.answer ? "correct" : "incorrect",
+      });
+    } else {
+      for (const field of step.fields) {
+        const given = record.inputs[field.key] ?? "";
+        logTrainingEvent({
+          ...common,
+          checks: NOUN_FIELD_CHECKS[field.key] ?? "translation",
+          prompt: step.promptText ?? word,
+          answer: given,
+          expected: field.expected,
+          outcome: outcomeFromVerdict(record.results[field.key]?.verdict ?? "wrong", given),
+          answerShown: peeked.has(field.key),
+        });
+      }
+    }
     onRecord(step.entry.id, allGood);
     if (allGood) {
       setCorrectCount((c) => c + 1);

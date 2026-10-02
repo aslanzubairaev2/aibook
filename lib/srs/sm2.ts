@@ -26,6 +26,25 @@ export function clampDueAt(dueAt: string, now = new Date()): string {
   return Number.isFinite(due) && due <= limit.getTime() ? dueAt : limit.toISOString();
 }
 
+/** When the card was last reviewed and when it was due — what makes a review early. */
+export type ReviewTiming = { lastReviewedAt?: string | null; dueAt?: string | null; now?: Date };
+
+const DAY_MS = 86_400_000;
+
+/** Reviewed before the day it was due (a pack drill, a free run through the deck). */
+export function isEarlyReview(timing?: ReviewTiming): boolean {
+  if (!timing?.dueAt) return false;
+  const due = Date.parse(timing.dueAt);
+  const now = (timing.now ?? new Date()).getTime();
+  return Number.isFinite(due) && now < due - DAY_MS;
+}
+
+function elapsedDays(timing?: ReviewTiming): number {
+  const last = timing?.lastReviewedAt ? Date.parse(timing.lastReviewedAt) : NaN;
+  if (!Number.isFinite(last)) return 0;
+  return Math.max(0, ((timing?.now ?? new Date()).getTime() - last) / DAY_MS);
+}
+
 /**
  * Calculates new Spaced Repetition System (SRS) values based on the SM-2 algorithm.
  * 
@@ -44,12 +63,14 @@ export function calculateSM2(
   prevRepetitions: number,
   prevLapses: number,
   prevIntervalDays: number,
-  prevEaseFactor: number
+  prevEaseFactor: number,
+  timing?: ReviewTiming,
 ): SrsResult {
   let repetitions = prevRepetitions;
   let lapses = prevLapses;
-  let intervalDays = prevIntervalDays;
+  let intervalDays = Math.min(prevIntervalDays, MAX_INTERVAL_DAYS);
   let easeFactor = prevEaseFactor || 2.5;
+  const early = isEarlyReview(timing);
   let status: Flashcard["status"] = "review";
 
   if (score === 1) {
@@ -68,7 +89,9 @@ export function calculateSM2(
       easeFactor = Math.max(1.3, easeFactor - 0.15);
       status = "learning";
     } else if (score === 4) {
-      easeFactor += 0.15;
+      // Ease grows only on a review that actually waited: drilling a pack ten
+      // times in a week said nothing about the word being easy to remember.
+      if (!early) easeFactor += 0.15;
       status = "review";
     } else {
       status = "review";
@@ -86,7 +109,13 @@ export function calculateSM2(
       } else if (score === 4) {
         multiplier *= 1.2;
       }
-      intervalDays = Math.max(1, Math.round(intervalDays * multiplier));
+      // The interval grows from the time that really passed. A card reviewed
+      // before its due date has not survived the scheduled wait, so the
+      // scheduled interval must not be multiplied as if it had — that is what
+      // pushed cards drilled daily in a pack to intervals of 2 589 949 days.
+      // It never shrinks either: an early «Легко» keeps what was earned.
+      const base = early ? Math.max(1, elapsedDays(timing)) : intervalDays;
+      intervalDays = Math.max(early ? intervalDays : 1, Math.round(base * multiplier));
     }
   }
   intervalDays = Math.min(intervalDays, MAX_INTERVAL_DAYS);

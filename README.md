@@ -94,7 +94,7 @@ the words, and these tools store them exactly the way the in-app generator does.
 | Discovery | `get_overview`, `get_capabilities` |
 | Flashcards | `list_flashcards`, `add_flashcards`, `update_flashcard`, `delete_flashcards`, `get_study_words` |
 | Dictionary & batches | `list_word_batches`, `list_batch_words`, `search_dictionary`, `add_word_batch`, `add_words_to_batch` |
-| Learning quality | `get_progress` |
+| Learning quality | `get_progress`, `get_training_summary`, `get_training_history` ([docs](docs/training-history-mcp.md)) |
 | Texts | `create_lesson`, `list_texts`, `get_text`, `list_catalogue` |
 | Interactive tests | `get_assessment_capabilities`, `create_assessment`, `update_assessment`, `prepare_assessment_audio`, `get_assessment_status`, `publish_assessment`, `list_assessments`, `get_assessment_results`, `submit_assessment_review`, `get_learning_gaps`, `check_dictionary_words`, `get_speech_service_status` |
 

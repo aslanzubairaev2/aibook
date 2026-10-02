@@ -16,6 +16,7 @@
 // and appears in no result, log line or client payload.
 
 import { getGeminiTtsLanguageCode } from "@/lib/ttsProviders";
+import { alignReference, mergePhrases, phraseCutShort, sentences, sliceWav, splitOnPauses, SAMPLE_RATE, type PhraseResult } from "./speechSegments";
 
 export type SpeechScores = {
   /** Azure's overall pronunciation score (PronScore), 0–100. */
@@ -45,6 +46,7 @@ export type TechnicalReason =
   | "too_long"
   | "too_short"
   | "service_unavailable"
+  | "incomplete_recognition"
   | "not_configured";
 
 export const TECHNICAL_REASON_RU: Record<TechnicalReason, string> = {
@@ -55,6 +57,7 @@ export const TECHNICAL_REASON_RU: Record<TechnicalReason, string> = {
   too_long: "Запись длиннее разрешённого.",
   too_short: "Запись слишком короткая.",
   service_unavailable: "Сервис оценки временно недоступен — запись сохранена, попробуйте отправить её ещё раз.",
+  incomplete_recognition: "Распознана не вся запись, поэтому оценка не выставлена. Это техническая проблема, а не ошибка ответа — попробуйте записать ещё раз.",
   not_configured: "Оценка произношения не настроена на сервере.",
 };
 
@@ -215,8 +218,120 @@ export function normalizeAzureAnswer(raw: unknown, scripted: boolean): SpeechAna
   };
 }
 
-/** One call to Azure's short-audio recognizer with pronunciation assessment. */
+/**
+ * Assess a whole recording.
+ *
+ * The short-audio endpoint hears one utterance and stops at the first long
+ * pause, so a recording with several phrases is split at its pauses
+ * (speechSegments.ts) and every phrase is assessed on its own — against its
+ * own slice of the reading text when there is one — then merged back. If any
+ * phrase still comes back cut short, the answer is a technical status: a gap
+ * in recognition must never read as missing content.
+ */
 export async function assessPronunciation(wav: Buffer, lang: string, referenceText: string): Promise<SpeechAnalysis> {
+  const pcm = pcmOf(wav);
+  const segments = pcm ? splitOnPauses(pcm) : [];
+  if (!pcm || segments.length <= 1) {
+    const single = await assessSegment(wav, lang, referenceText);
+    if (single.status === "done" && segments[0]) {
+      if (phraseCutShort({ segment: { ...segments[0], startMs: 0 }, words: single.words })) {
+        return { status: "technical_error", reason: "incomplete_recognition", detail: "speech continues after the last recognized word", raw: single.raw };
+      }
+    }
+    return single;
+  }
+
+  const scripted = referenceText.trim().length > 0;
+  const audio = segments.map((segment) => wavOf(sliceWav(pcm, segment)));
+  // Three phrases at a time: quick, and inside the F0 tier's concurrency.
+  async function eachPhrase(fn: (i: number) => Promise<SpeechAnalysis>): Promise<SpeechAnalysis[]> {
+    const out: SpeechAnalysis[] = [];
+    for (let i = 0; i < segments.length; i += 3) {
+      const batch = await Promise.all(segments.slice(i, i + 3).map((_, j) => fn(i + j)));
+      out.push(...batch);
+    }
+    return out;
+  }
+
+  let references: string[] = segments.map(() => "");
+  if (scripted) {
+    const bySentence = sentences(referenceText);
+    if (bySentence.length === segments.length) {
+      references = bySentence;
+    } else {
+      // Phrases and sentences do not line up: hear each phrase first, then
+      // give it the stretch of the text it actually read.
+      const heard = await eachPhrase((i) => assessSegment(audio[i], lang, ""));
+      references = alignReference(referenceText, heard.map((h) => (h.status === "done" ? h.transcript : "")));
+    }
+  }
+
+  const analyses = await eachPhrase((i) => assessSegment(audio[i], lang, references[i]));
+  const phrases: PhraseResult[] = [];
+  for (let i = 0; i < analyses.length; i++) {
+    const a = analyses[i];
+    if (a.status === "technical_error") {
+      // A phrase that was only a breath or a cough is not part of the answer.
+      if (a.reason === "silence" || a.reason === "unrecognized" || a.reason === "noise") continue;
+      return a;
+    }
+    const phrase: PhraseResult = {
+      segment: segments[i],
+      transcript: a.transcript,
+      scores: a.scores,
+      words: a.words,
+      referenceWords: references[i].split(" ").filter(Boolean).length,
+    };
+    if (phraseCutShort(phrase)) {
+      return { status: "technical_error", reason: "incomplete_recognition", detail: `phrase ${i + 1} of ${segments.length} cut short`, raw: analyses.map((x) => x.raw) };
+    }
+    phrases.push(phrase);
+  }
+  if (phrases.length === 0) {
+    return { status: "technical_error", reason: "silence", detail: "no phrase recognized", raw: analyses.map((x) => x.raw) };
+  }
+  const merged = mergePhrases(phrases, scripted);
+  return {
+    status: "done",
+    ...merged,
+    raw: {
+      phrases: phrases.length,
+      segments: segments.map((s, i) => ({ ...s, reference: references[i] || null, answer: analyses[i].raw })),
+    },
+  };
+}
+
+function pcmOf(wav: Buffer): Int16Array | null {
+  const info = inspectWav(wav);
+  if (!info || info.sampleRate !== SAMPLE_RATE || info.channels !== 1 || info.bitsPerSample !== 16) return null;
+  const dataStart = wav.indexOf("data", 12, "latin1") + 8;
+  if (dataStart < 8) return null;
+  const length = Math.floor((wav.length - dataStart) / 2);
+  const copy = Buffer.from(wav.subarray(dataStart, dataStart + length * 2));
+  return new Int16Array(copy.buffer, copy.byteOffset, length);
+}
+
+function wavOf(pcm: Int16Array): Buffer {
+  const body = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0, "latin1");
+  header.writeUInt32LE(36 + body.length, 4);
+  header.write("WAVE", 8, "latin1");
+  header.write("fmt ", 12, "latin1");
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(SAMPLE_RATE, 24);
+  header.writeUInt32LE(SAMPLE_RATE * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36, "latin1");
+  header.writeUInt32LE(body.length, 40);
+  return Buffer.concat([header, body]);
+}
+
+/** One call to Azure's short-audio recognizer with pronunciation assessment: one utterance. */
+async function assessSegment(wav: Buffer, lang: string, referenceText: string): Promise<SpeechAnalysis> {
   const config = speechConfig();
   if (!config) return { status: "technical_error", reason: "not_configured", detail: "missing env", raw: null };
   const scripted = referenceText.trim().length > 0;

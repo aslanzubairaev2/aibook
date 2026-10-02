@@ -74,6 +74,18 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
     ],
   },
   {
+    area: "Training history («как прошла тренировка»)",
+    summary:
+      "Every answer the learner gives in the trainers is recorded as an event (from 2026-10-03; older practice left only counters and is not reconstructed): «Повторение» flashcard self-ratings, «Активно» written/listening/spoken recall, nouns (article, plural, translation, word with article), verbs (Präteritum/Partizip II forms, conjugation by pronoun and tense, translation, a sentence accepted by the tutor), adjective endings, preposition cases. get_training_summary answers «как сегодня прошли артикли и спряжения?» with exact numbers in the learner's own time zone: first-try accuracy, typos apart from errors, corrections after an error, the concrete difficult articles/forms/conjugations with what was answered, repeated errors, a daily trend, and per word which kinds of knowledge hold (translation, article, verb form, conjugation, sentence use) — never one number for all. Self-ratings are never counted as correct answers. get_training_history lists the events with filters and paging. get_progress is the SM-2 schedule; this is what actually happened.",
+    tools: ["get_training_summary", "get_training_history"],
+    say: [
+      "«как сегодня прошли артикли и спряжения?»",
+      "«какие формы глаголов я путаю?»",
+      "«что я сегодня тренировал?»",
+      "«где я ошибаюсь чаще всего за неделю?»",
+    ],
+  },
+  {
     area: "Reading texts",
     summary:
       "Texts the learner reads in the app. You write them yourself — you are the language model, this server never spends the learner's AI budget — and create_lesson saves them into «Мои уроки» with an optional glossary and comprehension questions. list_catalogue searches the ready-made public shelves and reports the share of words the learner already knows in each text.",
@@ -113,7 +125,7 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
  */
 export const AGENT_LIMITS: string[] = [
   "Grading reviews: only the learner can answer a card. You add and edit cards; the app schedules them.",
-  "The active trainer («Активно» — the written test over вспоминаю / слушаю / говорю) keeps its record on the learner's own device. Nothing about it reaches this connection; what you can read is the «Повторение» deck.",
+  "The active trainer («Активно») keeps its scheduling on the learner's device, but every answer given in it is recorded and readable through get_training_summary / get_training_history (from 2026-10-03).",
   "Audio: the app speaks cards and texts itself, through whichever voice engine the learner has chosen in their settings, and no audio comes back through this connection. The one place you direct speech is a test's listening passage: you send its text and voices, and prepare_assessment_audio has the app record it.",
   "The live voice tutor, photo recognition of coursebook pages and in-app AI analysis run inside the app on the learner's own AI budget; this connection is plain data and costs them nothing.",
   "Deleting a text, or a single dictionary entry on its own: still the learner's own action in the app. Packs and flashcards are different — delete_pack and delete_flashcards are both available here, for a pack that turned out wrong or empty and for cleaning up mistakes you made.",

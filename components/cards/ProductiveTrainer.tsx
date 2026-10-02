@@ -10,6 +10,7 @@ import { startRecognition, isSpeechRecognitionSupported, type Recognizer } from 
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { SkillBadges } from "@/components/cards/SkillBadges";
 import { splitCardBack } from "@/lib/cards";
+import { logTrainingEvent, outcomeFromVerdict } from "@/lib/training/client";
 import {
   buildActiveQueue,
   checkTypedAnswer,
@@ -148,7 +149,23 @@ export function ProductiveTrainer({ cards, targetLanguage, onReviewed }: Props) 
     if (!item) return;
     stopVoice();
     const prev = getCardSkillState(item.card.id)[item.skill] ?? createDefaultSkillProgress();
-    const upd = calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor);
+    const upd = calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor, prev);
+    // Two separate facts: what the app checked (typed or recognized answer),
+    // and how the learner rated themselves afterwards.
+    const checks = item.skill === "listen" ? "listening" as const : item.skill === "produce" ? "spoken_production" as const : "recall" as const;
+    const given = result?.heard ?? input;
+    if (result && result.verdict !== "self") {
+      logTrainingEvent({
+        trainer: "active", mode: item.skill, cardId: item.card.id, word: item.card.front, checks,
+        prompt: item.skill === "listen" ? null : splitCardBack(item.card.back).meaning ?? null,
+        answer: given, expected: item.card.front, outcome: outcomeFromVerdict(result.verdict, given),
+        meta: result.heard ? { via: "speech_recognition" } : undefined,
+      });
+    }
+    logTrainingEvent({
+      trainer: "active", mode: item.skill, cardId: item.card.id, word: item.card.front, checks,
+      outcome: "self_rated", selfGrade: score, answer: result?.verdict === "self" ? given : null,
+    });
     saveCardSkillProgress(item.card.id, item.skill, { ...upd, lastReviewedAt: new Date().toISOString() });
     onReviewed?.(item.card);
     setInput("");

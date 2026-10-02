@@ -50,6 +50,7 @@ import {
   wordMarkKey,
 } from "./publicView";
 import { assessPronunciation, inspectWav, speechRemarks, TECHNICAL_REASON_RU } from "./azureSpeech";
+import { trainerErrors } from "@/lib/training/store";
 import { assessmentTtsModels, audioSpecHash, synthesizeListening } from "./speech";
 
 const AUDIO_BUCKET = "tts-audio";
@@ -724,6 +725,8 @@ export async function learningGaps(admin: SupabaseClient, userId: string, args: 
     words_the_learner_did_not_know: unknownWords,
     /** Words Azure heard as mispronounced, left out or added — pronunciation, not vocabulary. */
     pronunciation_problems: pronunciation,
+    /** Errors from the trainers over the last two weeks, each tagged with its source (trainer:nouns, trainer:verbs…). */
+    trainer_errors: await trainerErrors(admin, userId).then((t) => t.errors).catch(() => []),
     how_to_build_a_review_pack: [
       "Choose the material yourself: a wrong answer does not mean every word in it is unknown.",
       "Run check_dictionary_words on your candidates first and leave out what the learner already has.",
@@ -736,31 +739,63 @@ export async function learningGaps(admin: SupabaseClient, userId: string, args: 
 
 // ─── Learner ─────────────────────────────────────────────────────────────────
 
+/**
+ * The learner's published tests with where each one stands.
+ *
+ * notify drives the home screen: a test is news while it is new (never
+ * opened) and again once its results are out, until they have been looked at.
+ * Everything else lives in Каталог → Тесты.
+ */
 export async function listForLearner(admin: SupabaseClient, userId: string) {
   const { data, error } = await admin.from("assessments")
     .select("id, title, description, mode, published_at")
     .eq("user_id", userId).eq("status", "published")
-    .order("published_at", { ascending: false }).limit(30);
+    .order("published_at", { ascending: false }).limit(60);
   if (error) throw new AssessmentError(`tests read failed: ${error.message}`, 500);
   const ids = (data ?? []).map((a) => a.id as string);
   const { data: attempts } = ids.length
-    ? await admin.from("assessment_attempts").select("assessment_id, status, started_at, answers, snapshot")
-      .in("assessment_id", ids).order("started_at", { ascending: false })
+    ? await admin.from("assessment_attempts").select("*")
+      .in("assessment_id", ids).eq("user_id", userId).order("started_at", { ascending: false })
     : { data: [] };
   return (data ?? []).map((a) => {
-    const latest = (attempts ?? []).find((t) => t.assessment_id === a.id);
-    const items = latest ? allItems((latest.snapshot as AttemptSnapshot).content).length : null;
+    const latest = (attempts ?? []).find((t) => t.assessment_id === a.id) as AttemptRow & { results_seen_at?: string | null } | undefined;
+    if (!latest) {
+      return {
+        id: a.id, title: a.title, description: a.description, mode: a.mode, published_at: a.published_at,
+        state: "new" as const, notify: "new" as const,
+        answered: 0, items: null, started_at: null, updated_at: null, submitted_at: null, result: null,
+      };
+    }
+    const content = latest.snapshot.content;
+    const items = allItems(content).length;
+    const speech = latest.speech ?? {};
+    const answered = allItems(content).filter(({ item }) => isSpeakingType(item.type)
+      ? Boolean(answerRecording(speech[item.id]))
+      : isAnswered(latest.answers?.[item.id])).length;
+    const released = resultsReleased(latest);
+    const t = released ? totals(gradeAll(content, latest.answers ?? {}, latest.review, speech)) : null;
     return {
       id: a.id,
       title: a.title,
       description: a.description,
       mode: a.mode,
       published_at: a.published_at,
-      state: latest ? latest.status : "new",
-      answered: latest ? Object.values((latest.answers ?? {}) as Record<string, AnswerRecord>).filter(isAnswered).length : 0,
+      state: latest.status === "in_progress" ? "in_progress" as const : released ? "results" as const : "awaiting_review" as const,
+      notify: released && !latest.results_seen_at ? "results" as const : null,
+      answered,
       items,
+      started_at: latest.started_at,
+      updated_at: (latest as AttemptRow & { updated_at?: string }).updated_at ?? latest.started_at,
+      submitted_at: latest.submitted_at,
+      result: t ? { score: t.score, max: t.max, percent: t.percent } : null,
     };
   });
+}
+
+/** The learner has seen this attempt's results: the home screen stops announcing them. */
+export async function markResultsSeen(admin: SupabaseClient, attempt: AttemptRow & { results_seen_at?: string | null }) {
+  if (attempt.results_seen_at || !resultsReleased(attempt)) return;
+  await admin.from("assessment_attempts").update({ results_seen_at: new Date().toISOString() }).eq("id", attempt.id).eq("user_id", attempt.user_id);
 }
 
 async function latestAttempt(admin: SupabaseClient, userId: string, assessmentId: string): Promise<AttemptRow | null> {

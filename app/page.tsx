@@ -28,6 +28,7 @@ import {
 } from "@/lib/db/supabase";
 import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, deleteLocalCards, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalCards, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
 import { freshFetch } from "@/lib/net/freshFetch";
+import { flushTrainingEvents } from "@/lib/training/client";
 import { parseBook } from "@/lib/parser/index";
 import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress, type TrainBatch } from "@/lib/cards";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
@@ -261,7 +262,7 @@ function AppInner() {
   const [activeBook, setActiveBook] = useState<Book | null>(null);
   const [activeHomework, setActiveHomework] = useState<{ book: HomeworkBook; exercises: HomeworkExercise[]; initialAnswers: HomeworkAnswers } | null>(null);
   const [readerOrigin, setReaderOrigin] = useState<AppSection>("home");
-  const [discoverInitialTab, setDiscoverInitialTab] = useState<"classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons">("classic");
+  const [discoverInitialTab, setDiscoverInitialTab] = useState<"classic" | "audio" | "klexikon" | "cefr" | "videos" | "lessons" | "tests">("classic");
   const [discoverVideoQuery, setDiscoverVideoQuery] = useState<string | null>(null);
   const [discoverVideoLang, setDiscoverVideoLang] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -570,6 +571,8 @@ function AppInner() {
 
     if (user) {
       void loadData(user.id);
+      // Trainer answers recorded offline or before a reload go out now.
+      window.setTimeout(() => void flushTrainingEvents(), 3000);
     } else {
       // Not logged in → switch namespace to guest
       setLocalNamespace("guest");
@@ -1065,6 +1068,7 @@ function AppInner() {
       <QuickWordPreview nativeLanguage={profile.nativeLanguage} targetLanguage={profile.targetLanguage} />
       {section === "home" && (
         <HomeDashboard
+          onOpenTests={() => { setDiscoverInitialTab("tests"); setSection("discover"); }}
           onOpenLiveChat={() => setIsLiveChatOpen(true)}
           onOpenLiveTranslate={() => setSection("live-translate")}
         />

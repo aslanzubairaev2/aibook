@@ -55,6 +55,7 @@ import { ReverseWordModal } from "@/components/word-modal/ReverseWordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { describeCardFamiliarity } from "@/lib/ai/wordProfile";
 import { ProductiveTrainer } from "@/components/cards/ProductiveTrainer";
+import { logTrainingEvent } from "@/lib/training/client";
 import { SkillBadges } from "@/components/cards/SkillBadges";
 
 type Props = {
@@ -1073,8 +1074,20 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
     if (viewingHistoryIndex !== null || trainQueue.length === 0 || currentTrainIndex >= trainQueue.length) return;
     const { card, variant } = trainQueue[currentTrainIndex];
     const prev = getVariantProgress(card, variant, variantProgress);
-    const srsUpdate = calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor);
+    const srsUpdate = calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor, prev);
     const now = new Date().toISOString();
+    // A self-rating, not a checked answer: «Легко» is the learner's own word.
+    logTrainingEvent({
+      trainer: "review",
+      mode: variant,
+      cardId: card.id,
+      word: card.front,
+      checks: variant === "reverse" ? "recall" : variant === "audio" ? "listening" : "recognition",
+      outcome: "self_rated",
+      selfGrade: score,
+      expected: splitCardBack(card.back).meaning || null,
+      meta: { early: Boolean(prev.dueAt && Date.parse(prev.dueAt) > Date.now() + 86_400_000) },
+    });
     if (variant === "forward") {
       onUpdateCard({ ...card, ...srsUpdate, lastReviewedAt: now });
     } else {
