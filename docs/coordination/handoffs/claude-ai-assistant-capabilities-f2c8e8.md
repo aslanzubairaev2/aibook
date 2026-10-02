@@ -2,7 +2,7 @@
 
 - Агент: Claude
 - Ветка: `claude/ai-assistant-capabilities-f2c8e8`
-- Статус: закоммичено в ветке, в `main` не мержено
+- Статус: залито в `origin/main` по просьбе владельца (вместе с `claude/card-ai-correction-verification-8bfa9c`)
 
 ## Проблема
 
