@@ -185,6 +185,8 @@ export type WordAnalysis = {
     infinitive?: string;
     praeteritum?: string;
     partizip2?: string;
+    /** Auxiliary for Perfekt: "haben" or "sein". */
+    hilfsverb?: string;
     tense?: string;
     person?: string;
     /** Whether this occurrence uses a separable verb reading. */

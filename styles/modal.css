@@ -341,6 +341,10 @@
   background: rgba(240, 230, 211, 0.04);
 }
 
+/* Infinitiv · Präteritum · Perfekt read as one row, the way a verb is learned. */
+.word-details-grid.verb-forms { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.word-details-grid.verb-forms b { overflow-wrap: anywhere; }
+
 .word-details-grid b {
   display: block;
   margin-top: 2px;
@@ -2837,3 +2841,39 @@
 }
 
 
+
+/* ─── German verb class & principal parts (word modal, card back) ─────────── */
+/* Strong/mixed/special verbs must be memorised as forms, so they get the warm
+   accent; weak verbs follow the rule and stay quiet. */
+.word-meta-chip.verb-class,
+.card-verb-chip.verb-class { color: var(--text-muted); }
+.word-meta-chip.verb-class-strong,
+.card-verb-chip.verb-class-strong { color: #e0a06e; border-color: rgba(224,160,110,0.45); background: rgba(224,160,110,0.1); }
+.word-meta-chip.verb-class-mixed,
+.card-verb-chip.verb-class-mixed { color: #c99be0; border-color: rgba(201,155,224,0.45); background: rgba(201,155,224,0.1); }
+.word-meta-chip.verb-class-special,
+.card-verb-chip.verb-class-special { color: #e08a8a; border-color: rgba(224,138,138,0.45); background: rgba(224,138,138,0.1); }
+.word-meta-chip.verb-class-weak,
+.card-verb-chip.verb-class-weak { color: #6ea8e0; border-color: rgba(110,168,224,0.4); background: rgba(110,168,224,0.08); }
+
+.card-verb-forms {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 15px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+.card-verb-forms i { font-style: normal; font-size: 12px; }
+.card-verb-forms b { color: var(--surface); font-weight: 700; }
+.card-verb-chip {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+}
+.srs-history-card .card-verb-forms { justify-content: flex-start; margin-top: 7px; font-size: 14px; }

@@ -184,7 +184,8 @@ export function classifyGermanVerb(
   if (hasGermanStem(norm, GERMAN_IRREGULAR_VERB_STEMS)) return "strong";
 
   const p2 = (forms.partizip2 || "").toLowerCase().trim();
-  const pr = (forms.praeteritum || "").toLowerCase().trim();
+  // «kaufte ein»: the detached particle says nothing about the stem's class.
+  const pr = (forms.praeteritum || "").toLowerCase().trim().split(/\s+/)[0];
   if (p2.endsWith("en") && !p2.endsWith("ten")) return "strong";
   if (pr && !pr.endsWith("te") && !pr.endsWith("ten")) return "strong";
 
@@ -193,4 +194,84 @@ export function classifyGermanVerb(
 
 export function isIrregularGermanVerb(lemma: string, headword: string, forms: Record<string, string> = {}): boolean {
   return classifyGermanVerb(lemma, headword, forms) !== "weak";
+}
+
+// ─── Principal parts on screen (word modal, card back) ───────────────────────
+
+/** The three answers a German verb is learned by, ready to print. */
+export type GermanVerbSummary = {
+  /** Книжное прошедшее: 3rd person singular, e.g. «backte». */
+  praeteritum: string;
+  /** Разговорное прошедшее with its auxiliary, e.g. «hat gebacken» / «ist gegangen». */
+  perfekt: string;
+  verbClass: GermanVerbClass;
+  separable: boolean;
+};
+
+/** «hat gebacken» / «ist gegangen» — the auxiliary is half of what Partizip II is for. */
+export function germanPerfekt(partizip2: string, hilfsverb: string): string {
+  const p2 = partizip2.trim();
+  if (!p2) return "";
+  // An answer that already carries its auxiliary must not get a second one.
+  if (/^(hat|ist|haben|sein)\s/iu.test(p2)) return p2.replace(/^haben\s/iu, "hat ").replace(/^sein\s/iu, "ist ");
+  const aux = hilfsverb.trim().toLowerCase();
+  if (aux === "sein") return `ist ${p2}`;
+  if (aux === "haben") return `hat ${p2}`;
+  // «haben/sein» — both are correct (e.g. schwimmen); show both rather than guess.
+  if (/haben/.test(aux) && /sein/.test(aux)) return `hat/ist ${p2}`;
+  return p2;
+}
+
+/** Forms are usable once the past, the participle and the auxiliary are all known. */
+export function hasCompleteGermanVerbForms(forms: Record<string, string | undefined> | null | undefined): boolean {
+  return Boolean(forms?.praeteritum?.trim() && forms?.partizip2?.trim() && forms?.hilfsverb?.trim());
+}
+
+export function summarizeGermanVerb(infinitive: string, forms: Record<string, string | undefined>): GermanVerbSummary | null {
+  if (!hasCompleteGermanVerbForms(forms)) return null;
+  const clean: Record<string, string> = {};
+  for (const [k, v] of Object.entries(forms)) if (v) clean[k] = v;
+  return {
+    praeteritum: clean.praeteritum.trim(),
+    perfekt: germanPerfekt(clean.partizip2, clean.hilfsverb),
+    verbClass: classifyGermanVerb(infinitive.replace(/^sich\s+/iu, ""), infinitive, clean),
+    separable: isMarkedSeparable(clean.trennbar),
+  };
+}
+
+/**
+ * Whether a card front could be a German infinitive: one lowercase word
+ * (optionally after «sich») ending in -n. Nouns are capitalised, phrases have
+ * spaces, so this keeps AI lookups to real verb candidates; adjectives such as
+ * «offen» slip through and are rejected by the forms endpoint.
+ */
+export function looksLikeGermanInfinitive(front: string): boolean {
+  const word = front.trim().replace(/^sich\s+/u, "");
+  return /^[a-zäöüß]{2,}(en|ern|eln|n)$/u.test(word) && word.length <= 30;
+}
+
+const FORM_KEY_BY_LABEL: Record<string, string> = Object.fromEntries(
+  Object.entries(FORM_LABEL).map(([key, label]) => [label.toLowerCase(), key]),
+);
+const VERB_DETAIL_KEYS = new Set(["praeteritum", "partizip2", "hilfsverb", "trennbar"]);
+
+/**
+ * Reads the forms a dictionary-made card already carries on its back
+ * («Präteritum: backte · Partizip II: gebacken · вспом. глагол: haben») and
+ * returns the details with those parts removed, so the verb line can replace
+ * them instead of repeating them.
+ */
+export function extractVerbFormsFromDetails(details: string): { forms: Record<string, string>; rest: string } {
+  const forms: Record<string, string> = {};
+  const lines = details.split("\n").map((line) => {
+    const parts = line.split(" · ").filter((part) => {
+      const m = /^([^:]+):\s*(.+)$/u.exec(part.trim());
+      const key = m ? FORM_KEY_BY_LABEL[m[1].trim().toLowerCase()] : undefined;
+      if (!m || !key || !VERB_DETAIL_KEYS.has(key)) return true;
+      forms[key] = m[2].trim();
+      return false;
+    });
+    return parts.join(" · ");
+  });
+  return { forms, rest: lines.filter((l) => l.trim()).join("\n") };
 }

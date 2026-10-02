@@ -7,6 +7,7 @@ import { GrammarModal, POS_GRAMMAR_LABEL } from "@/components/word-modal/Grammar
 import type { AiAnalysis, PosTag, WordAnalysis } from "@/lib/types";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { sbAuthHeaders } from "@/lib/db/supabase";
+import { useGermanVerbSummary, VerbClassChips } from "@/components/verbs/VerbPrincipalParts";
 
 type Props = {
   analysis: AiAnalysis | null;
@@ -66,6 +67,13 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
   const [grammarOpen, setGrammarOpen] = useState(false);
   // The built-in fallback for "мини-текст": save into «Мои уроки» right here.
   const [miniState, setMiniState] = useState<"idle" | "busy" | "done" | "error">("idle");
+  // A verb is always shown with its two past forms — Präteritum (книжное) and
+  // Perfekt with the right auxiliary (разговорное) — plus its class. The hook
+  // runs before the early return below so the hook order stays stable.
+  const loadedWord = !isLoading ? analysis?.word : undefined;
+  const isVerb = loadedWord ? resolvePos(loadedWord) === "verb" : false;
+  const infinitive = isVerb ? (loadedWord?.verbDetails?.infinitive || loadedWord?.lemma || "") : "";
+  const verb = useGermanVerbSummary(infinitive, lang, nativeLang, loadedWord?.verbDetails);
 
   async function createTextHere(word: WordAnalysis) {
     if (miniState === "busy") return;
@@ -159,6 +167,7 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
                 rather than hiding in the details grid below. */}
             {article && <span className={`word-meta-chip article ${articleGender(article)}`}>{article}</span>}
             {word.gender && word.gender !== article && <span className="word-meta-chip gender">{word.gender}</span>}
+            {verb.summary && <VerbClassChips summary={verb.summary} />}
             {word.cefr && <span className="word-meta-chip level" title="Уровень слова по CEFR">{word.cefr}</span>}
           </div>
           {hasLemma && (
@@ -186,26 +195,40 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
           <span className="modal-section-label">{TRANSLATION_LABEL}</span>
           <div className="modal-translation">{word.translation}</div>
           {word.explanation && <div className="modal-explanation">{word.explanation}</div>}
-          {(word.nounDetails?.article || word.nounDetails?.plural || word.verbDetails?.infinitive) && (
-            <div className="word-details-grid">
+          {(word.nounDetails?.article || word.nounDetails?.plural || infinitive) && (
+            <div className={`word-details-grid${verb.summary || verb.loading ? " verb-forms" : ""}`}>
               {word.nounDetails?.article && <span>{ARTICLE_LABEL} <b>{word.nounDetails.article}</b></span>}
               {word.nounDetails?.plural && <span>{PLURAL_LABEL} <b>{word.nounDetails.plural}</b></span>}
-              {word.verbDetails?.infinitive && (
-                <span style={{ position: "relative" }}>
-                  {INFINITIVE_LABEL} <b>{word.verbDetails.infinitive}</b>
-                  {onAddLemma && word.translation && (
-                    <button
-                      type="button"
-                      className="lemma-add-btn"
-                      style={{ position: "absolute", top: 6, right: 6 }}
-                      aria-label="Добавить инфинитив в карточки"
-                      title="Добавить инфинитив в карточки"
-                      onClick={() => onAddLemma(word.verbDetails!.infinitive!)}
-                    >
-                      <Plus size={13} />
-                    </button>
-                  )}
+              {infinitive && (
+                <span>
+                  {INFINITIVE_LABEL}
+                  <b style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                    {infinitive}
+                    {onAddLemma && word.translation && (
+                      <button
+                        type="button"
+                        className="lemma-add-btn"
+                        aria-label="Добавить инфинитив в карточки"
+                        title="Добавить инфинитив в карточки"
+                        onClick={() => onAddLemma(infinitive)}
+                      >
+                        <Plus size={13} />
+                      </button>
+                    )}
+                  </b>
                 </span>
+              )}
+              {infinitive && lang === "de" && (verb.summary || verb.loading) && (
+                <>
+                  <span title="Präteritum — книжное (письменное) прошедшее">
+                    Präteritum · книжное
+                    <b>{verb.summary ? verb.summary.praeteritum : "…"}</b>
+                  </span>
+                  <span title="Perfekt — разговорное прошедшее, с нужным вспомогательным глаголом">
+                    Perfekt · разговорное
+                    <b>{verb.summary ? verb.summary.perfekt : "…"}</b>
+                  </span>
+                </>
               )}
               {word.verbDetails?.person && <span>{FORM_LABEL} <b>{word.verbDetails.person}</b></span>}
             </div>

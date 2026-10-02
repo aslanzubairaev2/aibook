@@ -3,6 +3,10 @@ import test from "node:test";
 
 import {
   classifyGermanVerb,
+  extractVerbFormsFromDetails,
+  germanPerfekt,
+  looksLikeGermanInfinitive,
+  summarizeGermanVerb,
   GERMAN_VERB_CLASS_HINT,
   GERMAN_VERB_CLASS_LABEL,
   getPresentSeparableSuffix,
@@ -72,4 +76,36 @@ test("verb type filters combine compatible groups and replace weak/strong", () =
 
   selected = toggleGermanVerbClassSelection(selected, "mixed");
   assert.deepEqual([...selected], ["special", "impersonal", "strong"]);
+});
+
+test("Perfekt carries the right auxiliary", () => {
+  assert.equal(germanPerfekt("gebacken", "haben"), "hat gebacken");
+  assert.equal(germanPerfekt("gegangen", "sein"), "ist gegangen");
+  assert.equal(germanPerfekt("hat gemacht", "haben"), "hat gemacht");
+  assert.equal(germanPerfekt("geschwommen", "haben/sein"), "hat/ist geschwommen");
+});
+
+test("verb summary needs past, participle and auxiliary", () => {
+  assert.equal(summarizeGermanVerb("backen", { praeteritum: "backte" }), null);
+  assert.deepEqual(
+    summarizeGermanVerb("einkaufen", { praeteritum: "kaufte ein", partizip2: "eingekauft", hilfsverb: "haben", trennbar: "да" }),
+    { praeteritum: "kaufte ein", perfekt: "hat eingekauft", verbClass: "weak", separable: true },
+  );
+  assert.equal(summarizeGermanVerb("gehen", { praeteritum: "ging", partizip2: "gegangen", hilfsverb: "sein" })?.verbClass, "strong");
+});
+
+test("only lowercase -n words are verb candidates", () => {
+  assert.equal(looksLikeGermanInfinitive("backen"), true);
+  assert.equal(looksLikeGermanInfinitive("sich freuen"), true);
+  assert.equal(looksLikeGermanInfinitive("wandern"), true);
+  assert.equal(looksLikeGermanInfinitive("der Kuchen"), false);
+  assert.equal(looksLikeGermanInfinitive("Brot"), false);
+  assert.equal(looksLikeGermanInfinitive("schnell"), false);
+});
+
+test("dictionary-made card backs give their forms and drop them from details", () => {
+  const { forms, rest } = extractVerbFormsFromDetails("Präteritum: backte · Partizip II: gebacken · вспом. глагол: haben · отделяемая: нет\nпримечание");
+  assert.deepEqual(forms, { praeteritum: "backte", partizip2: "gebacken", hilfsverb: "haben", trennbar: "нет" });
+  assert.equal(rest, "примечание");
+  assert.deepEqual(extractVerbFormsFromDetails("мн. ч.: Häuser"), { forms: {}, rest: "мн. ч.: Häuser" });
 });

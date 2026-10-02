@@ -50,6 +50,7 @@ import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProf
 import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertCardVariantProgress, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
+import { CardVerbForms, useCardVerbSummary } from "@/components/verbs/VerbPrincipalParts";
 import { ReverseWordModal } from "@/components/word-modal/ReverseWordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { describeCardFamiliarity } from "@/lib/ai/wordProfile";
@@ -1518,6 +1519,12 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   const historyItem = historyPosition ? reviewHistory[historyPosition.index] : null;
   const historyCard = historyItem?.card;
   const historyBackParts = splitCardBack(historyCard?.back ?? "");
+  // A verb's back always shows Präteritum, Perfekt and the verb class — for
+  // old cards too, looked up once and cached (see useCardVerbSummary).
+  const currentVerb = useCardVerbSummary(currentCard, targetLanguage, nativeLanguage,
+    currentCard ? dictionaryEntries.get(normalizeFront(currentCard.front)) : undefined);
+  const historyVerb = useCardVerbSummary(historyCard, targetLanguage, nativeLanguage,
+    historyCard ? dictionaryEntries.get(normalizeFront(historyCard.front)) : undefined);
   // Memoized per card so the tokenized spans are not rebuilt on every render.
   const handleCurrentWordTap = useCallback(
     (word: string, e: React.MouseEvent) => handleWordTap(word, e, currentCard),
@@ -2434,7 +2441,8 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                 <div className="srs-history-divider" />
                 <div className="srs-history-label">Перевод</div>
                 <div className="srs-history-meaning">{historyBackParts.meaning || "—"}</div>
-                {historyBackParts.details && <div className="srs-history-details">{historyBackParts.details}</div>}
+                {historyVerb.summary && <CardVerbForms summary={historyVerb.summary} />}
+                {historyVerb.details && <div className="srs-history-details">{historyVerb.details}</div>}
                 <div className="srs-history-source">{historyCard.sourceBookTitle || historyCard.source}</div>
               </article>
 
@@ -2677,7 +2685,11 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                             style={{ fontSize: cardFontSize(currentCard.front), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3, textAlign: "center" }}
                             onWordTap={handleCurrentWordTap}
                           />
-                          <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center" }}>{currentCard.back}</div>
+                          <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center" }}>{backParts.meaning}</div>
+                          {currentVerb.summary && <CardVerbForms summary={currentVerb.summary} />}
+                          {currentVerb.details && (
+                            <div style={{ fontSize: 13, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>{currentVerb.details}</div>
+                          )}
                         </div>
                       ) : isReversed ? (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
@@ -2686,15 +2698,24 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
                             style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}
                             onWordTap={handleCurrentWordTap}
                           />
-                          {backParts.details && (
+                          {currentVerb.summary && <CardVerbForms summary={currentVerb.summary} />}
+                          {currentVerb.details && (
                             <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
-                              {backParts.details}
+                              {currentVerb.details}
                             </div>
                           )}
                         </div>
                       ) : (
-                        <div style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}>
-                          {answerText}
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                          <div style={{ fontSize: cardFontSize(backParts.meaning), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3, textAlign: "center" }}>
+                            {backParts.meaning}
+                          </div>
+                          {currentVerb.summary && <CardVerbForms summary={currentVerb.summary} />}
+                          {currentVerb.details && (
+                            <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
+                              {currentVerb.details}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

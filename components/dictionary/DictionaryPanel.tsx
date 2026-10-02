@@ -919,7 +919,10 @@ export function entryToAnalysis(entry: DictionaryEntry): AiAnalysis {
     : pos.includes("числит") ? "numeral"
     : "other";
 
+  // A verb's principal parts get their own cells in the modal; repeating
+  // them in the note would only add noise.
   const formLines = Object.entries(entry.forms ?? {})
+    .filter(([k]) => posTag !== "verb" || !["praeteritum", "partizip2", "hilfsverb", "trennbar"].includes(k))
     .map(([k, v]) => `${FORM_LABEL[k] ?? k}: ${v}`)
     .join(" · ");
 
@@ -936,7 +939,14 @@ export function entryToAnalysis(entry: DictionaryEntry): AiAnalysis {
       nounDetails: posTag === "noun"
         ? { article: entry.article || undefined, plural: entry.plural || undefined }
         : undefined,
-      verbDetails: posTag === "verb" ? { infinitive: entry.lemma } : undefined,
+      verbDetails: posTag === "verb"
+        ? {
+            infinitive: entry.lemma,
+            praeteritum: entry.forms?.praeteritum,
+            partizip2: entry.forms?.partizip2,
+            hilfsverb: entry.forms?.hilfsverb,
+          }
+        : undefined,
     },
     examples: entry.example
       ? [{ text: entry.example, translation: entry.example_translation }]

@@ -63,6 +63,7 @@ export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
         infinitive: "infinitive if it is a verb, otherwise empty string",
         praeteritum: "bare simple past, German third-person singular Präteritum WITHOUT pronoun, e.g. saß; empty for non-verbs",
         partizip2: "bare past participle WITHOUT auxiliary or pronoun, e.g. gesessen (NOT hat gesessen); empty for non-verbs",
+        hilfsverb: "German Perfekt auxiliary of the infinitive: exactly haben or sein; empty for non-verbs",
         tense: "tense/person context if obvious, otherwise empty string",
         person: "person/number if obvious, otherwise empty string",
         separability: "for a German verb occurrence: exactly yes, no, or unknown; otherwise empty string",
