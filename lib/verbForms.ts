@@ -250,10 +250,20 @@ export function looksLikeGermanInfinitive(front: string): boolean {
   return /^[a-zäöüß]{2,}(en|ern|eln|n)$/u.test(word) && word.length <= 30;
 }
 
-const FORM_KEY_BY_LABEL: Record<string, string> = Object.fromEntries(
-  Object.entries(FORM_LABEL).map(([key, label]) => [label.toLowerCase(), key]),
-);
-const VERB_DETAIL_KEYS = new Set(["praeteritum", "partizip2", "hilfsverb", "trennbar"]);
+// Backs carry the forms under either label: the display one («Präteritum»,
+// «вспом. глагол») or the raw storage key («praeteritum», «hilfsverb») that
+// some importers wrote verbatim.
+const FORM_KEY_BY_LABEL: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(FORM_LABEL).flatMap(([key, label]) => [[label.toLowerCase(), key], [key, key]])),
+  "präteritum": "praeteritum",
+  "prateritum": "praeteritum",
+  "partizip ii": "partizip2",
+  "partizip 2": "partizip2",
+  "infinitiv": "infinitiv",
+};
+const VERB_DETAIL_KEYS = new Set(["praeteritum", "partizip2", "hilfsverb", "trennbar", "infinitiv"]);
+/** «мн. ч.: нет данных для глагола» and similar placeholders say nothing. */
+const EMPTY_DETAIL_VALUE = /^(—|-|–|нет данных.*|n\/a|none|null|не применимо.*)$/iu;
 
 /**
  * Reads the forms a dictionary-made card already carries on its back
@@ -266,9 +276,11 @@ export function extractVerbFormsFromDetails(details: string): { forms: Record<st
   const lines = details.split("\n").map((line) => {
     const parts = line.split(" · ").filter((part) => {
       const m = /^([^:]+):\s*(.+)$/u.exec(part.trim());
-      const key = m ? FORM_KEY_BY_LABEL[m[1].trim().toLowerCase()] : undefined;
-      if (!m || !key || !VERB_DETAIL_KEYS.has(key)) return true;
-      forms[key] = m[2].trim();
+      if (!m) return true;
+      if (EMPTY_DETAIL_VALUE.test(m[2].trim())) return false;
+      const key = FORM_KEY_BY_LABEL[m[1].trim().toLowerCase()];
+      if (!key || !VERB_DETAIL_KEYS.has(key)) return true;
+      if (key !== "infinitiv") forms[key] = m[2].trim();
       return false;
     });
     return parts.join(" · ");

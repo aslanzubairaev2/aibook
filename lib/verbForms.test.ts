@@ -109,3 +109,12 @@ test("dictionary-made card backs give their forms and drop them from details", (
   assert.equal(rest, "примечание");
   assert.deepEqual(extractVerbFormsFromDetails("мн. ч.: Häuser"), { forms: {}, rest: "мн. ч.: Häuser" });
 });
+
+test("raw storage keys and empty placeholders are cleaned from card backs too", () => {
+  const a = extractVerbFormsFromDetails("praeteritum: fuhr hin · partizip2: hingefahren · hilfsverb: sein · trennbar: да");
+  assert.deepEqual(a.forms, { praeteritum: "fuhr hin", partizip2: "hingefahren", hilfsverb: "sein", trennbar: "да" });
+  assert.equal(a.rest, "");
+  const b = extractVerbFormsFromDetails("мн. ч.: нет данных для глагола · hilfsverb: sein · partizip2: geworden · praeteritum: wurde");
+  assert.deepEqual(b.forms, { hilfsverb: "sein", partizip2: "geworden", praeteritum: "wurde" });
+  assert.equal(b.rest, "");
+});
