@@ -314,10 +314,13 @@ export function DiscussAiModal({
 
   // The chips follow the answer: the model writes the three questions this
   // learner would plausibly ask next about this item. The fixed list is only
-  // the opening hand, before there is anything to follow up on.
-  const currentPrompts = lastModelMessage?.suggestions?.length
-    ? lastModelMessage.suggestions
-    : BASE_QUICK_PROMPTS[mode];
+  // the opening hand, before there is anything to follow up on. Once the model
+  // has answered, an answer it gave no chips for gets no chips — the fixed list
+  // reappearing under a joke or a word list was exactly the canned feel.
+  const currentPrompts = useMemo(
+    () => (lastModelMessage ? lastModelMessage.suggestions ?? [] : BASE_QUICK_PROMPTS[mode]),
+    [lastModelMessage, mode],
+  );
 
   // Buttons into the app's own tables. Whatever the model offered, plus a
   // standing one for the selected word — the forms are always one tap away,

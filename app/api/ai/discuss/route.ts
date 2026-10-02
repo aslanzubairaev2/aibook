@@ -59,8 +59,17 @@ const RESPONSE_SCHEMA = {
   required: ["contentParts"],
 } as const;
 
+/**
+ * A past turn as the model will reread it. One line per part, with the
+ * translation kept: glued together without separators, the model saw its own
+ * earlier answer as one run-on string and could not tell what it had already
+ * shown the learner.
+ */
 function messageText(message: DiscussMessage) {
-  return message.text || message.contentParts?.map((part) => part.text).join("") || "";
+  if (!message.contentParts?.length) return message.text || "";
+  return message.contentParts
+    .map((part) => (part.type === "learning" && part.translation ? `${part.text} — ${part.translation}` : part.text))
+    .join("\n");
 }
 
 /**
@@ -144,10 +153,10 @@ export async function POST(req: Request) {
       responseSchema: RESPONSE_SCHEMA as never,
       maxOutputTokens: AI_CONFIG.discussMaxOutputTokens,
       temperature: 0.7,
-      // The depth here comes from the instructions, not from a thinking
-      // budget — and in a chat the learner is waiting, while a budget spent
-      // thinking comes out of the same ceiling as the answer and truncates it.
-      thinkingConfig: { thinkingBudget: 0 },
+      // A small budget on the discussion model: without it the answers
+      // followed the request but got facts wrong (which prefixes separate,
+      // which words belong to a family). The fallback model stays unthinking.
+      thinkingConfig: { thinkingBudget: model === AI_CONFIG.discussModel ? AI_CONFIG.discussThinkingBudget : 0 },
     },
   });
 

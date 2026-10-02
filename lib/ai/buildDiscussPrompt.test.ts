@@ -51,12 +51,30 @@ describe("what the discussion asks the model for", () => {
 
   test("the answer carries follow-up questions and table buttons, not a pasted paradigm", () => {
     const prompt = buildDiscussSystemPrompt(BASE);
-    assert.match(prompt, /3 short follow-up questions/);
+    assert.match(prompt, /up to 3 short follow-ups/);
+    assert.match(prompt, /An empty list is better than filler/);
     assert.match(prompt, /AS THE LEARNER WOULD ASK THEM/);
     assert.match(prompt, /do NOT paste the table into the chat/);
     for (const kind of ["conjugation", "declension", "comparison", "forms"]) {
       assert.ok(prompt.includes(`"${kind}"`), `${kind} is offered as a button kind`);
     }
+  });
+
+  test("a follow-up turn does what was asked instead of re-running the opening template", () => {
+    // The complaint: "show me all words with räumen" came back as four
+    // example sentences, and a joke request got a meaning line and chips.
+    const prompt = buildDiscussSystemPrompt({ ...BASE, isFollowUp: true });
+    assert.match(prompt, /FREE CONVERSATION TURN/);
+    assert.match(prompt, /a real, COMPLETE list/);
+    assert.match(prompt, /a joke, an anecdote, a story/);
+    assert.ok(!prompt.includes("WHAT TO COVER"), "the opening template is not sent on a follow-up");
+    assert.ok(!prompt.includes("Four to six example sentences"), "no fixed example count on a follow-up");
+  });
+
+  test("homework follow-ups stay a tutor, never a free chat", () => {
+    const prompt = buildDiscussSystemPrompt({ ...BASE, mode: "homework", isFollowUp: true, homeworkContext: { instruction: "Ergänzen Sie", items: ["Ich ... auf."] } });
+    assert.ok(!prompt.includes("FREE CONVERSATION TURN"));
+    assert.match(prompt, /NEVER state, spell out/);
   });
 
   test("a noun and a sentence get their own brief", () => {

@@ -3,10 +3,16 @@ export const AI_CONFIG = {
   /** Structured dictionary and morphology need stronger reasoning than chat/TTS. */
   dictionaryModel: "gemini-3.8-flash",
   dictionaryThinkingLevel: "HIGH",
-  /** Keep discussions on the same fast, inexpensive model as the rest of the app. */
-  discussModel: "gemini-3.1-flash-lite",
-  /** A discussion answer carries several examples and their translations. */
-  discussMaxOutputTokens: 4096,
+  /**
+   * The discussion is a free conversation (word lists, jokes, corrections), so
+   * it runs on the stronger model with a small thinking budget. Probed live on
+   * 2026-10-02: ~2-3 s per answer; flash-lite and 3.8 without thinking both
+   * followed the request but got word-family facts wrong.
+   */
+  discussModel: "gemini-3.8-flash",
+  discussThinkingBudget: 1024,
+  /** A discussion answer carries several examples and their translations; thinking shares this ceiling. */
+  discussMaxOutputTokens: 6144,
   maxOutputTokens: 1024,
   temperature: 0.2,
   contextSentences: 1,
