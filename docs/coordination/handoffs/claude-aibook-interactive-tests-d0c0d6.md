@@ -38,7 +38,7 @@
 
 ## Проверки
 
-- `npm test` — passed (521 тест, из них 18 новых).
+- `npm test` — passed (503 теста, из них 18 новых).
 - `npx tsc --noEmit` — passed.
 - `npm run lint` — без новых ошибок.
 - `npm run build` — passed.
