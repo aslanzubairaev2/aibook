@@ -18,8 +18,25 @@ interface AnalysisPromptParams {
   sentenceBefore: string;
   sentenceAfter: string;
   targetSentence?: string;
+  /**
+   * The flashcard the word was tapped on. A card is a deliberate entry — its
+   * front and meaning say which word, part of speech and sense the learner is
+   * studying — whereas the bare spelling ("stelle") is ambiguous between a
+   * noun and a verb form.
+   */
+  cardContext?: { front: string; back: string };
   nativeLanguage: string;
   targetLanguage: string;
+}
+
+/** The instruction that pins the reading of a word tapped on a flashcard. */
+function cardContextBlock(p: AnalysisPromptParams): string {
+  if (!p.cardContext?.front.trim()) return "";
+  const meaning = p.cardContext.back.replace(/\r\n/g, "\n").split("\n")[0].trim();
+  return `
+The word was tapped on the learner's flashcard. Front: "${p.cardContext.front.trim()}"${meaning ? `. Meaning on the back: "${meaning}"` : ""}.
+The card fixes which word is meant: if the front starts with an article (der/die/das) the word is a noun with that gender, and the meaning on the back fixes the sense. Analyze the word in exactly that reading; do not treat it as a different part of speech or as an inflected form of another word merely because the spelling coincides (for example "die Stelle" is the noun, not a form of "stellen").
+`;
 }
 
 export function buildAnalysisPrompt(p: AnalysisPromptParams): string {
@@ -85,7 +102,7 @@ Word: "${p.word}"
 Previous sentence for context: "${p.sentenceBefore}"
 Current sentence: "${p.sentence}"
 Next sentence for context: "${p.sentenceAfter}"
-
+${cardContextBlock(p)}
 For German separable verbs, return 'separability: "yes"' and the prefix only
 when the clicked token is a verb form and the sentence syntax shows that the
 detached particle belongs to that verb. A preposition, adverb, particle of a

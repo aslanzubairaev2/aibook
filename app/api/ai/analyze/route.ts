@@ -71,6 +71,7 @@ export async function POST(req: Request) {
     sentenceBefore: string;
     sentenceAfter: string;
     targetSentence?: string;
+    cardContext?: { front: string; back: string };
     nativeLanguage: string;
     targetLanguage: string;
     skipWord?: boolean;
