@@ -262,6 +262,8 @@ const FORM_KEY_BY_LABEL: Record<string, string> = {
   "infinitiv": "infinitiv",
 };
 const VERB_DETAIL_KEYS = new Set(["praeteritum", "partizip2", "hilfsverb", "trennbar", "infinitiv"]);
+/** A verb has no plural; importers sometimes put the wir-form there («мн. ч.: sollen»). */
+const PLURAL_LABEL = /^(мн\.?\s*ч\.?|plural|pl\.?)$/iu;
 /** «мн. ч.: нет данных для глагола» and similar placeholders say nothing. */
 const EMPTY_DETAIL_VALUE = /^(—|-|–|нет данных.*|n\/a|none|null|не применимо.*)$/iu;
 
@@ -269,7 +271,8 @@ const EMPTY_DETAIL_VALUE = /^(—|-|–|нет данных.*|n\/a|none|null|н�
  * Reads the forms a dictionary-made card already carries on its back
  * («Präteritum: backte · Partizip II: gebacken · вспом. глагол: haben») and
  * returns the details with those parts removed, so the verb line can replace
- * them instead of repeating them.
+ * them instead of repeating them. The rest is shown only for verbs, so a
+ * «мн. ч.» part (meaningless for a verb) is dropped as well.
  */
 export function extractVerbFormsFromDetails(details: string): { forms: Record<string, string>; rest: string } {
   const forms: Record<string, string> = {};
@@ -277,7 +280,7 @@ export function extractVerbFormsFromDetails(details: string): { forms: Record<st
     const parts = line.split(" · ").filter((part) => {
       const m = /^([^:]+):\s*(.+)$/u.exec(part.trim());
       if (!m) return true;
-      if (EMPTY_DETAIL_VALUE.test(m[2].trim())) return false;
+      if (EMPTY_DETAIL_VALUE.test(m[2].trim()) || PLURAL_LABEL.test(m[1].trim())) return false;
       const key = FORM_KEY_BY_LABEL[m[1].trim().toLowerCase()];
       if (!key || !VERB_DETAIL_KEYS.has(key)) return true;
       if (key !== "infinitiv") forms[key] = m[2].trim();
