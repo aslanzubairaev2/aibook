@@ -148,7 +148,7 @@ function getCapabilities(): unknown {
   return {
     flow: [
       "create_assessment (with a client_key, so a retry never duplicates) → draft",
-      "prepare_assessment_audio → the app records every listening passage and repeat sample itself with Gemini TTS; call again until all are 'ready' (already-recorded audio is never paid twice)",
+      "prepare_assessment_audio (optional) → the app records every listening passage and repeat sample itself with Gemini TTS; publish_assessment also does this on its own",
       "publish_assessment → link for the learner (the test also appears on the app's home screen)",
       "the learner takes it in the app: choices save on tap, typed text saves as they go, recordings are assessed by Azure on the server; listenings and recordings are counted on the server",
       "get_assessment_results → raw answers, first answers and changes, auto-scores, words the learner marked or looked up, listenings, recordings with transcripts, Azure scores, per-word errors and private links",
@@ -538,7 +538,10 @@ export const ASSESSMENT_TOOLS: McpToolDef[] = [
       required: ["assessment_id"],
       additionalProperties: false,
     },
-    annotations: { ...WRITES, idempotentHint: true, openWorldHint: true, title: "Озвучить аудирование" },
+    // Not openWorld: the speech service is the app's own backend. Marked
+    // openWorld, chat clients demanded a confirmation they were not allowed
+    // to ask for, and the tool could not be called at all.
+    annotations: { ...WRITES, idempotentHint: true, title: "Озвучить аудирование" },
   },
   {
     name: "get_assessment_status",
@@ -552,7 +555,7 @@ export const ASSESSMENT_TOOLS: McpToolDef[] = [
     name: "publish_assessment",
     title: "Опубликовать тест",
     description:
-      "Make a ready test available to the learner and get the link to give them (it also shows on the app's home screen). Refuses, naming the sections, while any recording is not ready.",
+      "Make the test available to the learner and get the link to give them (it also shows on the app's home screen). Records any listening audio that is not ready yet by itself — calling prepare_assessment_audio first is optional; if a recording still is not finished, the test is published anyway and the learner's page completes it.",
     inputSchema: { type: "object", properties: { ...ID }, required: ["assessment_id"], additionalProperties: false },
     annotations: { ...WRITES, idempotentHint: true, title: "Опубликовать тест" },
   },
@@ -654,7 +657,7 @@ export const ASSESSMENT_TOOLS: McpToolDef[] = [
     description:
       "Is speaking assessment ready: checks the server's Azure Speech key and region with a free token request and reports configured / ok / region / the error, plus what was verified for German (which scores exist, that prosody and phoneme names do not). Never returns a key.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    annotations: { ...READ_ONLY, openWorldHint: true, title: "Проверка оценки произношения" },
+    annotations: { ...READ_ONLY, title: "Проверка оценки произношения" },
   },
   {
     name: "check_dictionary_words",

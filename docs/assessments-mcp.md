@@ -13,7 +13,7 @@ AIBook, приложение само озвучивает аудировани�
 ```
 get_assessment_capabilities            ← один раз: типы заданий, голоса, правила
 create_assessment(client_key, …)       ← черновик; повтор с тем же client_key не создаёт дубль
-prepare_assessment_audio(id)           ← повторять, пока все аудио не «ready»
+prepare_assessment_audio(id)           ← необязательно: publish_assessment озвучивает сам
 publish_assessment(id)                 → ссылка https://…/test/<id>  (тест появится и на главной)
    … ученик проходит тест …
 get_assessment_results(assessment_id)  ← сырые ответы, история изменений, прослушивания

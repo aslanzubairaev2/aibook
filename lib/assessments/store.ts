@@ -389,13 +389,14 @@ export async function assessmentStatus(admin: SupabaseClient, userId: string, id
 export async function publishAssessment(admin: SupabaseClient, userId: string, id: string, origin: string) {
   const a = await getAssessment(admin, userId, id);
   if (a.status === "archived") throw new AssessmentError("This test is archived.");
-  const audio = describeAudio(await getAudioRows(admin, id));
-  const missing = audio.filter((x) => x.status !== "ready");
-  if (missing.length > 0) {
-    throw new AssessmentError(
-      `Audio is not ready for: ${missing.map((m) => `${m.section_id} (${m.status}${m.error ? `: ${m.error}` : ""})`).join(", ")}. Call prepare_assessment_audio first.`,
-    );
+  // Publishing records whatever is still missing itself: the teacher's chat
+  // client may not be allowed to call prepare_assessment_audio, and a test
+  // must never be stuck as a draft because of that.
+  let audio = describeAudio(await getAudioRows(admin, id));
+  if (audio.some((x) => x.status !== "ready")) {
+    audio = (await prepareAudio(admin, userId, id, { budgetMs: 25000 })).audio;
   }
+  const missing = audio.filter((x) => x.status !== "ready");
   if (a.status !== "published") {
     const { error } = await admin.from("assessments")
       .update({ status: "published", published_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -406,7 +407,10 @@ export async function publishAssessment(admin: SupabaseClient, userId: string, i
     id,
     status: "published",
     link: testLink(origin, id),
-    note: "The learner opens the link (or finds the test on the home screen of the app). Results arrive through get_assessment_results.",
+    audio,
+    note: missing.length === 0
+      ? "The learner opens the link (or finds the test on the home screen of the app). Results arrive through get_assessment_results."
+      : `Published. ${missing.length} recording(s) are still being made (${missing.map((m) => m.section_id).join(", ")}); the learner's page finishes them on its own and shows «Аудио готовится» until then. Nothing else to do.`,
   };
 }
 
