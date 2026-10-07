@@ -132,14 +132,32 @@ type CardRow = {
 const CARD_COLUMNS =
   "id, front, back, status, repetitions, lapses, easiness_factor, interval_days, next_review_at, last_reviewed_at, source_book_id, source_book_title, selection_type, cefr";
 
+/** PostgREST caps a response at 1000 rows without saying so; read in pages. */
+async function readAllPages<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ rows: T[]; error: string | null }> {
+  const size = 1000;
+  const rows: T[] = [];
+  for (let from = 0; ; from += size) {
+    const { data, error } = await page(from, from + size - 1);
+    if (error) return { rows: [], error: error.message };
+    rows.push(...(data ?? []));
+    if ((data?.length ?? 0) < size) return { rows, error: null };
+  }
+}
+
 async function getCards(ctx: Ctx): Promise<CardRow[]> {
-  const { data, error } = await ctx.admin
-    .from("flashcards")
-    .select(CARD_COLUMNS)
-    .eq("user_id", ctx.userId)
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(`flashcards read failed: ${error.message}`);
-  return (data ?? []) as CardRow[];
+  const { rows, error } = await readAllPages<CardRow>((from, to) =>
+    ctx.admin
+      .from("flashcards")
+      .select(CARD_COLUMNS)
+      .eq("user_id", ctx.userId)
+      .order("created_at", { ascending: false })
+      .order("id")
+      .range(from, to),
+  );
+  if (error) throw new Error(`flashcards read failed: ${error}`);
+  return rows;
 }
 
 // A card counts as "learned" once it has survived three consecutive reviews —
@@ -191,16 +209,21 @@ const SKILL_NAMES: Record<Direction, string> = {
 };
 
 async function getVariantProgress(ctx: Ctx): Promise<VariantRow[]> {
-  const { data, error } = await ctx.admin
-    .from("flashcard_variant_progress")
-    .select(
-      "flashcard_id, variant, status, repetitions, lapses, easiness_factor, interval_days, next_review_at, last_reviewed_at",
-    )
-    .eq("user_id", ctx.userId);
+  const { rows, error } = await readAllPages<VariantRow>((from, to) =>
+    ctx.admin
+      .from("flashcard_variant_progress")
+      .select(
+        "flashcard_id, variant, status, repetitions, lapses, easiness_factor, interval_days, next_review_at, last_reviewed_at",
+      )
+      .eq("user_id", ctx.userId)
+      .order("flashcard_id")
+      .order("variant")
+      .range(from, to),
+  );
   // The table arrived in a later migration; an installation without it should
   // still answer everything else rather than failing the whole call.
   if (error) return [];
-  return (data ?? []) as VariantRow[];
+  return rows;
 }
 
 // ─── One schedule, whichever direction it belongs to ────────────────────────

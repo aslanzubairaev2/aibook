@@ -320,15 +320,42 @@ export async function sbUpsertProgress(entry: Omit<DbReadingProgress, "id">): Pr
 
 // ─── Flashcards ───────────────────────────────────────────────────────────────
 
+/**
+ * Reads a whole table slice, page by page.
+ *
+ * PostgREST answers at most 1000 rows per request and says nothing about the
+ * rest. A fresh install has no local copy to hide behind, so it painted a deck
+ * whose last 600 schedules were simply missing — each one a phantom "new"
+ * prompt due today — while a device with an old cache looked fine.
+ */
+const PAGE_SIZE = 1000;
+
+async function fetchAllRows<T>(
+  label: string,
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[] | null> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) {
+      console.error(`${label}:`, error.message);
+      return null;
+    }
+    rows.push(...(data ?? []));
+    if ((data?.length ?? 0) < PAGE_SIZE) return rows;
+  }
+}
+
 export async function sbGetFlashcards(userId: string): Promise<DbFlashcard[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase
-    .from("flashcards")
-    .select("*")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
-  if (error) { console.error("sbGetFlashcards:", error.message); return []; }
-  return (data ?? []) as DbFlashcard[];
+  const client = supabase;
+  // A partial deck is worse than none: callers treat an empty answer as "read
+  // failed" and keep what they have.
+  const rows = await fetchAllRows<DbFlashcard>("sbGetFlashcards", (from, to) =>
+    client.from("flashcards").select("*").eq("user_id", userId)
+      .order("created_at", { ascending: false }).order("id").range(from, to),
+  );
+  return rows ?? [];
 }
 
 export async function sbInsertFlashcard(card: Omit<DbFlashcard, "id" | "created_at">): Promise<string | null> {
@@ -364,15 +391,15 @@ export async function sbDeleteFlashcards(cardIds: string[]): Promise<void> {
 
 export async function sbGetCardVariantProgress(userId: string): Promise<DbCardVariantProgress[] | null> {
   if (!supabase) return null;
-  const { data, error } = await supabase
-    .from("flashcard_variant_progress")
-    .select("user_id, flashcard_id, variant, status, repetitions, lapses, interval_days, easiness_factor, next_review_at, last_reviewed_at, updated_at")
-    .eq("user_id", userId);
-  if (error) {
-    console.error("sbGetCardVariantProgress:", error.message);
-    return null;
-  }
-  return (data ?? []) as DbCardVariantProgress[];
+  const client = supabase;
+  return fetchAllRows<DbCardVariantProgress>("sbGetCardVariantProgress", (from, to) =>
+    client
+      .from("flashcard_variant_progress")
+      .select("user_id, flashcard_id, variant, status, repetitions, lapses, interval_days, easiness_factor, next_review_at, last_reviewed_at, updated_at")
+      .eq("user_id", userId)
+      .order("flashcard_id").order("variant")
+      .range(from, to),
+  );
 }
 
 /** One batch handles both a single review and the first upload of old local progress. */
