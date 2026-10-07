@@ -68,6 +68,8 @@ type Props = {
    * filters, so the learner's own training setup survives it.
    */
   trainBatch?: TrainBatch | null;
+  /** Changes when the account's schedules were re-read; the local snapshot is then retaken. */
+  progressRevision?: number;
   /** Lets the owner drop its copy of the batch once the session leaves it. */
   onExitBatch?: () => void;
   onBack: () => void;
@@ -518,7 +520,7 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
   );
 });
 
-export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, onAddCard, onUpdateCard, onDeleteCard, onDeleteCards, onFindVideos }: Props) {
+export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0, onExitBatch, onBack, onAddCard, onUpdateCard, onDeleteCard, onDeleteCards, onFindVideos }: Props) {
   const { user } = useAuth();
   const [profile, setProfile] = useState(getLocalProfile);
   const targetLanguage = profile.targetLanguage;
@@ -604,6 +606,13 @@ export function CardsView({ cards, initialTab, trainBatch, onExitBatch, onBack, 
   // mutated) after a grade, so every memo below can key on its identity
   // instead of re-reading storage per card.
   const [variantProgress, setVariantProgress] = useState<VariantProgressMap>(getCardVariantProgressMap);
+  // Retaken during render rather than in an effect: the new snapshot is there
+  // for the very paint that follows a refresh, not one frame later.
+  const [seenRevision, setSeenRevision] = useState(progressRevision);
+  if (seenRevision !== progressRevision) {
+    setSeenRevision(progressRevision);
+    setVariantProgress(getCardVariantProgressMap());
+  }
   const skillProgress = useMemo(() => getCardSkillProgressMap(), [cards]);
 
   // The end of "today" only has to move when the day does.

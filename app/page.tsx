@@ -24,7 +24,7 @@ import {
   sbGetBooks, sbGetChapters, sbGetFlashcards, sbGetSettings, sbGetProgress,
   sbGetCardVariantProgress, sbUpsertCardVariantProgress,
   sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbUpsertFlashcard, sbDeleteFlashcard, sbDeleteFlashcards, sbAuthHeaders, supabase,
-  type DbBook, type DbReadingProgress, type DbUserSettings, type DbFlashcard,
+  type DbBook, type DbCardVariantProgress, type DbReadingProgress, type DbUserSettings, type DbFlashcard,
 } from "@/lib/db/supabase";
 import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, deleteLocalCards, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalCards, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
 import { freshFetch } from "@/lib/net/freshFetch";
@@ -273,6 +273,9 @@ function AppInner() {
   // re-running loadData on every onAuthStateChange (token refresh, tab focus / app
   // resume), which would re-apply the synced last view and yank the reader back.
   const loadedIdentityRef = useRef<string | null>(null);
+  // Bumped when the per-direction schedules were re-read from the account, so
+  // screens that hold a snapshot of them know to take a new one.
+  const [progressRevision, setProgressRevision] = useState(0);
 
   // A screen can disappear while an async open/load operation is finishing
   // (or after a lesson/book was deleted). Do this redirect in an effect rather
@@ -454,22 +457,7 @@ function AppInner() {
     // Supabase is the cross-device source of truth, while the local mirror
     // keeps reviews working offline. This also uploads progress created before
     // server-side variant storage existed.
-    const remoteVariantProgress: Record<string, CardVariantState> = {};
-    for (const row of dbVariantProgress ?? []) {
-      const progress = {
-        status: row.status as Flashcard["status"],
-        repetitions: row.repetitions,
-        lapses: row.lapses,
-        intervalDays: row.interval_days,
-        easeFactor: row.easiness_factor,
-        dueAt: row.next_review_at,
-        lastReviewedAt: row.last_reviewed_at,
-      };
-      remoteVariantProgress[row.flashcard_id] = {
-        ...remoteVariantProgress[row.flashcard_id],
-        [row.variant]: progress,
-      };
-    }
+    const remoteVariantProgress = variantRowsToState(dbVariantProgress ?? []);
     const mergedVariantProgress = mergeCardVariantProgress(getCardVariantProgressMap(), remoteVariantProgress);
     saveCardVariantProgressMap(mergedVariantProgress);
     const remoteCardIds = new Set(dbCards.map((card) => card.id));
@@ -558,6 +546,64 @@ function AppInner() {
     }
     setIsRemoteSyncReady(true);
   }, []);
+
+  /**
+   * Re-reads the cards and their per-direction schedules from the account.
+   *
+   * loadData runs once per identity, so a phone or an installed window left
+   * open for a day kept painting yesterday's queue while another device had
+   * already worked through it: three screens, three different "due" numbers.
+   * This is the cheap half of that load — no books, no last view, nothing that
+   * could move the learner to another screen — run whenever the app comes back
+   * into view. A local review newer than the server's copy wins, the same rule
+   * the variant merge uses, so an answer given offline is not lost.
+   */
+  const refreshCardProgress = useCallback(async (userId: string) => {
+    const [dbCards, dbVariantProgress] = await Promise.all([
+      sbGetFlashcards(userId),
+      sbGetCardVariantProgress(userId),
+    ]);
+    // A failed read comes back empty; replacing the deck with nothing would
+    // be far worse than showing it stale.
+    if (dbCards.length === 0) return;
+
+    const merged = mergeCardVariantProgress(
+      getCardVariantProgressMap(),
+      variantRowsToState(dbVariantProgress ?? []),
+    );
+    saveCardVariantProgressMap(merged);
+
+    const localById = new Map(getLocalCards().map((card) => [card.id, card]));
+    const reviewedMs = (card?: Flashcard) => (card?.lastReviewedAt ? Date.parse(card.lastReviewedAt) || 0 : 0);
+    const nextCards = dbCards.map(dbCardToFlashcard).map((remote) => {
+      const local = localById.get(remote.id);
+      return local && reviewedMs(local) > reviewedMs(remote) ? local : remote;
+    });
+    saveLocalCards(nextCards);
+    setCards(nextCards);
+    setProgressRevision((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const userId = user.id;
+    let lastRun = Date.now();
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      // Focus and visibility often fire together; one fetch per half minute is plenty.
+      if (Date.now() - lastRun < 30_000) return;
+      lastRun = Date.now();
+      void refreshCardProgress(userId);
+    };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+    };
+  }, [user, refreshCardProgress]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -1150,6 +1196,7 @@ function AppInner() {
           cards={cards}
           initialTab={cardsInitialTab}
           trainBatch={trainBatch}
+          progressRevision={progressRevision}
           onExitBatch={() => setTrainBatch(null)}
           onBack={() => { setCardsInitialTab(null); setTrainBatch(null); setSection("practice"); }}
           onAddCard={handleAddCard}
@@ -1243,6 +1290,25 @@ export default function Page() {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function variantRowsToState(rows: DbCardVariantProgress[]): Record<string, CardVariantState> {
+  const state: Record<string, CardVariantState> = {};
+  for (const row of rows) {
+    state[row.flashcard_id] = {
+      ...state[row.flashcard_id],
+      [row.variant]: {
+        status: row.status as Flashcard["status"],
+        repetitions: row.repetitions,
+        lapses: row.lapses,
+        intervalDays: row.interval_days,
+        easeFactor: row.easiness_factor,
+        dueAt: row.next_review_at,
+        lastReviewedAt: row.last_reviewed_at,
+      },
+    };
+  }
+  return state;
+}
 
 function dbCardToFlashcard(c: DbFlashcard): Flashcard {
   return {

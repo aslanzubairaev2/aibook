@@ -37,10 +37,13 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
     return end.getTime();
   }, []);
 
-  const dueCards = useMemo(
-    () => computeDeckStats(cards, getCardVariantProgressMap(), new Date(todayEndTime)).dueCards,
-    [cards, todayEndTime],
-  );
+  // Repetitions lead, as in the trainer's own headline: a card is three
+  // prompts (recognition, recall, listening), and "390" here against "680"
+  // there was the same queue counted in two units.
+  const due = useMemo(() => {
+    const stats = computeDeckStats(cards, getCardVariantProgressMap(), new Date(todayEndTime));
+    return { reps: stats.dueReps, cards: stats.dueCards };
+  }, [cards, todayEndTime]);
 
   // Read once at mount: the counts are a hint about how much there is to do,
   // not a live figure worth a request every time this screen is opened.
@@ -67,14 +70,16 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
       <div className="practice-list">
         <button className="action-card study glass-card" onClick={onOpenCards} type="button">
           <span className="action-card-icon">
-            <Flame size={24} fill={dueCards > 0 ? "var(--green)" : "none"} style={{ color: dueCards > 0 ? "var(--green)" : "var(--text-muted)" }} />
+            <Flame size={24} fill={due.reps > 0 ? "var(--green)" : "none"} style={{ color: due.reps > 0 ? "var(--green)" : "var(--text-muted)" }} />
           </span>
           <span>
             <span className="action-card-label">Карточки</span>
             <strong className="action-card-title">
-              {dueCards > 0 ? `Повторить сегодня: ${dueCards}` : "Изучение слов и фраз"}
+              {due.reps > 0 ? `Повторить сегодня: ${due.reps}` : "Изучение слов и фраз"}
             </strong>
-            <span className="action-card-sub">Слова, фразы и предложения — интервальное повторение</span>
+            <span className="action-card-sub">
+              {due.reps > 0 ? `${due.cards} карточек · интервальное повторение` : "Слова, фразы и предложения — интервальное повторение"}
+            </span>
           </span>
           <ChevronRight size={20} className="action-card-arrow" />
         </button>
