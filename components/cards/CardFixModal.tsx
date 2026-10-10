@@ -1,10 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, Loader2, MessageCircleQuestion, ShieldCheck } from "lucide-react";
+import { AlertCircle, Check, Copy, Loader2, MessageCircleQuestion, ShieldCheck, Trash2 } from "lucide-react";
 import type { Flashcard } from "@/lib/types";
 import type { CardVerifyClarification, CardVerifyDictionaryEntry } from "@/lib/ai/cardVerify";
 import { verifyCard } from "@/lib/ai/verifyCard";
+
+/**
+ * What saving the fix came to: `null` when it was saved, an error to show, or
+ * the card the corrected text already belongs to.
+ */
+export type CardFixApplyResult = null | { error: string } | { duplicate: Flashcard };
 
 type Props = {
   card: Flashcard;
@@ -12,8 +18,10 @@ type Props = {
   entry: CardVerifyDictionaryEntry | null;
   targetLanguage: string;
   nativeLanguage: string;
-  /** Saves the corrected card. Returns a message when it cannot be saved. */
-  onApply: (front: string, back: string) => string | null;
+  /** Saves the corrected card, or says why it could not. */
+  onApply: (front: string, back: string) => CardFixApplyResult;
+  /** Deletes this card — used when its fix turns out to be a card that already exists. */
+  onDeleteDuplicate: () => void;
   onClose: () => void;
 };
 
@@ -22,6 +30,8 @@ type Phase =
   | { kind: "question"; question: string }
   | { kind: "ok"; note: string }
   | { kind: "fixed"; front: string; back: string; changes: string[]; note: string }
+  | { kind: "duplicate"; existing: Flashcard }
+  | { kind: "deleted"; existing: Flashcard }
   | { kind: "error"; message: string };
 
 /**
@@ -32,7 +42,7 @@ type Phase =
  * под руками. Когда ИИ не уверен, он спрашивает; «Отменить» отменяет всю
  * правку целиком — карточка остаётся как была.
  */
-export function CardFixModal({ card, entry, targetLanguage, nativeLanguage, onApply, onClose }: Props) {
+export function CardFixModal({ card, entry, targetLanguage, nativeLanguage, onApply, onDeleteDuplicate, onClose }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: "checking" });
   const [answer, setAnswer] = useState("");
   const clarifications = useRef<CardVerifyClarification[]>([]);
@@ -66,10 +76,14 @@ export function CardFixModal({ card, entry, targetLanguage, nativeLanguage, onAp
       } else if (result.verdict === "ok") {
         setPhase({ kind: "ok", note: result.note });
       } else {
-        const failure = onApply(result.front, result.back);
-        setPhase(failure
-          ? { kind: "error", message: failure }
-          : { kind: "fixed", front: result.front, back: result.back, changes: result.changes, note: result.note });
+        const outcome = onApply(result.front, result.back);
+        if (!outcome) {
+          setPhase({ kind: "fixed", front: result.front, back: result.back, changes: result.changes, note: result.note });
+        } else if ("duplicate" in outcome) {
+          setPhase({ kind: "duplicate", existing: outcome.duplicate });
+        } else {
+          setPhase({ kind: "error", message: outcome.error });
+        }
       }
     } catch (err) {
       if (controller.signal.aborted) return;
@@ -112,7 +126,13 @@ export function CardFixModal({ card, entry, targetLanguage, nativeLanguage, onAp
     recheck();
   }
 
-  const finished = phase.kind === "ok" || phase.kind === "fixed" || phase.kind === "error";
+  const deleteDuplicate = useCallback(() => {
+    if (phase.kind !== "duplicate") return;
+    onDeleteDuplicate();
+    setPhase({ kind: "deleted", existing: phase.existing });
+  }, [onDeleteDuplicate, phase]);
+
+  const finished = phase.kind === "ok" || phase.kind === "fixed" || phase.kind === "error" || phase.kind === "deleted";
 
   return (
     <div className="card-fix-backdrop" role="presentation">
@@ -182,6 +202,30 @@ export function CardFixModal({ card, entry, targetLanguage, nativeLanguage, onAp
           </div>
         )}
 
+        {phase.kind === "duplicate" && (
+          <div className="card-fix-result">
+            <p className="card-fix-verdict warn"><Copy size={16} /> После исправления это дубликат — такая карточка у вас уже есть:</p>
+            <div className="card-fix-after">
+              <strong>{phase.existing.front}</strong>
+              <span>{phase.existing.back}</span>
+            </div>
+            <p className="card-fix-note">Удалить эту неправильную карточку и оставить существующую? Прогресс существующей карточки сохранится.</p>
+            <div className="card-fix-actions">
+              <button type="button" className="card-fix-btn" onClick={onClose}>Оставить</button>
+              <button type="button" className="card-fix-btn primary" onClick={deleteDuplicate} autoFocus>
+                <Trash2 size={15} /> Удалить дубликат
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase.kind === "deleted" && (
+          <div className="card-fix-result">
+            <p className="card-fix-verdict ok"><Check size={16} /> Дубликат удалён.</p>
+            <p className="card-fix-note">Осталась карточка «{phase.existing.front}».</p>
+          </div>
+        )}
+
         {phase.kind === "error" && (
           <div className="card-fix-result">
             <p className="card-fix-verdict bad"><AlertCircle size={16} /> {phase.message}</p>
@@ -225,10 +269,12 @@ const STYLES = `
   .card-fix-verdict { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 14px; font-weight: 700; }
   .card-fix-verdict.ok { color: #8bbf7a; }
   .card-fix-verdict.bad { color: #e08a8a; }
+  .card-fix-verdict.warn { color: var(--accent); align-items: flex-start; line-height: 1.4; }
+  .card-fix-verdict.warn svg { flex-shrink: 0; margin-top: 2px; }
   .card-fix-note { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-muted); }
   .card-fix-changes { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; line-height: 1.4; }
   .card-fix-actions { display: flex; justify-content: flex-end; gap: 10px; }
-  .card-fix-btn { min-height: 40px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+  .card-fix-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--text-primary); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
   .card-fix-btn:hover:not(:disabled) { border-color: var(--accent); }
   .card-fix-btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1710; }
   .card-fix-btn:disabled { opacity: 0.5; cursor: default; }

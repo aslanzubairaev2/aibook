@@ -45,7 +45,7 @@ import { getAvailableTtsProviders, getTtsProviderLabel } from "@/lib/ttsProvider
 import { analyzeSelection } from "@/lib/ai/analyze";
 import { makeAiCacheKey, makeDiscussCacheKey, makeWordContextCacheKey } from "@/lib/ai/cacheKeys";
 import type { CardVerifyDictionaryEntry } from "@/lib/ai/cardVerify";
-import { CardFixModal } from "@/components/cards/CardFixModal";
+import { CardFixModal, type CardFixApplyResult } from "@/components/cards/CardFixModal";
 import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardSkillProgressMap, getCardVariantProgressMap, saveCardVariantProgress } from "@/lib/db/local";
 import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertCardVariantProgress, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -1356,14 +1356,13 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   /**
    * Saves the AI's corrected card. Progress, schedule and id stay as they
    * were: the card is the same card, only its text changed. Refuses a front
-   * that another card already has, so a fix cannot create a duplicate.
+   * that another card already has, so a fix cannot create a duplicate — the
+   * modal is handed that card instead and offers to drop this one.
    */
-  const applyCardFix = useCallback((front: string, back: string): string | null => {
-    if (!fixCard) return "Карточка не найдена.";
+  const applyCardFix = useCallback((front: string, back: string): CardFixApplyResult => {
+    if (!fixCard) return { error: "Карточка не найдена." };
     const clash = findDuplicateCard(front, cards);
-    if (clash && clash.id !== fixCard.id) {
-      return `Исправленная карточка «${front}» совпала бы с уже существующей. Объедините или удалите дубликат вручную.`;
-    }
+    if (clash && clash.id !== fixCard.id) return { duplicate: clash };
     onUpdateCard({ ...fixCard, front, back });
     // The session holds snapshots of its cards, so the card on screen (and in
     // the review history) would keep its old text until the session restarted.
@@ -1373,6 +1372,24 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     setReviewHistory((history) => history.map(refresh));
     return null;
   }, [fixCard, cards, onUpdateCard]);
+
+  /**
+   * Deletes the card being fixed: its corrected text turned out to be a card
+   * the learner already has, so this one is just a wrong copy of it. The
+   * session drops it too, keeping the card on screen where it was — the next
+   * one simply moves up into its place.
+   */
+  const deleteFixedDuplicate = useCallback(() => {
+    if (!fixCard) return;
+    const id = fixCard.id;
+    onDeleteCard(id);
+    const removedBefore = trainQueue.slice(0, currentTrainIndex).filter((item) => item.card.id === id).length;
+    if (trainQueue[currentTrainIndex]?.card.id === id) setIsFlipped(false);
+    setTrainQueue((queue) => queue.filter((item) => item.card.id !== id));
+    setCurrentTrainIndex((index) => Math.max(0, index - removedBefore));
+    setReviewHistory((history) => history.filter((item) => item.card.id !== id));
+    setViewingHistoryIndex(null);
+  }, [fixCard, onDeleteCard, trainQueue, currentTrainIndex]);
 
   const handleWordTap = useCallback((word: string, e: React.MouseEvent, card?: Flashcard | null) => {
     e.stopPropagation();
@@ -1998,6 +2015,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
           targetLanguage={targetLanguage}
           nativeLanguage={nativeLanguage}
           onApply={applyCardFix}
+          onDeleteDuplicate={deleteFixedDuplicate}
           onClose={() => setFixCard(null)}
         />
       )}
