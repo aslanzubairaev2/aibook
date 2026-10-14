@@ -57,6 +57,9 @@ export function VerbsView({ profile, onBack }: Props) {
   const [isLoading, setIsLoading] = useState(cachedDict === null);
   const [error, setError] = useState<string | null>(null);
   const hasDataRef = useRef(!!cachedDict && (cachedDict.entries.length > 0 || cachedDict.batches.length > 0));
+  // True once this visit has the account's own copy, not the device cache —
+  // the cache can still hold verbs whose forms were filled since.
+  const [serverFresh, setServerFresh] = useState(false);
 
   // Empty means «Все». Compatible learning groups can be selected together;
   // weak and strong are switched as one base-conjugation choice.
@@ -108,6 +111,7 @@ export function VerbsView({ profile, onBack }: Props) {
       setEntries(nextEntries);
       setBatches(nextBatches);
       saveLocalVerbsDict(profile.targetLanguage, nextEntries, nextBatches);
+      setServerFresh(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Не удалось загрузить глаголы.";
       // A cached list is still shown behind it — don't blank the screen for a
@@ -341,7 +345,7 @@ export function VerbsView({ profile, onBack }: Props) {
   // failure (offline, quota) leaves the manual button, never a retry loop.
   const autoFillTriedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (isLoading || bulkProgress) return;
+    if (!serverFresh || bulkProgress) return;
     const fresh = missingForms.filter((e) => !autoFillTriedRef.current.has(e.id));
     if (fresh.length === 0) return;
     const timer = setTimeout(() => {
@@ -351,7 +355,13 @@ export function VerbsView({ profile, onBack }: Props) {
     return () => clearTimeout(timer);
     // fillAllMissing is recreated every render; the list is what matters here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missingForms, isLoading, bulkProgress]);
+  }, [missingForms, serverFresh, bulkProgress]);
+
+  // Keep the device cache in step with forms filled on this screen, so the
+  // next visit does not open on the verbs as they were before.
+  useEffect(() => {
+    if (serverFresh) saveLocalVerbsDict(profile.targetLanguage, entries, batches);
+  }, [serverFresh, entries, batches, profile.targetLanguage]);
 
   const activeFilterCount = verbTypes.size;
 
