@@ -335,6 +335,24 @@ export function VerbsView({ profile, onBack }: Props) {
     );
   }
 
+  // A tutor or a photo can save a verb without its full principal parts. The
+  // app's own AI fills those in as soon as the screen sees them, so a new pack
+  // becomes trainable without a tap. Each verb is tried once per visit — a
+  // failure (offline, quota) leaves the manual button, never a retry loop.
+  const autoFillTriedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (isLoading || bulkProgress) return;
+    const fresh = missingForms.filter((e) => !autoFillTriedRef.current.has(e.id));
+    if (fresh.length === 0) return;
+    const timer = setTimeout(() => {
+      for (const e of fresh) autoFillTriedRef.current.add(e.id);
+      void fillAllMissing(fresh);
+    }, 0);
+    return () => clearTimeout(timer);
+    // fillAllMissing is recreated every render; the list is what matters here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missingForms, isLoading, bulkProgress]);
+
   const activeFilterCount = verbTypes.size;
 
   /** Starts a session on one pack — stamps it, then hands the words to the quiz. */
