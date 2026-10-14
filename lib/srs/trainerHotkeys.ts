@@ -1,10 +1,10 @@
 // Keyboard control for the recognize trainer.
 //
 // A review session is a long run of identical decisions, and reaching for the
-// mouse between every one of them is most of the effort. The numeric keypad
-// already reads like the card: the four grade buttons carry the digits 1–4, so
-// those keys are the grades, and the rest of the pad covers what is left on the
-// card in the order the buttons sit in.
+// mouse between every one of them is most of the effort. The three answers sit
+// on the keypad's home row — 4 «Забыл», 5 «Помню», 6 «Легко» — under the three
+// fingers that rest there; flip is 1 below them, and the top row keeps the
+// card's own buttons (7 story, 8 discuss, 9 speak).
 
 export type TrainerAction =
   | { kind: "grade"; score: 1 | 2 | 3 | 4 }
@@ -21,17 +21,12 @@ export type TrainerAction =
   | { kind: "zenExit" };
 
 const BY_DIGIT: Record<string, TrainerAction> = {
-  "1": { kind: "grade", score: 1 },
-  "2": { kind: "grade", score: 2 },
-  "3": { kind: "grade", score: 3 },
-  "4": { kind: "grade", score: 4 },
-  "5": { kind: "speak" },
-  "6": { kind: "flip" },
+  "1": { kind: "flip" },
+  "4": { kind: "grade", score: 1 },
+  "5": { kind: "grade", score: 3 },
+  "6": { kind: "grade", score: 4 },
   "7": { kind: "story" },
   "8": { kind: "discuss" },
-  // The card's speaker and the top row's speaker voice the same thing — the
-  // word in the language being learned — so both keys land on one action
-  // rather than inventing a difference the buttons do not have.
   "9": { kind: "speak" },
   "0": { kind: "live" },
 };

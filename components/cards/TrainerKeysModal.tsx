@@ -17,10 +17,12 @@ type Props = {
 type Row = { keys: string[]; label: string; note?: string };
 
 const CARD_KEYS: Row[] = [
-  { keys: ["1", "3", "4"], label: "Оценка", note: "забыл · помню · легко (2 — тоже «помню»)" },
-  { keys: ["5"], label: "Озвучить" },
+  { keys: ["4"], label: "Забыл" },
+  { keys: ["5"], label: "Помню" },
+  { keys: ["6"], label: "Легко" },
+  { keys: ["1"], label: "Перевернуть карточку" },
+  { keys: ["9"], label: "Озвучить" },
   { keys: ["+"], label: "Переозвучить", note: "заново, не из кеша" },
-  { keys: ["6"], label: "Перевернуть карточку" },
   { keys: ["7"], label: "Мини-рассказ" },
   { keys: ["8"], label: "Обсудить с AI" },
   { keys: ["←", "→"], label: "История", note: "пройденные карточки" },

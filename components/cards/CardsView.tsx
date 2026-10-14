@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard, EyeOff, ShieldCheck } from "lucide-react";
 import { CEFR_LEVELS, LEARNING_ITEM_TYPES, type AiAnalysis, type CardFilters, type CardSkillState, type CefrLevel, type DiscussMessage, type Flashcard, type LearningItemType, type ReverseWordAnalysis, type TrainVariant, type TtsProvider } from "@/lib/types";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
-import { formatInterval, previewIntervals, recallChance, reviewMemory, type ReviewGrade } from "@/lib/srs/fsrs";
+import { recallChance, reviewMemory, type ReviewGrade } from "@/lib/srs/fsrs";
 import {
   ALL_TRAIN_VARIANTS,
   buildTrainQueue,
@@ -1622,16 +1622,6 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   const answerText = isReversed ? currentCard?.front : currentCard?.back;
   const promptLang = isReversed ? nativeLanguage : targetLanguage;
   const currentProgress = currentCard ? getVariantProgress(currentCard, currentVariant, variantProgress) : null;
-  // When each answer would bring the word back. A relearning pass is already
-  // scheduled for tomorrow by its «Забыл», so it says so.
-  const gradeIntervals: Record<ReviewGrade, string> | null = !currentProgress || previewCard
-    ? null
-    : currentItem?.relearn
-      ? { 1: "ещё раз", 3: "завтра", 4: "завтра" }
-      : (() => {
-          const days = previewIntervals(currentProgress);
-          return { 1: formatInterval(days[1]), 3: formatInterval(days[3]), 4: formatInterval(days[4]) };
-        })();
   const historyPosition = getReviewHistoryPosition(reviewHistory.length, viewingHistoryIndex);
   const historyItem = historyPosition ? reviewHistory[historyPosition.index] : null;
   const historyCard = historyItem?.card;
@@ -2056,7 +2046,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
         .srs-dir-chip { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-muted); font-size: 12px; font-weight: 750; cursor: pointer; transition: all 0.18s ease; }
         .srs-dir-chip:hover { border-color: var(--border-strong); color: var(--text-primary); }
         .srs-dir-chip.active { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
-        .grade-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px 4px; border: 1px solid var(--border); border-radius: var(--radius-md); font-weight: 700; font-size: 12px; cursor: pointer; background: var(--bg-elevated); transition: all 0.2s; color: var(--text-primary); }
+        .grade-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 11px 4px; font-size: 14px; border: 1px solid var(--border); border-radius: var(--radius-md); font-weight: 800; cursor: pointer; background: var(--bg-elevated); transition: all 0.2s; color: var(--text-primary); }
         .grade-btn:active { transform: scale(0.96); }
         .grade-btn-1 { border-color: rgba(224, 136, 136, 0.3); }
         .grade-btn-1:hover, .grade-btn-1:active { background: rgba(224, 136, 136, 0.1); border-color: #e08888; }
@@ -2068,8 +2058,10 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
         .grade-btn-4:hover, .grade-btn-4:active { background: rgba(212, 168, 71, 0.1); border-color: var(--accent); }
         .grade-score { font-size: 15px; font-weight: 900; margin-bottom: 2px; }
         .grade-lbl { font-size: 10px; color: var(--text-muted); }
+        .grade-btn-1 { color: #e08888; }
+        .grade-btn-3 { color: var(--green); }
+        .grade-btn-4 { color: var(--accent); }
         .grade-btn-1 .grade-score { color: #e08888; }
-        .grade-when { font-size: 11px; font-weight: 700; color: var(--text-muted); margin-top: 2px; }
         .grade-btn-2 .grade-score { color: var(--blue); }
         .grade-btn-3 .grade-score { color: var(--green); }
         .grade-btn-4 .grade-score { color: var(--accent); }
@@ -2879,18 +2871,15 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
 
               {cardFlipper}
 
-              {/* Grade buttons — always available. Each says when the word
-                  comes back for that answer, as Anki prints it. */}
+              {/* Grade buttons — always available. Keys 4 · 5 · 6. */}
               <div className="srs-grade-row">
                 {([
-                  [1, "1", "Забыл", "grade-btn-1"],
-                  [3, "3", "Помню", "grade-btn-3"],
-                  [4, "4", "Легко", "grade-btn-4"],
-                ] as const).map(([grade, key, label, cls]) => (
+                  [1, "Забыл", "grade-btn-1"],
+                  [3, "Помню", "grade-btn-3"],
+                  [4, "Легко", "grade-btn-4"],
+                ] as const).map(([grade, label, cls]) => (
                   <button key={grade} className={`grade-btn ${cls}`} onClick={() => handleGrade(grade)} type="button">
-                    <span className="grade-score">{key}</span>
-                    <span className="grade-lbl">{label}</span>
-                    {gradeIntervals && <span className="grade-when">{gradeIntervals[grade]}</span>}
+                    {label}
                   </button>
                 ))}
               </div>
