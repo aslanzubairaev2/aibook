@@ -27,6 +27,7 @@ import {
 } from "@/lib/db/dictionaryStore";
 import { describePackTraining, normalizePackTraining } from "@/lib/cards";
 import { applyNounFieldRules, normalizeLearningItemType, type DictionaryEntryDraft } from "@/lib/ai/buildDictionaryPrompt";
+import { validateGermanVerbEntries } from "@/lib/ai/verbEntryValidation";
 import { estimateLevel } from "@/lib/text/readability";
 import { buildKnownWordSet, buildWordCounts, computeCoverage } from "@/lib/text/vocab";
 import type { GeneratedLesson } from "@/lib/ai/buildLessonPrompt";
@@ -1362,6 +1363,18 @@ function parseWordDrafts(raw: unknown): DictionaryEntryDraft[] {
   return dedupeDictionaryDrafts(parsed);
 }
 
+/**
+ * German verbs need all four principal-parts fields to reach the «Глаголы»
+ * trainer. «ja»/«true» are normalized to «да»; what is still missing is
+ * reported back so the agent can resend those verbs with add_words_to_batch.
+ */
+function checkVerbForms(drafts: DictionaryEntryDraft[], language: string): { drafts: DictionaryEntryDraft[]; missing: string[] } {
+  const checked = validateGermanVerbEntries(drafts, language);
+  return { drafts: checked.entries, missing: checked.invalidVerbs };
+}
+
+const VERB_FORMS_WARNING = "These German verbs were saved without a complete forms object, so the «Глаголы» trainer cannot drill them yet (the learner sees them in the pack as «ждут форм»). Resend them now with add_words_to_batch to the same batch_id, each with forms { praeteritum, partizip2, hilfsverb: haben|sein, trennbar: да|нет }.";
+
 async function addWordsToBatch(ctx: Ctx, args: Args): Promise<unknown> {
   const batchId = String(args.batch_id ?? "").trim();
   if (!batchId) throw new Error("Pass 'batch_id' from list_word_batches.");
@@ -1375,13 +1388,14 @@ async function addWordsToBatch(ctx: Ctx, args: Args): Promise<unknown> {
   if (readError) throw new Error(`batch read failed: ${readError.message}`);
   if (!batch) throw new Error("No such batch in this learner's dictionary.");
 
-  const drafts = parseWordDrafts(args.words);
-  if (drafts.length === 0) {
+  const parsed = parseWordDrafts(args.words);
+  if (parsed.length === 0) {
     throw new Error("Every word needs at least 'headword' and 'translation'.");
   }
 
   const language = String(batch.language ?? "") || (await getLanguages(ctx)).target;
   const title = String(batch.title ?? "");
+  const { drafts, missing: verbsMissingForms } = checkVerbForms(parsed, language);
 
   const saved = await saveDictionaryEntries(ctx.admin, ctx.userId, language, drafts, title, batchId);
   if (!saved.ok) throw new Error(saved.error);
@@ -1405,17 +1419,18 @@ async function addWordsToBatch(ctx: Ctx, args: Args): Promise<unknown> {
     words_updated: saved.updated,
     cards_created: cards.created,
     cards_relinked: cards.relinked,
+    ...(verbsMissingForms.length > 0 ? { verbs_missing_forms: verbsMissingForms, verbs_warning: VERB_FORMS_WARNING } : {}),
     note: "Words already in the dictionary were updated rather than duplicated, and cards that already existed kept their review history.",
   };
 }
 
 async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
   const title = String(args.title ?? "").trim().slice(0, 200);
-  const drafts = parseWordDrafts(args.words);
+  const parsed = parseWordDrafts(args.words);
   if (!title) {
     throw new Error("A batch needs a 'title' — what the learner will see on the page in their Словарь.");
   }
-  if (drafts.length === 0) {
+  if (parsed.length === 0) {
     throw new Error("A batch needs a non-empty 'words' array, and every word needs at least 'headword' and 'translation'.");
   }
 
@@ -1423,6 +1438,7 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
   const language = typeof args.language === "string" && args.language.trim()
     ? args.language.trim()
     : langs.target;
+  const { drafts, missing: verbsMissingForms } = checkVerbForms(parsed, language);
 
   const training = normalizePackTraining(args.training);
   const details = packDetails(args);
@@ -1478,6 +1494,7 @@ async function addWordBatch(ctx: Ctx, args: Args): Promise<unknown> {
     training_summary: describePackTraining(training) || "the learner's own trainer filters",
     description: details.description || null,
     instruction: details.instruction || null,
+    ...(verbsMissingForms.length > 0 ? { verbs_missing_forms: verbsMissingForms, verbs_warning: VERB_FORMS_WARNING } : {}),
     note: "The batch appears in the learner's Словарь as its own page, with its own progress and a «тренировать» button; every new word is already a flashcard. Words that were already cards kept the review history they had.",
   };
 }
@@ -2018,7 +2035,7 @@ export const MCP_TOOLS: McpToolDef[] = [
               gender: { type: "string", description: "m / f / n / pl for nouns" },
               article: { type: "string" },
               plural: { type: "string", description: "Written out in full: «die Haltestellen»" },
-              forms: { type: "object", description: "Irregular verb parts: praeteritum, partizip2, hilfsverb, trennbar" },
+              forms: { type: "object", description: "Required for every German verb, regular ones too — all four keys: praeteritum (3rd person singular), partizip2 (bare participle), hilfsverb (exactly «haben» or «sein»), trennbar (exactly «да» or «нет»). A verb missing any of them is saved but stays out of the «Глаголы» trainer until its forms are filled." },
               cefr: { type: "string", enum: ["A1", "A2", "B1", "B2", "C1", "C2"] },
               note: { type: "string", description: "One short warning if the word has a trap (a case, a false friend)" },
               example: { type: "string" },

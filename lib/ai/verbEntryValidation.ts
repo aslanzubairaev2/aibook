@@ -1,6 +1,7 @@
 import type { DictionaryEntryDraft } from "./buildDictionaryPrompt";
 
-const VERB_POS = /глагол|verb|verbo|verbe|verbo/iu;
+// Word boundary so an English "adverb" is not read as a verb.
+const VERB_POS = /глагол|\bverb[oe]?\b/iu;
 const VERB_FORM_KEYS = ["praeteritum", "partizip2", "hilfsverb", "trennbar"] as const;
 const AUXILIARIES = new Set(["haben", "sein"]);
 const SEPARABLE_VALUES = new Set(["да", "нет", "ja", "nein", "yes", "no", "true", "false"]);

@@ -20,6 +20,7 @@ import { usePackProgress } from "@/lib/srs/usePackProgress";
 import { formatTrainedAt, isCompletedToday, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
 import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
+import { groupVerbsByPack } from "@/lib/verbPacks";
 import type { UserProfile } from "@/lib/types";
 
 type Props = {
@@ -28,13 +29,6 @@ type Props = {
 };
 
 const VERB_TYPE_ORDER: GermanVerbClass[] = ["weak", "strong", "mixed", "special", "impersonal"];
-
-type VerbGroup = {
-  key: string;
-  title: string;
-  createdAt: number;
-  verbs: DictionaryEntry[];
-};
 
 type FillResult = { ok: true } | { ok: false; error: string };
 
@@ -217,31 +211,18 @@ export function VerbsView({ profile, onBack }: Props) {
   // exists for browsing, not for looking something specific up.
   const isNarrowed = query.trim().length > 0 || verbTypes.size > 0;
 
-  const groups = useMemo<VerbGroup[]>(() => {
-    const byBatch = new Map<string, DictionaryEntry[]>();
-    const loose: DictionaryEntry[] = [];
-    for (const v of verbs) {
-      if (v.batch_id) {
-        const list = byBatch.get(v.batch_id) ?? [];
-        list.push(v);
-        byBatch.set(v.batch_id, list);
-      } else {
-        loose.push(v);
-      }
-    }
+  // Incomplete verbs that match the search. A type filter needs the forms to
+  // classify a verb, so it hides them until they are filled.
+  const pendingVerbs = useMemo(() => {
+    if (verbTypes.size > 0) return [];
+    const terms = parseSearchTerms(query);
+    return missingForms.filter((e) => matchesSearchTerms([e.headword, e.lemma, e.translation], terms));
+  }, [missingForms, verbTypes, query]);
 
-    const result: VerbGroup[] = [];
-    for (const batch of batches) {
-      const batchVerbs = byBatch.get(batch.id) ?? [];
-      if (batchVerbs.length === 0) continue;
-      result.push({ key: batch.id, title: batch.title, createdAt: Date.parse(batch.created_at) || 0, verbs: batchVerbs });
-    }
-    result.sort((a, b) => b.createdAt - a.createdAt);
-    if (loose.length > 0) {
-      result.push({ key: "loose", title: "Без пачки", createdAt: 0, verbs: loose });
-    }
-    return result;
-  }, [verbs, batches]);
+  const { groups, loosePending } = useMemo(
+    () => groupVerbsByPack(verbs, pendingVerbs, batches),
+    [verbs, pendingVerbs, batches],
+  );
 
   function toggleMode(mode: QuizMode) {
     setQuizModes((prev) => {
@@ -335,8 +316,7 @@ export function VerbsView({ profile, onBack }: Props) {
     setToast(result.ok ? "✓ Формы заполнены" : result.error);
   }
 
-  async function fillAllMissing() {
-    const targets = missingForms;
+  async function fillAllMissing(targets: DictionaryEntry[]) {
     if (targets.length === 0 || bulkProgress) return;
     setBulkProgress({ done: 0, total: targets.length });
     setFillingIds(new Set(targets.map((e) => e.id)));
@@ -583,9 +563,9 @@ export function VerbsView({ profile, onBack }: Props) {
             </div>
           )}
 
-          {allVerbs.length > 0 && groups.length === 0 && <p className="dict-nothing">Ничего не нашлось.</p>}
+          {allGlagolEntries.length > 0 && groups.length === 0 && loosePending.length === 0 && <p className="dict-nothing">Ничего не нашлось.</p>}
 
-          {allVerbs.length > 0 && (
+          {groups.length > 0 && (
             <div className="verbs-groups">
               {groups.map((group) => {
                 const open = isNarrowed || openGroups.has(group.key);
@@ -603,6 +583,7 @@ export function VerbsView({ profile, onBack }: Props) {
                         <span className="dict-batch-meta">
                           {group.verbs.length} {verbNoun(group.verbs.length)}
                           {nonStandardCount > 0 && ` · ${nonStandardCount} нестандартных`}
+                          {group.pending.length > 0 && ` · ${group.pending.length} без форм`}
                           {trainedAt ? ` · тренировка ${trainedAt}` : " · ещё не тренировали"}
                         </span>
                       </div>
@@ -613,9 +594,9 @@ export function VerbsView({ profile, onBack }: Props) {
                     <PackBar coverage={coverage} />
 
                     <div className="dict-batch-actions">
-                      <button type="button" className="dict-train-btn" disabled={sessionVerbs.length === 0} onClick={() => trainPack(group.key, sessionVerbs)} title={sessionVerbs.length === 0 ? "Все слова этой пачки уже пройдены сегодня" : undefined}>
+                      <button type="button" className="dict-train-btn" disabled={sessionVerbs.length === 0} onClick={() => trainPack(group.key, sessionVerbs)} title={group.verbs.length === 0 ? "Сначала дозаполните формы глаголов" : sessionVerbs.length === 0 ? "Все слова этой пачки уже пройдены сегодня" : undefined}>
                         <Dumbbell size={14} />
-                        {sessionVerbs.length === 0 && trainingFilter === "all" ? "Сегодня всё пройдено" : trainingFilter !== "all" ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${trainable.length})` : coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
+                        {group.verbs.length === 0 ? "Нужны формы" : sessionVerbs.length === 0 && trainingFilter === "all" ? "Сегодня всё пройдено" : trainingFilter !== "all" ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${trainable.length})` : coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
                       </button>
                       {unfamiliar.length > 0 && (
                         <button
@@ -639,7 +620,18 @@ export function VerbsView({ profile, onBack }: Props) {
                       )}
                     </div>
 
-                    {open && (
+                    {group.pending.length > 0 && (
+                      <MissingFormsList
+                        entries={group.pending}
+                        hint="ИИ определит Präteritum, Partizip II, haben/sein и отделяемость — глаголы останутся в этой пачке."
+                        fillingIds={fillingIds}
+                        bulkProgress={bulkProgress}
+                        onFillOne={(entry) => void fillOne(entry)}
+                        onFillAll={() => void fillAllMissing(group.pending)}
+                      />
+                    )}
+
+                    {open && group.verbs.length > 0 && (
                       <div className="verb-table-wrap">
                           <table className="verb-table">
                             <thead>
@@ -712,44 +704,16 @@ export function VerbsView({ profile, onBack }: Props) {
             </div>
           )}
 
-          {missingForms.length > 0 && (
-            <section className="verb-missing">
-              <div className="verb-missing-head">
-                <strong>Без форм — {missingForms.length}</strong>
-                <button
-                  type="button"
-                  className="dict-train-btn verb-missing-fill-all"
-                  onClick={() => void fillAllMissing()}
-                  disabled={bulkProgress !== null}
-                >
-                  {bulkProgress
-                    ? `Заполняю ${bulkProgress.done} из ${bulkProgress.total}…`
-                    : <><Wand2 size={14} /> Дозаполнить все</>}
-                </button>
-              </div>
-              <p className="verb-missing-hint">
-                Эти глаголы уже в Словаре, но без Präteritum/Partizip II — ИИ может определить их сам.
-              </p>
-              <div className="verb-missing-list">
-                {missingForms.map((entry) => (
-                  <div key={entry.id} className="verb-missing-row">
-                    <span className="verb-missing-word">
-                      {entry.headword}
-                      {entry.translation && <em> — {entry.translation}</em>}
-                    </span>
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      aria-label={`Заполнить формы для ${entry.headword}`}
-                      onClick={() => void fillOne(entry)}
-                      disabled={fillingIds.has(entry.id)}
-                    >
-                      {fillingIds.has(entry.id) ? <Loader2 className="spin" size={15} /> : <Wand2 size={15} />}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </section>
+          {loosePending.length > 0 && (
+            <MissingFormsList
+              title={`Без форм — ${loosePending.length}`}
+              entries={loosePending}
+              hint="Эти глаголы уже в Словаре, но без Präteritum/Partizip II — ИИ может определить их сам."
+              fillingIds={fillingIds}
+              bulkProgress={bulkProgress}
+              onFillOne={(entry) => void fillOne(entry)}
+              onFillAll={() => void fillAllMissing(loosePending)}
+            />
           )}
         </>
       )}
@@ -836,6 +800,55 @@ function partizipFirstPerson(entry: DictionaryEntry): string {
   if (!p2) return "";
   const aux = (entry.forms?.hilfsverb || "").trim().toLowerCase();
   return aux === "sein" ? `ich bin ${p2}` : `ich habe ${p2}`;
+}
+
+/** Verbs saved without a full principal-parts record, with a way to have the AI fill them in. */
+function MissingFormsList({ title, entries, hint, fillingIds, bulkProgress, onFillOne, onFillAll }: {
+  title?: string;
+  entries: DictionaryEntry[];
+  hint: string;
+  fillingIds: Set<string>;
+  bulkProgress: { done: number; total: number } | null;
+  onFillOne: (entry: DictionaryEntry) => void;
+  onFillAll: () => void;
+}) {
+  return (
+    <section className={`verb-missing${title ? "" : " verb-missing-in-pack"}`}>
+      <div className="verb-missing-head">
+        <strong>{title ?? `Ждут форм — ${entries.length}`}</strong>
+        <button
+          type="button"
+          className="dict-train-btn verb-missing-fill-all"
+          onClick={onFillAll}
+          disabled={bulkProgress !== null}
+        >
+          {bulkProgress
+            ? `Заполняю ${bulkProgress.done} из ${bulkProgress.total}…`
+            : <><Wand2 size={14} /> {entries.length === 1 ? "Дозаполнить" : "Дозаполнить все"}</>}
+        </button>
+      </div>
+      <p className="verb-missing-hint">{hint}</p>
+      <div className="verb-missing-list">
+        {entries.map((entry) => (
+          <div key={entry.id} className="verb-missing-row">
+            <span className="verb-missing-word">
+              {entry.headword}
+              {entry.translation && <em> — {entry.translation}</em>}
+            </span>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label={`Заполнить формы для ${entry.headword}`}
+              onClick={() => onFillOne(entry)}
+              disabled={fillingIds.has(entry.id)}
+            >
+              {fillingIds.has(entry.id) ? <Loader2 className="spin" size={15} /> : <Wand2 size={15} />}
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function isCompleteGermanVerbForms(forms: Record<string, string> | null | undefined): boolean {

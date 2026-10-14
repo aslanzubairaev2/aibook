@@ -2684,6 +2684,8 @@ textarea,
 .verb-missing-row:first-child { border-top: none; }
 .verb-missing-word { font-size: 13.5px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .verb-missing-word em { font-style: normal; color: var(--text-muted); }
+/* The same backlog, inside the pack its verbs belong to. */
+.verb-missing-in-pack { margin: 10px 0 0; padding: 10px 12px; background: transparent; }
 
 /* ── Card markers ──────────────────────────────────────────────────────────
    Type, part of speech and level, stacked top-left like the badges on a shop

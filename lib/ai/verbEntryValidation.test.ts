@@ -81,3 +81,12 @@ test("image parser reports incomplete German verb rows instead of silently savin
   assert.equal(result.invalidVerbs.length, 1);
 });
 
+
+test("a tutor's verb with only Präteritum and Partizip II is reported, an adverb is not", () => {
+  const result = validateGermanVerbEntries([
+    verb({ headword: "öffnen", lemma: "öffnen", forms: { praeteritum: "öffnete", partizip2: "geöffnet" } }),
+    verb({ headword: "gern", lemma: "gern", partOfSpeech: "adverb" }),
+  ], "de");
+  assert.equal(result.invalidVerbs.length, 1);
+  assert.match(result.invalidVerbs[0], /^öffnen: hilfsverb, trennbar$/);
+});
