@@ -192,9 +192,13 @@ test("a direction the learner has never been asked in counts as due", () => {
 });
 
 test("struggling means ground down, not merely lapsed once", () => {
-  assert.equal(isStrugglingProgress({ lapses: 2, repetitions: 5, ease: 2.5 }), true);
+  // Forgotten twice long ago and answered well since: forgiven (treffen).
+  assert.equal(isStrugglingProgress({ lapses: 2, repetitions: 5, ease: 3.25 }), false);
+  assert.equal(isStrugglingProgress({ lapses: 3, repetitions: 5, ease: 2.5 }), true);
   assert.equal(isStrugglingProgress({ lapses: 0, repetitions: 3, ease: 2.1 }), true);
   assert.equal(isStrugglingProgress({ lapses: 1, repetitions: 4, ease: 2.5 }), false);
+  assert.equal(isStrugglingProgress({ lapses: 1, repetitions: 0, ease: 2.5, status: "relearning" }), true);
+  assert.equal(isStrugglingProgress({ lapses: 2, repetitions: 5, ease: 3.25, difficulty: 8.2 }), true);
   // Untouched cards are not struggling, whatever their default ease says.
   assert.equal(isStrugglingProgress({ lapses: 0, repetitions: 0, ease: 2.2 }), false);
 });

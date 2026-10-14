@@ -423,6 +423,10 @@ export type Flashcard = {
   easeFactor: number;
   dueAt: string; // ISO 8601 string
   lastReviewedAt?: string | null;
+  /** FSRS: days until recall drops to 90 %. Null until the first review on FSRS. */
+  stability?: number | null;
+  /** FSRS: 1 (trivial) … 10 (keeps slipping). Null until the first review on FSRS. */
+  difficulty?: number | null;
   sourceBookId?: string | null;
   sourceBookTitle?: string | null;
   /** CEFR level of the word, when known (cards made from the dictionary carry it). */
@@ -443,6 +447,10 @@ export type SkillProgress = {
   easeFactor: number;
   dueAt: string;
   lastReviewedAt: string | null;
+  /** FSRS: days until recall drops to 90 %. Null until the first review on FSRS. */
+  stability?: number | null;
+  /** FSRS: 1 (trivial) … 10 (keeps slipping). Null until the first review on FSRS. */
+  difficulty?: number | null;
 };
 
 export type CardSkillState = Partial<Record<ProductiveSkill, SkillProgress>>;

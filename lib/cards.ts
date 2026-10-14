@@ -1,4 +1,5 @@
 import { CEFR_LEVELS, type CardFilters, type CardVariantState, type CefrFilterMode, type CefrLevel, type Flashcard, type LearningItemType, type PackSort, type PackTraining, type SkillProgress, type TrainVariant } from "@/lib/types";
+import { isStrugglingMemory } from "@/lib/srs/fsrs";
 
 export const ALL_TRAIN_VARIANTS: TrainVariant[] = ["forward", "reverse", "audio"];
 
@@ -25,6 +26,9 @@ export type VariantProgress = {
   intervalDays: number;
   easeFactor: number;
   dueAt: string;
+  lastReviewedAt?: string | null;
+  stability?: number | null;
+  difficulty?: number | null;
 };
 
 export const CARD_STATUSES: CardStatus[] = ["new", "learning", "review", "relearning"];
@@ -480,15 +484,69 @@ export function getVariantProgress(
 }
 
 /**
- * "Hard": repeatedly forgotten, or ground down to a low ease factor — the ones
- * the learner keeps losing. Trainable regardless of the due date.
+ * "Hard": the words that keep slipping — FSRS difficulty high, or forgotten
+ * and not yet answered since. Trainable regardless of the due date. A lapse
+ * from weeks ago no longer brands a word for good once later answers have
+ * brought its difficulty down.
  */
-export function isHardProgress(p: { lapses: number; repetitions: number; easeFactor: number }): boolean {
-  return p.lapses >= 2 || (p.repetitions > 0 && p.easeFactor <= 2.2);
+export function isHardProgress(p: VariantProgress): boolean {
+  return isStrugglingMemory(p);
 }
 
 export function isVariantDue(p: VariantProgress, todayEndMs: number): boolean {
   return p.status === "new" || Date.parse(p.dueAt) <= todayEndMs;
+}
+
+function lastReviewMs(card: Flashcard, variant: TrainVariant, variantProgress: VariantProgressMap): number {
+  const at = variant === "forward" ? card.lastReviewedAt : variantProgress[card.id]?.[variant]?.lastReviewedAt;
+  const ms = at ? Date.parse(at) : NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
+ * One word, one direction a day — Anki's «bury related cards».
+ *
+ * «einsteigen» forgotten in «Читаю», then «садиться (в транспорт)» two cards
+ * later in «Говорю»: the second answer is the first one remembered, not
+ * recall, and it graded a direction the learner has not actually shown. So a
+ * word answered today in any direction has its other directions held until
+ * tomorrow, and when several of its directions fall due together only the one
+ * waiting longest is offered. The others stay due and lead on a later day.
+ *
+ * `candidates` are the directions that already qualify (due, or matching the
+ * filter); `buryAnsweredToday` is off for a deliberate drill, which may repeat
+ * a word answered earlier but still shows each word once.
+ */
+export function pickDirectionForToday(
+  card: Flashcard,
+  candidates: TrainVariant[],
+  variantProgress: VariantProgressMap,
+  todayEndMs: number,
+  buryAnsweredToday = true,
+): TrainVariant | null {
+  if (candidates.length === 0) return null;
+  if (buryAnsweredToday) {
+    const todayStartMs = todayEndMs - 86_400_000 + 1;
+    if (ALL_TRAIN_VARIANTS.some((v) => lastReviewMs(card, v, variantProgress) >= todayStartMs)) return null;
+  }
+  // A direction already being learned that has come due goes first — that is
+  // memory slipping. A word new in every direction starts with «Читаю»,
+  // recognition before production, in the order the directions are listed.
+  const reviewed = candidates.filter((v) => getVariantProgress(card, v, variantProgress).status !== "new");
+  if (reviewed.length === 0) return candidates[0];
+  let best = reviewed[0];
+  let bestDue = Date.parse(getVariantProgress(card, best, variantProgress).dueAt) || 0;
+  for (const variant of reviewed.slice(1)) {
+    const due = Date.parse(getVariantProgress(card, variant, variantProgress).dueAt) || 0;
+    if (due < bestDue) { best = variant; bestDue = due; }
+  }
+  return best;
+}
+
+/** The direction a card asks for today, if any — every direction considered. */
+export function todaysDirection(card: Flashcard, variantProgress: VariantProgressMap, todayEndMs: number): TrainVariant | null {
+  const due = ALL_TRAIN_VARIANTS.filter((v) => isVariantDue(getVariantProgress(card, v, variantProgress), todayEndMs));
+  return pickDirectionForToday(card, due, variantProgress, todayEndMs);
 }
 
 export type TrainSelection = {
@@ -539,12 +597,12 @@ export function buildTrainQueue(
 
   const items: TrainQueueItem[] = [];
   for (const card of scoped) {
-    for (const variant of selection.variants) {
+    const matching = selection.variants.filter((variant) => {
       const p = getVariantProgress(card, variant, variantProgress);
-      if (matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule)) {
-        items.push({ card, variant });
-      }
-    }
+      return matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule);
+    });
+    const variant = pickDirectionForToday(card, matching, variantProgress, todayEndMs, !selection.ignoreSchedule);
+    if (variant) items.push({ card, variant });
   }
   return items;
 }
@@ -601,23 +659,27 @@ export function countTrainCandidates(
   };
   const scoped = filterCardsByTrainingSource(cards, selection.book ?? "all", selection.sourceId ?? null, selection.excluded);
 
+  // Counted the way the queue is built: a word contributes at most one
+  // direction, so every chip promises exactly what a session would serve.
+  const bury = !selection.ignoreSchedule;
   for (const card of scoped) {
     const typeMatches = selection.type === "all" || card.type === selection.type;
-    for (const variant of selection.variants) {
-      const p = getVariantProgress(card, variant, variantProgress);
-      const due = isVariantDue(p, todayEndMs);
+    const progress = new Map(selection.variants.map((v) => [v, getVariantProgress(card, v, variantProgress)] as const));
+    const pick = (keep: (p: VariantProgress) => boolean, buryToday = bury) =>
+      pickDirectionForToday(card, selection.variants.filter((v) => keep(progress.get(v)!)), variantProgress, todayEndMs, buryToday);
 
-      if (typeMatches) {
-        if (isHardProgress(p)) counts.byStatus.hard += 1;
-        if (due) {
-          counts.byStatus.all += 1;
-          counts.byStatus[p.status] += 1;
-        }
+    if (typeMatches) {
+      if (pick(isHardProgress, false)) counts.byStatus.hard += 1;
+      const dueVariant = pick((p) => isVariantDue(p, todayEndMs), true);
+      if (dueVariant) {
+        counts.byStatus.all += 1;
+        counts.byStatus[progress.get(dueVariant)!.status] += 1;
       }
-      if (matchesTrainStatus(p, selection.status, due, selection.ignoreSchedule)) {
-        counts.byType.all += 1;
-        counts.byType[card.type] += 1;
-      }
+    }
+    const chosen = pick((p) => matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule));
+    if (chosen) {
+      counts.byType.all += 1;
+      counts.byType[card.type] += 1;
     }
   }
   return counts;
@@ -816,6 +878,9 @@ export function computeDeckStats(
     let cardOverdue = false;
     let cardTouched = false;
     let cardHard = false;
+    // Today's plan holds one direction per word (see pickDirectionForToday);
+    // the others wait for a later day and are counted there, not here.
+    const todays = todaysDirection(card, variantProgress, todayEndMs);
 
     for (const variant of ALL_TRAIN_VARIANTS) {
       const p = getVariantProgress(card, variant, variantProgress);
@@ -826,7 +891,7 @@ export function computeDeckStats(
         stats.startedByVariant[variant] += 1;
         cardTouched = true;
       }
-      if (isVariantDue(p, todayEndMs)) {
+      if (variant === todays) {
         cardDue = true;
         stats.dueReps += 1;
         stats.dueByVariant[variant] += 1;
@@ -836,7 +901,7 @@ export function computeDeckStats(
           cardOverdue = true;
           stats.overdueReps += 1;
         }
-      } else {
+      } else if (!isVariantDue(p, todayEndMs)) {
         const inDays = Math.ceil((Date.parse(p.dueAt) - todayEndMs) / dayMs);
         if (inDays >= 1 && inDays < FORECAST_DAYS) stats.forecast[inDays].count += 1;
       }

@@ -17,7 +17,7 @@ type Props = {
 type Row = { keys: string[]; label: string; note?: string };
 
 const CARD_KEYS: Row[] = [
-  { keys: ["1", "2", "3", "4"], label: "Оценка", note: "забыл · трудно · хорошо · легко" },
+  { keys: ["1", "3", "4"], label: "Оценка", note: "забыл · помню · легко (2 — тоже «помню»)" },
   { keys: ["5"], label: "Озвучить" },
   { keys: ["+"], label: "Переозвучить", note: "заново, не из кеша" },
   { keys: ["6"], label: "Перевернуть карточку" },

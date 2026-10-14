@@ -84,6 +84,8 @@ export type DbFlashcard = {
   repetitions: number;
   lapses: number;
   easiness_factor: number;
+  stability?: number | null;
+  difficulty?: number | null;
   interval_days: number;
   next_review_at: string | null;
   last_reviewed_at: string | null;
@@ -102,6 +104,8 @@ export type DbCardVariantProgress = {
   lapses: number;
   interval_days: number;
   easiness_factor: number;
+  stability?: number | null;
+  difficulty?: number | null;
   next_review_at: string;
   last_reviewed_at: string | null;
   updated_at: string;
@@ -395,7 +399,7 @@ export async function sbGetCardVariantProgress(userId: string): Promise<DbCardVa
   return fetchAllRows<DbCardVariantProgress>("sbGetCardVariantProgress", (from, to) =>
     client
       .from("flashcard_variant_progress")
-      .select("user_id, flashcard_id, variant, status, repetitions, lapses, interval_days, easiness_factor, next_review_at, last_reviewed_at, updated_at")
+      .select("user_id, flashcard_id, variant, status, repetitions, lapses, interval_days, easiness_factor, stability, difficulty, next_review_at, last_reviewed_at, updated_at")
       .eq("user_id", userId)
       .order("flashcard_id").order("variant")
       .range(from, to),
@@ -418,6 +422,9 @@ export async function sbUpsertCardVariantProgress(
     lapses: progress.lapses,
     interval_days: Math.min(progress.intervalDays, MAX_INTERVAL_DAYS),
     easiness_factor: progress.easeFactor,
+    // Left out, not nulled, when a device's copy predates FSRS: an upsert
+    // only touches the columns it is given.
+    ...(progress.stability != null ? { stability: progress.stability, difficulty: progress.difficulty ?? null } : {}),
     // Local progress saved before the interval ceiling can hold dates far past
     // what Postgres accepts; one such row would fail the whole batch.
     next_review_at: clampDueAt(progress.dueAt),

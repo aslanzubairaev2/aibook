@@ -271,7 +271,7 @@ function variant(dueAt: string, overrides: Partial<SkillProgress> = {}): SkillPr
   };
 }
 
-test("a card due in two directions produces one queue item per direction", () => {
+test("a card due in two directions is asked in one of them today, the one waiting longest", () => {
   const cards = [scheduled({ id: "one", status: "review", repetitions: 1, dueAt: "2026-08-14T23:59:59.999Z" })];
   const progress: Record<string, CardVariantState> = {
     one: {
@@ -287,7 +287,23 @@ test("a card due in two directions produces one queue item per direction", () =>
     TODAY_END,
   );
 
-  assert.deepEqual(queue.map((item) => item.variant).sort(), ["forward", "reverse"]);
+  assert.deepEqual(queue.map((item) => item.variant), ["forward"]);
+});
+
+test("a word answered today in one direction is not asked in another until tomorrow", () => {
+  // «einsteigen» forgotten in «Читаю» must not come back as «садиться (в
+  // транспорт)» in «Говорю» two cards later — that answer would be memory of
+  // the card just seen, not recall.
+  const cards = [scheduled({ id: "einsteigen", status: "relearning", repetitions: 0, lapses: 1, dueAt: "2026-08-15T00:00:00.000Z", lastReviewedAt: NOW.toISOString() })];
+  const progress: Record<string, CardVariantState> = { einsteigen: { reverse: variant("2026-08-14T23:59:59.999Z") } };
+
+  const queue = buildTrainQueue(cards, { status: "all", type: "all", variants: ALL_TRAIN_VARIANTS }, progress, TODAY_END);
+  assert.equal(queue.length, 0);
+  assert.equal(computeDeckStats(cards, progress, NOW).dueReps, 0);
+
+  // A deliberate drill still shows the word, once.
+  const drill = buildTrainQueue(cards, { status: "all", type: "all", variants: ALL_TRAIN_VARIANTS, ignoreSchedule: true }, progress, TODAY_END);
+  assert.equal(drill.length, 1);
 });
 
 test("a variant with no stored progress counts as new rather than being skipped", () => {
@@ -298,7 +314,8 @@ test("a variant with no stored progress counts as new rather than being skipped"
     TODAY_END,
   );
 
-  assert.equal(queue.length, 3);
+  // New in all three directions: it is in the queue, starting with «Читаю».
+  assert.deepEqual(queue.map((item) => item.variant), ["forward"]);
 });
 
 test("excluding a source trains everything but it", () => {
@@ -450,7 +467,7 @@ test("chip counts match the queue each chip would build", () => {
   }
 });
 
-test("statistics count every direction, so the banner matches a full session", () => {
+test("statistics count today's direction of each word, so the banner matches a full session", () => {
   const cards = [
     scheduled({ id: "one", status: "review", repetitions: 2, intervalDays: 30, dueAt: "2026-09-30T00:00:00.000Z", lastReviewedAt: "2026-08-14T09:00:00.000Z" }),
     scheduled({ id: "two" }),
@@ -461,10 +478,12 @@ test("statistics count every direction, so the banner matches a full session", (
 
   const stats = computeDeckStats(cards, progress, NOW);
 
-  // "two" is new in all three directions; "one" is settled forward but due in reverse.
-  assert.equal(stats.dueReps, 4);
-  assert.equal(stats.dueCards, 2);
-  assert.deepEqual(stats.dueByVariant, { forward: 1, reverse: 2, audio: 1 });
+  // "two" is new everywhere and starts with «Читаю». "one" is due in reverse,
+  // but its forward direction was answered this morning, so reverse waits for
+  // tomorrow — one direction per word a day.
+  assert.equal(stats.dueReps, 1);
+  assert.equal(stats.dueCards, 1);
+  assert.deepEqual(stats.dueByVariant, { forward: 1, reverse: 0, audio: 0 });
   assert.equal(stats.totalVariants, 6);
   assert.equal(stats.learnedVariants, 3);
   assert.equal(stats.matureCards, 1);
@@ -482,16 +501,16 @@ test("today's remaining work drops on every single grade, not once a card is fin
   const cards = [scheduled({ id: "one" }), scheduled({ id: "two" })];
 
   const before = computeDeckStats(cards, {}, NOW);
-  assert.equal(before.dueReps, 6);
+  assert.equal(before.dueReps, 2);
   assert.equal(before.dueCards, 2);
 
-  // One direction of one card graded away to tomorrow.
+  // One word answered today: it is done for today in every direction.
   const after = computeDeckStats(cards, {
     one: { reverse: variant("2026-08-20T23:59:59.999Z", { lastReviewedAt: NOW.toISOString() }) },
   }, NOW);
 
-  assert.equal(after.dueReps, 5, "remaining repetitions must fall by one");
-  assert.equal(after.dueCards, 2, "the card itself is still due in its other directions");
+  assert.equal(after.dueReps, 1, "remaining repetitions must fall by one");
+  assert.equal(after.dueCards, 1, "its other directions wait until tomorrow");
   assert.equal(after.reviewedToday, 1, "and today's done count must rise");
 });
 
@@ -544,7 +563,7 @@ test("yesterday's unfinished session is named as carried over, not folded in sil
   // the untouched reverse and audio prompts are new, which is waiting, not late.
   assert.equal(stats.overdueReps, 1);
   assert.equal(stats.overdueCards, 1);
-  assert.equal(stats.dueReps, 6);
+  assert.equal(stats.dueReps, 2);
   assert.match(deckInsight(stats) ?? "", /из них 1 с прошлых дней/);
 });
 

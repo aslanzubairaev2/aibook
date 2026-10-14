@@ -69,6 +69,8 @@ export function CardVerbForms({ summary }: { summary: GermanVerbSummary }) {
   );
 }
 
+const NON_VERB_DETAILS = /komparativ|superlativ|мн\. ?ч\.|plural|прил\.|сущ\./iu;
+
 /**
  * Verb line for a flashcard back. Works on every existing card without a data
  * migration: the forms come from the card's own dictionary row, then from the
@@ -86,8 +88,12 @@ export function useCardVerbSummary(
   const parsed = extractVerbFormsFromDetails(details);
   const front = (card?.front ?? "").trim();
   const dictVerb = dictionary ? /глагол|verb/iu.test(dictionary.partOfSpeech) : undefined;
+  // A back that already describes another part of speech — degrees of
+  // comparison, a plural — settles it: «trocken» (сухой) ends in -en like an
+  // infinitive, and asking the AI for its «forms» returned those of trocknen.
+  const otherPos = NON_VERB_DETAILS.test(details);
   const candidate = card?.type === "word" && lang === "de" && dictVerb !== false
-    && (dictVerb === true || hasCompleteGermanVerbForms(parsed.forms) || looksLikeGermanInfinitive(front));
+    && (dictVerb === true || hasCompleteGermanVerbForms(parsed.forms) || (!otherPos && looksLikeGermanInfinitive(front)));
   const lemma = candidate ? (dictionary?.lemma || front).replace(/^sich\s+/iu, "") : undefined;
   const known = dictionary && hasCompleteGermanVerbForms(dictionary.forms) ? dictionary.forms : parsed.forms;
   const { summary } = useGermanVerbSummary(lemma, lang, nativeLang, known);

@@ -801,6 +801,7 @@ function AppInner() {
         repetitions: card.repetitions,
         lapses: card.lapses,
         easiness_factor: card.easeFactor,
+        ...(card.stability != null ? { stability: card.stability, difficulty: card.difficulty ?? null } : {}),
         interval_days: card.intervalDays,
         next_review_at: card.dueAt,
         last_reviewed_at: card.lastReviewedAt || null,
@@ -1329,6 +1330,8 @@ function variantRowsToState(rows: DbCardVariantProgress[]): Record<string, CardV
         easeFactor: row.easiness_factor,
         dueAt: row.next_review_at,
         lastReviewedAt: row.last_reviewed_at,
+        stability: row.stability ?? null,
+        difficulty: row.difficulty ?? null,
       },
     };
   }
@@ -1350,6 +1353,8 @@ function dbCardToFlashcard(c: DbFlashcard): Flashcard {
     easeFactor: c.easiness_factor ?? 2.5,
     dueAt: c.next_review_at || c.created_at || new Date().toISOString(),
     lastReviewedAt: c.last_reviewed_at || null,
+    stability: c.stability ?? null,
+    difficulty: c.difficulty ?? null,
     sourceBookId: c.source_book_id || null,
     sourceBookTitle: c.source_book_title || null,
     cefr: c.cefr ?? null,

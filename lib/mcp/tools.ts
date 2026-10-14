@@ -35,6 +35,7 @@ import { LEARNING_ITEM_TYPES, type CefrLevel } from "@/lib/types";
 import { AGENT_LIMITS, AGENT_TIPS, CAPABILITY_AREAS } from "@/lib/mcp/capabilities";
 import { ASSESSMENT_HANDLERS, ASSESSMENT_TOOLS } from "@/lib/mcp/assessmentTools";
 import { TRAINING_HANDLERS, TRAINING_TOOLS } from "@/lib/mcp/trainingTools";
+import { difficultyFromSm2 } from "@/lib/srs/fsrs";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
@@ -121,6 +122,8 @@ type CardRow = {
   repetitions: number | null;
   lapses: number | null;
   easiness_factor: number | null;
+  stability?: number | null;
+  difficulty?: number | null;
   interval_days: number | null;
   next_review_at: string | null;
   last_reviewed_at: string | null;
@@ -131,7 +134,7 @@ type CardRow = {
 };
 
 const CARD_COLUMNS =
-  "id, front, back, status, repetitions, lapses, easiness_factor, interval_days, next_review_at, last_reviewed_at, source_book_id, source_book_title, selection_type, cefr";
+  "id, front, back, status, repetitions, lapses, easiness_factor, stability, difficulty, interval_days, next_review_at, last_reviewed_at, source_book_id, source_book_title, selection_type, cefr";
 
 /** PostgREST caps a response at 1000 rows without saying so; read in pages. */
 async function readAllPages<T>(
@@ -195,6 +198,8 @@ type VariantRow = {
   repetitions: number | null;
   lapses: number | null;
   easiness_factor: number | null;
+  stability?: number | null;
+  difficulty?: number | null;
   interval_days: number | null;
   next_review_at: string | null;
   last_reviewed_at: string | null;
@@ -214,7 +219,7 @@ async function getVariantProgress(ctx: Ctx): Promise<VariantRow[]> {
     ctx.admin
       .from("flashcard_variant_progress")
       .select(
-        "flashcard_id, variant, status, repetitions, lapses, easiness_factor, interval_days, next_review_at, last_reviewed_at",
+        "flashcard_id, variant, status, repetitions, lapses, easiness_factor, stability, difficulty, interval_days, next_review_at, last_reviewed_at",
       )
       .eq("user_id", ctx.userId)
       .order("flashcard_id")
@@ -241,6 +246,8 @@ export type DirectionProgress = {
   repetitions: number;
   lapses: number;
   ease: number;
+  /** FSRS difficulty 1–10; null until the prompt is first reviewed on FSRS. */
+  difficulty?: number | null;
   intervalDays: number;
   dueAt: string | null;
   lastReviewedAt: string | null;
@@ -266,6 +273,7 @@ export function directionProgress(cards: CardRow[], variants: VariantRow[]): Dir
           repetitions: card.repetitions ?? 0,
           lapses: card.lapses ?? 0,
           ease: card.easiness_factor ?? 2.5,
+          difficulty: card.difficulty ?? null,
           intervalDays: card.interval_days ?? 0,
           dueAt: card.next_review_at,
           lastReviewedAt: card.last_reviewed_at,
@@ -281,6 +289,7 @@ export function directionProgress(cards: CardRow[], variants: VariantRow[]): Dir
         repetitions: row?.repetitions ?? 0,
         lapses: row?.lapses ?? 0,
         ease: row?.easiness_factor ?? 2.5,
+        difficulty: row?.difficulty ?? null,
         intervalDays: row?.interval_days ?? 0,
         dueAt: row?.next_review_at ?? null,
         lastReviewedAt: row?.last_reviewed_at ?? null,
@@ -299,11 +308,14 @@ export function isDueToday(p: DirectionProgress, todayEndMs: number): boolean {
 
 /**
  * "Struggling" is not a low score: it is a prompt the learner keeps losing —
- * forgotten twice, or ground down to an ease factor the algorithm has pushed
- * to the floor. Same rule as the app's «Сложные» filter (isHardProgress).
+ * FSRS difficulty high, or forgotten and not answered since. Same rule as the
+ * app's «Сложные» filter (isHardProgress → isStrugglingMemory), so the tutor
+ * and the app never name different words.
  */
-export function isStrugglingProgress(p: { lapses: number; repetitions: number; ease: number }): boolean {
-  return p.lapses >= 2 || (p.repetitions > 0 && p.ease <= 2.2);
+export function isStrugglingProgress(p: { lapses: number; repetitions: number; ease: number; status?: string; difficulty?: number | null }): boolean {
+  if (p.repetitions === 0 && p.lapses === 0) return false;
+  if (p.status === "relearning") return true;
+  return (p.difficulty ?? difficultyFromSm2(p.ease, p.lapses)) >= 7.5;
 }
 
 /**

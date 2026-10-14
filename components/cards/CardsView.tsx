@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard, EyeOff, ShieldCheck } from "lucide-react";
 import { CEFR_LEVELS, LEARNING_ITEM_TYPES, type AiAnalysis, type CardFilters, type CardSkillState, type CefrLevel, type DiscussMessage, type Flashcard, type LearningItemType, type ReverseWordAnalysis, type TrainVariant, type TtsProvider } from "@/lib/types";
-import { calculateSM2, createDefaultSrsFields } from "@/lib/srs/sm2";
+import { createDefaultSrsFields } from "@/lib/srs/sm2";
+import { formatInterval, previewIntervals, recallChance, reviewMemory, type ReviewGrade } from "@/lib/srs/fsrs";
 import {
   ALL_TRAIN_VARIANTS,
   buildTrainQueue,
@@ -26,6 +27,7 @@ import {
   shuffleTrainQueue,
   splitCardBack,
   relearnAfterGrade,
+  todaysDirection,
   DEFAULT_TRAIN_VARIANTS,
   type DeckStats,
   type ResolvedCardFilters,
@@ -693,9 +695,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   // same rule the statistics use, so the banner, the tab badge and this list
   // can never disagree the way they used to.
   const dueCards = useMemo(
-    () => cards.filter((card) =>
-      ALL_TRAIN_VARIANTS.some((v) => isVariantDue(getVariantProgress(card, v, variantProgress), todayEndTime)),
-    ),
+    () => cards.filter((card) => todaysDirection(card, variantProgress, todayEndTime) !== null),
     [cards, variantProgress, todayEndTime],
   );
 
@@ -1119,10 +1119,14 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     const { card, variant, relearn } = trainQueue[currentTrainIndex];
     const prev = getVariantProgress(card, variant, variantProgress);
     const now = new Date().toISOString();
-    // Forgotten again while relearning: the lapse was counted the first time,
-    // so the schedule stays as it is and the prompt simply comes round again.
-    const stillForgotten = Boolean(relearn) && score === 1;
-    const srsUpdate = calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor, prev);
+    // Three answers: «Забыл», «Помню», «Легко». Key 2 (the old «Трудно») counts
+    // as «Помню» — the learner remembered it.
+    const grade: ReviewGrade = score === 1 ? 1 : score === 4 ? 4 : 3;
+    // A relearning pass is practice: the «Забыл» earlier in this session has
+    // already scheduled the word for tomorrow, and grading it again minutes
+    // later would tell FSRS nothing about memory.
+    const stillForgotten = Boolean(relearn);
+    const srsUpdate = { ...reviewMemory(prev, grade, new Date(now)), easeFactor: prev.easeFactor };
     // A self-rating, not a checked answer: «Легко» is the learner's own word.
     logTrainingEvent({
       trainer: "review",
@@ -1131,7 +1135,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
       word: card.front,
       checks: variant === "reverse" ? "recall" : variant === "audio" ? "listening" : "recognition",
       outcome: "self_rated",
-      selfGrade: score,
+      selfGrade: grade,
       expected: splitCardBack(card.back).meaning || null,
       meta: { early: Boolean(prev.dueAt && Date.parse(prev.dueAt) > Date.now() + 86_400_000), relearn: Boolean(relearn) },
     });
@@ -1156,7 +1160,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     // that direction reads its schedule from the card itself.
     const again = relearnAfterGrade(
       { card, variant, relearn },
-      score,
+      grade,
       variant === "forward" && !stillForgotten ? { ...card, ...srsUpdate, lastReviewedAt: now } : undefined,
     );
     if (again) setTrainQueue((queue) => [...queue, again]);
@@ -1614,6 +1618,16 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   const answerText = isReversed ? currentCard?.front : currentCard?.back;
   const promptLang = isReversed ? nativeLanguage : targetLanguage;
   const currentProgress = currentCard ? getVariantProgress(currentCard, currentVariant, variantProgress) : null;
+  // When each answer would bring the word back. A relearning pass is already
+  // scheduled for tomorrow by its «Забыл», so it says so.
+  const gradeIntervals: Record<ReviewGrade, string> | null = !currentProgress || previewCard
+    ? null
+    : currentItem?.relearn
+      ? { 1: "ещё раз", 3: "завтра", 4: "завтра" }
+      : (() => {
+          const days = previewIntervals(currentProgress);
+          return { 1: formatInterval(days[1]), 3: formatInterval(days[3]), 4: formatInterval(days[4]) };
+        })();
   const historyPosition = getReviewHistoryPosition(reviewHistory.length, viewingHistoryIndex);
   const historyItem = historyPosition ? reviewHistory[historyPosition.index] : null;
   const historyCard = historyItem?.card;
@@ -1919,7 +1933,9 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
                     </div>
                     <div className="card-footer-row">
                       <span>Повторений: {currentProgress?.repetitions ?? 0}</span>
-                      <span style={{ maxWidth: "none" }}>Коэф: {(currentProgress?.easeFactor ?? 2.5).toFixed(2)}</span>
+                      <span style={{ maxWidth: "none" }} title="Насколько вероятно вспомнить слово прямо сейчас (FSRS)">
+                        {currentProgress && currentProgress.status !== "new" ? `Вспомню: ${Math.round(recallChance(currentProgress) * 100)}%` : "Новое"}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -2014,7 +2030,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
         .tts-menu-item { padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text-primary); transition: background 0.15s; white-space: nowrap; }
         .tts-menu-item:hover { background: var(--bg-elevated); }
         .tts-menu-item.active { color: var(--accent); }
-        .srs-grade-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; width: 100%; max-width: 420px; margin: 0 auto; }
+        .srs-grade-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; width: 100%; max-width: 420px; margin: 0 auto; }
         .srs-keys-link { display: none; }
         @media (hover: hover) and (pointer: fine) {
           .srs-keys-link { display: inline-flex; align-items: center; gap: 5px; margin: 12px auto 0; padding: 4px 8px; border: none; border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 10.5px; font-weight: 700; cursor: pointer; transition: color 0.18s; }
@@ -2049,6 +2065,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
         .grade-score { font-size: 15px; font-weight: 900; margin-bottom: 2px; }
         .grade-lbl { font-size: 10px; color: var(--text-muted); }
         .grade-btn-1 .grade-score { color: #e08888; }
+        .grade-when { font-size: 11px; font-weight: 700; color: var(--text-muted); margin-top: 2px; }
         .grade-btn-2 .grade-score { color: var(--blue); }
         .grade-btn-3 .grade-score { color: var(--green); }
         .grade-btn-4 .grade-score { color: var(--accent); }
@@ -2858,24 +2875,20 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
 
               {cardFlipper}
 
-              {/* Grade buttons — always available */}
+              {/* Grade buttons — always available. Each says when the word
+                  comes back for that answer, as Anki prints it. */}
               <div className="srs-grade-row">
-                <button className="grade-btn grade-btn-1" onClick={() => handleGrade(1)} type="button">
-                  <span className="grade-score">1</span>
-                  <span className="grade-lbl">Забыл</span>
-                </button>
-                <button className="grade-btn grade-btn-2" onClick={() => handleGrade(2)} type="button">
-                  <span className="grade-score">2</span>
-                  <span className="grade-lbl">Трудно</span>
-                </button>
-                <button className="grade-btn grade-btn-3" onClick={() => handleGrade(3)} type="button">
-                  <span className="grade-score">3</span>
-                  <span className="grade-lbl">Хорошо</span>
-                </button>
-                <button className="grade-btn grade-btn-4" onClick={() => handleGrade(4)} type="button">
-                  <span className="grade-score">4</span>
-                  <span className="grade-lbl">Легко</span>
-                </button>
+                {([
+                  [1, "1", "Забыл", "grade-btn-1"],
+                  [3, "3", "Помню", "grade-btn-3"],
+                  [4, "4", "Легко", "grade-btn-4"],
+                ] as const).map(([grade, key, label, cls]) => (
+                  <button key={grade} className={`grade-btn ${cls}`} onClick={() => handleGrade(grade)} type="button">
+                    <span className="grade-score">{key}</span>
+                    <span className="grade-lbl">{label}</span>
+                    {gradeIntervals && <span className="grade-when">{gradeIntervals[grade]}</span>}
+                  </button>
+                ))}
               </div>
               {reviewHistory.length > 0 && (
                 <button className="srs-history-open" onClick={openLatestReviewedCard} type="button">
