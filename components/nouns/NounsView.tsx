@@ -715,6 +715,7 @@ export function NounsView({ profile, onBack }: Props) {
                                 return (
                                   <tr
                                     key={entry.id}
+                                    data-word={entry.headword}
                                     className={`verb-row noun-row gender-row-${gender}${state?.ok ? " noun-row-learned" : ""}${difficult ? " noun-row-difficult" : ""}${hideArticles ? " noun-row-blind" : ""}`}
                                   onClick={() => setGrammarEntry(entry)}
                                 >

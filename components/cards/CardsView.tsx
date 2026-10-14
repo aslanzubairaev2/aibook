@@ -51,6 +51,8 @@ import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertC
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { CardVerbForms, useCardVerbSummary } from "@/components/verbs/VerbPrincipalParts";
+import { CardBackSummary } from "@/components/cards/CardBackSummary";
+import { isPhrase, openFlashcardPreview } from "@/lib/wordMenu";
 import { ReverseWordModal } from "@/components/word-modal/ReverseWordModal";
 import { DiscussAiModal } from "@/components/discuss-ai/DiscussAiModal";
 import { describeCardFamiliarity } from "@/lib/ai/wordProfile";
@@ -201,9 +203,11 @@ type TokenizedTextProps = {
   text: string;
   style?: React.CSSProperties;
   onWordTap: (word: string, e: React.MouseEvent) => void;
+  /** Target-language text: each word gets the right-click word menu. */
+  menuWords?: boolean;
 };
 
-const TokenizedText = memo(function TokenizedText({ text, style, onWordTap }: TokenizedTextProps) {
+const TokenizedText = memo(function TokenizedText({ text, style, onWordTap, menuWords }: TokenizedTextProps) {
   const tokens = useMemo(() => splitIntoTokens(text), [text]);
   return (
     <div style={style}>
@@ -212,6 +216,8 @@ const TokenizedText = memo(function TokenizedText({ text, style, onWordTap }: To
         return (
           <span
             key={i}
+            data-tap-word=""
+            data-word={menuWords ? tok : undefined}
             onClick={(e) => onWordTap(tok, e)}
             style={{ cursor: "pointer", borderRadius: 2, transition: "background 0.15s" }}
             onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(212, 168, 71, 0.15)")}
@@ -283,56 +289,57 @@ type AllCardRowProps = {
 const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWordTap, onDiscuss, onFix, onDelete }: AllCardRowProps) {
   const color = STATUS_COLORS[card.status] ?? "var(--accent)";
   const tapFront = useCallback((word: string, e: React.MouseEvent) => onWordTap(word, e, card), [onWordTap, card]);
+  // The row itself is the card: a word on it opens the word, a button does its
+  // job, anywhere else shows the flashcard read-only.
+  const openPreview = (e: React.MouseEvent) => {
+    if ((e.target as Element).closest("button, a, input, [data-tap-word]")) return;
+    openFlashcardPreview(card.id);
+  };
+  // For the right-click menu: a one-word card is a word, anything longer a phrase.
+  const menuAttrs = isPhrase(card.front)
+    ? { "data-phrase": card.front, "data-phrase-card-id": card.id }
+    : { "data-word": card.front, "data-card-id": card.id };
   return (
-    <div className="flash-card" style={{ display: "flex", gap: 12, alignItems: "flex-start", justifyContent: "space-between" }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6, flexWrap: "wrap" }}>
+    <div className="flash-card all-card-row" onClick={openPreview} title="Открыть флешкарту" {...menuAttrs}>
+      <div className="all-card-head">
+        <div className="all-card-markers">
           {cardMarkers(card, facts).map((m, i) => (
             <span key={i} className={`card-marker ${m.kind}${i === 0 ? " lead" : ""}`}>{m.text}</span>
           ))}
-          <span style={{ fontSize: 10, background: `${color}18`, color, padding: "2px 6px", borderRadius: 4, fontWeight: 800 }}>
+          <span className="all-card-status" style={{ background: `${color}18`, color }}>
             {STATUS_LABELS[card.status] ?? card.status}
             {card.intervalDays > 0 ? ` · ${card.intervalDays}дн` : ""}
           </span>
         </div>
-        {/* Front is spoken and word-tappable, like text everywhere else in the app. */}
-        <div className="flash-card-front" style={{ fontSize: 15, display: "flex", alignItems: "flex-start", gap: 6 }}>
-          <TokenizedText text={card.front} style={{ flex: 1 }} onWordTap={tapFront} />
-          <SpeakButton text={card.front} lang={targetLanguage} size={15} />
+        <div className="all-card-actions">
+          <button className="card-row-delete-btn" onClick={() => onDiscuss(card)} type="button" aria-label="Обсудить с AI" title="Обсудить с AI">
+            <MessageCircle size={16} />
+          </button>
+          <button className="card-row-delete-btn" onClick={() => onFix(card)} type="button" aria-label="Проверить и исправить карточку" title="Проверить и исправить карточку">
+            <ShieldCheck size={16} />
+          </button>
+          <button
+            className="card-row-delete-btn danger"
+            onClick={() => { if (confirm("Удалить карточку?")) onDelete(card.id); }}
+            type="button"
+            aria-label="Удалить"
+            title="Удалить"
+          >
+            <Trash2 size={16} />
+          </button>
         </div>
-        <TokenizedText text={card.back} style={{ fontSize: 13, color: "var(--text-muted)" }} onWordTap={onWordTap} />
-        <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
-        <button
-          className="card-row-delete-btn"
-          style={{ color: "var(--text-muted)" }}
-          onClick={() => onDiscuss(card)}
-          type="button"
-          aria-label="Обсудить с AI"
-          title="Обсудить с AI"
-        >
-          <MessageCircle size={16} />
-        </button>
-        <button
-          className="card-row-delete-btn"
-          style={{ color: "var(--text-muted)" }}
-          onClick={() => onFix(card)}
-          type="button"
-          aria-label="Проверить и исправить карточку"
-          title="Проверить и исправить карточку"
-        >
-          <ShieldCheck size={16} />
-        </button>
-        <button
-          className="card-row-delete-btn"
-          onClick={() => { if (confirm("Удалить карточку?")) onDelete(card.id); }}
-          type="button"
-          aria-label="Удалить"
-        >
-          <Trash2 size={16} />
-        </button>
+      {/* Front is spoken and word-tappable, like text everywhere else in the app. */}
+      <div className="flash-card-front all-card-front">
+        <TokenizedText text={card.front} style={{ minWidth: 0 }} onWordTap={tapFront} menuWords />
+        <SpeakButton text={card.front} lang={targetLanguage} size={15} />
       </div>
+      <CardBackSummary
+        front={card.front}
+        back={card.back}
+        renderText={(text) => <TokenizedText text={text} onWordTap={onWordTap} />}
+      />
+      <div className="flash-card-source">из «{card.sourceBookTitle || card.source}»</div>
     </div>
   );
 });
@@ -1696,15 +1703,18 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
            which read as two screens printed on top of each other — but a flat
            fill of --bg-primary painted a black rectangle over the warm glow the
            app-shell puts at the top of every screen, and that rectangle was the
-           first thing on the page. A blurred, slightly translucent panel does
-           the hiding without the hole. */
-        .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 10px; border-bottom: 1px solid var(--border); background: rgba(30, 27, 22, 0.72); backdrop-filter: blur(18px) saturate(130%); -webkit-backdrop-filter: blur(18px) saturate(130%); }
+           first thing on the page. A translucent tinted panel was still a
+           visible box. So: no fill and no rule — only a strong blur of what
+           scrolls beneath, fading out at the bottom. Over the still glow a blur
+           changes nothing, so at rest the header is the page itself; text that
+           scrolls under it turns to haze instead of overprinting the title. */
+        .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 14px; border-bottom: none; background: transparent; backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); -webkit-mask-image: linear-gradient(to bottom, #000 86%, transparent); mask-image: linear-gradient(to bottom, #000 86%, transparent); }
         /* Where the browser cannot blur, fall back to a fill opaque enough to
            hide the scrolling content — the panel is still warm, not black. */
         @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
           .srs-sticky-header { background: var(--bg-secondary); }
         }
-        @media (min-width: 640px) { .srs-sticky-header { margin: -28px -24px 16px; padding: 24px 24px 10px; } }
+        @media (min-width: 640px) { .srs-sticky-header { margin: -28px -24px 16px; padding: 24px 24px 14px; } }
         .srs-tabs-container { display: flex; gap: 4px; padding: 4px; margin-bottom: 14px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-lg); }
         .srs-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 4px; background: transparent; border: none; border-radius: var(--radius-md); font-weight: 700; font-size: 13px; color: var(--text-muted); transition: all 0.2s; cursor: pointer; }
         .srs-tab.active { color: var(--accent); background: var(--bg-card); box-shadow: var(--shadow-sm); }
@@ -1833,10 +1843,21 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
         .srs-history-nav-btn { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 42px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-elevated); color: var(--text-primary); font-size: 12px; font-weight: 800; cursor: pointer; transition: all 0.18s ease; }
         .srs-history-nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
         .srs-history-nav-btn:disabled { opacity: 0.35; cursor: default; }
-        .all-search-bar { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--bg-card); border-radius: var(--radius-sm); padding: 0 12px; height: 40px; margin-bottom: 12px; min-width: 0; }
+        .all-search-bar { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--bg-card); border-radius: 999px; padding: 0 14px; height: 40px; margin-bottom: 12px; min-width: 0; }
         .all-search-input { flex: 1; min-width: 0; background: transparent; border: none; color: var(--text-primary); outline: none; font-size: 14px; }
         .card-row-delete-btn { color: var(--text-muted); background: transparent; border: none; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s; }
-        .card-row-delete-btn:hover { color: #e08888; background: rgba(224, 136, 136, 0.08); }
+        .card-row-delete-btn:hover { color: var(--accent); background: rgba(212, 168, 71, 0.08); }
+        .card-row-delete-btn.danger:hover { color: #e08888; background: rgba(224, 136, 136, 0.08); }
+        .all-card-row { display: flex; flex-direction: column; gap: 4px; cursor: pointer; transition: border-color 0.15s; }
+        .all-card-row:hover { border-color: var(--border-strong); }
+        .all-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+        .all-card-markers { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; padding-top: 4px; }
+        .all-card-status { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 800; }
+        .all-card-actions { display: flex; gap: 0; flex-shrink: 0; margin: -4px -8px 0 0; }
+        .all-card-actions .card-row-delete-btn { padding: 7px; line-height: 0; }
+        .all-card-front { display: flex; align-items: center; gap: 6px; font-size: 16px; margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; }
+        .all-card-row .card-back-summary { font-size: 13px; }
+        .all-card-row .card-verb-forms { justify-content: flex-start; font-size: 13px; }
         .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
         .filter-chip { padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-muted); transition: all 0.2s; white-space: nowrap; }
         .filter-chip.active { background: rgba(212, 168, 71, 0.15); border-color: var(--accent); color: var(--accent); }

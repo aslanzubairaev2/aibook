@@ -14,6 +14,7 @@ import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
 import { LEARNING_ITEM_TYPES, type AiAnalysis, type CefrLevel, type Flashcard, type LearningItemType, type PackSort, type PosTag } from "@/lib/types";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { EditMetadataModal } from "@/components/ui/EditMetadataModal";
+import { isPhrase } from "@/lib/wordMenu";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const CONTENT_TYPE_LABELS: Record<LearningItemType, string> = {
@@ -789,7 +790,7 @@ export function DictionaryPanel({
               {open && !isCardPack && (
                 <div className="dict-list">
                   {group.entries.map((entry) => (
-                    <div key={entry.id} className="dict-row-wrap">
+                    <div key={entry.id} className="dict-row-wrap" {...(isPhrase(entry.headword) ? { "data-phrase": entry.headword } : { "data-word": entry.headword })}>
                       <button type="button" className="dict-row" onClick={() => onOpenEntry(entry)}>
                         <div className="dict-row-main">
                           <span className={`dict-word gender-${entry.gender || "none"}`}>{entry.headword}</span>

@@ -678,6 +678,7 @@ export function VerbsView({ profile, onBack }: Props) {
                                 return (
                                   <tr
                                     key={entry.id}
+                                    data-word={entry.headword}
                                     className={`verb-row verb-row-${verbClass}${difficult ? " verb-row-difficult" : ""}`}
                                     title={GERMAN_VERB_CLASS_HINT[verbClass]}
                                     onClick={() => openEntry(entry)}
@@ -858,7 +859,7 @@ function MissingFormsList({ title, entries, hint, fillingIds, bulkProgress, onFi
       <p className="verb-missing-hint">{hint}</p>
       <div className="verb-missing-list">
         {entries.map((entry) => (
-          <div key={entry.id} className="verb-missing-row">
+          <div key={entry.id} className="verb-missing-row" data-word={entry.headword}>
             <span className="verb-missing-word">
               {entry.headword}
               {entry.translation && <em> — {entry.translation}</em>}

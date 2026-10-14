@@ -1414,7 +1414,8 @@ textarea,
   height: 42px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  /* Every search field in the app is a pill, like the filter buttons beside it. */
+  border-radius: 999px;
   background: rgba(39, 35, 25, 0.78);
   color: var(--text-muted);
 }
@@ -1445,6 +1446,9 @@ textarea,
 
 .discover-submit {
   height: 42px;
+  /* A pill, like the search field it submits. */
+  border-radius: 999px;
+  padding: 0 18px;
 }
 
 .discover-language {
@@ -2081,7 +2085,7 @@ textarea,
   display: flex; align-items: center; gap: 8px;
   padding: 0 12px;
   background: var(--bg-card); border: 1px solid var(--accent);
-  border-radius: var(--radius-sm); color: var(--text-muted);
+  border-radius: 999px; color: var(--text-muted);
   box-shadow: var(--shadow-sm);
 }
 .dict-search-float input {

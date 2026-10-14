@@ -3,6 +3,8 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { franc } from "franc-min";
 import { QuickWordPreview } from "@/components/word-modal/QuickWordPreview";
+import { WordContextMenu } from "@/components/word-menu/WordContextMenu";
+import { FlashcardPreview } from "@/components/cards/FlashcardPreview";
 import { AppShell } from "@/components/ui/AppShell";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
@@ -1112,6 +1114,8 @@ function AppInner() {
       }}
     >
       <QuickWordPreview nativeLanguage={profile.nativeLanguage} targetLanguage={profile.targetLanguage} />
+      <WordContextMenu cards={cards} />
+      <FlashcardPreview cards={cards} targetLanguage={profile.targetLanguage} />
       {section === "home" && (
         <HomeDashboard
           onOpenTests={() => { setDiscoverInitialTab("tests"); setSection("discover"); }}
