@@ -549,6 +549,15 @@ export function todaysDirection(card: Flashcard, variantProgress: VariantProgres
   return pickDirectionForToday(card, due, variantProgress, todayEndMs);
 }
 
+/**
+ * A deliberate practice run — «пройти заново», or «Сложные», which exist to
+ * drill the words that keep slipping whatever the schedule says — may repeat
+ * a word answered earlier today. Only the scheduled day holds them back.
+ */
+function buriesAnsweredToday(selection: { ignoreSchedule?: boolean; status: TrainStatus }): boolean {
+  return !selection.ignoreSchedule && selection.status !== "hard";
+}
+
 export type TrainSelection = {
   status: TrainStatus;
   type: TrainTypeFilter;
@@ -601,7 +610,7 @@ export function buildTrainQueue(
       const p = getVariantProgress(card, variant, variantProgress);
       return matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule);
     });
-    const variant = pickDirectionForToday(card, matching, variantProgress, todayEndMs, !selection.ignoreSchedule);
+    const variant = pickDirectionForToday(card, matching, variantProgress, todayEndMs, buriesAnsweredToday(selection));
     if (variant) items.push({ card, variant });
   }
   return items;
@@ -661,7 +670,7 @@ export function countTrainCandidates(
 
   // Counted the way the queue is built: a word contributes at most one
   // direction, so every chip promises exactly what a session would serve.
-  const bury = !selection.ignoreSchedule;
+  const bury = buriesAnsweredToday(selection);
   for (const card of scoped) {
     const typeMatches = selection.type === "all" || card.type === selection.type;
     const progress = new Map(selection.variants.map((v) => [v, getVariantProgress(card, v, variantProgress)] as const));

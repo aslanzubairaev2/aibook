@@ -92,9 +92,12 @@ export function toFsrsCard(p: MemoryProgress, now: Date): Card {
   const lastReview = p.lastReviewedAt
     ? new Date(Date.parse(p.lastReviewedAt))
     : new Date(due.getTime() - interval * DAY_MS);
-  // FSRS's stability is exactly the interval at 90 % retention, which is what
-  // an SM-2 interval was meant to be — after the repair it is also bounded.
-  const stability = p.stability ?? interval;
+  // FSRS's stability is the interval at 90 % retention, which is what an SM-2
+  // interval was meant to be — but SM-2 also handed «einfach», forgotten seven
+  // times, 27 days. So an old interval is believed only as far as the lapses
+  // allow: up to 45 days for a word never forgotten, 12 after one lapse, and
+  // a day or two for one that keeps slipping.
+  const stability = p.stability ?? Math.min(interval, p.lapses === 0 ? 45 : Math.max(1, 12 / p.lapses));
   const difficulty = p.difficulty ?? difficultyFromSm2(p.easeFactor, p.lapses);
   return {
     due,

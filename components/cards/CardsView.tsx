@@ -107,9 +107,13 @@ function shortPos(pos: string): string {
  * cases worth marking. Anything less certain shows no chip at all rather than
  * a guess the learner would have to double-check.
  */
-function guessPos(front: string): string {
+function guessPos(front: string, back = ""): string {
   const text = front.trim();
   if (/^(der|die|das)\s+\S/i.test(text)) return "сущ.";
+  // The back knows better than the ending: «trocken» ends like an infinitive
+  // but its back lists degrees of comparison.
+  if (/komparativ|superlativ/iu.test(back)) return "прил.";
+  if (/мн\. ?ч\./iu.test(back)) return "сущ.";
   if (/^[a-zäöüß]+(en|ern|eln)$/i.test(text)) return "гл.";
   return "";
 }
@@ -243,7 +247,7 @@ function cardMarkers(card: Flashcard, facts: WordFacts | undefined): { text: str
   const marks: { text: string; kind: string }[] = [
     { text: TYPE_LABELS[card.type], kind: card.type },
   ];
-  const pos = card.type === "word" ? shortPos(facts?.pos ?? "") || guessPos(card.front) : "";
+  const pos = card.type === "word" ? shortPos(facts?.pos ?? "") || guessPos(card.front, card.back) : "";
   if (pos) marks.push({ text: pos, kind: "pos" });
   const level = card.cefr || facts?.cefr || "";
   if (level) marks.push({ text: level, kind: "level" });

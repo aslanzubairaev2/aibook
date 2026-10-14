@@ -69,3 +69,14 @@ test("intervals read short on a button", () => {
   assert.equal(formatInterval(60), "2 мес.");
   assert.equal(formatInterval(547), "1,5 г.");
 });
+
+test("an old interval is not trusted for a word that keeps slipping", () => {
+  // einfach in «Говорю»: forgotten seven times, yet SM-2 gave it 27 days.
+  const einfach: MemoryProgress = {
+    status: "review", repetitions: 5, lapses: 7, intervalDays: 27, easeFactor: 1.9,
+    dueAt: new Date(NOW.getTime() + 27 * 86_400_000).toISOString(), lastReviewedAt: NOW.toISOString(),
+  };
+  const p = previewIntervals(einfach, NOW);
+  assert.ok(p[3] <= 4, `«Помню» brings it back within days, got ${p[3]}`);
+  assert.equal(isStrugglingMemory(einfach), true);
+});

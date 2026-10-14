@@ -304,6 +304,10 @@ test("a word answered today in one direction is not asked in another until tomor
   // A deliberate drill still shows the word, once.
   const drill = buildTrainQueue(cards, { status: "all", type: "all", variants: ALL_TRAIN_VARIANTS, ignoreSchedule: true }, progress, TODAY_END);
   assert.equal(drill.length, 1);
+
+  // So does «Сложные»: it is there to drill the words that keep slipping.
+  const hard = buildTrainQueue(cards, { status: "hard", type: "all", variants: ALL_TRAIN_VARIANTS }, progress, TODAY_END);
+  assert.equal(hard.length, 1);
 });
 
 test("a variant with no stored progress counts as new rather than being skipped", () => {
