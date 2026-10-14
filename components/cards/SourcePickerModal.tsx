@@ -142,10 +142,6 @@ export function SourcePickerModal({
           </button>
         )}
 
-        <p className="source-picker-hint">
-          Нажмите на источник, чтобы тренировать только его. Глаз справа — исключить из тренировки,
-          не трогая остальные.
-        </p>
       </section>
     </div>
   );

@@ -13,10 +13,14 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
-  background: rgba(18, 15, 10, 0.96);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border);
+  padding: 12px 16px 16px;
+  /* No fill and no rule — a filled bar is a box laid over the page. Only a
+     blur of the text scrolling beneath, fading out at the bottom edge. */
+  background: transparent;
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 82%, transparent);
+  mask-image: linear-gradient(to bottom, #000 82%, transparent);
 }
 
 .reader-toolbar-info {

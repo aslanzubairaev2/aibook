@@ -170,7 +170,6 @@ export function LiveTranslateView({ onBack, profile }: Props) {
         {error && <div className="live-translate-error" role="alert">{error}</div>}
       </main>
 
-      <p className="live-translate-hint"><Volume2 size={13} /> Лучше в наушниках — иначе микрофон услышит перевод</p>
 
       <footer className="live-translate-bar">
         <button type="button" className={`live-translate-chip${showText ? " is-on" : ""}`} onClick={() => setShowText((value) => !value)} aria-expanded={showText}>

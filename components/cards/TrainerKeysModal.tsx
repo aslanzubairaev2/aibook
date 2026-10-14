@@ -83,9 +83,6 @@ export function TrainerKeysModal({ onClose }: Props) {
         <KeyRows rows={CARD_KEYS} />
 
         <div className="keys-modal-section">Пока открыт плеер</div>
-        <p className="keys-modal-hint">
-          Остальные клавиши по-прежнему относятся к карточке — только эти две переходят к плееру.
-        </p>
         <KeyRows rows={PLAYER_KEYS} />
 
         <div className="keys-modal-section">В окне «Обсудить с AI»</div>

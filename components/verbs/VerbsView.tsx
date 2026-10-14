@@ -532,7 +532,6 @@ export function VerbsView({ profile, onBack }: Props) {
                     </button>
                   ))}
                 </div>
-                <p className="verb-modes-hint">Можно выбрать несколько типов: «сильный», «смешанный», «особый» и «безличный» объединяются. «Слабый» и «сильный» — взаимоисключающие базовые группы.</p>
               </div>
             </div>
           )}
@@ -546,7 +545,6 @@ export function VerbsView({ profile, onBack }: Props) {
                   <button type="button" className={`filter-chip ${trainingFilter === "unfamiliar" ? "active" : ""}`} onClick={() => chooseTrainingFilter("unfamiliar")}>Незнакомые ({unfamiliarCount})</button>
                   <button type="button" className={`filter-chip ${trainingFilter === "difficult" ? "active" : ""}`} onClick={() => chooseTrainingFilter("difficult")}>Сложные ({difficultCount})</button>
                 </div>
-                <p className="verb-modes-hint">«Незнакомые» — последняя попытка с ошибкой. «Сложные» — слова с повторными ошибками, рассчитанные по вашей локальной истории. Слово, полностью пройденное сегодня, до завтра больше не показывается.</p>
               </div>
               <div className="filter-group">
                 <div className="filter-group-label">Что тренировать</div>
@@ -563,9 +561,6 @@ export function VerbsView({ profile, onBack }: Props) {
                     </button>
                   ))}
                 </div>
-                <p className="verb-modes-hint">
-                  Несколько режимов — по каждому слову подряд: {QUIZ_MODE_ORDER.map((m) => QUIZ_MODE_LABEL[m]).join(" → ")}.
-                </p>
               </div>
 
               {quizModes.has("conjugation") && (
@@ -583,9 +578,6 @@ export function VerbsView({ profile, onBack }: Props) {
                       </button>
                     ))}
                   </div>
-                  <p className="verb-modes-hint">
-                    Местоимение уже в подписи поля — писать его снова не нужно. «Прошедшее (книжное)» — Präteritum одним словом («sang»); «Прошедшее (разговорное)» и «Будущее» — со вспомогательным глаголом («habe gesungen», «werde singen»), это и проверяется. Каждое время — отдельным шагом.
-                  </p>
                 </div>
               )}
             </div>
@@ -651,7 +643,6 @@ export function VerbsView({ profile, onBack }: Props) {
                     {group.pending.length > 0 && (
                       <MissingFormsList
                         entries={group.pending}
-                        hint="ИИ определит Präteritum, Partizip II, haben/sein и отделяемость — глаголы останутся в этой пачке."
                         fillingIds={fillingIds}
                         bulkProgress={bulkProgress}
                         onFillOne={(entry) => void fillOne(entry)}
@@ -737,7 +728,6 @@ export function VerbsView({ profile, onBack }: Props) {
             <MissingFormsList
               title={`Без форм — ${loosePending.length}`}
               entries={loosePending}
-              hint="Эти глаголы уже в Словаре, но без Präteritum/Partizip II — ИИ может определить их сам."
               fillingIds={fillingIds}
               bulkProgress={bulkProgress}
               onFillOne={(entry) => void fillOne(entry)}
@@ -832,10 +822,9 @@ function partizipFirstPerson(entry: DictionaryEntry): string {
 }
 
 /** Verbs saved without a full principal-parts record, with a way to have the AI fill them in. */
-function MissingFormsList({ title, entries, hint, fillingIds, bulkProgress, onFillOne, onFillAll }: {
+function MissingFormsList({ title, entries, fillingIds, bulkProgress, onFillOne, onFillAll }: {
   title?: string;
   entries: DictionaryEntry[];
-  hint: string;
   fillingIds: Set<string>;
   bulkProgress: { done: number; total: number } | null;
   onFillOne: (entry: DictionaryEntry) => void;
@@ -856,7 +845,6 @@ function MissingFormsList({ title, entries, hint, fillingIds, bulkProgress, onFi
             : <><Wand2 size={14} /> {entries.length === 1 ? "Дозаполнить" : "Дозаполнить все"}</>}
         </button>
       </div>
-      <p className="verb-missing-hint">{hint}</p>
       <div className="verb-missing-list">
         {entries.map((entry) => (
           <div key={entry.id} className="verb-missing-row" data-word={entry.headword}>

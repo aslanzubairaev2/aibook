@@ -75,6 +75,10 @@ type Props = {
   /** Lets the owner drop its copy of the batch once the session leaves it. */
   onExitBatch?: () => void;
   onBack: () => void;
+  /** «Перейти к флешкарте»: show this one card read-only instead of the module. */
+  previewCardId?: string | null;
+  /** Leaves the preview — back to wherever the learner came from. */
+  onClosePreview?: () => void;
   onAddCard: (card: Flashcard) => void;
   onUpdateCard: (card: Flashcard) => void;
   onDeleteCard: (id: string) => void;
@@ -527,7 +531,7 @@ const StatsPanel = memo(function StatsPanel({ stats, onClick }: { stats: DeckSta
   );
 });
 
-export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0, onExitBatch, onBack, onAddCard, onUpdateCard, onDeleteCard, onDeleteCards, onFindVideos }: Props) {
+export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0, onExitBatch, onBack, previewCardId = null, onClosePreview, onAddCard, onUpdateCard, onDeleteCard, onDeleteCards, onFindVideos }: Props) {
   const { user } = useAuth();
   const [profile, setProfile] = useState(getLocalProfile);
   const targetLanguage = profile.targetLanguage;
@@ -984,6 +988,29 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
       : 0,
     [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
   );
+
+  // Today's due work in the directions this session leaves out. «Сегодня»
+  // counts every direction, so a «Слышу»-only queue that runs dry while a card
+  // still waits in «Читаю» used to look like a broken counter.
+  const sessionOver = trainQueue.length === 0 || currentTrainIndex >= trainQueue.length;
+  const dueElsewhere = useMemo(() => {
+    if (activeTab !== "train" || !sessionOver) return 0;
+    const others = ALL_TRAIN_VARIANTS.filter((v) => !trainVariants.includes(v));
+    if (others.length === 0) return 0;
+    return countTrainCandidates(
+      filterByPos(cards, trainPos),
+      { status: trainStatus, type: trainFilter, variants: others, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded },
+      variantProgress,
+      todayEndTime,
+    ).byType.all;
+  }, [activeTab, sessionOver, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime]);
+
+  function trainAllDirections() {
+    const variants = [...ALL_TRAIN_VARIANTS];
+    setTrainVariants(variants);
+    persistCardFilters({ trainVariants: variants });
+    startTrainingSession(trainStatus, trainFilter, variants);
+  }
 
   function startTrainingSession(
     status: TrainStatus,
@@ -1551,7 +1578,16 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
 
   const openDiscussCallback = useCallback((card: Flashcard) => { void openDiscussForCard(card); }, [targetLanguage, nativeLanguage, user]);
 
-  const currentItem = trainQueue[currentTrainIndex];
+  // «Перейти к флешкарте» shows one card exactly as the trainer does — every
+  // button, the verb forms, the flip — but no grades: looking at a card from
+  // the reader or a list must never move its schedule.
+  const previewCard = previewCardId ? cards.find((c) => c.id === previewCardId) ?? null : null;
+  const [shownPreviewId, setShownPreviewId] = useState(previewCardId);
+  if (previewCardId !== shownPreviewId) {
+    setShownPreviewId(previewCardId);
+    setIsFlipped(false);
+  }
+  const currentItem = previewCard ? { card: previewCard, variant: "forward" as TrainVariant } : trainQueue[currentTrainIndex];
   const currentCard = currentItem?.card as Flashcard;
   const currentVariant: TrainVariant = currentItem?.variant ?? "forward";
   const isReversed = currentVariant === "reverse";
@@ -1605,8 +1641,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   // Bound only while a card is actually on screen, and never over a modal or a
   // field the learner is typing into, so the digits stay available to the
   // search box and the chat.
-  const hotkeysActive = activeTab === "train"
-    && trainMode === "recognize"
+  const hotkeysActive = ((activeTab === "train" && trainMode === "recognize") || Boolean(previewCard))
     && !wordModal.open
     && !reverseWord.open
     && !showKeysModal
@@ -1625,12 +1660,12 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
       // Browsing a graded card is read-only by design, so the keys that would
       // change it do nothing rather than quietly rescheduling a card the
       // learner is only looking at.
-      const browsing = historyPosition !== null;
+      const browsing = !previewCard && historyPosition !== null;
       const speakTarget = browsing ? historyCard : currentCard;
 
       switch (action.kind) {
         case "grade":
-          if (browsing || !currentCard) return;
+          if (browsing || !currentCard || previewCard) return;
           handleGrade(action.score);
           break;
         case "speak":
@@ -1662,19 +1697,20 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
           void openDiscussForCard(speakTarget);
           break;
         case "historyOlder":
-          if (reviewHistory.length === 0) return;
+          if (previewCard || reviewHistory.length === 0) return;
           // Not yet browsing: the first step back opens the card just graded.
           if (!historyPosition) openLatestReviewedCard();
           else if (historyPosition.canGoOlder) setViewingHistoryIndex(historyPosition.index - 1);
           break;
         case "historyNewer":
-          if (!historyPosition) return;
+          if (previewCard || !historyPosition) return;
           // Past the newest reviewed card is the live one, which is where the
           // «Следующая» button leads too.
           if (historyPosition.canGoNewer) setViewingHistoryIndex(historyPosition.index + 1);
           else closeReviewedCard();
           break;
         case "live":
+          if (previewCard) return;
           closeReviewedCard();
           break;
         case "zenExit":
@@ -1692,6 +1728,187 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hotkeysActive, playerOpen, historyPosition?.index, historyPosition?.canGoOlder, historyPosition?.canGoNewer, reviewHistory.length, currentCard?.id, historyCard?.id, targetLanguage, currentTrainIndex, trainQueue, viewingHistoryIndex, miniStory, zenActive, setZen]);
 
+  // The card itself — one copy for the trainer and for «Перейти к флешкарте».
+  const cardFlipper = currentCard ? (
+              <div className="flipper-perspective" style={{ marginBottom: 16 }}>
+                <div className={`flipper-card ${isFlipped ? "flipped" : ""}`}>
+                  {/* Front */}
+                  <div className="flipper-face flipper-face-front" onClick={() => setIsFlipped((f) => !f)}>
+                    {/* One row of actions across the top. There used to be a
+                        stack of badges opposite them — type, part of speech,
+                        level — which said what the card already says and cost
+                        the text the whole top of the card. */}
+                    <div className="card-actions-right">
+                      <button
+                        className="card-action-btn"
+                        type="button"
+                        aria-label="Мини-рассказ с этим словом"
+                        title="Мини-рассказ с этим словом — сохранится в «Мои уроки»"
+                        disabled={miniStory === currentCard.id}
+                        onClick={(e) => { e.stopPropagation(); void createMiniStory(currentCard); }}
+                      >
+                        {miniStory === currentCard.id ? <Loader2 size={22} className="spin" /> : <FileText size={22} />}
+                      </button>
+                      <button
+                        className="card-action-btn"
+                        type="button"
+                        aria-label="Проверить и исправить карточку"
+                        title="Проверить и исправить карточку"
+                        onClick={(e) => { e.stopPropagation(); setFixCard(currentCard); }}
+                      >
+                        <ShieldCheck size={22} />
+                      </button>
+                      <button
+                        className="card-action-btn"
+                        type="button"
+                        aria-label="Обсудить с AI"
+                        title="Обсудить с AI"
+                        onClick={(e) => { e.stopPropagation(); void openDiscussForCard(currentCard); }}
+                      >
+                        <MessageCircle size={22} />
+                      </button>
+                      {/* Re-record. Shown wherever something is actually spoken:
+                          a reversed prompt is the learner's own language and is
+                          never read aloud, so there is nothing there to fix. */}
+                      {!isReversed && (
+                        <RespeakButton
+                          text={isAudio ? currentCard.front : promptText}
+                          lang={isAudio ? targetLanguage : promptLang}
+                        />
+                      )}
+                      {/* TTS button — long press or right-click to change provider.
+                          Hidden when the prompt is native-language text (speaking it
+                          back is pointless) or audio mode (its own play button covers this). */}
+                      {!isReversed && !isAudio && (
+                        <div
+                          className="card-tts-wrap"
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={handleTtsPointerDown}
+                          onPointerUp={handleTtsPointerUp}
+                          onPointerLeave={() => { if (longPressRef.current) clearTimeout(longPressRef.current); }}
+                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setShowTtsMenu(true); }}
+                        >
+                          <SpeakButton text={promptText} lang={promptLang} size={22} />
+                          {showTtsMenu && (
+                            <div className="tts-menu" onClick={(e) => e.stopPropagation()}>
+                              {ttsProvidersFor(targetLanguage).map((p) => (
+                                <div
+                                  key={p.value}
+                                  className={`tts-menu-item ${profile.ttsProvider === p.value ? "active" : ""}`}
+                                  onClick={(e) => handleTtsProviderChange(p.value, e)}
+                                >
+                                  {p.label}
+                                  {profile.ttsProvider === p.value ? " ✓" : ""}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="card-text-area">
+                      {isAudio ? (
+                        <div className="audio-prompt">
+                          <button
+                            type="button"
+                            className="audio-play-btn"
+                            aria-label="Прослушать"
+                            onClick={(e) => { e.stopPropagation(); void speak(currentCard.front, targetLanguage); }}
+                          >
+                            <Volume2 size={26} />
+                          </button>
+                          <span className="audio-prompt-lbl">Нажмите, чтобы услышать</span>
+                        </div>
+                      ) : isReversed ? (
+                        /* Tappable, like the other side — but asking the
+                           opposite question. One unknown word in a phrase the
+                           learner otherwise understands used to cost them the
+                           whole card: flipping it to find that one word gives
+                           away the answer they were about to produce. */
+                        <TokenizedText
+                          text={promptText}
+                          style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
+                          onWordTap={handleNativeWordTap}
+                        />
+                      ) : (
+                        <TokenizedText
+                          text={promptText}
+                          style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
+                          onWordTap={handleCurrentWordTap}
+                        />
+                      )}
+                    </div>
+
+                    <div className="card-footer-row">
+                      <span>{currentCard.sourceBookTitle || currentCard.source}</span>
+                      {currentProgress?.status === "new" && (
+                        <span style={{ color: "var(--accent)", fontWeight: 800, flexShrink: 0, maxWidth: "none" }}>НОВАЯ</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Back */}
+                  <div className="flipper-face flipper-face-back" onClick={() => setIsFlipped((f) => !f)}>
+                    {(isReversed || isAudio) && (
+                      <div className="card-actions-right">
+                        <RespeakButton text={currentCard.front} lang={targetLanguage} />
+                        <div className="card-tts-wrap" onClick={(e) => e.stopPropagation()}>
+                          <SpeakButton text={currentCard.front} lang={targetLanguage} size={22} />
+                        </div>
+                      </div>
+                    )}
+                    <div className="card-text-area">
+                      {isAudio ? (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                          <TokenizedText
+                            text={currentCard.front}
+                            style={{ fontSize: cardFontSize(currentCard.front), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3, textAlign: "center" }}
+                            onWordTap={handleCurrentWordTap}
+                          />
+                          <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center" }}>{backParts.meaning}</div>
+                          {currentVerb.summary && <CardVerbForms summary={currentVerb.summary} />}
+                          {currentVerb.details && (
+                            <div style={{ fontSize: 13, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>{currentVerb.details}</div>
+                          )}
+                        </div>
+                      ) : isReversed ? (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                          <TokenizedText
+                            text={answerText}
+                            style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}
+                            onWordTap={handleCurrentWordTap}
+                          />
+                          {currentVerb.summary && <CardVerbForms summary={currentVerb.summary} />}
+                          {currentVerb.details && (
+                            <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
+                              {currentVerb.details}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                          <div style={{ fontSize: cardFontSize(backParts.meaning), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3, textAlign: "center" }}>
+                            {backParts.meaning}
+                          </div>
+                          {currentVerb.summary && <CardVerbForms summary={currentVerb.summary} />}
+                          {currentVerb.details && (
+                            <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
+                              {currentVerb.details}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="card-footer-row">
+                      <span>Повторений: {currentProgress?.repetitions ?? 0}</span>
+                      <span style={{ maxWidth: "none" }}>Коэф: {(currentProgress?.easeFactor ?? 2.5).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+  ) : null;
+
   return (
     <section
       className={`screen${zenActive ? " srs-zen" : ""}`}
@@ -1708,6 +1925,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
            scrolls beneath, fading out at the bottom. Over the still glow a blur
            changes nothing, so at rest the header is the page itself; text that
            scrolls under it turns to haze instead of overprinting the title. */
+        .srs-preview-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100svh - 260px); }
         .srs-sticky-header { position: sticky; top: 0; z-index: 30; margin: -20px -16px 16px; padding: 16px 16px 14px; border-bottom: none; background: transparent; backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); -webkit-mask-image: linear-gradient(to bottom, #000 86%, transparent); mask-image: linear-gradient(to bottom, #000 86%, transparent); }
         /* Where the browser cannot blur, fall back to a fill opaque enough to
            hide the scrolling content — the panel is still warm, not black. */
@@ -1981,7 +2199,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
         .srs-zen .flipper-perspective { margin-bottom: 12px !important; }
         .srs-zen .srs-history-view { margin-top: auto; margin-bottom: auto; }
 
-        .zen-topbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px; width: 100%; max-width: 420px; margin: 0 auto; padding: 2px 0 8px; background: var(--bg-primary); }
+        .zen-topbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 10px; width: 100%; max-width: 420px; margin: 0 auto; padding: 2px 0 8px; background: transparent; backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); }
         .zen-progress { flex: 1; min-width: 0; height: 3px; border-radius: 99px; overflow: hidden; background: rgba(240, 230, 211, 0.09); }
         .zen-progress i { display: block; height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.35s ease; }
         .zen-count { flex-shrink: 0; font-size: 11px; font-weight: 800; color: var(--text-muted); font-variant-numeric: tabular-nums; }
@@ -2076,17 +2294,25 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
 
       {/* Screen Header — stays pinned while the card lists scroll */}
       <header className="screen-header srs-sticky-header">
-        <button className="icon-btn" onClick={onBack} type="button" aria-label="Назад">
+        <button className="icon-btn" onClick={previewCard ? onClosePreview : onBack} type="button" aria-label="Назад">
           <ArrowLeft size={20} />
         </button>
         <div>
-          <p className="eyebrow">Интервальное повторение</p>
-          <h1>SRS Тренажер</h1>
+          <p className="eyebrow">{previewCard ? "Флешкарта" : "Интервальное повторение"}</p>
+          <h1>{previewCard ? "Просмотр" : "SRS Тренажер"}</h1>
         </div>
-        <button className="icon-btn" onClick={() => setActiveTab("all")} type="button" aria-label="Все карточки">
-          <Layers size={20} />
-        </button>
+        {previewCard ? <span className="icon-btn-spacer" aria-hidden /> : (
+          <button className="icon-btn" onClick={() => setActiveTab("all")} type="button" aria-label="Все карточки">
+            <Layers size={20} />
+          </button>
+        )}
       </header>
+
+      {previewCard ? (
+        <div className="srs-train-stage srs-preview-stage">
+          {cardFlipper}
+        </div>
+      ) : (<>
 
       {/* Today's progress — the one line that has to move on every grade.
           It used to lead with the number of cards due, which only drops once
@@ -2445,19 +2671,18 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
             ) : (
               <div className="empty-state">
                 <AlertCircle size={40} />
-                <strong>{drillCandidates > 0 ? "На сегодня по расписанию ничего нет" : "Нет карточек по выбранным фильтрам"}</strong>
-                <p>
-                  {trainStatus === "hard"
-                    ? "Отлично — сложных карточек нет!"
-                    : drillCandidates > 0
-                      ? "Расписание решает, когда карточка вернётся сама. Пройти этот набор ещё раз можно когда угодно."
-                      : "Попробуйте другой тип или статус."}
-                </p>
+                <strong>{dueElsewhere > 0 ? "В этом направлении на сегодня всё" : drillCandidates > 0 ? "На сегодня по расписанию ничего нет" : "Нет карточек по выбранным фильтрам"}</strong>
+                {trainStatus === "hard" && <p>Отлично — сложных карточек нет!</p>}
                 {/* The way out of the dead end the learner actually hit:
                     everything in this selection is scheduled for later, and
                     they want to go through it now anyway. */}
+                {dueElsewhere > 0 && (
+                  <button className="primary-btn" style={{ marginTop: 12, maxWidth: 280 }} onClick={trainAllDirections} type="button">
+                    <Play size={14} fill="currentColor" style={{ marginRight: 6 }} /> Ещё {dueElsewhere} — все направления
+                  </button>
+                )}
                 {drillCandidates > 0 && (
-                  <button className="primary-btn" style={{ marginTop: 12, maxWidth: 280 }} onClick={drillAgain} type="button">
+                  <button className={dueElsewhere > 0 ? "secondary-btn" : "primary-btn"} style={{ marginTop: 12, maxWidth: 280 }} onClick={drillAgain} type="button">
                     <RotateCcw size={14} style={{ marginRight: 6 }} /> Пройти заново ({drillCandidates})
                   </button>
                 )}
@@ -2539,7 +2764,12 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
               {/* The batch was a detour. Its cards are done, so the obvious next
                   step is the training the learner set up for themselves — which
                   is still exactly as they left it. */}
-              {batch && (
+              {dueElsewhere > 0 && (
+                  <button className="primary-btn" style={{ marginTop: 12, maxWidth: 280 }} onClick={trainAllDirections} type="button">
+                    <Play size={14} fill="currentColor" style={{ marginRight: 6 }} /> Ещё {dueElsewhere} — все направления
+                  </button>
+                )}
+                {batch && (
                 <button className="primary-btn" style={{ marginTop: 12, maxWidth: 280 }} onClick={startSavedTraining} type="button">
                   <Play size={14} fill="currentColor" style={{ marginRight: 6 }} /> Продолжить обычную тренировку
                 </button>
@@ -2609,184 +2839,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
                 </span>
               </div>
 
-              {/* Flipper card — height adapts to content */}
-              <div className="flipper-perspective" style={{ marginBottom: 16 }}>
-                <div className={`flipper-card ${isFlipped ? "flipped" : ""}`}>
-                  {/* Front */}
-                  <div className="flipper-face flipper-face-front" onClick={() => setIsFlipped((f) => !f)}>
-                    {/* One row of actions across the top. There used to be a
-                        stack of badges opposite them — type, part of speech,
-                        level — which said what the card already says and cost
-                        the text the whole top of the card. */}
-                    <div className="card-actions-right">
-                      <button
-                        className="card-action-btn"
-                        type="button"
-                        aria-label="Мини-рассказ с этим словом"
-                        title="Мини-рассказ с этим словом — сохранится в «Мои уроки»"
-                        disabled={miniStory === currentCard.id}
-                        onClick={(e) => { e.stopPropagation(); void createMiniStory(currentCard); }}
-                      >
-                        {miniStory === currentCard.id ? <Loader2 size={22} className="spin" /> : <FileText size={22} />}
-                      </button>
-                      <button
-                        className="card-action-btn"
-                        type="button"
-                        aria-label="Проверить и исправить карточку"
-                        title="Проверить и исправить карточку"
-                        onClick={(e) => { e.stopPropagation(); setFixCard(currentCard); }}
-                      >
-                        <ShieldCheck size={22} />
-                      </button>
-                      <button
-                        className="card-action-btn"
-                        type="button"
-                        aria-label="Обсудить с AI"
-                        title="Обсудить с AI"
-                        onClick={(e) => { e.stopPropagation(); void openDiscussForCard(currentCard); }}
-                      >
-                        <MessageCircle size={22} />
-                      </button>
-                      {/* Re-record. Shown wherever something is actually spoken:
-                          a reversed prompt is the learner's own language and is
-                          never read aloud, so there is nothing there to fix. */}
-                      {!isReversed && (
-                        <RespeakButton
-                          text={isAudio ? currentCard.front : promptText}
-                          lang={isAudio ? targetLanguage : promptLang}
-                        />
-                      )}
-                      {/* TTS button — long press or right-click to change provider.
-                          Hidden when the prompt is native-language text (speaking it
-                          back is pointless) or audio mode (its own play button covers this). */}
-                      {!isReversed && !isAudio && (
-                        <div
-                          className="card-tts-wrap"
-                          onClick={(e) => e.stopPropagation()}
-                          onPointerDown={handleTtsPointerDown}
-                          onPointerUp={handleTtsPointerUp}
-                          onPointerLeave={() => { if (longPressRef.current) clearTimeout(longPressRef.current); }}
-                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setShowTtsMenu(true); }}
-                        >
-                          <SpeakButton text={promptText} lang={promptLang} size={22} />
-                          {showTtsMenu && (
-                            <div className="tts-menu" onClick={(e) => e.stopPropagation()}>
-                              {ttsProvidersFor(targetLanguage).map((p) => (
-                                <div
-                                  key={p.value}
-                                  className={`tts-menu-item ${profile.ttsProvider === p.value ? "active" : ""}`}
-                                  onClick={(e) => handleTtsProviderChange(p.value, e)}
-                                >
-                                  {p.label}
-                                  {profile.ttsProvider === p.value ? " ✓" : ""}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="card-text-area">
-                      {isAudio ? (
-                        <div className="audio-prompt">
-                          <button
-                            type="button"
-                            className="audio-play-btn"
-                            aria-label="Прослушать"
-                            onClick={(e) => { e.stopPropagation(); void speak(currentCard.front, targetLanguage); }}
-                          >
-                            <Volume2 size={26} />
-                          </button>
-                          <span className="audio-prompt-lbl">Нажмите, чтобы услышать</span>
-                        </div>
-                      ) : isReversed ? (
-                        /* Tappable, like the other side — but asking the
-                           opposite question. One unknown word in a phrase the
-                           learner otherwise understands used to cost them the
-                           whole card: flipping it to find that one word gives
-                           away the answer they were about to produce. */
-                        <TokenizedText
-                          text={promptText}
-                          style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
-                          onWordTap={handleNativeWordTap}
-                        />
-                      ) : (
-                        <TokenizedText
-                          text={promptText}
-                          style={{ fontSize: cardFontSize(promptText), fontWeight: 800, userSelect: "none", lineHeight: 1.3 }}
-                          onWordTap={handleCurrentWordTap}
-                        />
-                      )}
-                    </div>
-
-                    <div className="card-footer-row">
-                      <span>{currentCard.sourceBookTitle || currentCard.source}</span>
-                      {currentProgress?.status === "new" && (
-                        <span style={{ color: "var(--accent)", fontWeight: 800, flexShrink: 0, maxWidth: "none" }}>НОВАЯ</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Back */}
-                  <div className="flipper-face flipper-face-back" onClick={() => setIsFlipped((f) => !f)}>
-                    {(isReversed || isAudio) && (
-                      <div className="card-actions-right">
-                        <RespeakButton text={currentCard.front} lang={targetLanguage} />
-                        <div className="card-tts-wrap" onClick={(e) => e.stopPropagation()}>
-                          <SpeakButton text={currentCard.front} lang={targetLanguage} size={22} />
-                        </div>
-                      </div>
-                    )}
-                    <div className="card-text-area">
-                      {isAudio ? (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                          <TokenizedText
-                            text={currentCard.front}
-                            style={{ fontSize: cardFontSize(currentCard.front), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3, textAlign: "center" }}
-                            onWordTap={handleCurrentWordTap}
-                          />
-                          <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center" }}>{backParts.meaning}</div>
-                          {currentVerb.summary && <CardVerbForms summary={currentVerb.summary} />}
-                          {currentVerb.details && (
-                            <div style={{ fontSize: 13, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>{currentVerb.details}</div>
-                          )}
-                        </div>
-                      ) : isReversed ? (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                          <TokenizedText
-                            text={answerText}
-                            style={{ fontSize: cardFontSize(answerText), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3 }}
-                            onWordTap={handleCurrentWordTap}
-                          />
-                          {currentVerb.summary && <CardVerbForms summary={currentVerb.summary} />}
-                          {currentVerb.details && (
-                            <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
-                              {currentVerb.details}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                          <div style={{ fontSize: cardFontSize(backParts.meaning), fontWeight: 700, color: "var(--accent)", wordBreak: "break-word", lineHeight: 1.3, textAlign: "center" }}>
-                            {backParts.meaning}
-                          </div>
-                          {currentVerb.summary && <CardVerbForms summary={currentVerb.summary} />}
-                          {currentVerb.details && (
-                            <div style={{ fontSize: 14, color: "var(--text-muted)", textAlign: "center", whiteSpace: "pre-line" }}>
-                              {currentVerb.details}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="card-footer-row">
-                      <span>Повторений: {currentProgress?.repetitions ?? 0}</span>
-                      <span style={{ maxWidth: "none" }}>Коэф: {(currentProgress?.easeFactor ?? 2.5).toFixed(2)}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {cardFlipper}
 
               {/* Grade buttons — always available */}
               <div className="srs-grade-row">
@@ -2986,6 +3039,8 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
           )}
         </div>
       )}
+
+      </>)}
 
       {toast && <div className="toast">{toast}</div>}
     </section>

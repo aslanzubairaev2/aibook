@@ -4,7 +4,7 @@ import { startTransition, useCallback, useEffect, useRef, useState } from "react
 import { franc } from "franc-min";
 import { QuickWordPreview } from "@/components/word-modal/QuickWordPreview";
 import { WordContextMenu } from "@/components/word-menu/WordContextMenu";
-import { FlashcardPreview } from "@/components/cards/FlashcardPreview";
+import { FLASHCARD_PREVIEW_EVENT } from "@/lib/wordMenu";
 import { AppShell } from "@/components/ui/AppShell";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
@@ -246,6 +246,21 @@ function AppInner() {
   const [cardsInitialTab, setCardsInitialTab] = useState<"all" | "train" | null>(null);
   // The dictionary batch being trained right now, if any. Session-only.
   const [trainBatch, setTrainBatch] = useState<TrainBatch | null>(null);
+  // «Перейти к флешкарте» from anywhere: the card opens in the trainer, and
+  // «назад» returns to the screen it was asked from.
+  const [previewCard, setPreviewCard] = useState<{ id: string; from: AppSection } | null>(null);
+  const sectionRef = useRef(section);
+  useEffect(() => { sectionRef.current = section; }, [section]);
+  useEffect(() => {
+    const open = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      const from = sectionRef.current;
+      setPreviewCard((prev) => ({ id, from: from === "cards" && prev ? prev.from : from }));
+      setSection("cards");
+    };
+    window.addEventListener(FLASHCARD_PREVIEW_EVENT, open);
+    return () => window.removeEventListener(FLASHCARD_PREVIEW_EVENT, open);
+  }, []);
   // Which book is having its text fetched, so the shelf can show a spinner.
   const [openingBookId, setOpeningBookId] = useState<string | null>(null);
   const [isLiveChatOpen, setIsLiveChatOpen] = useState(false);
@@ -1110,12 +1125,12 @@ function AppInner() {
         // batch" flag, so a later visit restores the learner's own filters
         // instead of silently resetting them again.
         if (next !== "cards") { setCardsInitialTab(null); setTrainBatch(null); }
+        setPreviewCard(null);
         setSection(next);
       }}
     >
       <QuickWordPreview nativeLanguage={profile.nativeLanguage} targetLanguage={profile.targetLanguage} />
       <WordContextMenu cards={cards} />
-      <FlashcardPreview cards={cards} targetLanguage={profile.targetLanguage} />
       {section === "home" && (
         <HomeDashboard
           onOpenTests={() => { setDiscoverInitialTab("tests"); setSection("discover"); }}
@@ -1200,6 +1215,12 @@ function AppInner() {
           cards={cards}
           initialTab={cardsInitialTab}
           trainBatch={trainBatch}
+          previewCardId={previewCard?.id ?? null}
+          onClosePreview={() => {
+            const from = previewCard?.from ?? "cards";
+            setPreviewCard(null);
+            setSection(from);
+          }}
           progressRevision={progressRevision}
           onExitBatch={() => setTrainBatch(null)}
           onBack={() => { setCardsInitialTab(null); setTrainBatch(null); setSection("practice"); }}

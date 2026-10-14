@@ -296,7 +296,6 @@ export function OtherPosView({ profile, onBack }: Props) {
                   <button type="button" className={`filter-chip ${trainingFilter === "unfamiliar" ? "active" : ""}`} onClick={() => chooseTrainingFilter("unfamiliar")}>Незнакомые ({unfamiliarCount})</button>
                   <button type="button" className={`filter-chip ${trainingFilter === "difficult" ? "active" : ""}`} onClick={() => chooseTrainingFilter("difficult")}>Сложные ({difficultCount})</button>
                 </div>
-                <p className="verb-modes-hint">«Незнакомые» — последняя попытка с ошибкой. «Сложные» — слова с повторными ошибками, рассчитанные по вашей локальной истории.</p>
               </div>
             </div>
           )}
@@ -392,9 +391,6 @@ export function OtherPosView({ profile, onBack }: Props) {
               <div className="verb-missing-head">
                 <strong>Без данных о падеже — {missingCasePrepositions.length}</strong>
               </div>
-              <p className="verb-missing-hint">
-                Эти предлоги не попали в таблицу управления падежом — редкие или составные формы. Они не участвуют в тренировке.
-              </p>
               <div className="verb-missing-list">
                 {missingCasePrepositions.map((entry) => (
                   <div key={entry.id} className="verb-missing-row">

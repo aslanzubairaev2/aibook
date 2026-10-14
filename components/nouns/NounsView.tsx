@@ -584,7 +584,6 @@ export function NounsView({ profile, onBack }: Props) {
                   <button type="button" className={`filter-chip ${trainingFilter === "unfamiliar" ? "active" : ""}`} onClick={() => chooseTrainingFilter("unfamiliar")}>Незнакомые ({unfamiliarCount})</button>
                   <button type="button" className={`filter-chip ${trainingFilter === "difficult" ? "active" : ""}`} onClick={() => chooseTrainingFilter("difficult")}>Сложные ({difficultCount})</button>
                 </div>
-                <p className="verb-modes-hint">«Незнакомые» — последняя попытка с ошибкой. «Сложные» — слова с повторными ошибками, рассчитанные по вашей локальной истории.</p>
               </div>
               <div className="filter-group">
                 <div className="filter-group-label">Что тренировать</div>
@@ -601,10 +600,6 @@ export function NounsView({ profile, onBack }: Props) {
                     </button>
                   ))}
                 </div>
-                <p className="verb-modes-hint">
-                  Несколько режимов чередуются между существительными: то же слово вернётся позже, в другом задании.
-                  «Артикль» — выбор из der / die / das с подсказкой по правилу окончания.
-                </p>
               </div>
               {quizModes.has("article") && (
                 <div className="filter-group">
@@ -634,9 +629,6 @@ export function NounsView({ profile, onBack }: Props) {
                       Всё
                     </button>
                   </div>
-                  <p className="verb-modes-hint">
-                    Для «Артикля» можно вспомнить род по слову, переводу, слуху или пройти все три варианта вперемешку. Аудио всегда содержит только существительное без артикля.
-                  </p>
                 </div>
               )}
             </div>
@@ -782,9 +774,6 @@ export function NounsView({ profile, onBack }: Props) {
                     : <><Wand2 size={14} /> Дозаполнить все</>}
                 </button>
               </div>
-              <p className="verb-missing-hint">
-                Эти слова уже в Словаре, но без рода и артикля — ИИ может определить их сам, и тогда они попадут в таблицу выше.
-              </p>
               <div className="verb-missing-list">
                 {missingArticles.map((entry) => (
                   <div key={entry.id} className="verb-missing-row">
@@ -822,9 +811,6 @@ export function NounsView({ profile, onBack }: Props) {
                     : <><Wand2 size={14} /> Дозаполнить переводы</>}
                 </button>
               </div>
-              <p className="verb-missing-hint">
-                Для режима «Родной язык» нужен перевод. ИИ добавит его только в пустые поля и не изменит уже сохранённые переводы.
-              </p>
               <div className="verb-missing-list">
                 {missingTranslations.map((entry) => (
                   <div key={entry.id} className="verb-missing-row">
