@@ -694,3 +694,18 @@ test("endOfTodayMs moves to the next boundary once the day turns over", () => {
   const day2 = endOfTodayMs(new Date("2026-08-15T00:30:00.000Z"));
   assert.ok(day2 > day1, "a later day's end-of-day boundary must be later");
 });
+
+test("«Забыл» brings the prompt back in the same session, other grades let it go", async () => {
+  const { relearnAfterGrade } = await import("./cards.ts");
+  const card = { id: "c1", front: "einsteigen", repetitions: 8, lapses: 0 } as unknown as import("./types.ts").Flashcard;
+  const saved = { ...card, repetitions: 0, lapses: 1 } as typeof card;
+
+  for (const score of [2, 3, 4] as const) assert.equal(relearnAfterGrade({ card, variant: "forward" }, score, saved), null);
+
+  const forward = relearnAfterGrade({ card, variant: "forward" }, 1, saved);
+  assert.deepEqual(forward, { card: saved, variant: "forward", relearn: true });
+
+  // Other directions read their schedule from the progress map, not the card.
+  const reverse = relearnAfterGrade({ card, variant: "reverse" }, 1, saved);
+  assert.deepEqual(reverse, { card, variant: "reverse", relearn: true });
+});

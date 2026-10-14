@@ -25,6 +25,7 @@ import {
   resolveCardFilters,
   shuffleTrainQueue,
   splitCardBack,
+  relearnAfterGrade,
   DEFAULT_TRAIN_VARIANTS,
   type DeckStats,
   type ResolvedCardFilters,
@@ -1115,10 +1116,13 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
 
   const handleGrade = (score: 1 | 2 | 3 | 4) => {
     if (viewingHistoryIndex !== null || trainQueue.length === 0 || currentTrainIndex >= trainQueue.length) return;
-    const { card, variant } = trainQueue[currentTrainIndex];
+    const { card, variant, relearn } = trainQueue[currentTrainIndex];
     const prev = getVariantProgress(card, variant, variantProgress);
-    const srsUpdate = calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor, prev);
     const now = new Date().toISOString();
+    // Forgotten again while relearning: the lapse was counted the first time,
+    // so the schedule stays as it is and the prompt simply comes round again.
+    const stillForgotten = Boolean(relearn) && score === 1;
+    const srsUpdate = calculateSM2(score, prev.repetitions, prev.lapses, prev.intervalDays, prev.easeFactor, prev);
     // A self-rating, not a checked answer: «Легко» is the learner's own word.
     logTrainingEvent({
       trainer: "review",
@@ -1129,9 +1133,11 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
       outcome: "self_rated",
       selfGrade: score,
       expected: splitCardBack(card.back).meaning || null,
-      meta: { early: Boolean(prev.dueAt && Date.parse(prev.dueAt) > Date.now() + 86_400_000) },
+      meta: { early: Boolean(prev.dueAt && Date.parse(prev.dueAt) > Date.now() + 86_400_000), relearn: Boolean(relearn) },
     });
-    if (variant === "forward") {
+    if (stillForgotten) {
+      // Nothing to save.
+    } else if (variant === "forward") {
       onUpdateCard({ ...card, ...srsUpdate, lastReviewedAt: now });
     } else {
       const progress = { ...srsUpdate, lastReviewedAt: now };
@@ -1143,6 +1149,17 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
       // reverse prompt as two reviews in «сделано сегодня». The streak reads
       // every direction's timestamp, so today's activity is seen either way.
     }
+
+    // «Забыл» does not end the card's day: like Anki's relearning step it comes
+    // back before the session is over, and only a later «помню» lets it go
+    // until tomorrow. The forward copy carries the progress just saved, since
+    // that direction reads its schedule from the card itself.
+    const again = relearnAfterGrade(
+      { card, variant, relearn },
+      score,
+      variant === "forward" && !stillForgotten ? { ...card, ...srsUpdate, lastReviewedAt: now } : undefined,
+    );
+    if (again) setTrainQueue((queue) => [...queue, again]);
 
     setReviewHistory((history) => [...history, { card, variant }]);
     const nextReviewedIds = [...reviewedIds, card.id];

@@ -7,7 +7,15 @@ export type TrainStatus = CardStatus | "all" | "hard";
 export type CardType = LearningItemType;
 export type TrainTypeFilter = CardType | "all";
 export type VariantProgressMap = Record<string, CardVariantState>;
-export type TrainQueueItem = { card: Flashcard; variant: TrainVariant };
+export type TrainQueueItem = {
+  card: Flashcard;
+  variant: TrainVariant;
+  /**
+   * A prompt forgotten earlier in this session, shown again before it ends —
+   * Anki's relearning step. Its lapse is already counted.
+   */
+  relearn?: boolean;
+};
 
 /** The SM-2 fields a single prompt direction schedules on. */
 export type VariantProgress = {
@@ -539,6 +547,22 @@ export function buildTrainQueue(
     }
   }
   return items;
+}
+
+/**
+ * What a grade adds back to the running session. «Забыл» brings the prompt
+ * round again before the session ends (Anki's relearning step); a forward
+ * prompt carries its just-saved progress, since that direction is scheduled
+ * on the card itself. Any other grade lets it go until its next due date.
+ */
+export function relearnAfterGrade(
+  item: TrainQueueItem,
+  score: 1 | 2 | 3 | 4,
+  savedForward?: Flashcard,
+): TrainQueueItem | null {
+  if (score !== 1) return null;
+  const card = item.variant === "forward" && savedForward ? savedForward : item.card;
+  return { card, variant: item.variant, relearn: true };
 }
 
 /** Interleaves the variants so a session isn't all of one before the next. */
