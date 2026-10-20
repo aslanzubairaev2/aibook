@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, BarChart3, ChevronRight, Play, Settings2, UserCheck } from "lucide-react";
+import { ArrowLeft, BarChart3, ChevronRight, MousePointerClick, Play, Puzzle, Settings2, UserCheck } from "lucide-react";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { CONSTRUCTIONS, CONSTRUCTION_LABEL, MODE_LABEL, PRONOUNS, PRONOUN_IDS, RESPONSE_MODES, VERBS, verbUsable, type Construction, type ResponseMode } from "@/lib/pronouns/catalog";
 import { COMPONENT_LABEL, type Component } from "@/lib/pronouns/check";
@@ -9,10 +9,13 @@ import { DEFAULT_CONFIG, FOCUSES, sessionFromConfig, type Focus, type PronounCon
 import { labelDifficulty, type pronounSummary } from "@/lib/pronouns/stats";
 import { verbLabel } from "@/lib/pronouns/tasks";
 import { PronounDrill } from "./PronounDrill";
+import { PronounFlow } from "./PronounFlow";
 
 type Assigned = { session_id: string; status: string; settings: SessionSettings; created_at: string };
 type Stats = ReturnType<typeof pronounSummary>;
-type View = "home" | "settings" | "stats" | { drill: SessionSettings; assignedId: string | null; title: string };
+type View = "home" | "settings" | "stats"
+  | { drill: SessionSettings; assignedId: string | null; title: string }
+  | { flow: "tap" | "build"; settings: SessionSettings; assignedId: string | null; limit?: number; title: string };
 
 const FOCUS_LABEL: Record<Focus, string> = {
   object_pronouns: "Местоимение-дополнение",
@@ -64,6 +67,19 @@ export function PronounsView({ onBack }: { onBack: () => void }) {
     return () => { cancelled = true; };
   }, [reloadKey]);
 
+  if (typeof view === "object" && "flow" in view) {
+    return (
+      <PronounFlow
+        mode={view.flow}
+        settings={view.settings}
+        dueDifficulties={due}
+        limit={view.limit}
+        assignedSessionId={view.assignedId}
+        title={view.title}
+        onExit={() => { setView("home"); load(); }}
+      />
+    );
+  }
   if (typeof view === "object") {
     return (
       <PronounDrill
@@ -95,7 +111,9 @@ export function PronounsView({ onBack }: { onBack: () => void }) {
       <div className="practice-list">
         {assigned.map((a) => (
           <button key={a.session_id} type="button" className="action-card study glass-card"
-            onClick={() => setView({ drill: a.settings, assignedId: a.session_id, title: "От преподавателя" })}>
+            onClick={() => setView(a.settings.response_mode === "tap" || a.settings.response_mode === "build"
+              ? { flow: a.settings.response_mode, settings: a.settings, assignedId: a.session_id, limit: a.settings.item_count, title: "От преподавателя" }
+              : { drill: a.settings, assignedId: a.session_id, title: "От преподавателя" })}>
             <span className="action-card-icon"><UserCheck size={24} /></span>
             <span>
               <span className="action-card-label">От преподавателя{a.status === "started" ? " · начата" : ""}</span>
@@ -107,10 +125,32 @@ export function PronounsView({ onBack }: { onBack: () => void }) {
         ))}
 
         <button type="button" className="action-card pronouns glass-card" disabled={loading}
+          onClick={() => setView({ flow: "tap", settings: own, assignedId: null, title: "Быстрый выбор" })}>
+          <span className="action-card-icon"><MousePointerClick size={24} /></span>
+          <span>
+            <span className="action-card-label">Быстрый выбор</span>
+            <strong className="action-card-title">Он видит её · они зовут их</strong>
+            <span className="action-card-sub">Нажимайте местоимения — они сразу встают в пропуски. Без конца, пока не выйдете</span>
+          </span>
+          <ChevronRight size={20} className="action-card-arrow" />
+        </button>
+
+        <button type="button" className="action-card pronouns glass-card" disabled={loading}
+          onClick={() => setView({ flow: "build", settings: own, assignedId: null, title: "Сборка предложения" })}>
+          <span className="action-card-icon"><Puzzle size={24} /></span>
+          <span>
+            <span className="action-card-label">Сборка предложения</span>
+            <strong className="action-card-title">Только русский — собираете по-немецки</strong>
+            <span className="action-card-sub">Слова-кнопки по порядку, среди них есть лишние</span>
+          </span>
+          <ChevronRight size={20} className="action-card-arrow" />
+        </button>
+
+        <button type="button" className="action-card glass-card" disabled={loading}
           onClick={() => setView({ drill: own, assignedId: null, title: "Местоимения" })}>
           <span className="action-card-icon"><Play size={24} /></span>
           <span>
-            <span className="action-card-label">Тренировка</span>
+            <span className="action-card-label">Письмом и голосом</span>
             <strong className="action-card-title">Начать: {own.item_count} заданий</strong>
             <span className="action-card-sub">{describeSettings(own)}{due.length ? ` · повторить: ${due.length}` : ""}</span>
           </span>

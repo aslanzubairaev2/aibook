@@ -145,7 +145,7 @@ test("nothing outside the switched-on blocks is ever drawn", () => {
   const settings = sessionFromConfig(DEFAULT_CONFIG);
   const specs = candidateSpecs(settings);
   assert.ok(specs.length > 0);
-  assert.ok(specs.every((s) => ["sehen", "hoeren"].includes(s.verb) && !s.modal && s.kind === "people"));
+  assert.ok(specs.every((s) => ["sehen", "hoeren", "rufen"].includes(s.verb) && !s.modal && s.kind === "people"));
   // No reflexive pairs.
   assert.ok(!specs.some((s) => (s.subject === "ich" && s.object === "ich") || (s.subject === "wir" && s.object === "ich") || (s.subject === "Sie" && s.object === "Sie")));
   // reparieren never with people.
@@ -198,4 +198,28 @@ test("settings are checked against the catalogue", () => {
     assert.ok(s.warnings.some((w) => w.includes("abholen")));
   }
   assert.equal(validateSessionSettings(DEFAULT_CONFIG, { response_mode: "telepathy" }).ok, false);
+});
+
+test("tap: one fixed bank, both pronouns blank, judged like gaps", () => {
+  const t = makeTask({ kind: "people", verb: "rufen", sentenceType: "statement", modal: false, subject: "sie_pl", object: "sie_pl", noun: null }, "tap", { id: id(), focusRole: "object", random: rng(4) });
+  assert.equal(t.prompt_ru, "Они зовут их.");
+  assert.deepEqual(t.blanks, ["subject", "object"]);
+  assert.ok(!t.bank!.includes("es") && t.bank!.includes("uns") && t.bank!.includes("Sie"));
+  assert.equal(checkBlanks(t, { subject: "sie", object: "sie" }).outcome, "correct");
+  const wrong = checkBlanks(t, { subject: "sie", object: "Sie" });
+  assert.equal(wrong.components.object, "error");
+  assert.equal(wrong.confusions[0].kind, "polite_case");
+});
+
+test("build: the sentence's words plus distractors, checked as a full sentence", () => {
+  const t = makeTask({ kind: "people", verb: "sehen", sentenceType: "statement", modal: false, subject: "er", object: "sie_sg", noun: null }, "build", { id: id(), focusRole: "object", random: rng(5) });
+  assert.equal(t.prompt_ru, "Он видит её.");
+  for (const w of ["er", "sieht", "sie"]) assert.ok(t.bank!.includes(w), w);
+  assert.ok(t.bank!.length > t.tokens.length, "has distractors");
+  assert.ok(t.bank!.includes("sehen"), "a wrong verb person");
+  assert.equal(checkSentence(t, "er sieht sie").outcome, "correct");
+  assert.equal(checkSentence(t, "er sehen sie").components.conjugation, "error");
+  // Mixed sessions never draw the fast modes by themselves.
+  const plan = planSession({ settings: { ...sessionFromConfig(DEFAULT_CONFIG), response_mode: "mixed" }, enabledModes: ["written", "tap", "build"], seed: 3, newId: id });
+  assert.ok(plan.every((x) => x.mode === "written"));
 });

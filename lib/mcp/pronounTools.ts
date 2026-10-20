@@ -12,7 +12,7 @@ type Args = Record<string, unknown>;
 
 const PRONOUN_LIST = { type: "array", items: { type: "string" }, description: "ich, du, er, sie_sg, es, wir, ihr, sie_pl, Sie — or accusative forms / brief names: uns, euch, sie_plural, sie_polite" };
 const CONSTRUCTION_LIST = { type: "array", items: { type: "string", enum: ["statement", "question", "negation", "modal", "separable", "prep_auf", "noun_replacement"] } };
-const MODE_LIST = { type: "array", items: { type: "string", enum: ["choice", "gaps", "written", "spoken"] } };
+const MODE_LIST = { type: "array", items: { type: "string", enum: ["choice", "gaps", "written", "spoken", "tap", "build"] } };
 const FOCUS_LIST = { type: "array", items: { type: "string", enum: ["object_pronouns", "subject_pronouns", "role_distinction"] } };
 const VERB_LIST = { type: "array", items: { type: "string" }, description: "Verb ids or infinitives from get_pronoun_practice_config: sehen, hören, kennen, suchen, finden, brauchen, anrufen, abholen, prüfen, reparieren, kaufen, mitbringen, mitnehmen, warten (auf)" };
 
@@ -61,7 +61,7 @@ export const PRONOUN_TOOLS: McpToolDef[] = [
         target_pronouns: PRONOUN_LIST,
         verbs: VERB_LIST,
         sentence_types: { ...CONSTRUCTION_LIST, description: "statement, question, negation (and, if wanted, modal, separable, prep_auf, noun_replacement)" },
-        response_mode: { type: "string", enum: ["choice", "gaps", "written", "spoken", "mixed"], description: "mixed (default) alternates the learner's independent modes" },
+        response_mode: { type: "string", enum: ["choice", "gaps", "written", "spoken", "tap", "build", "mixed"], description: "mixed (default) alternates the learner's independent modes; tap = both pronouns picked from buttons (fast recognition); build = the sentence assembled from word buttons, with distractors" },
         item_count: { type: "number", description: "4–40; errors add short follow-ups on top" },
         hints_before_first_answer: { type: "boolean" },
         include_delayed_review: { type: "boolean", description: "Mix in earlier difficulties due for a delayed check" },

@@ -55,6 +55,8 @@ export type PronounTask = TaskSpec & {
   /** Hidden in choice and gaps modes. */
   blanks: Role[];
   options: string[] | null;
+  /** tap / build: the buttons, in the order shown. */
+  bank: string[] | null;
   focus_role: Role;
   /** What this task is evidence about, e.g. «object:wir». */
   difficulty: string;
@@ -237,6 +239,38 @@ function choiceOptions(spec: TaskSpec, role: Role, random: () => number): string
   return options.sort(() => random() - 0.5);
 }
 
+/**
+ * One fixed bank for every task, in the same order every time — the hand
+ * learns where «uns» is. Subject forms first, object forms after; tapping
+ * fills the next empty blank, so choosing «wir» for an object is possible
+ * and is exactly the error being trained.
+ */
+export const TAP_BANK = ["ich", "du", "er", "sie", "es", "wir", "ihr", "Sie", "mich", "dich", "ihn", "uns", "euch"];
+
+function tapBank(spec: TaskSpec): string[] {
+  return spec.kind === "people" ? TAP_BANK.filter((w) => w !== "es") : TAP_BANK;
+}
+
+/** The sentence's own words plus three that test the distinctions: a wrong verb person, the object's subject form, a confusable pronoun. */
+function buildBank(spec: TaskSpec, tokens: { slot: Slot; text: string }[], random: () => number): string[] {
+  const words = tokens.map((t) => t.text);
+  const verb = VERB_BY_ID[spec.verb];
+  const table = spec.modal ? MODAL.present : verb.present;
+  const subjRow = PRONOUNS[spec.subject].de;
+  const wrongVerb = table[subjRow === "3p" || subjRow === "1p" ? "3s" : "3p"];
+  const obj = PRONOUNS[spec.object];
+  const objNom = obj.nom !== obj.acc ? obj.nom : obj.acc === "sie" ? "Sie" : "sie";
+  const confusable = ["uns", "euch", "sie", "ihn"].filter((w) => w !== obj.acc && !words.includes(w));
+  const extra = [wrongVerb, objNom, confusable[Math.floor(random() * confusable.length)]]
+    .filter((w) => w && !words.includes(w));
+  const bank = [...words, ...new Set(extra)];
+  for (let i = bank.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [bank[i], bank[j]] = [bank[j], bank[i]];
+  }
+  return bank;
+}
+
 export function makeTask(spec: TaskSpec, mode: ResponseMode, opts: {
   id: string; focusRole: Role; random: () => number; bothBlanks?: boolean;
   delayedReview?: boolean; followupOf?: string | null; recheckOf?: string | null;
@@ -247,7 +281,8 @@ export function makeTask(spec: TaskSpec, mode: ResponseMode, opts: {
   const noun = spec.noun ? NOUN_BY_ID[spec.noun] : null;
   const context = noun ? nounContext(noun, verb) : null;
   const role: Role = noun ? "object" : opts.focusRole;
-  const blanks: Role[] = mode === "gaps" && opts.bothBlanks && !noun ? ["subject", "object"] : mode === "gaps" || mode === "choice" ? [role] : [];
+  const blanks: Role[] = mode === "tap" ? ["subject", "object"]
+    : mode === "gaps" && opts.bothBlanks && !noun ? ["subject", "object"] : mode === "gaps" || mode === "choice" ? [role] : [];
   return {
     ...spec,
     id: opts.id,
@@ -262,6 +297,7 @@ export function makeTask(spec: TaskSpec, mode: ResponseMode, opts: {
     tokens: german.tokens,
     blanks,
     options: mode === "choice" ? choiceOptions(spec, role, opts.random) : null,
+    bank: mode === "tap" ? tapBank(spec) : mode === "build" ? buildBank(spec, german.tokens, opts.random) : null,
     focus_role: role,
     difficulty: difficultyOf(spec, role),
     delayed_review: opts.delayedReview ?? false,
@@ -274,7 +310,7 @@ export function makeTask(spec: TaskSpec, mode: ResponseMode, opts: {
 /** The modes a session's main items rotate through: choice is kept for addressing a difficulty. */
 export function mainModes(settings: SessionSettings, enabled: ResponseMode[]): ResponseMode[] {
   if (settings.response_mode !== "mixed") return [settings.response_mode];
-  const own = enabled.filter((m) => m !== "choice");
+  const own = enabled.filter((m) => m !== "choice" && m !== "tap" && m !== "build");
   return own.length ? own : enabled.length ? enabled : ["written"];
 }
 

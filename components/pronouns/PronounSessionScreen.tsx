@@ -9,6 +9,7 @@ import { AuthScreen } from "@/components/auth/AuthScreen";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import type { PronounConfig, SessionSettings } from "@/lib/pronouns/config";
 import { PronounDrill } from "./PronounDrill";
+import { PronounFlow } from "./PronounFlow";
 
 type Loaded = { session: { session_id: string; status: string; settings: SessionSettings }; config: PronounConfig; due: string[] };
 
@@ -50,6 +51,15 @@ export function PronounSessionScreen({ id }: { id: string }) {
     );
   }
   if (!data) return <main className="app-main"><p className="verb-quiz-loading">Загрузка…</p></main>;
+  const flowMode = data.session.settings.response_mode;
+  if (flowMode === "tap" || flowMode === "build") {
+    return (
+      <main className="app-main pron-standalone">
+        <PronounFlow mode={flowMode} settings={data.session.settings} dueDifficulties={data.due} limit={data.session.settings.item_count}
+          assignedSessionId={data.session.session_id} title={data.session.settings.note || "От преподавателя"} onExit={() => router.push("/")} />
+      </main>
+    );
+  }
   return (
     <main className="app-main pron-standalone">
       <PronounDrill

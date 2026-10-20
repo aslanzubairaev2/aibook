@@ -44,7 +44,7 @@ export const DEFAULT_CONFIG: PronounConfig = {
   version: 1,
   case: "accusative",
   constructions: ["statement", "question", "negation"],
-  verbs: ["sehen", "hoeren"],
+  verbs: ["sehen", "hoeren", "rufen"],
   modes: ["written", "spoken", "choice"],
   focus: ["object_pronouns", "role_distinction"],
   target_pronouns: ["wir", "ihr", "sie_pl"],

@@ -78,7 +78,10 @@ export const LEVELS: { level: number; title: string; adds: Construction[] }[] = 
   { level: 7, title: "Замена существительного местоимением", adds: ["noun_replacement"] },
 ];
 
-export const RESPONSE_MODES = ["choice", "gaps", "written", "spoken"] as const;
+// tap: both pronouns picked from a fixed bank of buttons; build: the whole
+// sentence assembled from word buttons. Both are fast recognition drills —
+// never evidence of independent production on their own.
+export const RESPONSE_MODES = ["choice", "gaps", "written", "spoken", "tap", "build"] as const;
 export type ResponseMode = typeof RESPONSE_MODES[number];
 
 export const MODE_LABEL: Record<ResponseMode, string> = {
@@ -86,6 +89,8 @@ export const MODE_LABEL: Record<ResponseMode, string> = {
   gaps: "Пропуски",
   written: "Перевод письменно",
   spoken: "Перевод голосом",
+  tap: "Быстрый выбор",
+  build: "Сборка предложения",
 };
 
 export type GermanForms = Record<PersonKey, string>;
@@ -138,6 +143,31 @@ export const VERBS: VerbInfo[] = [
     id: "hoeren", infinitive: "hören", ru: "слышать", present: de("höre", "hörst", "hört", "hören", "hört", "hören"),
     prefix: null, case: "accusative", preposition: null, objects: ["person"], sentenceTypes: ["statement", "question", "negation"], modal: true,
     ruPresent: ru("слышу", "слышишь", "слышит", "слышим", "слышите", "слышат"), ruInfinitive: "слышать", ruObject: "acc", requires: null,
+  },
+  {
+    id: "rufen", infinitive: "rufen", ru: "звать", present: de("rufe", "rufst", "ruft", "rufen", "ruft", "rufen"),
+    prefix: null, case: "accusative", preposition: null, objects: ["person"], sentenceTypes: ["statement", "question", "negation"], modal: true,
+    ruPresent: ru("зову", "зовёшь", "зовёт", "зовём", "зовёте", "зовут"), ruInfinitive: "позвать", ruObject: "acc", requires: null,
+  },
+  {
+    id: "fragen", infinitive: "fragen", ru: "спрашивать", present: de("frage", "fragst", "fragt", "fragen", "fragt", "fragen"),
+    prefix: null, case: "accusative", preposition: null, objects: ["person"], sentenceTypes: ["statement", "question", "negation"], modal: true,
+    ruPresent: ru("спрашиваю", "спрашиваешь", "спрашивает", "спрашиваем", "спрашиваете", "спрашивают"), ruInfinitive: "спросить", ruObject: "acc", requires: null,
+  },
+  {
+    id: "verstehen", infinitive: "verstehen", ru: "понимать", present: de("verstehe", "verstehst", "versteht", "verstehen", "versteht", "verstehen"),
+    prefix: null, case: "accusative", preposition: null, objects: ["person"], sentenceTypes: ["statement", "question", "negation"], modal: true,
+    ruPresent: ru("понимаю", "понимаешь", "понимает", "понимаем", "понимаете", "понимают"), ruInfinitive: "понять", ruObject: "acc", requires: null,
+  },
+  {
+    id: "besuchen", infinitive: "besuchen", ru: "навещать", present: de("besuche", "besuchst", "besucht", "besuchen", "besucht", "besuchen"),
+    prefix: null, case: "accusative", preposition: null, objects: ["person"], sentenceTypes: ["statement", "question", "negation"], modal: true,
+    ruPresent: ru("навещаю", "навещаешь", "навещает", "навещаем", "навещаете", "навещают"), ruInfinitive: "навестить", ruObject: "acc", requires: null,
+  },
+  {
+    id: "treffen", infinitive: "treffen", ru: "встречать", present: de("treffe", "triffst", "trifft", "treffen", "trefft", "treffen"),
+    prefix: null, case: "accusative", preposition: null, objects: ["person"], sentenceTypes: ["statement", "question"], modal: true,
+    ruPresent: ru("встречаю", "встречаешь", "встречает", "встречаем", "встречаете", "встречают"), ruInfinitive: "встретить", ruObject: "acc", requires: null,
   },
   {
     id: "kennen", infinitive: "kennen", ru: "знать (кого-то)", present: de("kenne", "kennst", "kennt", "kennen", "kennt", "kennen"),

@@ -3196,3 +3196,33 @@ textarea,
 .pron-confusions small { display: block; font-size: 12px; }
 .pron-status.confident { color: var(--green); }
 .pron-status.practising { color: var(--accent); }
+
+/* Fast pronoun flows: buttons («чипы») that drop straight into the sentence. */
+.pron-frame-big { font-size: 22px; gap: 8px; }
+.pron-slot {
+  min-width: 64px; min-height: 40px; padding: 0 10px; border-radius: var(--radius-sm);
+  border: 1.5px dashed var(--accent); background: rgba(212, 168, 71, 0.06);
+  color: var(--accent-bright); font: inherit; font-weight: 800; cursor: pointer;
+}
+.pron-slot.filled { border-style: solid; background: rgba(212, 168, 71, 0.14); }
+.pron-slot.right { border-color: var(--green); color: var(--green); background: rgba(122, 171, 106, 0.14); }
+.pron-slot.wrong { border-color: var(--red); color: var(--red); background: rgba(196, 106, 106, 0.12); }
+.pron-bank { display: flex; flex-wrap: wrap; gap: 8px; }
+.pron-chip {
+  min-width: 56px; min-height: 44px; padding: 0 14px; border-radius: 22px;
+  border: 1px solid var(--border-strong); background: var(--bg-elevated);
+  color: var(--text-primary); font-size: 17px; font-weight: 700; cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+.pron-chip:hover:not(:disabled) { border-color: var(--accent); }
+.pron-chip:active:not(:disabled) { transform: scale(0.95); }
+.pron-chip:disabled { opacity: 0.25; cursor: default; }
+.pron-chip.placed { min-height: 38px; border-color: var(--accent); background: rgba(212, 168, 71, 0.12); }
+.pron-chip-undo { color: var(--text-muted); }
+.pron-build-line {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 58px; padding: 8px;
+  border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); font-size: 18px; font-weight: 700;
+}
+.pron-build-line.right { border-style: solid; border-color: var(--green); }
+.pron-build-line.wrong { border-style: solid; border-color: var(--red); }
+.pron-build-placeholder { color: var(--text-muted); font-size: 14px; font-weight: 500; }

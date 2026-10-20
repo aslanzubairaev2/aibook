@@ -27,7 +27,7 @@ const FILTERS = {
   only_errors: { type: "boolean", description: "Only incorrect, typo and «не знаю»" },
   // Pronoun practice (trainer: "pronouns") — read from each task's own record.
   case: { type: "string", enum: ["accusative"], description: "Pronoun practice: grammatical case (only accusative exists in this version)" },
-  response_mode: { type: "string", enum: ["choice", "gaps", "written", "spoken"], description: "Pronoun practice: how the answer was given" },
+  response_mode: { type: "string", enum: ["choice", "gaps", "written", "spoken", "tap", "build"], description: "Pronoun practice: how the answer was given" },
   construction: { type: "string", enum: ["statement", "question", "negation", "modal", "separable", "prep_auf", "noun_replacement"], description: "Pronoun practice: tasks that used this construction" },
   verb: { type: "string", description: "Pronoun practice: verb id or infinitive (sehen, hören, abholen, warten auf…)" },
   role: { type: "string", enum: ["subject", "object"], description: "Pronoun practice: with pronoun — the pronoun in this role; alone — tasks focused on this role" },
