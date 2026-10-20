@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, BarChart3, ChevronRight, MousePointerClick, Play, Puzzle, Settings2, UserCheck } from "lucide-react";
 import { sbAuthHeaders } from "@/lib/db/supabase";
+import { getLocalNamespace } from "@/lib/db/local";
 import { CONSTRUCTIONS, CONSTRUCTION_LABEL, MODE_LABEL, PRONOUNS, PRONOUN_IDS, RESPONSE_MODES, VERBS, verbUsable, type Construction, type ResponseMode } from "@/lib/pronouns/catalog";
 import { COMPONENT_LABEL, type Component } from "@/lib/pronouns/check";
 import { DEFAULT_CONFIG, FOCUSES, sessionFromConfig, type Focus, type PronounConfig, type SessionSettings } from "@/lib/pronouns/config";
@@ -42,12 +43,33 @@ export function describeSettings(s: SessionSettings): string {
   return parts.join(" · ");
 }
 
+type Cached = { config: PronounConfig; due: string[] };
+
+function cacheKey(): string {
+  return `aibook:pronouns:home:${getLocalNamespace()}`;
+}
+
+/** The last settings the server gave, so the screen is usable before it answers again. */
+function readCached(): Cached | null {
+  try {
+    const raw = window.localStorage.getItem(cacheKey());
+    return raw ? (JSON.parse(raw) as Cached) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCached(value: Cached) {
+  try { window.localStorage.setItem(cacheKey(), JSON.stringify(value)); } catch { /* storage blocked: next visit just starts from defaults */ }
+}
+
 export function PronounsView({ onBack }: { onBack: () => void }) {
   const [view, setView] = useState<View>("home");
-  const [config, setConfig] = useState<PronounConfig>(DEFAULT_CONFIG);
+  // Never wait for the server to start training: the cached or default
+  // settings are good enough to begin; the answer refreshes them quietly.
+  const [config, setConfig] = useState<PronounConfig>(() => (typeof window === "undefined" ? null : readCached())?.config ?? DEFAULT_CONFIG);
   const [assigned, setAssigned] = useState<Assigned[]>([]);
-  const [due, setDue] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [due, setDue] = useState<string[]>(() => (typeof window === "undefined" ? null : readCached())?.due ?? []);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const load = () => setReloadKey((k) => k + 1);
@@ -59,11 +81,12 @@ export function PronounsView({ onBack }: { onBack: () => void }) {
       setConfig(body.config);
       setAssigned(body.sessions ?? []);
       setDue(body.due_difficulties ?? []);
+      writeCached({ config: body.config, due: body.due_difficulties ?? [] });
       setLoadError(null);
     }).catch((e) => {
       // Offline or signed out: train with the defaults; answers wait in the queue.
       if (!cancelled) setLoadError(e instanceof Error ? e.message : String(e));
-    }).finally(() => { if (!cancelled) setLoading(false); });
+    });
     return () => { cancelled = true; };
   }, [reloadKey]);
 
@@ -124,7 +147,7 @@ export function PronounsView({ onBack }: { onBack: () => void }) {
           </button>
         ))}
 
-        <button type="button" className="action-card pronouns glass-card" disabled={loading}
+        <button type="button" className="action-card pronouns glass-card"
           onClick={() => setView({ flow: "tap", settings: own, assignedId: null, title: "Быстрый выбор" })}>
           <span className="action-card-icon"><MousePointerClick size={24} /></span>
           <span>
@@ -135,7 +158,7 @@ export function PronounsView({ onBack }: { onBack: () => void }) {
           <ChevronRight size={20} className="action-card-arrow" />
         </button>
 
-        <button type="button" className="action-card pronouns glass-card" disabled={loading}
+        <button type="button" className="action-card pronouns glass-card"
           onClick={() => setView({ flow: "build", settings: own, assignedId: null, title: "Сборка предложения" })}>
           <span className="action-card-icon"><Puzzle size={24} /></span>
           <span>
@@ -146,7 +169,7 @@ export function PronounsView({ onBack }: { onBack: () => void }) {
           <ChevronRight size={20} className="action-card-arrow" />
         </button>
 
-        <button type="button" className="action-card glass-card" disabled={loading}
+        <button type="button" className="action-card glass-card"
           onClick={() => setView({ drill: own, assignedId: null, title: "Местоимения" })}>
           <span className="action-card-icon"><Play size={24} /></span>
           <span>

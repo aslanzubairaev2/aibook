@@ -20,7 +20,8 @@ export async function GET(req: Request) {
     const [config, sessions, events, reviews] = await Promise.all([
       readConfig(supabaseAdmin, user.id),
       listSessions(supabaseAdmin, user.id, origin, true),
-      readPronounEvents(supabaseAdmin, user.id),
+      // The home screen only needs recent difficulties; statistics read everything.
+      readPronounEvents(supabaseAdmin, user.id, withStats ? "all" : "last_30_days"),
       readReviews(supabaseAdmin, user.id),
     ]);
     return NextResponse.json({
