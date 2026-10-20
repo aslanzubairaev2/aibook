@@ -726,9 +726,19 @@ test("«Забыл» brings the prompt back in the same session, other grades le
   for (const score of [2, 3, 4] as const) assert.equal(relearnAfterGrade({ card, variant: "forward" }, score, saved), null);
 
   const forward = relearnAfterGrade({ card, variant: "forward" }, 1, saved);
-  assert.deepEqual(forward, { card: saved, variant: "forward", relearn: true });
+  assert.deepEqual(forward, { card: saved, variant: "forward", relearn: true, relearnCount: 1 });
 
   // Other directions read their schedule from the progress map, not the card.
   const reverse = relearnAfterGrade({ card, variant: "reverse" }, 1, saved);
-  assert.deepEqual(reverse, { card, variant: "reverse", relearn: true });
+  assert.deepEqual(reverse, { card, variant: "reverse", relearn: true, relearnCount: 1 });
+});
+
+test("a forgotten word comes back at most twice in one session", async () => {
+  const { relearnAfterGrade } = await import("./cards.ts");
+  const card = { id: "w", front: "der Winterreifen" } as unknown as Flashcard;
+  const first = relearnAfterGrade({ card, variant: "reverse" }, 1);
+  assert.equal(first?.relearnCount, 1);
+  const second = relearnAfterGrade(first!, 1);
+  assert.equal(second?.relearnCount, 2);
+  assert.equal(relearnAfterGrade(second!, 1), null, "the third miss waits for tomorrow");
 });

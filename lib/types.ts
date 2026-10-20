@@ -308,7 +308,26 @@ export type GrammarPattern = {
  */
 export type GrammarEncounter = GrammarPattern & {
   firstSeenAt: string;
+  /** Last time an answer was actually built around this pattern. Missing on entries saved before it existed. */
+  lastSeenAt?: string;
   count: number;
+};
+
+/**
+ * What the app already knows about this learner beyond the tapped item —
+ * built locally from their deck and bookshelf, so the tutor can write
+ * examples with *their* words and *their* book instead of generic ones.
+ */
+export type DiscussLearnerSnapshot = {
+  /** Words they keep failing in reviews, most-failed first. */
+  strugglingWords?: string[];
+  /** Words saved in the last two weeks, newest first. */
+  recentWords?: string[];
+  /** Cards that are reliably recalled. */
+  knownWordCount?: number;
+  totalWordCount?: number;
+  /** The book in the target language they opened most recently. */
+  currentBook?: { title: string; author?: string; progress: number; chapter?: string; cefr?: string | null };
 };
 
 export type DiscussContentPart = {

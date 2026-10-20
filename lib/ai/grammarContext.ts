@@ -1,10 +1,18 @@
 // Grammar context tracking for AI discussions.
 //
-// After each "Обсудить с AI" response, the model returns a handful of grammar
-// pattern IDs it touched on (e.g. "v2-inversion", "perfekt-past-tense").
+// After each "Обсудить с AI" response, the model returns the grammar pattern
+// IDs the answer was built around (e.g. "perfekt-past", "dativ-after-mit").
 // We accumulate these in localStorage, keyed by target language, so the next
-// discussion can say "the learner has already seen: ..." and the tutor can
-// reference earlier explanations instead of starting from zero every time.
+// discussion knows which explanations the learner has already had.
+//
+// What this list is for changed after it backfired: it used to be read as
+// "remind the learner of these", and since nearly every German sentence has a
+// verb in second position, that pattern was reported on almost every answer,
+// climbed to the top of the list, and the tutor opened every chat with "вы уже
+// встречали это правило". Now a pattern that has been explained more than once
+// is treated as KNOWN — the tutor is told to stay silent about it — and the
+// list is ordered by recency, so a single overexposed pattern cannot crowd
+// everything else out.
 //
 // The list is language-agnostic — the model generates both `patternId` and
 // `patternLabel`, so it works for German, French, or any other language
@@ -14,10 +22,13 @@ import type { GrammarEncounter, GrammarPattern } from "@/lib/types";
 
 const STORAGE_KEY = "aibook_grammar_encounters";
 const MAX_PATTERNS = 40;
-const PROMPT_LIMIT = 15;
 
 function storageKey(targetLanguage: string): string {
   return `${STORAGE_KEY}:${targetLanguage}`;
+}
+
+function touchedAt(encounter: GrammarEncounter): number {
+  return Date.parse(encounter.lastSeenAt ?? encounter.firstSeenAt) || 0;
 }
 
 /** Load all encountered grammar patterns for a language. */
@@ -35,66 +46,49 @@ export function loadGrammarContext(targetLanguage: string): GrammarEncounter[] {
  * Merge new patterns from an AI response into the existing context.
  * Bumps `count` for patterns already seen; appends new ones.
  */
+export function mergeGrammarPatterns(
+  existing: GrammarEncounter[],
+  patterns: GrammarPattern[],
+  now: string = new Date().toISOString(),
+): GrammarEncounter[] {
+  const byId = new Map(existing.map((e) => [e.patternId, { ...e }]));
+
+  for (const p of patterns) {
+    const id = p.patternId.trim().toLowerCase();
+    if (!id) continue;
+
+    const prev = byId.get(id);
+    if (prev) {
+      prev.count += 1;
+      prev.lastSeenAt = now;
+      // Update the label in case the model phrased it better this time.
+      prev.patternLabel = p.patternLabel || prev.patternLabel;
+    } else {
+      byId.set(id, {
+        patternId: id,
+        patternLabel: p.patternLabel,
+        firstSeenAt: now,
+        lastSeenAt: now,
+        count: 1,
+      });
+    }
+  }
+
+  // Keep the most recently touched patterns, capped.
+  return [...byId.values()]
+    .sort((a, b) => touchedAt(b) - touchedAt(a))
+    .slice(0, MAX_PATTERNS);
+}
+
 export function saveGrammarPatterns(
   targetLanguage: string,
   patterns: GrammarPattern[],
 ): void {
   if (!patterns.length) return;
   try {
-    const existing = loadGrammarContext(targetLanguage);
-    const byId = new Map(existing.map((e) => [e.patternId, e]));
-
-    for (const p of patterns) {
-      const id = p.patternId.trim().toLowerCase();
-      if (!id) continue;
-
-      const prev = byId.get(id);
-      if (prev) {
-        prev.count += 1;
-        // Update the label in case the model phrased it better this time.
-        prev.patternLabel = p.patternLabel || prev.patternLabel;
-      } else {
-        byId.set(id, {
-          patternId: id,
-          patternLabel: p.patternLabel,
-          firstSeenAt: new Date().toISOString(),
-          count: 1,
-        });
-      }
-    }
-
-    // Keep the most recently touched patterns, capped.
-    const all = [...byId.values()]
-      .sort((a, b) => b.count - a.count)
-      .slice(0, MAX_PATTERNS);
-
-    localStorage.setItem(storageKey(targetLanguage), JSON.stringify(all));
+    const merged = mergeGrammarPatterns(loadGrammarContext(targetLanguage), patterns);
+    localStorage.setItem(storageKey(targetLanguage), JSON.stringify(merged));
   } catch {
     // localStorage full or unavailable — silently skip.
   }
-}
-
-/**
- * Format grammar context for injection into the prompt.
- * Returns a short paragraph listing previously encountered patterns,
- * or an empty string if there is nothing to report.
- */
-export function formatGrammarContextForPrompt(
-  encounters: GrammarEncounter[],
-): string {
-  if (encounters.length === 0) return "";
-
-  // Take the top N most-seen patterns.
-  const top = encounters
-    .sort((a, b) => b.count - a.count)
-    .slice(0, PROMPT_LIMIT);
-
-  const items = top
-    .map((e) => `"${e.patternLabel}"${e.count >= 3 ? " (seen several times)" : ""}`)
-    .join(", ");
-
-  return (
-    `Grammar patterns this learner has already encountered in previous explanations: ${items}.\n` +
-    `When one of these patterns appears again, you can reference the earlier explanation briefly ("you've seen this before: …") instead of explaining from scratch. But always show an example — never just name the pattern.`
-  );
 }

@@ -231,10 +231,47 @@ describe("grammar context and structural breakdown in the prompt", () => {
         { patternId: "perfekt-past", patternLabel: "Прошедшее время Perfekt", firstSeenAt: "2026-01-02", count: 1 },
       ],
     });
-    assert.match(prompt, /Grammar patterns this learner has already encountered/);
-    assert.match(prompt, /"Глагол на 2-м месте" \(seen several times\)/);
-    assert.match(prompt, /"Прошедшее время Perfekt"/);
-    assert.match(prompt, /you may briefly reference the earlier explanation/);
+    assert.match(prompt, /Grammar they ALREADY KNOW[^\n]*"Глагол на 2-м месте"/);
+    assert.match(prompt, /Grammar explained to them once before: "Прошедшее время Perfekt"/);
+    assert.match(prompt, /Do NOT re-explain it, do NOT remind them of it/);
+    assert.doesNotMatch(prompt, /you may briefly reference the earlier explanation/);
+  });
+
+  test("the prompt itself no longer primes the verb-second pattern", () => {
+    const prompt = buildDiscussSystemPrompt({ ...BASE, mode: "sentence", selectedText: "Da gibt es nur Doppelzimmer." });
+    assert.doesNotMatch(prompt, /Глагол всегда на 2-м месте/);
+    assert.doesNotMatch(prompt, /v2-word-order/);
+    assert.doesNotMatch(prompt, /ALWAYS show a contrastive pair/);
+    assert.doesNotMatch(prompt, /do this for every sentence/);
+  });
+
+  test("the learner's own words and book become material for examples", () => {
+    const prompt = buildDiscussSystemPrompt({
+      ...BASE,
+      learnerSnapshot: {
+        strugglingWords: ["die Rechnung"],
+        recentWords: ["buchen", "das Doppelzimmer"],
+        totalWordCount: 320,
+        knownWordCount: 140,
+        currentBook: { title: "Emil und die Detektive", progress: 42, cefr: "B1" },
+      },
+    });
+    assert.match(prompt, /WHAT YOU KNOW ABOUT THIS LEARNER/);
+    assert.match(prompt, /"buchen", "das Doppelzimmer"/);
+    assert.match(prompt, /keep forgetting in reviews: "die Rechnung"/);
+    assert.match(prompt, /"Emil und die Detektive" \(B1\), 42% through/);
+    assert.match(prompt, /320 saved words, about 140/);
+    assert.match(prompt, /work one or two of their recent or forgotten words into them/);
+  });
+
+  test("homework help never gets the personal word list (it must not leak answers)", () => {
+    const prompt = buildDiscussSystemPrompt({
+      ...BASE,
+      mode: "homework",
+      homeworkContext: { instruction: "Ergänzen Sie", items: ["Ich ... ein Zimmer."] },
+      learnerSnapshot: { recentWords: ["buchen"] },
+    });
+    assert.doesNotMatch(prompt, /WHAT YOU KNOW ABOUT THIS LEARNER/);
   });
 
   test("sentence mode demands contrastive word order and anti-examples", () => {
@@ -245,7 +282,7 @@ describe("grammar context and structural breakdown in the prompt", () => {
       sentence: "Samstags treffe ich oft meine Freunde.",
     });
     assert.match(prompt, /STRUCTURAL BREAKDOWN/);
-    assert.match(prompt, /Show two versions of the sentence/);
+    assert.match(prompt, /show two versions of the sentence/);
     assert.match(prompt, /Break the sentence into chunks and for each chunk say IN PLAIN WORDS what role it plays/);
     assert.match(prompt, /Show ONE anti-example/);
     assert.match(prompt, /Concrete substitutions you MUST use/);

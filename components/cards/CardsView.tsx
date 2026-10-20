@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { ArrowLeft, Search, Trash2, Flame, Calendar, CheckCircle2, RotateCcw, AlertCircle, Play, Layers, ChevronDown, ChevronLeft, ChevronRight, MessageCircle, SlidersHorizontal, Volume2, FileText, Loader2, Eye, X, BarChart3, Maximize2, Minimize2, Keyboard, EyeOff, ShieldCheck } from "lucide-react";
 import { CEFR_LEVELS, LEARNING_ITEM_TYPES, type AiAnalysis, type CardFilters, type CardSkillState, type CefrLevel, type DiscussMessage, type Flashcard, type LearningItemType, type ReverseWordAnalysis, type TrainVariant, type TtsProvider } from "@/lib/types";
 import { createDefaultSrsFields } from "@/lib/srs/sm2";
-import { recallChance, reviewMemory, type ReviewGrade } from "@/lib/srs/fsrs";
+import { isLeech, recallChance, reviewMemory, type ReviewGrade } from "@/lib/srs/fsrs";
 import {
   ALL_TRAIN_VARIANTS,
   buildTrainQueue,
@@ -34,6 +34,7 @@ import {
   type TrainBatch,
   type TrainQueueItem,
   type TrainStatus,
+  type VariantProgress,
   type VariantProgressMap,
 } from "@/lib/cards";
 import { isTypingTarget, trainerHotkey } from "@/lib/srs/trainerHotkeys";
@@ -295,9 +296,11 @@ type AllCardRowProps = {
   onDiscuss: (card: Flashcard) => void;
   onFix: (card: Flashcard) => void;
   onDelete: (id: string) => void;
+  /** Forgotten LEECH_LAPSES+ times in some direction. */
+  leech?: boolean;
 };
 
-const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWordTap, onDiscuss, onFix, onDelete }: AllCardRowProps) {
+const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWordTap, onDiscuss, onFix, onDelete, leech }: AllCardRowProps) {
   const color = STATUS_COLORS[card.status] ?? "var(--accent)";
   const tapFront = useCallback((word: string, e: React.MouseEvent) => onWordTap(word, e, card), [onWordTap, card]);
   // The row itself is the card: a word on it opens the word, a button does its
@@ -321,6 +324,7 @@ const AllCardRow = memo(function AllCardRow({ card, facts, targetLanguage, onWor
             {STATUS_LABELS[card.status] ?? card.status}
             {card.intervalDays > 0 ? ` · ${card.intervalDays}дн` : ""}
           </span>
+          {leech && <span className="all-card-leech" title="Забыто 8+ раз">пиявка</span>}
         </div>
         <div className="all-card-actions">
           <button className="card-row-delete-btn" onClick={() => onDiscuss(card)} type="button" aria-label="Обсудить с AI" title="Обсудить с AI">
@@ -652,11 +656,17 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     cacheKey: string;
     messages: DiscussMessage[];
     historyLoading: boolean;
+    /** The schedule of the direction being trained, when opened from a card. */
+    progress?: VariantProgress | null;
   }>({ open: false, card: null, cacheKey: "", messages: [], historyLoading: false });
 
   // The card's own schedule is what tells the tutor whether this word needs a
-  // memory hook or nothing but nuance.
-  const discussWordProfile = useMemo(() => describeCardFamiliarity(discuss.card), [discuss.card]);
+  // memory hook or nothing but nuance — the schedule of the direction actually
+  // being trained, since «verliebt» can be easy to read and a leech to say.
+  const discussWordProfile = useMemo(
+    () => describeCardFamiliarity(discuss.card && discuss.progress ? { ...discuss.card, ...discuss.progress } : discuss.card),
+    [discuss.card, discuss.progress],
+  );
 
   // Word modal state
   const [wordModal, setWordModal] = useState<{
@@ -698,6 +708,15 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   // A card belongs on "today" when any of its three directions is due — the
   // same rule the statistics use, so the banner, the tab badge and this list
   // can never disagree the way they used to.
+  // Words some direction of which keeps being forgotten — marked in the list.
+  const leechCardIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const card of cards) {
+      if (ALL_TRAIN_VARIANTS.some((v) => isLeech(getVariantProgress(card, v, variantProgress)))) ids.add(card.id);
+    }
+    return ids;
+  }, [cards, variantProgress]);
+
   const dueCards = useMemo(
     () => cards.filter((card) => todaysDirection(card, variantProgress, todayEndTime) !== null),
     [cards, variantProgress, todayEndTime],
@@ -1282,10 +1301,10 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   };
 
   // --- Discuss with AI about a card ---
-  async function openDiscussForCard(card: Flashcard) {
+  async function openDiscussForCard(card: Flashcard, progress?: VariantProgress | null) {
     const cacheKey = makeDiscussCacheKey(discussionModeForCard(card.type), card.front, targetLanguage, nativeLanguage);
     const history = getLocalDiscussHistory(cacheKey);
-    setDiscuss({ open: true, card, cacheKey, messages: history, historyLoading: Boolean(user) });
+    setDiscuss({ open: true, card, cacheKey, messages: history, historyLoading: Boolean(user), progress });
 
     if (!user) return;
     try {
@@ -1788,7 +1807,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
                         type="button"
                         aria-label="Обсудить с AI"
                         title="Обсудить с AI"
-                        onClick={(e) => { e.stopPropagation(); void openDiscussForCard(currentCard); }}
+                        onClick={(e) => { e.stopPropagation(); void openDiscussForCard(currentCard, currentProgress); }}
                       >
                         <MessageCircle size={22} />
                       </button>
@@ -1869,6 +1888,18 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
                       <span>{currentCard.sourceBookTitle || currentCard.source}</span>
                       {currentProgress?.status === "new" && (
                         <span style={{ color: "var(--accent)", fontWeight: 800, flexShrink: 0, maxWidth: "none" }}>НОВАЯ</span>
+                      )}
+                      {/* A leech: repeating it has not worked, so the card offers
+                          the discussion, which opens on a memory hook for it. */}
+                      {currentProgress && isLeech(currentProgress) && (
+                        <button
+                          type="button"
+                          className="leech-chip"
+                          title={`Забыто ${currentProgress.lapses} раз — обсудить с AI`}
+                          onClick={(e) => { e.stopPropagation(); void openDiscussForCard(currentCard, currentProgress); }}
+                        >
+                          <MessageCircle size={12} /> пиявка · {currentProgress.lapses}×
+                        </button>
                       )}
                     </div>
                   </div>
@@ -2059,6 +2090,9 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
         .grade-score { font-size: 15px; font-weight: 900; margin-bottom: 2px; }
         .grade-lbl { font-size: 10px; color: var(--text-muted); }
         .grade-btn-1 { color: #e08888; }
+        .leech-chip { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; max-width: none; padding: 2px 8px; border: 1px solid rgba(224, 136, 136, 0.45); border-radius: 999px; background: rgba(224, 136, 136, 0.1); color: #e08888; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
+        .leech-chip:hover { background: rgba(224, 136, 136, 0.18); }
+        .all-card-leech { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 800; color: #e08888; background: rgba(224, 136, 136, 0.12); }
         .grade-btn-3 { color: var(--green); }
         .grade-btn-4 { color: var(--accent); }
         .grade-btn-1 .grade-score { color: #e08888; }
@@ -3055,6 +3089,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
                   onDiscuss={openDiscussCallback}
                   onFix={openFixCallback}
                   onDelete={onDeleteCard}
+                  leech={leechCardIds.has(card.id)}
                 />
               ))}
               {hasMoreRows && <div ref={sentinelRef} style={{ height: 1 }} />}

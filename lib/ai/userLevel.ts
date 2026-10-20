@@ -4,7 +4,7 @@
 // as a fallback vocabulary-size heuristic.
 
 import { getLocalBooks, getLocalCards } from "@/lib/db/local";
-import type { CefrLevel } from "@/lib/types";
+import type { Book, CefrLevel, Flashcard } from "@/lib/types";
 
 const CEFR_ORDER: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 
@@ -39,7 +39,11 @@ export type TargetLevelEstimate = {
 /** Looks at books and flashcards for `targetLanguage` to estimate the learner's CEFR level. */
 export async function estimateTargetLanguageLevel(targetLanguage: string): Promise<TargetLevelEstimate | null> {
   const [books, cards] = await Promise.all([getLocalBooks(), Promise.resolve(getLocalCards())]);
+  return estimateLevelFrom(books, cards, targetLanguage);
+}
 
+/** The same estimate from data the caller has already loaded — books come out of IndexedDB with every paragraph, so reading them twice per chat is not free. */
+export function estimateLevelFrom(books: Book[], cards: Flashcard[], targetLanguage: string): TargetLevelEstimate | null {
   const targetBooks = books.filter((b) => b.language === targetLanguage);
   const readBooks = targetBooks.filter((b) => b.progress > 0);
   const finishedBooks = targetBooks.filter((b) => b.progress >= 95);

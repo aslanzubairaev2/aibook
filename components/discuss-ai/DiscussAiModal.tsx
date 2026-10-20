@@ -5,7 +5,9 @@ import { Loader2, Mic, Square, Send, X, Quote, Plus, Table2, MessageCircle } fro
 import { useGeminiDictation } from "@/lib/audio/useGeminiDictation";
 import { discussWithAi } from "@/lib/ai/discuss";
 import { INITIAL_DISCUSS_REQUEST } from "@/lib/ai/buildDiscussPrompt";
-import { estimateTargetLanguageLevel } from "@/lib/ai/userLevel";
+import { estimateLevelFrom } from "@/lib/ai/userLevel";
+import { buildLearnerSnapshot } from "@/lib/ai/learnerSnapshot";
+import { getLocalBooks, getLocalCards } from "@/lib/db/local";
 import { loadGrammarContext, saveGrammarPatterns } from "@/lib/ai/grammarContext";
 import { normalizeToken, splitIntoTokens } from "@/lib/selector/text";
 import { discussHotkey, isTypingTarget } from "@/lib/srs/trainerHotkeys";
@@ -16,6 +18,7 @@ import type {
   DiscussAction,
   DiscussActionKind,
   DiscussContentPart,
+  DiscussLearnerSnapshot,
   DiscussMessage,
   DiscussWordProfile,
   GrammarEncounter,
@@ -120,6 +123,7 @@ export function DiscussAiModal({
   const [learnerLevel, setLearnerLevel] = useState<{ ready: boolean; summary?: string }>({ ready: false });
   const [grammarFor, setGrammarFor] = useState<{ word: string; posTag: PosTag } | null>(null);
   const grammarContextRef = useRef<GrammarEncounter[]>([]);
+  const learnerSnapshotRef = useRef<DiscussLearnerSnapshot | undefined>(undefined);
   const initialSentRef = useRef("");
   const endRef = useRef<HTMLDivElement>(null);
   const latestSelectionRef = useRef("");
@@ -141,7 +145,11 @@ export function DiscussAiModal({
     let cancelled = false;
     void (async () => {
       try {
-        const estimate = await estimateTargetLanguageLevel(targetLanguage);
+        // One read of the deck and the bookshelf feeds both the level and the
+        // personal snapshot (their recent / forgotten words, current book).
+        const [books, cards] = await Promise.all([getLocalBooks(), Promise.resolve(getLocalCards())]);
+        learnerSnapshotRef.current = buildLearnerSnapshot(cards, books, targetLanguage, selectedText);
+        const estimate = estimateLevelFrom(books, cards, targetLanguage);
         if (!cancelled) setLearnerLevel({ ready: true, summary: estimate?.summary });
       } catch {
         if (!cancelled) setLearnerLevel({ ready: true });
@@ -150,7 +158,7 @@ export function DiscussAiModal({
     // Load grammar context synchronously from localStorage.
     grammarContextRef.current = loadGrammarContext(targetLanguage);
     return () => { cancelled = true; };
-  }, [isOpen, targetLanguage]);
+  }, [isOpen, targetLanguage, selectedText]);
 
   // Document selection change listener to preserve mobile/desktop highlight selections before click clears them
   useEffect(() => {
@@ -212,6 +220,7 @@ export function DiscussAiModal({
         wordProfile,
         homeworkContext,
         grammarContext: grammarContextRef.current,
+        learnerSnapshot: learnerSnapshotRef.current,
         history: [],
         message: INITIAL_DISCUSS_REQUEST,
       });
@@ -283,6 +292,7 @@ export function DiscussAiModal({
         wordProfile,
         homeworkContext,
         grammarContext: grammarContextRef.current,
+        learnerSnapshot: learnerSnapshotRef.current,
         history: historyForApi,
         message: fullText,
       });
