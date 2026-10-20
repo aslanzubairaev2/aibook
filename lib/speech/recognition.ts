@@ -22,7 +22,8 @@ export function isSpeechRecognitionSupported(): boolean {
 export type Recognizer = { stop: () => void };
 
 export type RecognizerCallbacks = {
-  onResult: (transcript: string) => void;
+  /** confidence: the recogniser's own 0–1 estimate, when the browser gives one. */
+  onResult: (transcript: string, confidence?: number) => void;
   onError?: (message: string) => void;
   onEnd?: () => void;
 };
@@ -42,8 +43,10 @@ export function startRecognition(lang: string, cb: RecognizerCallbacks): Recogni
   recognition.continuous = false;
 
   recognition.onresult = (event: any) => {
-    const transcript = event.results?.[0]?.[0]?.transcript ?? "";
-    if (transcript) cb.onResult(transcript.trim());
+    const best = event.results?.[0]?.[0];
+    const transcript = best?.transcript ?? "";
+    const confidence = typeof best?.confidence === "number" && best.confidence > 0 ? best.confidence : undefined;
+    if (transcript) cb.onResult(transcript.trim(), confidence);
   };
   recognition.onerror = (event: any) => {
     cb.onError?.(event?.error ?? "speech-error");

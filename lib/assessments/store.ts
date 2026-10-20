@@ -50,7 +50,7 @@ import {
   wordMarkKey,
 } from "./publicView";
 import { assessPronunciation, inspectWav, speechRemarks, TECHNICAL_REASON_RU } from "./azureSpeech";
-import { trainerErrors } from "@/lib/training/store";
+import { pronounTrainerGaps, trainerErrors } from "@/lib/training/store";
 import { assessmentTtsModels, audioSpecHash, synthesizeListening } from "./speech";
 
 const AUDIO_BUCKET = "tts-audio";
@@ -731,6 +731,8 @@ export async function learningGaps(admin: SupabaseClient, userId: string, args: 
     pronunciation_problems: pronunciation,
     /** Errors from the trainers over the last two weeks, each tagged with its source (trainer:nouns, trainer:verbs…). */
     trainer_errors: await trainerErrors(admin, userId).then((t) => t.errors).catch(() => []),
+    /** Pronoun practice: confusions repeated in first answers, with evidence; single errors are listed as such, not as gaps. */
+    pronoun_practice: await pronounTrainerGaps(admin, userId).catch(() => null),
     how_to_build_a_review_pack: [
       "Choose the material yourself: a wrong answer does not mean every word in it is unknown.",
       "Run check_dictionary_words on your candidates first and leave out what the learner already has.",

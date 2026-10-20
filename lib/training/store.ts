@@ -4,6 +4,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CHECKS, OUTCOMES, TRAINERS, dayInZone, normalizeEvent, type TrainingEvent } from "./events";
 import { summarizeTraining, type StoredEvent } from "./summary";
+import { pronounGaps, pronounSummary, type PronounEvent } from "@/lib/pronouns/stats";
+import { pronounFilters, readReviews } from "@/lib/pronouns/store";
 
 const COLUMNS =
   "id, client_event_id, occurred_at, local_date, time_zone, trainer, mode, session_id, entry_id, card_id, word, checks, form, pronoun, tense, prompt, answer, expected, outcome, attempt_no, hint_used, answer_shown, self_grade, meta";
@@ -69,6 +71,15 @@ async function readEvents(admin: SupabaseClient, userId: string, range: { from: 
     query = query.ilike("word", `%${word}%`);
   }
   if (typeof filters.entry_id === "string" && filters.entry_id) query = query.eq("entry_id", filters.entry_id);
+  // Pronoun practice keeps its task in meta; its filters read it there, in SQL, so paging stays exact.
+  const p = pronounFilters(filters);
+  if (p.verb) query = query.contains("meta", { verb: p.verb });
+  if (p.response_mode) query = query.contains("meta", { response_mode: p.response_mode });
+  if (p.construction) query = query.contains("meta", { constructions: [p.construction] });
+  if (p.case) query = query.contains("meta", { case: p.case });
+  if (p.pronoun && p.role) query = query.contains("meta", { target: { [p.role]: { id: p.pronoun } } });
+  else if (p.pronoun) query = query.or(`meta->target->subject->>id.eq.${p.pronoun},meta->target->object->>id.eq.${p.pronoun}`);
+  else if (p.role) query = query.contains("meta", { focus_role: p.role });
   const { data, error, count } = await query;
   if (error) throw new Error(`training events read failed: ${error.message}`);
   return { rows: (data ?? []) as StoredEvent[], total: count ?? 0 };
@@ -79,6 +90,7 @@ export async function trainingHistory(admin: SupabaseClient, userId: string, arg
   const limit = Math.min(200, Math.max(1, Number(args.limit) || 50));
   const offset = Math.max(0, Number(args.offset) || 0);
   const { rows, total } = await readEvents(admin, userId, range, args, limit, offset);
+  const reviews = rows.some((e) => e.trainer === "pronouns") ? await readReviews(admin, userId) : [];
   return {
     period: range,
     total,
@@ -107,7 +119,26 @@ export async function trainingHistory(admin: SupabaseClient, userId: string, arg
       answer_shown: e.answer_shown,
       self_grade: e.self_grade,
       session_id: e.session_id,
+      event_id: e.id,
+      client_event_id: e.client_event_id,
+      ...(e.trainer === "pronouns" ? { pronoun_task: pronounDetails(e, reviews.filter((r) => r.event_id === e.id)) } : {}),
     })),
+  };
+}
+
+/** What the teacher needs to read one pronoun answer: the task, each part's verdict, the explanation, any correction and re-grade. */
+function pronounDetails(e: StoredEvent, reviews: { outcome: string | null; components: unknown; note: string | null; created_at: string }[]) {
+  const m = e.meta as Record<string, unknown>;
+  const latest = reviews[reviews.length - 1];
+  return {
+    response_mode: m.response_mode, verb: m.verb, noun: m.noun, constructions: m.constructions, sentence_type: m.sentence_type,
+    target: m.target, expected_forms: m.expected_forms, components: m.components, confusions: m.confusions,
+    error_kind: m.error_kind, agreement_ok: m.agreement_ok, feedback: m.feedback, uncertain_reason: m.uncertain_reason,
+    first_answer: e.attempt_no === 1 && !m.correction_of, correction_of: m.correction_of ?? null,
+    delayed_review: m.delayed_review ?? false, recheck_of: m.recheck_of ?? null, followup_of: m.followup_of ?? null,
+    assigned_session_id: m.assigned_session_id ?? null, active_ms: m.active_ms ?? null, speech: m.speech ?? null,
+    technical_reason: m.technical_reason ?? null, check_method: latest ? "teacher" : m.check_method ?? "rules",
+    effective_outcome: latest?.outcome ?? e.outcome, reviews,
   };
 }
 
@@ -128,8 +159,13 @@ export async function trainingSummary(admin: SupabaseClient, userId: string, arg
   const range = await resolvePeriod(admin, userId, args);
   const { rows, total } = await readAll(admin, userId, range, args);
   const summary = summarizeTraining(rows, { from: range.from, to: range.to, time_zone: range.time_zone });
+  const pronounRows = rows.filter((e) => e.trainer === "pronouns");
+  const pronouns = pronounRows.length || args.trainer === "pronouns"
+    ? pronounSummary(pronounRows as unknown as PronounEvent[], await readReviews(admin, userId), pronounFilters(args))
+    : undefined;
   return {
     ...summary,
+    ...(pronouns ? { pronouns } : {}),
     events_considered: rows.length,
     truncated: total > rows.length,
     note: rows.length === 0
@@ -151,4 +187,18 @@ export async function trainerErrors(admin: SupabaseClient, userId: string, days 
     byItem.set(key, item);
   }
   return { period: range, errors: [...byItem.values()].sort((a, b) => b.times - a.times).slice(0, 60) };
+}
+
+/** Pronoun confusions for get_learning_gaps, each with the first answers it rests on. */
+export async function pronounTrainerGaps(admin: SupabaseClient, userId: string) {
+  const range = await resolvePeriod(admin, userId, { period: "last_30_days" });
+  const { rows } = await readAll(admin, userId, range, { trainer: "pronouns" }, 3000);
+  return { period: range, ...pronounGaps(rows as unknown as PronounEvent[], await readReviews(admin, userId)) };
+}
+
+/** Pronoun practice answers for the learner's own statistics screen. */
+export async function readPronounEvents(admin: SupabaseClient, userId: string, period: "last_30_days" | "all" = "all") {
+  const range = await resolvePeriod(admin, userId, { period });
+  const { rows } = await readAll(admin, userId, range, { trainer: "pronouns" }, 5000);
+  return rows as unknown as PronounEvent[];
 }

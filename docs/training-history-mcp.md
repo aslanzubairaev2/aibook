@@ -23,12 +23,12 @@
 | Поле | Значение |
 |---|---|
 | `at`, `day`, `time_zone` | время; **день ученика** в его часовом поясе (вычисляется на устройстве) |
-| `trainer` | `review` («Повторение»), `active` («Активно»), `nouns`, `verbs`, `adjectives`, `prepositions` |
+| `trainer` | `review` («Повторение»), `active` («Активно»), `nouns`, `verbs`, `adjectives`, `prepositions`, `pronouns` (см. `docs/pronoun-practice-mcp.md`) |
 | `mode`, `session_id` | режим тренажёра; одна сессия = один заход |
 | `word`, `entry_id`, `card_id` | слово и ссылка на запись словаря / карточку |
 | `checks` | что проверялось: `translation`, `article`, `plural`, `word_with_article`, `form` (+ `form`: `praeteritum` / `partizip2`), `conjugation` (+ `pronoun`, `tense`: `present` / `preteritum` / `perfekt` / `future`), `sentence` (предложение принято ИИ-тьютором), `adjective_ending` (+ рамка «тип артикля · падеж · род»), `preposition_case`, `recognition` / `recall` / `listening` / `spoken_production` |
 | `prompt`, `answer`, `expected` | задание, ответ ученика, правильный ответ |
-| `outcome` | `correct` · `typo` · `incorrect` · `dont_know` · `skipped` (пустой ответ) · `technical` · `self_rated` |
+| `outcome` | `correct` · `typo` · `incorrect` · `dont_know` · `skipped` (пустой ответ) · `technical` · `self_rated` · `needs_review` (правила не смогли уверенно оценить — ждёт преподавателя, ошибкой не считается) |
 | `attempt_no`, `first_try` | 1 — первый показ в сессии; 2+ — круг «повторить ошибки» |
 | `hint_used`, `answer_shown` | подсказка; подсмотренный ответ (такой ответ не считается успехом с первой попытки) |
 | `self_grade` | только для `self_rated`: 1 «не помню» … 4 «легко» — **никогда не считается проверенным правильным ответом** |
@@ -95,5 +95,5 @@
 ## Переподключение агента
 
 Список инструментов клиент запоминает при подключении. Версия сервера (`MCP_SERVER_VERSION`, сейчас
-`1.8.0`) меняется вместе с набором инструментов. Если агент не видит инструмент из
+`1.11.0`) меняется вместе с набором инструментов. Если агент не видит инструмент из
 `https://aibook-liart.vercel.app/api/mcp-version`, переподключите коннектор.

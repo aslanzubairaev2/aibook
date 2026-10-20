@@ -86,6 +86,18 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
     ],
   },
   {
+    area: "Pronoun practice («личные местоимения»)",
+    summary:
+      "A trainer in Практика for choosing personal pronouns — Nominativ + Akkusativ in this version — and building short sentences (Ich sehe dich. Seht ihr uns? Könnt ihr sie abholen? Wir warten auf euch.), with people and with nouns replaced by pronouns (die Tasche → sie, by the German gender). Tasks come only from a checked catalogue of verbs and constructions; blocks (questions, negation, können, separable verbs, warten auf, noun replacement) are switched on when the learner has covered them, never by a random draw. Modes: choice, gaps, written translation, spoken translation. Answers are checked by rules, part by part — subject, object, conjugation (agreement with the subject the learner chose), sentence type and word order, government, separable prefix, negation, spelling — and answers the rules cannot judge wait for review instead of counting as errors. get_pronoun_practice_config shows settings, catalogue and limits; update_pronoun_practice_config switches blocks, verbs and modes; create_pronoun_practice_session assigns a session with a focus and returns its link (idempotent by client_key); submit_pronoun_answer_review corrects an automatic verdict, keeping the original. Results: get_training_summary / get_training_history with trainer \"pronouns\"; repeated confusions also show in get_learning_gaps (pronoun_practice).",
+    tools: ["get_pronoun_practice_config", "update_pronoun_practice_config", "create_pronoun_practice_session", "submit_pronoun_answer_review"],
+    say: [
+      "«как у меня с местоимениями?»",
+      "«назначь тренировку на uns / euch / sie»",
+      "«включи отделяемые глаголы в местоимениях»",
+      "«этот ответ на самом деле правильный»",
+    ],
+  },
+  {
     area: "Reading texts",
     summary:
       "Texts the learner reads in the app. You write them yourself — you are the language model, this server never spends the learner's AI budget — and create_lesson saves them into «Мои уроки» with an optional glossary and comprehension questions. list_catalogue searches the ready-made public shelves and reports the share of words the learner already knows in each text.",

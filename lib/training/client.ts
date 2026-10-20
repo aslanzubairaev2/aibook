@@ -78,8 +78,9 @@ function listen() {
   });
 }
 
-export function logTrainingEvent(input: TrainingEventInput) {
-  if (typeof window === "undefined") return;
+/** Queues the answer; returns its client_event_id so a later correction can point at it. */
+export function logTrainingEvent(input: TrainingEventInput): string | null {
+  if (typeof window === "undefined") return null;
   const now = new Date();
   const event: TrainingEvent = {
     client_event_id: newId(),
@@ -109,6 +110,7 @@ export function logTrainingEvent(input: TrainingEventInput) {
   listen();
   if (timer) window.clearTimeout(timer);
   timer = window.setTimeout(() => void flushTrainingEvents(), FLUSH_DELAY_MS);
+  return event.client_event_id;
 }
 
 /** Send what is queued. Safe to call any time; concurrent calls collapse into one. */

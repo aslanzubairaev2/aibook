@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BookA, ChevronRight, Flame, Link2, Repeat } from "lucide-react";
+import { BookA, ChevronRight, Flame, Link2, Repeat, Users } from "lucide-react";
 import { computeDeckStats } from "@/lib/cards";
 import { getCardVariantProgressMap, getLocalNounsDict, getLocalOtherPosDict, getLocalVerbsDict } from "@/lib/db/local";
 import { isNounEntry, nounGender } from "@/lib/nounForms";
@@ -17,6 +17,7 @@ type Props = {
   onOpenVerbs: () => void;
   onOpenNouns: () => void;
   onOpenOtherPos: () => void;
+  onOpenPronouns: () => void;
 };
 
 /**
@@ -28,7 +29,7 @@ type Props = {
  * material it currently has, read from the caches the screens themselves keep
  * — so the numbers are there instantly and cost no network call.
  */
-export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenNouns, onOpenOtherPos }: Props) {
+export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenNouns, onOpenOtherPos, onOpenPronouns }: Props) {
   // The card module's own boundary for "due today", so this tile and the
   // trainer can never disagree about the number.
   const todayEndTime = useMemo(() => {
@@ -116,6 +117,16 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
             <span className="action-card-sub">
               {counts.otherPos > 0 ? `${counts.otherPos} слов из словаря` : "Падеж предлога · окончания прилагательных"}
             </span>
+          </span>
+          <ChevronRight size={20} className="action-card-arrow" />
+        </button>
+
+        <button className="action-card pronouns glass-card" onClick={onOpenPronouns} type="button">
+          <span className="action-card-icon"><Users size={24} /></span>
+          <span>
+            <span className="action-card-label">Личные местоимения</span>
+            <strong className="action-card-title">Кто кого: ich · mich · uns · euch</strong>
+            <span className="action-card-sub">Nominativ и Akkusativ · письмо, голос, выбор</span>
           </span>
           <ChevronRight size={20} className="action-card-arrow" />
         </button>

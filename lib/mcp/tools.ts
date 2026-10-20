@@ -35,6 +35,7 @@ import { LEARNING_ITEM_TYPES, type CefrLevel } from "@/lib/types";
 import { AGENT_LIMITS, AGENT_TIPS, CAPABILITY_AREAS } from "@/lib/mcp/capabilities";
 import { ASSESSMENT_HANDLERS, ASSESSMENT_TOOLS } from "@/lib/mcp/assessmentTools";
 import { TRAINING_HANDLERS, TRAINING_TOOLS } from "@/lib/mcp/trainingTools";
+import { PRONOUN_HANDLERS, PRONOUN_TOOLS } from "@/lib/mcp/pronounTools";
 import { difficultyFromSm2 } from "@/lib/srs/fsrs";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -2182,6 +2183,7 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   ...ASSESSMENT_TOOLS,
   ...TRAINING_TOOLS,
+  ...PRONOUN_TOOLS,
 ];
 
 const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
@@ -2208,6 +2210,7 @@ const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
   delete_pack: deletePack,
   ...ASSESSMENT_HANDLERS,
   ...TRAINING_HANDLERS,
+  ...PRONOUN_HANDLERS,
 };
 
 /** Every tool that is advertised must be callable, and vice versa. */

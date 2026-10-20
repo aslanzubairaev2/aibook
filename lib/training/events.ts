@@ -7,10 +7,12 @@
 // one of them (checks), and a flashcard self-rating (outcome «self_rated» with
 // self_grade) is never mistaken for an automatically checked right answer.
 
-export const TRAINERS = ["review", "active", "nouns", "verbs", "adjectives", "prepositions"] as const;
+export const TRAINERS = ["review", "active", "nouns", "verbs", "adjectives", "prepositions", "pronouns"] as const;
 export type Trainer = typeof TRAINERS[number];
 
-export const OUTCOMES = ["correct", "typo", "incorrect", "dont_know", "skipped", "technical", "self_rated"] as const;
+// needs_review: the rules could not judge the answer with confidence — it waits
+// for the teacher and is never counted as the learner's error.
+export const OUTCOMES = ["correct", "typo", "incorrect", "dont_know", "skipped", "technical", "self_rated", "needs_review"] as const;
 export type Outcome = typeof OUTCOMES[number];
 
 /** What a single event tested. */
@@ -28,11 +30,12 @@ export const CHECKS = [
   "recall",
   "listening",
   "spoken_production",
+  "pronoun",
 ] as const;
 export type Check = typeof CHECKS[number];
 
 /** The kind of knowledge a check is evidence of — what the teacher reads. */
-export const KNOWLEDGE: Record<Check, "translation" | "article" | "plural" | "verb_form" | "conjugation" | "sentence_use" | "grammar_ending" | "case_government" | "card_recall"> = {
+export const KNOWLEDGE: Record<Check, "translation" | "article" | "plural" | "verb_form" | "conjugation" | "sentence_use" | "grammar_ending" | "case_government" | "card_recall" | "pronoun_use"> = {
   translation: "translation",
   article: "article",
   plural: "plural",
@@ -46,6 +49,7 @@ export const KNOWLEDGE: Record<Check, "translation" | "article" | "plural" | "ve
   recall: "card_recall",
   listening: "card_recall",
   spoken_production: "card_recall",
+  pronoun: "pronoun_use",
 };
 
 export type TrainingEvent = {

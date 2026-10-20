@@ -3106,3 +3106,67 @@ textarea,
 
 /* Keeps a screen header's title centred when its right-hand button is absent. */
 .icon-btn-spacer { width: 40px; height: 40px; flex-shrink: 0; }
+
+/* ─── Личные местоимения (Практика) ───────────────────────────────────────── */
+.action-card.pronouns {
+  background: linear-gradient(135deg, rgba(96, 186, 170, 0.18) 0%, var(--bg-elevated) 60%);
+  border-color: rgba(96, 186, 170, 0.25);
+}
+.action-card.pronouns .action-card-icon { background: rgba(96, 186, 170, 0.15); color: #7fcfc0; }
+.action-card.pronouns .action-card-label { color: #7fcfc0; }
+.action-card.pronouns .action-card-arrow { color: #7fcfc0; }
+.action-card:disabled { opacity: 0.6; }
+.pron-load-error { font-size: 13px; color: var(--text-muted); padding: 10px 12px; border-left: 2px solid var(--red); background: rgba(196, 106, 106, 0.08); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin-bottom: 12px; }
+.pron-tag { align-self: flex-start; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #7fcfc0; }
+.pron-note { font-size: 13px; line-height: 1.5; color: var(--text-primary); padding: 10px 12px; border-left: 2px solid #7fcfc0; background: rgba(96, 186, 170, 0.08); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.pron-context { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 15px; color: var(--text-primary); }
+.pron-context .verb-quiz-translation { margin-top: 0; }
+.pron-notes { margin-top: -8px; font-size: 13px; color: var(--accent); }
+.pron-frame { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 18px; font-weight: 600; color: var(--text-primary); line-height: 1.6; }
+.pron-blank { display: inline-block; min-width: 54px; padding: 0 6px; text-align: center; border-bottom: 2px solid var(--accent); color: var(--accent-bright); }
+.pron-blank-input { width: 96px; height: 38px; font-size: 16px; font-weight: 700; text-align: center; }
+.pron-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.pron-speech { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 6px 0; text-align: center; }
+.pron-mic { width: 64px; height: 64px; border-radius: 50%; display: inline-grid; place-items: center; border: 1px solid var(--border-strong); background: var(--bg-elevated); color: var(--text-primary); cursor: pointer; }
+.pron-mic.listening { border-color: var(--red); color: var(--red); background: rgba(196, 106, 106, 0.14); animation: pron-pulse 1.2s ease-in-out infinite; }
+@keyframes pron-pulse { 50% { box-shadow: 0 0 0 8px rgba(196, 106, 106, 0.12); } }
+.pron-speech-label { font-size: 14px; color: var(--text-muted); overflow-wrap: anywhere; }
+.pron-speech-error { font-size: 13px; color: var(--red); }
+.pron-clarify { display: flex; flex-direction: column; gap: 10px; font-size: 14px; line-height: 1.5; padding: 12px 14px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: rgba(212, 168, 71, 0.08); }
+.pron-feedback { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border); font-size: 14px; line-height: 1.5; }
+.pron-feedback.correct, .pron-feedback.typo { border-color: rgba(122, 171, 106, 0.45); background: rgba(122, 171, 106, 0.1); }
+.pron-feedback.incorrect { border-color: rgba(196, 106, 106, 0.45); background: rgba(196, 106, 106, 0.08); }
+.pron-feedback.needs_review { border-color: var(--accent); background: rgba(212, 168, 71, 0.08); }
+.pron-verdict { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; }
+.pron-components { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 0; }
+.pron-components li { padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 700; border: 1px solid var(--border); color: var(--text-muted); }
+.pron-components li.correct { color: var(--green); border-color: rgba(122, 171, 106, 0.45); }
+.pron-components li.error { color: var(--red); border-color: rgba(196, 106, 106, 0.5); }
+.pron-components li.typo { color: var(--accent); border-color: rgba(212, 168, 71, 0.5); }
+.pron-feedback-lines { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.pron-expected { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 800; color: var(--text-primary); }
+.pron-rule { font-size: 13px; color: var(--text-muted); }
+.pron-summary { align-items: stretch; text-align: left; padding: 24px 4px; }
+.pron-summary > strong { text-align: center; }
+.pron-summary-parts, .pron-summary-misses, .pron-meters, .pron-confusions { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.pron-summary-parts li { display: flex; justify-content: space-between; font-size: 14px; color: var(--text-muted); }
+.pron-summary-parts b { color: var(--text-primary); }
+.pron-summary-misses li { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted); }
+.pron-summary-misses b { color: var(--text-primary); font-size: 14px; }
+.pron-summary-misses em { font-style: normal; font-size: 12px; color: var(--accent); }
+.pron-setting { display: flex; flex-direction: column; gap: 8px; }
+.pron-setting h2 { font-size: 15px; font-weight: 800; margin: 0; }
+.pron-setting + .pron-setting { padding-top: 12px; border-top: 1px solid var(--border); }
+.pron-setting-row label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-primary); }
+.pron-setting-row select { height: 32px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-primary); padding: 0 6px; }
+.pron-meter { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(60px, 1fr) auto; align-items: center; gap: 10px; font-size: 13px; color: var(--text-muted); }
+.pron-meter b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.pron-meter-bar { height: 6px; border-radius: 3px; background: var(--bg-elevated); overflow: hidden; }
+.pron-meter-bar span { display: block; height: 100%; background: #7fcfc0; border-radius: 3px; }
+.pron-confusions li { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.pron-confusions b { color: var(--text-primary); }
+.pron-confusions b.miss { color: var(--red); }
+.pron-confusions em { font-style: normal; color: var(--accent); margin-left: 4px; }
+.pron-confusions small { display: block; font-size: 12px; }
+.pron-status.confident { color: var(--green); }
+.pron-status.practising { color: var(--accent); }
