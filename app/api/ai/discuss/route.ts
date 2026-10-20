@@ -8,7 +8,7 @@
 import { GoogleGenAI, Type, type GenerateContentResponse } from "@google/genai";
 import { NextResponse } from "next/server";
 import { AI_CONFIG } from "@/lib/config";
-import type { AiMode, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
+import type { AiMode, DiscussLearnerSnapshot, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { parseModelJson } from "@/lib/ai/jsonResponse";
 import { buildDiscussSystemPrompt, parseDiscussReply } from "@/lib/ai/buildDiscussPrompt";
@@ -113,6 +113,7 @@ export async function POST(req: Request) {
     wordProfile?: DiscussWordProfile;
     homeworkContext?: { instruction: string; items: string[] };
     grammarContext?: GrammarEncounter[];
+    learnerSnapshot?: DiscussLearnerSnapshot;
     history: DiscussMessage[];
     message: string;
   };
@@ -129,6 +130,7 @@ export async function POST(req: Request) {
     wordProfile: body.wordProfile,
     homeworkContext: body.homeworkContext,
     grammarContext: body.grammarContext,
+    learnerSnapshot: body.learnerSnapshot,
     isFollowUp: body.history.length > 0,
   });
 

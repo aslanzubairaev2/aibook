@@ -1,4 +1,4 @@
-import type { AiMode, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
+import type { AiMode, DiscussLearnerSnapshot, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
 import { supabase } from "@/lib/db/supabase";
 import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
 import { AI_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "@/lib/net/freshFetch";
@@ -19,6 +19,8 @@ export type DiscussRequest = {
   homeworkContext?: { instruction: string; items: string[] };
   /** Grammar patterns previously encountered in AI discussions. */
   grammarContext?: GrammarEncounter[];
+  /** Their recent and forgotten words and current book, for personal examples. */
+  learnerSnapshot?: DiscussLearnerSnapshot;
   history: DiscussMessage[];
   message: string;
 };

@@ -23,6 +23,7 @@ import type {
   DiscussActionKind,
   DiscussContentPart,
   DiscussFamiliarity,
+  DiscussLearnerSnapshot,
   DiscussMessage,
   DiscussWordProfile,
   GrammarEncounter,
@@ -52,6 +53,8 @@ export type DiscussPromptInput = {
    * Used to let the tutor reference earlier explanations.
    */
   grammarContext?: GrammarEncounter[];
+  /** Their own words and book, so examples can be built from what they are actually learning. */
+  learnerSnapshot?: DiscussLearnerSnapshot;
   /**
    * True once the chat already has at least one exchange. The "explain this
    * item" instructions below (restate the meaning, run the per-part-of-speech
@@ -123,7 +126,10 @@ function describeLearner(input: DiscussPromptInput): string {
   // word, not about their own statistics.
   lines.push("Never mention the deck, the schedule, review counts, or how hard you think this is for them. Just adjust what you say.");
 
-  // Grammar context: patterns the learner has already encountered.
+  const snapshot = formatLearnerSnapshot(input.learnerSnapshot, input.mode);
+  if (snapshot) lines.push(snapshot);
+
+  // Grammar context: patterns the learner has already had explained.
   if (input.grammarContext && input.grammarContext.length > 0) {
     lines.push(formatGrammarContext(input.grammarContext));
   }
@@ -131,23 +137,59 @@ function describeLearner(input: DiscussPromptInput): string {
   return lines.join("\n");
 }
 
+/**
+ * Their deck and their book, turned into material for examples. The point is
+ * that an example sentence with a word they saved yesterday teaches twice,
+ * while an example about a generic "Hund" teaches once.
+ */
+function formatLearnerSnapshot(snapshot: DiscussLearnerSnapshot | undefined, mode: DiscussPromptInput["mode"]): string {
+  if (!snapshot || mode === "homework") return "";
+  const lines: string[] = [];
+  if (typeof snapshot.totalWordCount === "number" && snapshot.totalWordCount > 0) {
+    lines.push(`- Working vocabulary: ${snapshot.totalWordCount} saved words, about ${snapshot.knownWordCount ?? 0} of them recalled reliably.`);
+  }
+  if (snapshot.recentWords?.length) {
+    lines.push(`- Words they saved in the last two weeks: ${snapshot.recentWords.map((w) => `"${w}"`).join(", ")}.`);
+  }
+  if (snapshot.strugglingWords?.length) {
+    lines.push(`- Words they keep forgetting in reviews: ${snapshot.strugglingWords.map((w) => `"${w}"`).join(", ")}.`);
+  }
+  if (snapshot.currentBook) {
+    const b = snapshot.currentBook;
+    lines.push(`- They are reading "${b.title}"${b.author ? ` by ${b.author}` : ""}${b.cefr ? ` (${b.cefr})` : ""}, ${b.progress}% through${b.chapter ? `, chapter "${b.chapter}"` : ""}.`);
+  }
+  if (lines.length === 0) return "";
+  return (
+    `WHAT YOU KNOW ABOUT THIS LEARNER (use it, never recite it):\n${lines.join("\n")}\n` +
+    `Use this to make the answer theirs: when you build example sentences, work one or two of their recent or forgotten words into them wherever it is natural (never more than that, never forced, never with a remark that you did it), and pitch the vocabulary of the examples at what someone with this deck and this book can follow. If the book is relevant to the question, you may draw on it. Do not list these words back to them or comment on their progress.`
+  );
+}
+
 const MAX_GRAMMAR_IN_PROMPT = 15;
+/** Explained this many times already: the learner has it, the tutor should leave it alone. */
+const KNOWN_PATTERN_COUNT = 2;
 
 function formatGrammarContext(encounters: GrammarEncounter[]): string {
   if (encounters.length === 0) return "";
 
-  const top = [...encounters]
-    .sort((a, b) => b.count - a.count)
-    .slice(0, MAX_GRAMMAR_IN_PROMPT);
-
-  const items = top
-    .map((e) => `"${e.patternLabel}"${e.count >= 3 ? " (seen several times)" : ""}`)
-    .join(", ");
-
-  return (
-    `Grammar patterns this learner has already encountered in previous explanations: ${items}.\n` +
-    `When one of these patterns appears in the current item, you may briefly reference the earlier explanation ("you've seen this before: …") instead of explaining from scratch. But always include a fresh example — never just name the pattern.`
+  const byRecency = [...encounters].sort(
+    (a, b) => (Date.parse(b.lastSeenAt ?? b.firstSeenAt) || 0) - (Date.parse(a.lastSeenAt ?? a.firstSeenAt) || 0),
   );
+  const known = byRecency.filter((e) => e.count >= KNOWN_PATTERN_COUNT).slice(0, MAX_GRAMMAR_IN_PROMPT);
+  const once = byRecency.filter((e) => e.count < KNOWN_PATTERN_COUNT).slice(0, MAX_GRAMMAR_IN_PROMPT);
+  const list = (items: GrammarEncounter[]) => items.map((e) => `"${e.patternLabel}"`).join(", ");
+
+  const lines: string[] = [];
+  if (known.length) {
+    lines.push(`Grammar they ALREADY KNOW — it has been explained to them more than once: ${list(known)}.`);
+  }
+  if (once.length) {
+    lines.push(`Grammar explained to them once before: ${list(once)}.`);
+  }
+  lines.push(
+    `Treat all of this as settled. Do NOT re-explain it, do NOT remind them of it, and never write "you've already seen / вы уже встречали / помните правило" — hearing the same reminder in every chat is exactly what makes the tutor feel like a template. Bring one of these up only if they ask about it, or if it is the single thing in this item that would actually trip them up — and then in one short line, not a lesson. Spend the answer on what is NEW for them in this item.`,
+  );
+  return lines.join("\n");
 }
 
 // ─── What a useful answer contains ───────────────────────────────────────────
@@ -167,18 +209,18 @@ const MODE_FOCUS: Record<DiscussPromptInput["mode"], string> = {
   word: `They tapped a single word. Give the meaning in one plain line, then spend the rest of the answer on using it.
 ${WORD_PHRASES}`,
   phrase: `They tapped a phrase. Say what it means as a whole and when a person would actually say it (situation, tone, who says it to whom). Show two or three variations of it they could use themselves, and one natural reply to it. Only take it apart word by word if a part is surprising.
-Then break down the internal structure of the phrase in plain language:
+Then, only if its structure is not obvious, break it down in plain language:
 - Name the role of each piece WITHOUT grammar jargon: instead of "adverb" say "this word tells you WHEN / HOW / WHERE something happens"; instead of "accusative" say "this is the answer to 'whom?' or 'what?'".
-- If the phrase uses a word order that would confuse a speaker of the learner's native language, show the "normal" order side by side with the phrase's order and explain why the speaker chose this one (emphasis, habit, rule).`,
+- If the phrase uses an unusual word order that would genuinely confuse a speaker of the learner's native language AND that word order is not on their already-known list, show the "normal" order side by side with the phrase's order and explain why the speaker chose this one (emphasis, habit, rule).`,
   sentence: `They tapped a whole sentence. Give a natural translation first, then show the pattern it is built on as something reusable: the same frame with two or three different fillings, so they can say their own version of it.
-STRUCTURAL BREAKDOWN — do this for every sentence:
-1. Show two versions of the sentence — the one they tapped AND the "neutral" word order (if they differ), side by side, so the learner can see what moved and why.
+STRUCTURAL BREAKDOWN — focus it on what is actually hard in THIS sentence for THIS learner:
+1. Only if the word order is unusual for this kind of sentence (not just the ordinary verb-second rule they already know) — show two versions of the sentence, the one they tapped AND the "neutral" word order, side by side, so the learner can see what moved and why. Otherwise skip this step entirely.
 2. Break the sentence into chunks and for each chunk say IN PLAIN WORDS what role it plays. Never just name a grammar term; instead say what question the chunk answers:
    - "кого? что?" → this chunk tells you WHOM or WHAT is affected (instead of saying "accusative").
    - "когда? как часто?" → this chunk tells you WHEN or HOW OFTEN (instead of saying "adverb" or "temporal expression").
    - "кто? что делает?" → this is WHO does the action and WHAT they do (instead of "subject" and "predicate").
    If you DO mention a grammar term because it is genuinely useful for the learner to know, ALWAYS follow it with a one-sentence plain-language explanation in parentheses. For example: "Akkusativ (это падеж, который отвечает на вопрос «кого? что?» — он показывает, на кого направлено действие)".
-3. Show ONE anti-example: a sentence built the way a speaker of the learner's native language would instinctively say it, mark it with ✗, and briefly explain why it does not work. Then show the correct version with ✓.
+3. Show ONE anti-example where a real trap exists: a sentence built the way a speaker of the learner's native language would instinctively say it, mark it with ✗, and briefly explain why it does not work. Then show the correct version with ✓.
 Point out only what would actually trip them up — skip anything obvious.`,
   homework: `They opened help on one exercise from their own paper homework, which they must complete themselves — you are a tutor talking them through the rule, not a solver. Explain in plain words what the exercise is asking for and which grammatical pattern it is testing, then demonstrate the pattern with ONE worked example built from words that do NOT appear anywhere in the exercise below. Do not go item by item through their exercise. If they ask a follow-up, answer it the same way: explain the rule further, never by completing one of their blanks.`,
   audiobook: `This is a chat about a whole audiobook, not a single word or sentence. Talk about the book itself: what it is about without spoiling the ending, what the narration is actually like (pace, accent, how hard the vocabulary is), and whether it suits their level. If they ask about a specific word or line, explain it briefly, but do not turn this into a vocabulary drill — it stays a conversation about the book and whether it is worth listening to.`,
@@ -252,7 +294,7 @@ HOW TO WRITE
     • Instead of "сказуемое" → say "действие" or "что делает?".
     • Instead of just "Perfekt" → say "прошедшее время, которое используют в разговорной речи" and if you name "Perfekt", add "(так немцы говорят о прошлом в обычной жизни)".
 - Describe how a rule behaves in ordinary words ("вторая часть уходит в конец: 'ich räume mein Zimmer auf'") instead of naming it.
-- When a word-order rule is at play, ALWAYS show a contrastive pair: the "normal/neutral" order AND the order used in the tapped text, side by side, so the learner can see what moved and why.
+- When an unusual word order is the real difficulty of the item (and it is not on their already-known list), show a contrastive pair: the "normal/neutral" order AND the order used in the tapped text, side by side. Do not do this for ordinary word order they have already had explained.
 - Do not lecture about spelling, etymology, or exceptions nobody hits.
 - Be concrete and generous with examples; be brief with theory.${freeChat ? "" : " Four to six example sentences is the right size for this opening answer, fewer if the learner is struggling with this item."}
 - An example sentence must be a whole sentence a real person would say, with a translation. A single word or a short phrase is also fine as its own "learning" part when that is what was asked for (a word list, a set of collocations).
@@ -283,7 +325,7 @@ Return ONLY valid JSON, no markdown:
   "actions": [{ "kind": "conjugation", "label": "Спряжение …", "word": "dictionary form" }],
   "grammarPatterns": [{ "patternId": "short-kebab-id", "patternLabel": "plain-language name of the pattern in ${nativeLanguage}" }]
 }
-"grammarPatterns": list the 1-3 grammar constructions you explained or relied on in this answer. Each has a stable short "patternId" (lowercase, kebab-case, language-agnostic, e.g. "v2-word-order", "perfekt-past", "separable-prefix") and a "patternLabel" in ${nativeLanguage} (e.g. "Глагол всегда на 2-м месте"). Return an empty list if no grammar concept was central to the answer.
+"grammarPatterns": list only the 0-2 grammar constructions this answer actually EXPLAINED (spent at least a few sentences on) — not every construction that merely occurs in the examples. Each has a stable short "patternId" (lowercase, kebab-case, language-agnostic, e.g. "perfekt-past", "separable-prefix", "dativ-after-mit") and a "patternLabel" in ${nativeLanguage} (e.g. "Прошедшее время в разговоре"). Return an empty list if no grammar concept was central to the answer — that is the usual case for a word.
 Every ${targetLanguage} word, phrase or sentence you show MUST be its own "learning" part with a filled-in "translation" — that is what makes it tappable and speakable in the app. Never put ${targetLanguage} examples inside a "text" part. Keep "text" parts readable: a few plain sentences each, never a wall of text.
 Do not suggest changing the learner's source text. No markdown, no bullet characters, no headings.`;
 }
