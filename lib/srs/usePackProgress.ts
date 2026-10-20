@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { getLocalPackProgress, saveLocalPackProgress } from "@/lib/db/local";
+import { drillId, recordDrillAnswer, type DrillKey } from "@/lib/srs/drillSchedule";
 import { markWordCompleted, recordAnswer, recordSession, resetAllProgress, resetWords, type ModuleProgress, type PackModule } from "@/lib/srs/packProgress";
 
 /**
@@ -16,10 +17,12 @@ import { markWordCompleted, recordAnswer, recordSession, resetAllProgress, reset
 export function usePackProgress(module: PackModule) {
   const [progress, setProgress] = useState<ModuleProgress>(() => getLocalPackProgress(module));
   const seenRef = useRef<Set<string>>(new Set());
+  const drillSeenRef = useRef<Set<string>>(new Set());
 
   /** A session is starting on this pack — stamps it and clears the per-session set. */
   const startSession = useCallback((packKey: string) => {
     seenRef.current = new Set();
+    drillSeenRef.current = new Set();
     setProgress((prev) => {
       const next = recordSession(prev, packKey, Date.now());
       saveLocalPackProgress(module, next);
@@ -37,6 +40,18 @@ export function usePackProgress(module: PackModule) {
     seenRef.current.add(entryId);
     setProgress((prev) => {
       const next = recordAnswer(prev, entryId, correct, first, Date.now());
+      saveLocalPackProgress(module, next);
+      return next;
+    });
+  }, [module]);
+
+  /** One graded drill of a word (Глаголы): moves that drill's own schedule, not the word's. */
+  const recordDrill = useCallback((entryId: string, drill: DrillKey, correct: boolean) => {
+    const id = drillId(entryId, drill);
+    const first = !drillSeenRef.current.has(id);
+    drillSeenRef.current.add(id);
+    setProgress((prev) => {
+      const next = recordDrillAnswer(prev, entryId, drill, correct, first, Date.now());
       saveLocalPackProgress(module, next);
       return next;
     });
@@ -66,5 +81,5 @@ export function usePackProgress(module: PackModule) {
     });
   }, [module]);
 
-  return { progress, startSession, markSeen, record, completeWord, reset, resetAll };
+  return { progress, startSession, markSeen, record, recordDrill, completeWord, reset, resetAll };
 }

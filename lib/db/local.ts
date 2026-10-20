@@ -9,6 +9,7 @@ import {
   type NounQuizMode,
   type NounQuizPresentation,
 } from "@/lib/nounsQuizModes";
+import { DEFAULT_SESSION_LIMIT, SESSION_LIMIT_OPTIONS } from "@/lib/srs/drillSchedule";
 import { emptyModuleProgress, type ModuleProgress, type PackModule, type TrainingFilter } from "@/lib/srs/packProgress";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 import type { SavedNounQuizSession } from "@/lib/nounQuizSession";
@@ -592,6 +593,47 @@ export function saveLocalGrammar(key: string, value: GrammarTable): void {
   }
 }
 
+// The six forms of one tense of one verb, as the «Спряжения» drill asks them.
+// Kept apart from the grammar cache above: that one holds whole tables (a
+// full verb matrix is ~70 phrases) and keeps only the last 150, so with a few
+// hundred verbs every table was evicted before its next turn and fetched from
+// the AI again. Six short strings per tense fit thousands of verbs, and once
+// a verb's table is here the drill never asks the AI for it again.
+const VERB_CONJUGATION_KEY = "aibook_verb_conjugation";
+const VERB_CONJUGATION_LIMIT = 4000;
+
+export type StoredConjugationRow = { label: string; form: string };
+
+function verbConjugationStoreKey(lemma: string, tense: string, targetLanguage: string): string {
+  return `${targetLanguage}:${tense}:${lemma.trim().toLocaleLowerCase("de-DE")}`;
+}
+
+export function getLocalVerbConjugation(lemma: string, tense: string, targetLanguage: string): StoredConjugationRow[] | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const all = JSON.parse(localStorage.getItem(getNsKey(VERB_CONJUGATION_KEY)) ?? "{}") as Record<string, StoredConjugationRow[]>;
+    const rows = all[verbConjugationStoreKey(lemma, tense, targetLanguage)];
+    return Array.isArray(rows) && rows.length ? rows : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLocalVerbConjugation(lemma: string, tense: string, targetLanguage: string, rows: StoredConjugationRow[]): void {
+  if (!rows.length) return;
+  try {
+    const all = JSON.parse(localStorage.getItem(getNsKey(VERB_CONJUGATION_KEY)) ?? "{}") as Record<string, StoredConjugationRow[]>;
+    const key = verbConjugationStoreKey(lemma, tense, targetLanguage);
+    delete all[key];
+    all[key] = rows;
+    const keys = Object.keys(all);
+    for (const old of keys.slice(0, Math.max(0, keys.length - VERB_CONJUGATION_LIMIT))) delete all[old];
+    localStorage.setItem(getNsKey(VERB_CONJUGATION_KEY), JSON.stringify(all));
+  } catch {
+    // silently fail
+  }
+}
+
 export type VerbPhrase = { example: string; exampleTranslation: string };
 type VerbPhraseCacheEntry = { key: string; value: VerbPhrase; updatedAt: string };
 
@@ -712,6 +754,47 @@ export function getLocalConjugationTenses(): Set<ConjugationTense> {
 export function saveLocalConjugationTenses(tenses: Set<ConjugationTense>): void {
   try {
     localStorage.setItem(getNsKey(VERBS_CONJUGATION_TENSES_KEY), JSON.stringify([...tenses]));
+  } catch {
+    // silently fail
+  }
+}
+
+// How many verbs one «Тренировать» press takes (0 = all due ones), and
+// whether the conjugation drill asks all six persons instead of the key ones.
+const VERBS_SESSION_LIMIT_KEY = "aibook_verbs_session_limit";
+const VERBS_ALL_PERSONS_KEY = "aibook_verbs_all_persons";
+
+export function getLocalVerbsSessionLimit(): number {
+  if (typeof window === "undefined") return DEFAULT_SESSION_LIMIT;
+  try {
+    const raw = localStorage.getItem(getNsKey(VERBS_SESSION_LIMIT_KEY));
+    const value = Number(raw);
+    return raw !== null && (SESSION_LIMIT_OPTIONS as readonly number[]).includes(value) ? value : DEFAULT_SESSION_LIMIT;
+  } catch {
+    return DEFAULT_SESSION_LIMIT;
+  }
+}
+
+export function saveLocalVerbsSessionLimit(limit: number): void {
+  try {
+    localStorage.setItem(getNsKey(VERBS_SESSION_LIMIT_KEY), String(limit));
+  } catch {
+    // silently fail
+  }
+}
+
+export function getLocalVerbsAllPersons(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(getNsKey(VERBS_ALL_PERSONS_KEY)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveLocalVerbsAllPersons(value: boolean): void {
+  try {
+    localStorage.setItem(getNsKey(VERBS_ALL_PERSONS_KEY), value ? "1" : "0");
   } catch {
     // silently fail
   }
@@ -1091,7 +1174,7 @@ export function getLocalPackProgress(module: PackModule): ModuleProgress {
     const raw = localStorage.getItem(getNsKey(`${PACK_PROGRESS_KEY}_${module}`));
     if (!raw) return emptyModuleProgress();
     const parsed = JSON.parse(raw) as Partial<ModuleProgress>;
-    return { words: parsed.words ?? {}, packs: parsed.packs ?? {} };
+    return { words: parsed.words ?? {}, packs: parsed.packs ?? {}, ...(parsed.drills ? { drills: parsed.drills } : {}) };
   } catch {
     return emptyModuleProgress();
   }

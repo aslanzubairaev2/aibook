@@ -4,15 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import { logTrainingEvent, newId, outcomeFromVerdict } from "@/lib/training/client";
 import { ArrowLeft, Eye, EyeOff, Loader2, RotateCcw } from "lucide-react";
 import type { DictionaryEntry } from "@/lib/db/dictionaryStore";
-import { checkTypedAnswer, diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
+import { diffExpected, type AnswerVerdict } from "@/lib/srs/activeTraining";
 import { fetchGrammar } from "@/lib/ai/grammar";
 import { makeGrammarCacheKey } from "@/lib/ai/cacheKeys";
-import { getLocalGrammar, saveLocalGrammar } from "@/lib/db/local";
-import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
+import { getLocalGrammar, getLocalVerbConjugation, saveLocalGrammar, saveLocalVerbConjugation, type StoredConjugationRow } from "@/lib/db/local";
+import { CONJUGATION_TENSE_LABEL, QUIZ_MODE_LABEL, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { DictateButton, type DictateButtonHandle } from "@/components/discover/DictateButton";
 import { toRows } from "@/components/word-modal/GrammarModal";
-import { getPresentSeparableSuffix, isPresentPluralInfinitive } from "@/lib/verbForms";
+import { classifyGermanVerb, getPresentSeparableSuffix, isPresentPluralInfinitive, type GermanVerbClass } from "@/lib/verbForms";
+import { checkAgainstAlternatives, conjugateGermanLocally, GERMAN_PERSONS, keyPersons } from "@/lib/verbConjugation";
+import { drillKeysFor, type DrillKey } from "@/lib/srs/drillSchedule";
 import { VerbPhraseTutor } from "@/components/verbs/VerbPhraseTutor";
 
 type Props = {
@@ -21,15 +23,23 @@ type Props = {
   nativeLanguage: string;
   modes: Set<QuizMode>;
   conjugationTenses: Set<ConjugationTense>;
+  /** Only these drills per verb (the due ones); a verb missing here gets every switched-on drill. */
+  drillsByEntry?: Record<string, DrillKey[]>;
+  /** Ask all six persons instead of only the ones where this verb can differ. */
+  allPersons?: boolean;
   onExit: () => void;
-  /** Reports one answered step so the pack's coverage bar can move. */
-  onRecord?: (entryId: string, correct: boolean) => void;
+  /** Reports one answered step so the pack's coverage bar and that drill's schedule can move. */
+  onRecord?: (entryId: string, correct: boolean, drill: DrillKey, recalled: boolean) => void;
   /** Marks a word complete for the current local day after all its steps pass. */
   onComplete?: (entryId: string) => void;
 };
 
+/**
+ * `expected` may hold alternatives as «habe geschwommen / bin geschwommen»
+ * (verbs that take either auxiliary) — any one of them is right.
+ */
 type QuizField = { key: string; label: string; expected: string; locked?: boolean; suffix?: string };
-type FieldResult = { verdict: AnswerVerdict; expected: string };
+type FieldResult = { verdict: AnswerVerdict; expected: string; hint?: string };
 
 // 1sg, 2sg, 3sg, 1pl, 2pl, 3pl — the fixed person order the grammar prompt
 // always uses, so the full matrix's rows (which give a whole phrase, not a
@@ -74,13 +84,69 @@ type QuizStep = {
   key: string;
   entry: DictionaryEntry;
   mode: QuizMode;
+  /** The schedule this step's answer moves. */
+  drill: DrillKey;
   /** Which tense a conjugation step drills — every conjugation step has exactly one. */
   tense?: ConjugationTense;
   /** null while a conjugation/phrase step's AI data is still loading, [] if it failed and the step should be skipped. */
   fields: QuizField[] | null;
+  /** A conjugation step's whole table, shown after the check — the persons not asked included. */
+  paradigm?: StoredConjugationRow[];
+  /** Picks the rotating person for this step; fixed when the step is built. */
+  seed: number;
   /** The Russian sentence a phrase step asks to translate — the entry's own once it has one, an AI-generated one once fetched. */
   promptText?: string;
 };
+
+export function verbLemma(entry: DictionaryEntry): string {
+  return entry.lemma || entry.headword;
+}
+
+function verbClassOf(entry: DictionaryEntry): GermanVerbClass {
+  return classifyGermanVerb(verbLemma(entry).replace(/^sich\s+/iu, ""), entry.headword, entry.forms ?? {});
+}
+
+/**
+ * A tense's table without the AI: generated from the stored principal parts
+ * when the rules allow (lib/verbConjugation.ts), else read from the per-verb
+ * store an earlier AI answer was saved to. null — only now must the AI be asked.
+ */
+export function conjugationOnDevice(entry: DictionaryEntry, tense: ConjugationTense, targetLanguage: string): StoredConjugationRow[] | null {
+  if (targetLanguage === "de") {
+    const forms = conjugateGermanLocally(verbLemma(entry), entry.forms ?? {}, tense, verbClassOf(entry));
+    if (forms) return forms.map((form, i) => ({ label: GERMAN_PERSONS[i], form }));
+  }
+  return getLocalVerbConjugation(verbLemma(entry), tense, targetLanguage);
+}
+
+/**
+ * The fields a conjugation step asks, out of the tense's whole table: every
+ * person with «Все лица», otherwise only those where this verb can differ
+ * from the plain endings (keyPersons). A table that is not the usual six
+ * persons — an impersonal verb's single «es regnet» — is asked whole.
+ */
+function conjugationFields(entry: DictionaryEntry, tense: ConjugationTense, rows: StoredConjugationRow[], allPersons: boolean, seed: number): QuizField[] {
+  const lemma = verbLemma(entry);
+  const verbClass = verbClassOf(entry);
+  const asked = allPersons || rows.length !== 6 ? rows.map((_, i) => i) : keyPersons(tense, verbClass, seed);
+  return asked
+    .filter((i) => rows[i]?.form.trim())
+    .map((i) => {
+      const row = rows[i];
+      const label = verbClass === "impersonal" && rows.length === 6 && i === 2 ? "es" : row.label;
+      if (tense !== "present") return { key: `${tense}-${i}`, label, expected: row.form };
+      const suffix = getPresentSeparableSuffix(row.form, lemma, entry.forms?.trennbar);
+      return {
+        key: `${tense}-${i}`,
+        label,
+        expected: row.form,
+        // wir/sie that just repeat the infinitive (wir können) are shown, not
+        // asked — «sind» for sein is not the infinitive and stays a question.
+        locked: isPresentPluralInfinitive(row.label, row.form, lemma, entry.forms?.trennbar),
+        suffix: suffix ?? undefined,
+      };
+    });
+}
 
 function shuffle<T>(items: T[]): T[] {
   const arr = [...items];
@@ -97,51 +163,59 @@ function shuffle<T>(items: T[]): T[] {
  * verb that has nothing for it to ask (no stored translation, no example
  * sentence) rather than asking an unanswerable question.
  */
-function stepsForEntry(entry: DictionaryEntry, modes: Set<QuizMode>, conjugationTenses: Set<ConjugationTense>): QuizStep[] {
+type QueueOptions = {
+  modes: Set<QuizMode>;
+  conjugationTenses: Set<ConjugationTense>;
+  drillsByEntry?: Record<string, DrillKey[]>;
+  allPersons: boolean;
+  targetLanguage: string;
+};
+
+function stepsForEntry(entry: DictionaryEntry, options: QueueOptions): QuizStep[] {
   const steps: QuizStep[] = [];
-  for (const mode of QUIZ_MODE_ORDER) {
-    if (!modes.has(mode)) continue;
-    if (mode === "translation") {
+  const drills = options.drillsByEntry?.[entry.id] ?? drillKeysFor(entry, options.modes, options.conjugationTenses);
+  for (const drill of drills) {
+    const seed = Math.floor(Math.random() * 720);
+    if (drill === "translation") {
       const translation = entry.translation?.trim();
-      if (translation) steps.push({ key: `${entry.id}:translation`, entry, mode, fields: [{ key: "translation", label: "Перевод", expected: translation }] });
-    } else if (mode === "forms") {
+      if (translation) steps.push({ key: `${entry.id}:translation`, entry, mode: "translation", drill, seed, fields: [{ key: "translation", label: "Перевод", expected: translation }] });
+    } else if (drill === "forms") {
       const fields: QuizField[] = [];
       if (entry.forms?.praeteritum) fields.push({ key: "praeteritum", label: "Präteritum", expected: entry.forms.praeteritum });
       if (entry.forms?.partizip2) fields.push({ key: "partizip2", label: "Partizip II", expected: entry.forms.partizip2 });
-      if (fields.length) steps.push({ key: `${entry.id}:forms`, entry, mode, fields });
-    } else if (mode === "conjugation") {
-      // Each selected tense is its own step (up to 6 fields, same as the
-      // original present-only drill) rather than one step with as many as 18.
-      for (const tense of CONJUGATION_TENSE_ORDER) {
-        if (!conjugationTenses.has(tense)) continue;
-        steps.push({ key: `${entry.id}:conjugation:${tense}`, entry, mode, tense, fields: null });
-      }
-    } else if (mode === "phrase") {
+      if (fields.length) steps.push({ key: `${entry.id}:forms`, entry, mode: "forms", drill, seed, fields });
+    } else if (drill === "phrase") {
       // The AI tutor creates the situation and evaluates natural variants
       // conversationally, so this step deliberately has no expected string.
-      const example = "";
-      const exampleTranslation = "";
-      steps.push(example && exampleTranslation
-        ? { key: `${entry.id}:phrase`, entry, mode, fields: [{ key: "german", label: "Немецкий", expected: example }], promptText: exampleTranslation }
-        : { key: `${entry.id}:phrase`, entry, mode, fields: null });
+      steps.push({ key: `${entry.id}:phrase`, entry, mode: "phrase", drill, seed, fields: null });
+    } else {
+      // Each selected tense is its own step. Built right here whenever the
+      // table is on the device — no loading state, no AI call; only a verb
+      // never seen before whose table cannot be generated waits for the AI.
+      const tense = drill.slice("conjugation:".length) as ConjugationTense;
+      const rows = conjugationOnDevice(entry, tense, options.targetLanguage);
+      steps.push({
+        key: `${entry.id}:conjugation:${tense}`, entry, mode: "conjugation", drill, tense, seed,
+        fields: rows ? conjugationFields(entry, tense, rows, options.allPersons, seed) : null,
+        paradigm: rows ?? undefined,
+      });
     }
   }
   return steps;
 }
 
-function buildQueue(verbs: DictionaryEntry[], modes: Set<QuizMode>, conjugationTenses: Set<ConjugationTense>): QuizStep[] {
-  return shuffle(verbs).flatMap((entry) => stepsForEntry(entry, modes, conjugationTenses));
+function buildQueue(verbs: DictionaryEntry[], options: QueueOptions): QuizStep[] {
+  return shuffle(verbs).flatMap((entry) => stepsForEntry(entry, options));
 }
 
 /**
- * Session-only self-test built from whichever drills are switched on: recall
- * the translation, the principal parts, the present-tense conjugation, or
- * translate a phrase that uses the verb. Deliberately not wired into the SM-2
- * flashcard schedule — this is a drill on top of the dictionary the learner
- * already has, not a second spaced-repetition track for the same words.
+ * Self-test built from whichever drills are switched on: recall the
+ * translation, the principal parts, the conjugation, or use the verb in a
+ * phrase. Not the flashcards' schedule — each drill has its own one here
+ * (lib/srs/drillSchedule.ts), and the caller passes only the due drills.
  */
-export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, onExit, onRecord, onComplete }: Props) {
-  const [queue, setQueue] = useState<QuizStep[]>(() => buildQueue(verbs, modes, conjugationTenses));
+export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjugationTenses, drillsByEntry, allPersons = false, onExit, onRecord, onComplete }: Props) {
+  const [queue, setQueue] = useState<QuizStep[]>(() => buildQueue(verbs, { modes, conjugationTenses, drillsByEntry, allPersons, targetLanguage }));
   const [sessionId] = useState(newId);
   // 1 on the first pass, 2+ on each «повторить ошибки» round.
   const roundRef = useRef(1);
@@ -186,111 +260,76 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
     if (revealed) primaryButtonRef.current?.focus();
   }, [revealed]);
 
-  // Fetches a conjugation step's AI-generated content the moment it becomes
-  // current. Phrase steps own their conversational loading state in
-  // VerbPhraseTutor, so they never block this quiz effect.
+  // A conjugation step whose table is not on the device yet (a strong verb's
+  // present, a verb whose stored forms the rules cannot read) asks the AI the
+  // moment it becomes current — once: the six forms go into the per-verb
+  // store, and every later session builds the step from there instantly.
+  // Phrase steps own their conversational loading state in VerbPhraseTutor.
   useEffect(() => {
-    if (!step || step.fields !== null) return;
-    if (step.mode !== "conjugation") return;
+    if (!step || step.fields !== null || step.mode !== "conjugation") return;
     let cancelled = false;
     const entry = step.entry;
     const stepKey = step.key;
+    const tense = step.tense ?? "present";
 
     (async () => {
-      if (step.mode === "conjugation") {
-        const tense = step.tense ?? "present";
-        let fields: QuizField[];
-
-        if (tense === "present") {
-          // The original drill: a bare conjugated word ("singe"), from the
-          // same cheap "brief" table the grammar modal's "Кратко" tab already
-          // fills and caches — unchanged from before tenses existed.
-          const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "brief", targetLanguage, nativeLanguage);
-          let table = getLocalGrammar(cacheKey);
-          if (!table) {
-            try {
-              table = await fetchGrammar({
-                word: entry.headword,
-                lemma: entry.lemma,
-                posTag: "verb",
-                targetLanguage,
-                nativeLanguage,
-                detail: "brief",
-              });
-              saveLocalGrammar(cacheKey, table);
-            } catch {
-              table = null;
-            }
-          }
-          if (cancelled) return;
-          const cells = table?.sections?.[0]?.cells ?? [];
-          fields = cells
-            .filter((c) => c.pronoun?.trim() && c.form.trim())
-            .map((c) => {
-              const suffix = getPresentSeparableSuffix(c.form, entry.lemma || entry.headword, entry.forms?.trennbar);
-              return {
-                key: c.pronoun!,
-                label: c.pronoun!,
-                expected: c.form,
-                locked: isPresentPluralInfinitive(c.pronoun!, c.form, entry.lemma || entry.headword, entry.forms?.trennbar),
-                suffix: suffix ?? undefined,
-              };
-            });
-        } else {
-          // Präteritum, Perfekt and future have no dedicated "brief" shape —
-          // pull them from the same 4×3 matrix the "Полная" grammar view uses
-          // and caches, one row of it. Each cell there is a complete sentence
-          // ("ich habe gesungen"); the leading pronoun is stripped since the
-          // field's own label already says it — what is actually being tested
-          // is the rest ("habe gesungen"), auxiliary included.
-          const cacheKey = makeGrammarCacheKey(entry.lemma || entry.headword, "full", targetLanguage, nativeLanguage);
-          let table = getLocalGrammar(cacheKey);
-          if (!table) {
-            try {
-              table = await fetchGrammar({
-                word: entry.headword,
-                lemma: entry.lemma,
-                posTag: "verb",
-                targetLanguage,
-                nativeLanguage,
-                detail: "full",
-              });
-              saveLocalGrammar(cacheKey, table);
-            } catch {
-              table = null;
-            }
-          }
-          if (cancelled) return;
-          const rowIndex = CONJUGATION_TENSE_ROW[tense];
-          const cell = table?.matrix?.cells?.[rowIndex]?.[AFFIRMATION_COLUMN];
-          fields = toRows(cell)
-            .map((p, i) => ({ key: `${tense}-${i}`, label: CONJUGATION_PRONOUNS[i] ?? p.form, expected: stripLeadingPronoun(p.form) }))
-            .filter((f) => f.expected);
+      // Present: the cheap "brief" table the grammar modal's "Кратко" tab
+      // fills. Other tenses: one row of the 4×3 matrix the "Полная" view uses,
+      // each cell a sentence ("ich habe gesungen") with its pronoun cut off.
+      const detail = tense === "present" ? "brief" : "full";
+      const cacheKey = makeGrammarCacheKey(verbLemma(entry), detail, targetLanguage, nativeLanguage);
+      let table = getLocalGrammar(cacheKey);
+      if (!table) {
+        try {
+          table = await fetchGrammar({ word: entry.headword, lemma: entry.lemma, posTag: "verb", targetLanguage, nativeLanguage, detail });
+          saveLocalGrammar(cacheKey, table);
+        } catch {
+          table = null;
         }
-
-        if (fields.length === 0) {
-          // No cached table and the AI call failed or returned nothing usable
-          // — nothing left to ask, so skip past it rather than leaving the
-          // learner staring at a blank card.
-          setIndex((i) => i + 1);
-          return;
-        }
-        setQueue((prev) => prev.map((s) => (s.key === stepKey ? { ...s, fields } : s)));
       }
+      if (cancelled) return;
+
+      let rows: StoredConjugationRow[];
+      if (tense === "present") {
+        rows = (table?.sections?.[0]?.cells ?? [])
+          .filter((c) => c.pronoun?.trim() && c.form.trim())
+          .map((c) => ({ label: c.pronoun!.trim(), form: c.form.trim() }));
+      } else {
+        const cell = table?.matrix?.cells?.[CONJUGATION_TENSE_ROW[tense]]?.[AFFIRMATION_COLUMN];
+        rows = toRows(cell)
+          .map((p, i) => ({ label: CONJUGATION_PRONOUNS[i] ?? p.form, form: stripLeadingPronoun(p.form) }))
+          .filter((row) => row.form);
+      }
+      if (rows.length) saveLocalVerbConjugation(verbLemma(entry), tense, targetLanguage, rows);
+
+      const fields = rows.length ? conjugationFields(entry, tense, rows, allPersons, step.seed) : [];
+      if (fields.length === 0) {
+        // The AI call failed or returned nothing usable — nothing left to ask,
+        // so skip past it rather than leaving the learner at a blank card.
+        setIndex((i) => i + 1);
+        return;
+      }
+      setQueue((prev) => prev.map((s) => (s.key === stepKey ? { ...s, fields, paradigm: rows } : s)));
     })();
     return () => { cancelled = true; };
-  }, [step, targetLanguage, nativeLanguage]);
+  }, [step, targetLanguage, nativeLanguage, allPersons]);
 
   function submit() {
     if (!step || revealed || !step.fields) return;
     const next: Record<string, FieldResult> = {};
     let allGood = true;
+    let anyPeeked = false;
+    // Forms do not forgive a missing umlaut, conjugation not even one wrong
+    // letter: «fahrst» for «fährst», «besucht» for «besuchst» are exactly the
+    // mistakes these drills exist to catch.
+    const strictness = step.mode === "conjugation" ? "exact" : step.mode === "forms" ? "umlaut" : "lenient";
     for (const field of step.fields) {
       if (field.locked) continue;
       const given = fieldAnswer(field, inputs[field.key] ?? "");
-      const check = checkTypedAnswer(given, field.expected);
-      next[field.key] = { verdict: check.verdict, expected: field.expected };
+      const check = checkAgainstAlternatives(given, field.expected, strictness);
+      next[field.key] = { verdict: check.verdict, expected: check.matched, hint: check.hint };
       if (check.verdict === "wrong") allGood = false;
+      if (peeked.has(field.key)) anyPeeked = true;
       logTrainingEvent({
         trainer: "verbs",
         mode: step.mode,
@@ -309,7 +348,9 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
         answerShown: peeked.has(field.key),
       });
     }
-    onRecord?.(step.entry.id, allGood);
+    // A peeked answer was read, not recalled: it still counts for the pack
+    // bar, but the drill comes back tomorrow instead of in a few days.
+    onRecord?.(step.entry.id, allGood, step.drill, allGood && !anyPeeked);
     if (allGood) {
       setCorrectCount((c) => c + 1);
       const hasLaterStepForEntry = queue.some((candidate, candidateIndex) => candidateIndex > index && candidate.entry.id === step.entry.id);
@@ -335,7 +376,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
 
   function acceptPhrase() {
     if (!step) return;
-    onRecord?.(step.entry.id, true);
+    onRecord?.(step.entry.id, true, step.drill, true);
     // The tutor accepted a sentence using the verb: evidence of use, not of a form.
     logTrainingEvent({
       trainer: "verbs", mode: "phrase", sessionId, entryId: step.entry.id,
@@ -557,6 +598,7 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
                       {diffExpected(fieldAnswer(field, inputs[field.key] ?? ""), result.expected).map((seg, si) => (
                         <span key={si} className={seg.changed ? "verb-quiz-diff" : undefined}>{seg.text}</span>
                       ))}
+                      {result.hint && <span className="verb-quiz-hint"> · {result.hint}</span>}
                     </span>
                   ) : !revealed && peeked.has(field.key) ? (
                     <span className="verb-quiz-peek-hint">{field.expected}</span>
@@ -565,6 +607,19 @@ export function VerbsQuiz({ verbs, targetLanguage, nativeLanguage, modes, conjug
               );
             })}
           </div>
+        )}
+
+        {/* Only one or two persons are asked; after a mistake the whole table
+            is what shows where this verb's pattern breaks. */}
+        {revealed && isConjugation && step.paradigm && step.paradigm.length > (step.fields?.length ?? 0) && (
+          <dl className="verb-quiz-paradigm">
+            {step.paradigm.map((row) => (
+              <div key={row.label}>
+                <dt>{row.label}</dt>
+                <dd>{row.form}</dd>
+              </div>
+            ))}
+          </dl>
         )}
 
         {step.fields !== null && (
