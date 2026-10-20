@@ -2473,6 +2473,13 @@ textarea,
    reading as a long vertical list of near-identical one-word fields. */
 .verb-quiz-conjugation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 10px; }
 @media (max-width: 460px) { .verb-quiz-conjugation-grid { grid-template-columns: 1fr; } }
+.verb-quiz-hint { font-style: italic; }
+/* The whole tense after a mistake — dense, read at a glance, not a second form. */
+.verb-quiz-paradigm { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 12px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-primary); font-size: 13px; }
+.verb-quiz-paradigm div { display: flex; gap: 6px; min-width: 0; }
+.verb-quiz-paradigm dt { color: var(--text-muted); flex-shrink: 0; }
+.verb-quiz-paradigm dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 460px) { .verb-quiz-paradigm { grid-template-columns: 1fr 1fr; } }
 
 .verb-quiz-summary {
   display: flex; flex-direction: column; align-items: center; gap: 14px;

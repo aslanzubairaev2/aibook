@@ -12,6 +12,8 @@
 // (nothing is taken away), it simply is not counted yet; answering it right on
 // the retry fills that slot. A pack at 100% has been genuinely worked through.
 
+import type { DrillState } from "./drillSchedule";
+
 export type PackModule = "verbs" | "nouns" | "otherpos";
 
 /** Which subset the next training session should use. */
@@ -34,6 +36,8 @@ export type WordTrainingState = {
 export type ModuleProgress = {
   words: Record<string, WordTrainingState>;
   packs: Record<string, { sessions: number; lastTrainedAt: number }>;
+  /** Per-drill schedules keyed `${entryId}|${drill}` — only the Глаголы trainer keeps them (lib/srs/drillSchedule.ts). */
+  drills?: Record<string, DrillState>;
 };
 
 export type PackCoverage = {
@@ -143,7 +147,11 @@ export function resetWords(progress: ModuleProgress, entryIds: string[], packKey
   for (const id of entryIds) delete words[id];
   const packs = { ...progress.packs };
   if (packKey) delete packs[packKey];
-  return { words, packs };
+  const ids = new Set(entryIds);
+  const drills = progress.drills
+    ? Object.fromEntries(Object.entries(progress.drills).filter(([key]) => !ids.has(key.split("|")[0])))
+    : undefined;
+  return drills ? { words, packs, drills } : { words, packs };
 }
 
 /** Stable local-calendar key used for the rule «once completed today, skip it today». */

@@ -14,11 +14,12 @@ import { useAuth } from "@/lib/auth/useAuth";
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { getAiHeaders } from "@/lib/ai/analyze";
-import { getLocalConjugationTenses, getLocalTrainingFilter, getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, saveLocalConjugationTenses, saveLocalTrainingFilter, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes } from "@/lib/db/local";
+import { getLocalConjugationTenses, getLocalTrainingFilter, getLocalVerbsAllPersons, getLocalVerbsDict, getLocalVerbsHideForms, getLocalVerbsOpenGroups, getLocalVerbsQuizModes, getLocalVerbsSessionLimit, saveLocalConjugationTenses, saveLocalTrainingFilter, saveLocalVerbsAllPersons, saveLocalVerbsDict, saveLocalVerbsHideForms, saveLocalVerbsOpenGroups, saveLocalVerbsQuizModes, saveLocalVerbsSessionLimit } from "@/lib/db/local";
+import { countDueVerbs, countFilteredVerbs, planVerbSession, SESSION_LIMIT_OPTIONS, type DrillKey } from "@/lib/srs/drillSchedule";
 import { CONJUGATION_TENSE_LABEL, CONJUGATION_TENSE_ORDER, QUIZ_MODE_HINT, QUIZ_MODE_LABEL, QUIZ_MODE_ORDER, type ConjugationTense, type QuizMode } from "@/lib/verbsQuizModes";
 import { usePackProgress } from "@/lib/srs/usePackProgress";
 import { formatTrainedAt, isCompletedToday, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
-import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
+import { isDifficultWord, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import { groupVerbsByPack } from "@/lib/verbPacks";
 import type { UserProfile } from "@/lib/types";
@@ -75,6 +76,10 @@ export function VerbsView({ profile, onBack }: Props) {
   // Which tense(s) the conjugation drill covers — only meaningful once
   // "Спряжения" is one of the active modes above.
   const [conjugationTenses, setConjugationTenses] = useState<Set<ConjugationTense>>(() => getLocalConjugationTenses());
+  // How many verbs one session takes — the due ones beyond it wait for the
+  // next session or tomorrow — and whether conjugation asks all six persons.
+  const [sessionLimit, setSessionLimit] = useState(() => getLocalVerbsSessionLimit());
+  const [allPersons, setAllPersons] = useState(() => getLocalVerbsAllPersons());
   // Covers the Präteritum/Partizip II columns so the table becomes a self-test
   // on the spot — the infinitive and its translation stay visible to ask from.
   const [hideForms, setHideForms] = useState(() => getLocalVerbsHideForms());
@@ -83,7 +88,7 @@ export function VerbsView({ profile, onBack }: Props) {
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => getLocalVerbsOpenGroups());
 
   const [conjugateEntry, setConjugateEntry] = useState<DictionaryEntry | null>(null);
-  const [quizVerbs, setQuizVerbs] = useState<DictionaryEntry[] | null>(null);
+  const [quizPlan, setQuizPlan] = useState<{ verbs: DictionaryEntry[]; drillsByEntry: Record<string, DrillKey[]> } | null>(null);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -92,7 +97,7 @@ export function VerbsView({ profile, onBack }: Props) {
 
   // How far each pack has been worked through — the same bookkeeping the noun
   // trainer keeps, under its own module key.
-  const { progress, startSession, record, completeWord, reset, resetAll } = usePackProgress("verbs");
+  const { progress, startSession, record, recordDrill, completeWord, reset, resetAll } = usePackProgress("verbs");
 
   const loadDictionary = useCallback(async () => {
     if (!userId) { setEntries([]); setBatches([]); setIsLoading(false); return; }
@@ -197,17 +202,31 @@ export function VerbsView({ profile, onBack }: Props) {
     });
   }, [allVerbs, verbTypes, query]);
 
-  const trainingVerbs = useMemo(
-    () => verbs.filter((entry) => !isCompletedToday(progress.words[entry.id]) && matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
-    [verbs, progress.words, trainingFilter],
+  // What one session over these verbs asks: with «Все», only the drills that
+  // are due (lib/srs/drillSchedule.ts), cut at the session size; with
+  // «Незнакомые»/«Сложные», only the drills that match, hardest first.
+  // Words finished today stay out of the filtered sessions, as before.
+  const planFor = useCallback(
+    (list: DictionaryEntry[], filter: TrainingFilter = trainingFilter) =>
+      planVerbSession(
+        filter === "all" ? list : list.filter((entry) => !isCompletedToday(progress.words[entry.id])),
+        progress, quizModes, conjugationTenses, filter, sessionLimit,
+      ),
+    [progress, quizModes, conjugationTenses, trainingFilter, sessionLimit],
   );
+  const trainingPlan = useMemo(() => planFor(verbs), [planFor, verbs]);
+  const dueCount = useMemo(
+    () => countDueVerbs(verbs, progress, quizModes, conjugationTenses),
+    [verbs, progress, quizModes, conjugationTenses],
+  );
+  const notDoneToday = useMemo(() => allVerbs.filter((entry) => !isCompletedToday(progress.words[entry.id])), [allVerbs, progress.words]);
   const unfamiliarCount = useMemo(
-    () => allVerbs.filter((entry) => !isCompletedToday(progress.words[entry.id]) && isUnfamiliarWord(progress.words[entry.id])).length,
-    [allVerbs, progress.words],
+    () => countFilteredVerbs(notDoneToday, progress, quizModes, conjugationTenses, "unfamiliar"),
+    [notDoneToday, progress, quizModes, conjugationTenses],
   );
   const difficultCount = useMemo(
-    () => allVerbs.filter((entry) => !isCompletedToday(progress.words[entry.id]) && isDifficultWord(progress.words[entry.id])).length,
-    [allVerbs, progress.words],
+    () => countFilteredVerbs(notDoneToday, progress, quizModes, conjugationTenses, "difficult"),
+    [notDoneToday, progress, quizModes, conjugationTenses],
   );
 
   // A search or type filter narrows the table — the matching packs should be
@@ -365,12 +384,33 @@ export function VerbsView({ profile, onBack }: Props) {
 
   const activeFilterCount = verbTypes.size;
 
-  /** Starts a session on one pack — stamps it, then hands the words to the quiz. */
-  function trainPack(packKey: string, packVerbs: DictionaryEntry[]) {
-    if (packVerbs.length === 0) return;
+  /** Starts a session on one pack — stamps it, then hands the planned drills to the quiz. */
+  function trainPack(packKey: string, plan: ReturnType<typeof planFor>) {
+    if (plan.length === 0) return;
     startSession(packKey);
-    setQuizVerbs(packVerbs);
+    setQuizPlan({
+      verbs: plan.map((item) => item.entry),
+      drillsByEntry: Object.fromEntries(plan.map((item) => [item.entry.id, item.drills])),
+    });
   }
+
+  function chooseSessionLimit(limit: number) {
+    setSessionLimit(limit);
+    saveLocalVerbsSessionLimit(limit);
+  }
+
+  function toggleAllPersons() {
+    setAllPersons((prev) => {
+      saveLocalVerbsAllPersons(!prev);
+      return !prev;
+    });
+  }
+
+  // The pack bar keeps its one bit per word; the drill gets its own schedule.
+  const recordStep = useCallback((entryId: string, correct: boolean, drill: DrillKey, recalled: boolean) => {
+    record(entryId, correct);
+    recordDrill(entryId, drill, recalled);
+  }, [record, recordDrill]);
 
   function resetAllTrainingProgress() {
     if (typeof window !== "undefined" && !window.confirm("Сбросить прогресс всех пачек глаголов?")) return;
@@ -378,16 +418,18 @@ export function VerbsView({ profile, onBack }: Props) {
     setToast("Прогресс всех пачек сброшен");
   }
 
-  if (quizVerbs) {
+  if (quizPlan) {
     return (
       <VerbsQuiz
-        verbs={quizVerbs}
+        verbs={quizPlan.verbs}
+        drillsByEntry={quizPlan.drillsByEntry}
+        allPersons={allPersons}
         targetLanguage={profile.targetLanguage}
         nativeLanguage={profile.nativeLanguage}
         modes={quizModes}
         conjugationTenses={conjugationTenses}
         onExit={onBack}
-        onRecord={record}
+        onRecord={recordStep}
         onComplete={completeWord}
       />
     );
@@ -502,8 +544,10 @@ export function VerbsView({ profile, onBack }: Props) {
               </button>
             )}
             {verbs.length > 0 && (
-              <button type="button" className="dict-train-btn verbs-train-all-btn" disabled={trainingVerbs.length === 0} onClick={() => trainPack("__all__", trainingVerbs)} title={trainingVerbs.length === 0 ? "Для этого фильтра пока нет слов" : undefined}>
-                <Dumbbell size={14} /> {trainingFilter === "all" ? "Тренировать всё" : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"}`}
+              <button type="button" className="dict-train-btn verbs-train-all-btn" disabled={trainingPlan.length === 0} onClick={() => trainPack("__all__", trainingPlan)} title={trainingPlan.length === 0 ? (trainingFilter === "all" ? "На сегодня всё повторено" : "Для этого фильтра пока нет слов") : undefined}>
+                <Dumbbell size={14} /> {trainingFilter === "all"
+                  ? (dueCount === 0 ? "На сегодня всё" : `Тренировать ${trainingPlan.length}${dueCount > trainingPlan.length ? ` из ${dueCount}` : ""}`)
+                  : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"} (${trainingPlan.length})`}
               </button>
             )}
             {Object.keys(progress.words).length > 0 && (
@@ -563,6 +607,23 @@ export function VerbsView({ profile, onBack }: Props) {
                 </div>
               </div>
 
+              <div className="filter-group">
+                <div className="filter-group-label">Глаголов за одну тренировку</div>
+                <div className="filter-chips">
+                  {SESSION_LIMIT_OPTIONS.map((limit) => (
+                    <button
+                      key={limit}
+                      type="button"
+                      className={`filter-chip ${sessionLimit === limit ? "active" : ""}`}
+                      onClick={() => chooseSessionLimit(limit)}
+                      aria-pressed={sessionLimit === limit}
+                    >
+                      {limit === 0 ? "Все к повторению" : limit}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {quizModes.has("conjugation") && (
                 <div className="filter-group">
                   <div className="filter-group-label">Времена для спряжений</div>
@@ -578,6 +639,17 @@ export function VerbsView({ profile, onBack }: Props) {
                       </button>
                     ))}
                   </div>
+                  <div className="filter-chips">
+                    <button
+                      type="button"
+                      className={`filter-chip ${allPersons ? "active" : ""}`}
+                      onClick={toggleAllPersons}
+                      aria-pressed={allPersons}
+                      title="Выключено: спрашиваются только лица, где глагол может отличаться от правила (du/er у сильных), остальные — одно случайное лицо"
+                    >
+                      Все 6 лиц
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -592,9 +664,8 @@ export function VerbsView({ profile, onBack }: Props) {
                 const nonStandardCount = group.verbs.filter((v) => classifyGermanVerb(v.lemma, v.headword, v.forms) !== "weak").length;
                 const coverage = packCoverage(progress, group.key, group.verbs.map((v) => v.id));
                 const trainedAt = formatTrainedAt(coverage.lastTrainedAt);
-                const unfamiliar = group.verbs.filter((entry) => isUnfamiliarWord(progress.words[entry.id]));
-                const trainable = group.verbs.filter((entry) => !isCompletedToday(progress.words[entry.id]) && matchesTrainingFilter(progress.words[entry.id], trainingFilter));
-                const sessionVerbs = trainable;
+                const sessionPlan = planFor(group.verbs);
+                const unfamiliarPlan = trainingFilter === "all" ? planFor(group.verbs, "unfamiliar") : [];
                 return (
                   <section key={group.key} className="dict-batch">
                     <button type="button" className="dict-batch-head" onClick={() => toggleGroup(group.key)}>
@@ -614,17 +685,17 @@ export function VerbsView({ profile, onBack }: Props) {
                     <PackBar coverage={coverage} />
 
                     <div className="dict-batch-actions">
-                      <button type="button" className="dict-train-btn" disabled={sessionVerbs.length === 0} onClick={() => trainPack(group.key, sessionVerbs)} title={group.verbs.length === 0 ? "Сначала дозаполните формы глаголов" : sessionVerbs.length === 0 ? "Все слова этой пачки уже пройдены сегодня" : undefined}>
+                      <button type="button" className="dict-train-btn" disabled={sessionPlan.length === 0} onClick={() => trainPack(group.key, sessionPlan)} title={group.verbs.length === 0 ? "Сначала дозаполните формы глаголов" : sessionPlan.length === 0 ? "В этой пачке на сегодня повторять нечего" : undefined}>
                         <Dumbbell size={14} />
-                        {group.verbs.length === 0 ? "Нужны формы" : sessionVerbs.length === 0 && trainingFilter === "all" ? "Сегодня всё пройдено" : trainingFilter !== "all" ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${trainable.length})` : coverage.percent === 0 ? "Тренировать эту пачку" : coverage.percent >= 100 ? "Повторить пачку" : "Продолжить пачку"}
+                        {group.verbs.length === 0 ? "Нужны формы" : sessionPlan.length === 0 && trainingFilter === "all" ? "На сегодня всё" : trainingFilter !== "all" ? `${trainingFilter === "difficult" ? "Сложные" : "Незнакомые"} (${sessionPlan.length})` : `${coverage.percent === 0 ? "Тренировать" : "Повторить"} (${sessionPlan.length})`}
                       </button>
-                      {unfamiliar.length > 0 && (
+                      {unfamiliarPlan.length > 0 && (
                         <button
                           type="button"
                           className="dict-train-btn"
-                          onClick={() => trainPack(group.key, unfamiliar)}
+                          onClick={() => trainPack(group.key, unfamiliarPlan)}
                         >
-                          Незнакомые ({unfamiliar.length})
+                          Незнакомые ({unfamiliarPlan.length})
                         </button>
                       )}
                       {coverage.learned + coverage.seen > 0 && (
