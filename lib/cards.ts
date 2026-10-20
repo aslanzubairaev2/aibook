@@ -16,7 +16,16 @@ export type TrainQueueItem = {
    * Anki's relearning step. Its lapse is already counted.
    */
   relearn?: boolean;
+  /** How many times this session has already brought it back. */
+  relearnCount?: number;
 };
+
+/**
+ * A forgotten word comes round again at most twice in one session. The
+ * seventh showing of «der Winterreifen» in ten minutes taught nothing; after
+ * the second miss it waits for tomorrow like any other «Забыл».
+ */
+export const MAX_RELEARN_PER_SESSION = 2;
 
 /** The SM-2 fields a single prompt direction schedules on. */
 export type VariantProgress = {
@@ -628,8 +637,10 @@ export function relearnAfterGrade(
   savedForward?: Flashcard,
 ): TrainQueueItem | null {
   if (score !== 1) return null;
+  const count = (item.relearnCount ?? 0) + 1;
+  if (count > MAX_RELEARN_PER_SESSION) return null;
   const card = item.variant === "forward" && savedForward ? savedForward : item.card;
-  return { card, variant: item.variant, relearn: true };
+  return { card, variant: item.variant, relearn: true, relearnCount: count };
 }
 
 /** Interleaves the variants so a session isn't all of one before the next. */

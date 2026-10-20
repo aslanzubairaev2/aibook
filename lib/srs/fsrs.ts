@@ -168,6 +168,17 @@ export function isStrugglingMemory(p: MemoryProgress): boolean {
   return difficulty >= 7.5 || p.status === "relearning";
 }
 
+/**
+ * Anki's «leech»: forgotten so many times that one more repeat will not do
+ * it — the word needs a different way in (a memory hook, an example of its
+ * own), which is what the card then offers.
+ */
+export const LEECH_LAPSES = 8;
+
+export function isLeech(p: { lapses: number }): boolean {
+  return p.lapses >= LEECH_LAPSES;
+}
+
 /** «3 дн.», «2 мес.», «1,5 г.» — short enough for a button. */
 export function formatInterval(days: number): string {
   if (days < 30) return `${days} дн.`;
