@@ -98,7 +98,7 @@ type QuizStep = {
   promptText?: string;
 };
 
-function verbLemma(entry: DictionaryEntry): string {
+export function verbLemma(entry: DictionaryEntry): string {
   return entry.lemma || entry.headword;
 }
 
@@ -111,7 +111,7 @@ function verbClassOf(entry: DictionaryEntry): GermanVerbClass {
  * when the rules allow (lib/verbConjugation.ts), else read from the per-verb
  * store an earlier AI answer was saved to. null — only now must the AI be asked.
  */
-function conjugationOnDevice(entry: DictionaryEntry, tense: ConjugationTense, targetLanguage: string): StoredConjugationRow[] | null {
+export function conjugationOnDevice(entry: DictionaryEntry, tense: ConjugationTense, targetLanguage: string): StoredConjugationRow[] | null {
   if (targetLanguage === "de") {
     const forms = conjugateGermanLocally(verbLemma(entry), entry.forms ?? {}, tense, verbClassOf(entry));
     if (forms) return forms.map((form, i) => ({ label: GERMAN_PERSONS[i], form }));

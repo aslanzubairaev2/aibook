@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, ListChecks, Loader2, Repeat, RotateCcw, Search, SlidersHorizontal, Wand2, X } from "lucide-react";
+import { ArrowLeft, Camera, ChevronDown, Dumbbell, Eye, EyeOff, ListChecks, Loader2, Repeat, RotateCcw, Search, SlidersHorizontal, Wand2, X, Zap } from "lucide-react";
 import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import { GrammarModal } from "@/components/word-modal/GrammarModal";
 import { SpeakButton } from "@/components/ui/SpeakButton";
 import { VerbsQuiz } from "@/components/verbs/VerbsQuiz";
+import { VerbsBlitz } from "@/components/verbs/VerbsBlitz";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { classifyGermanVerb, GERMAN_VERB_CLASS_HINT, GERMAN_VERB_CLASS_LABEL, normalizePos, toggleGermanVerbClassSelection, type GermanVerbClass } from "@/lib/verbForms";
 import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/search/multiTerm";
@@ -89,6 +90,8 @@ export function VerbsView({ profile, onBack }: Props) {
 
   const [conjugateEntry, setConjugateEntry] = useState<DictionaryEntry | null>(null);
   const [quizPlan, setQuizPlan] = useState<{ verbs: DictionaryEntry[]; drillsByEntry: Record<string, DrillKey[]> } | null>(null);
+  // «Блиц» over these verbs — a warm-up, separate from the scheduled session.
+  const [blitzVerbs, setBlitzVerbs] = useState<DictionaryEntry[] | null>(null);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -418,6 +421,17 @@ export function VerbsView({ profile, onBack }: Props) {
     setToast("Прогресс всех пачек сброшен");
   }
 
+  if (blitzVerbs) {
+    return (
+      <VerbsBlitz
+        verbs={blitzVerbs}
+        targetLanguage={profile.targetLanguage}
+        tenses={conjugationTenses}
+        onExit={() => setBlitzVerbs(null)}
+      />
+    );
+  }
+
   if (quizPlan) {
     return (
       <VerbsQuiz
@@ -548,6 +562,11 @@ export function VerbsView({ profile, onBack }: Props) {
                 <Dumbbell size={14} /> {trainingFilter === "all"
                   ? (dueCount === 0 ? "На сегодня всё" : `Тренировать ${trainingPlan.length}${dueCount > trainingPlan.length ? ` из ${dueCount}` : ""}`)
                   : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"} (${trainingPlan.length})`}
+              </button>
+            )}
+            {verbs.length > 0 && (
+              <button type="button" className="dict-train-btn verbs-blitz-btn" onClick={() => setBlitzVerbs(verbs)} title="60 секунд: лицо + глагол + время вперемешку, без расписания">
+                <Zap size={14} /> Блиц
               </button>
             )}
             {Object.keys(progress.words).length > 0 && (
