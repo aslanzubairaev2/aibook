@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, BookOpen, Check, Delete, Mic, RotateCcw, Send, Square, X } from "lucide-react";
 import { SpeakButton } from "@/components/ui/SpeakButton";
-import { speak } from "@/lib/tts";
 import { flushTrainingEvents, logTrainingEvent, newId } from "@/lib/training/client";
 import { isSpeechRecognitionSupported, startRecognition, type Recognizer } from "@/lib/speech/recognition";
 import { cap, seedFrom } from "@/lib/grammar/common";
@@ -157,7 +156,6 @@ export function GrammarDrill({ trainer, config, mode, limit, due, assignedSessio
     setResult(check);
     setPhase("feedback");
     setDetails(false);
-    if (check.outcome === "correct" || check.outcome === "typo") void speak(check.correction, "de").catch(() => undefined);
     if (correcting) {
       setDone((d) => d.map((x, i) => (i === d.length - 1 ? { ...x, corrected: check.outcome } : x)));
       return;
@@ -226,7 +224,6 @@ export function GrammarDrill({ trainer, config, mode, limit, due, assignedSessio
       record(check.outcome, answer, check);
       setResult(check);
       setPhase("feedback");
-      if (check.outcome === "correct") void speak(task.expected, "de").catch(() => undefined);
       if (correcting) setDone((d) => d.map((x, i) => (i === d.length - 1 ? { ...x, corrected: check.outcome } : x)));
       else {
         setDone((d) => [...d, { task, outcome: check.outcome, result: check, helped, corrected: null }]);
