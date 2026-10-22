@@ -7,7 +7,7 @@ import { GrammarModal, POS_GRAMMAR_LABEL } from "@/components/word-modal/Grammar
 import type { AiAnalysis, PosTag, WordAnalysis } from "@/lib/types";
 import { splitIntoTokens, normalizeToken } from "@/lib/selector/text";
 import { sbAuthHeaders } from "@/lib/db/supabase";
-import { useGermanVerbSummary, VerbClassChips } from "@/components/verbs/VerbPrincipalParts";
+import { useGermanVerbSummary, VerbClassChips, VerbGovernment } from "@/components/verbs/VerbPrincipalParts";
 
 type Props = {
   analysis: AiAnalysis | null;
@@ -53,6 +53,8 @@ const ARTICLE_LABEL = "\u0410\u0440\u0442\u0438\u043a\u043b\u044c";
 const PLURAL_LABEL = "\u041c\u043d. \u0447\u0438\u0441\u043b\u043e";
 const INFINITIVE_LABEL = "\u0418\u043d\u0444\u0438\u043d\u0438\u0442\u0438\u0432";
 const FORM_LABEL = "\u0424\u043e\u0440\u043c\u0430";
+const FORMS_LABEL = "\u0424\u043e\u0440\u043c\u044b";
+const GOVERNMENT_LABEL = "\u041f\u0440\u0435\u0434\u043b\u043e\u0433 \u0438 \u043f\u0430\u0434\u0435\u0436";
 
 /** der → blue, die → pink, das → green: the app's one gender colour code. */
 function articleGender(article: string): string {
@@ -157,19 +159,21 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
           </div>
         ) : (
         <>
-        {/* Hero */}
+        {/* Hero: the word, what it is, what it means — read top to bottom
+            like a dictionary entry, without boxes around each part. */}
         <div className="word-hero">
-          <div className="word-hero-lemma">{displayWord.toUpperCase()}</div>
+          <div className="word-hero-lemma">{displayWord}</div>
           <div className="word-hero-meta">
             <span className="word-meta-chip">{word.partOfSpeech}</span>
             {/* The article is the single most important thing to memorise with
-                a German noun, so it gets its own chip in the gender colour
-                rather than hiding in the details grid below. */}
+                a German noun, so it gets the gender colour. */}
             {article && <span className={`word-meta-chip article ${articleGender(article)}`}>{article}</span>}
             {word.gender && word.gender !== article && <span className="word-meta-chip gender">{word.gender}</span>}
             {verb.summary && <VerbClassChips summary={verb.summary} />}
             {word.cefr && <span className="word-meta-chip level" title="Уровень слова по CEFR">{word.cefr}</span>}
           </div>
+          <div className="modal-translation">{word.translation}</div>
+          {word.explanation && <div className="modal-explanation">{word.explanation}</div>}
           {hasLemma && (
             <div className="word-lemma-line">
               <span>{LEMMA_LABEL}</span>
@@ -190,19 +194,23 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
           )}
         </div>
 
-        {/* Translation */}
-        <div className="modal-section">
-          <span className="modal-section-label">{TRANSLATION_LABEL}</span>
-          <div className="modal-translation">{word.translation}</div>
-          {word.explanation && <div className="modal-explanation">{word.explanation}</div>}
-          {(word.nounDetails?.article || word.nounDetails?.plural || infinitive) && (
-            <div className={`word-details-grid${verb.summary || verb.loading ? " verb-forms" : ""}`}>
-              {word.nounDetails?.article && <span>{ARTICLE_LABEL} <b>{word.nounDetails.article}</b></span>}
-              {word.nounDetails?.plural && <span>{PLURAL_LABEL} <b>{word.nounDetails.plural}</b></span>}
-              {infinitive && (
-                <span>
-                  {INFINITIVE_LABEL}
-                  <b style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+        {/* Forms as name → value rows (a phone is too narrow for three forms
+            side by side); a noun's article and plural the same way. The
+            infinitive gets a row only when the tapped word is another form. */}
+        {(word.nounDetails?.article || word.nounDetails?.plural || infinitive) && (
+          <div className="modal-section">
+            <span className="modal-section-label">{FORMS_LABEL}</span>
+            <div className="word-details-grid">
+              {word.nounDetails?.article && (
+                <div className="word-form-row"><span className="word-form-name">{ARTICLE_LABEL}</span><b>{word.nounDetails.article}</b></div>
+              )}
+              {word.nounDetails?.plural && (
+                <div className="word-form-row"><span className="word-form-name">{PLURAL_LABEL}</span><b>{word.nounDetails.plural}</b></div>
+              )}
+              {infinitive && infinitive.toLowerCase() !== displayWord.toLowerCase() && (
+                <div className="word-form-row">
+                  <span className="word-form-name">{INFINITIVE_LABEL}</span>
+                  <b className="word-details-with-action">
                     {infinitive}
                     {onAddLemma && word.translation && (
                       <button
@@ -216,24 +224,32 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
                       </button>
                     )}
                   </b>
-                </span>
+                </div>
               )}
               {infinitive && lang === "de" && (verb.summary || verb.loading) && (
                 <>
-                  <span title="Präteritum — книжное (письменное) прошедшее">
-                    Präteritum · книжное
+                  <div className="word-form-row" title="Präteritum — книжное (письменное) прошедшее">
+                    <span className="word-form-name">Präteritum<small>книжное</small></span>
                     <b>{verb.summary ? verb.summary.praeteritum : "…"}</b>
-                  </span>
-                  <span title="Perfekt — разговорное прошедшее, с нужным вспомогательным глаголом">
-                    Perfekt · разговорное
+                  </div>
+                  <div className="word-form-row" title="Perfekt — разговорное прошедшее, с нужным вспомогательным глаголом">
+                    <span className="word-form-name">Perfekt<small>разговорное</small></span>
                     <b>{verb.summary ? verb.summary.perfekt : "…"}</b>
-                  </span>
+                  </div>
                 </>
               )}
-              {word.verbDetails?.person && <span>{FORM_LABEL} <b>{word.verbDetails.person}</b></span>}
+              {word.verbDetails?.person && (
+                <div className="word-form-row"><span className="word-form-name">{FORM_LABEL}</span><b>{word.verbDetails.person}</b></div>
+              )}
             </div>
-          )}
-        </div>
+            {verb.summary && verb.summary.government.length > 0 && (
+              <div className="word-government">
+                <span className="word-government-label">{GOVERNMENT_LABEL}</span>
+                <VerbGovernment items={verb.summary.government} />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Examples — hidden rather than shown empty: a dictionary entry opened
             without an AI call (per entryToAnalysis) often has none stored. */}
@@ -302,6 +318,8 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
         </div>
         )}
 
+        {/* Follow-ups as one list of rows rather than a stack of boxed buttons. */}
+        <div className="word-actions">
         {/* Grammar — opens a dedicated modal; button label depends on part of speech */}
         <button
           type="button"
@@ -356,6 +374,7 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
             <ChevronRight size={18} />
           </button>
         )}
+        </div>
         </>
         )}
 

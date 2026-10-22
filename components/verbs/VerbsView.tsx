@@ -9,6 +9,8 @@ import { VerbsQuiz } from "@/components/verbs/VerbsQuiz";
 import { VerbsBlitz } from "@/components/verbs/VerbsBlitz";
 import { PhotoLessonModal } from "@/components/capture/PhotoLessonModal";
 import { classifyGermanVerb, GERMAN_VERB_CLASS_HINT, GERMAN_VERB_CLASS_LABEL, normalizePos, toggleGermanVerbClassSelection, type GermanVerbClass } from "@/lib/verbForms";
+import { germanVerbGovernment } from "@/lib/verbGovernment";
+import { VerbGovernment } from "@/components/verbs/VerbPrincipalParts";
 import { appendSearchTerm, matchesSearchTerms, parseSearchTerms } from "@/lib/search/multiTerm";
 import { SearchVoiceButton } from "@/components/ui/SearchVoiceButton";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -777,6 +779,12 @@ export function VerbsView({ profile, onBack }: Props) {
                                         <span className={`verb-translation${hideForms ? " verb-translation-hidden" : ""}`}>
                                           {entry.translation}
                                         </span>
+                                      )}
+                                      {!hideForms && (
+                                        <VerbGovernment
+                                          items={germanVerbGovernment(entry.lemma || entry.headword, entry.forms?.rektion)}
+                                          className="verb-gov-row"
+                                        />
                                       )}
                                     </td>
                                     <td className={hideForms ? "verb-cell-hidden" : undefined}>

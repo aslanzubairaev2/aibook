@@ -187,6 +187,8 @@ export type WordAnalysis = {
     partizip2?: string;
     /** Auxiliary for Perfekt: "haben" or "sein". */
     hilfsverb?: string;
+    /** What the verb governs: «auf + Akk (кого/что)». */
+    rektion?: string;
     tense?: string;
     person?: string;
     /** Whether this occurrence uses a separable verb reading. */

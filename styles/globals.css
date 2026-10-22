@@ -3289,3 +3289,10 @@ textarea,
   .gr-sheet-btn { padding: 0 10px; font-size: 12px; }
   .gr-key-row .pron-key { min-width: 56px; padding: 0 8px; }
 }
+
+/* Verb table: what the verb governs, under its translation. */
+.verb-gov.verb-gov-row { flex-direction: row; flex-wrap: wrap; gap: 2px 12px; margin-top: 4px; }
+.verb-gov.verb-gov-row li { gap: 4px; }
+.verb-gov-row .verb-gov-prep { font-family: var(--font-ui); font-size: 13px; color: var(--surface); }
+.verb-gov-row .verb-gov-case { font-size: 10.5px; padding: 0 5px; }
+.verb-gov-row .verb-gov-hint { font-size: 12px; color: var(--text-muted); }

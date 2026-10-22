@@ -19,6 +19,7 @@
 
 import { LEARNING_ITEM_TYPES, type LearningItemType } from "@/lib/types";
 import { germanVerbContractText, validateGermanVerbEntries } from "./verbEntryValidation";
+import { knownGermanGovernment } from "@/lib/verbGovernment";
 
 export type DictionaryEntryDraft = {
   headword: string;
@@ -215,7 +216,8 @@ export function normalizeDictionaryEntryDraft(
   targetLanguage = "",
 ): DictionaryEntryDraft {
   const ruled = applyNounFieldRules(entry);
-  if (!GERMAN_TARGET.test(targetLanguage) || !isNoun(ruled)) return ruled;
+  if (!GERMAN_TARGET.test(targetLanguage)) return ruled;
+  if (!isNoun(ruled)) return withKnownGovernment(ruled);
 
   const leading = ruled.headword.match(LEADING_ARTICLE)?.[1].toLowerCase() ?? "";
   const explicit = ruled.article.trim().toLowerCase();
@@ -237,6 +239,15 @@ const A1_DICTIONARY_WORDS = new Set([
   "monatlich", "renovieren", "ausgehen", "träumen", "feierabend", "notiz", "wäsche", "fahrplan", "käsebrötchen",
   "schinkenbrötchen", "anzeige", "schild", "bedienung", "menge", "fast", "genau", "erlaubt", "verboten", "lieber", "rund"
 ]);
+
+// A verb's preposition and case («warten auf + Akk») are filled from the
+// curated list, so a newly saved verb carries them without asking the model.
+function withKnownGovernment(entry: DictionaryEntryDraft): DictionaryEntryDraft {
+  const isVerb = VERB_FORM_KEYS.some((key) => entry.forms?.[key]) || /глагол|verb/iu.test(entry.partOfSpeech);
+  if (!isVerb || entry.forms?.rektion?.trim()) return entry;
+  const rektion = knownGermanGovernment(entry.lemma || entry.headword);
+  return rektion ? { ...entry, forms: { ...entry.forms, rektion } } : entry;
+}
 
 /** Narrow the model's raw JSON into entries worth storing. */
 export function parseDictionaryEntries(raw: unknown, targetLanguage = ""): {

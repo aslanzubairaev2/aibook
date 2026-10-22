@@ -143,42 +143,41 @@
 }
 
 /* ─── Word Hero ──────────────────────────────────────────────────────────── */
+/* Read like a dictionary entry: the word in the reading face, a quiet line of
+   tags, then the meaning — no boxes, the spacing does the grouping. */
 .word-hero {
-  margin: 16px 0 20px;
+  margin: 24px 0 0;
 }
 
 .word-hero-lemma {
-  font-size: 38px;
-  font-weight: 900;
+  font-family: var(--font-reading);
+  font-size: 36px;
+  font-weight: 700;
   color: var(--accent);
-  letter-spacing: -0.01em;
-  line-height: 1.05;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
   overflow-wrap: anywhere;
 }
 
 .word-hero-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 4px 6px;
+  margin-top: 8px;
 }
 
 .word-lemma-line {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 12px;
-  padding: 7px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: rgba(240, 230, 211, 0.05);
+  margin-top: 10px;
   color: var(--text-muted);
   font-size: 12px;
 }
 
 .word-lemma-line strong {
   color: var(--surface-dim);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* "+" button that saves the lemma / infinitive as its own card */
@@ -203,59 +202,55 @@
 
 .word-meta-chip {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 99px;
-  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: 6px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
+  line-height: 1.5;
   color: var(--text-muted);
-  background: var(--bg-elevated);
+  background: rgba(240, 230, 211, 0.06);
 }
 
-.word-meta-chip.gender { color: var(--accent); border-color: rgba(212,168,71,0.4); background: rgba(212,168,71,0.08); }
+.word-meta-chip.gender { color: var(--accent); background: rgba(212,168,71,0.1); }
 
 /* CEFR level of the word itself: how common it is, and so whether it is worth
    memorising at this stage. */
-.word-meta-chip.article { font-weight: 800; border-color: currentColor; background: rgba(255,255,255,0.04); }
+.word-meta-chip.article { font-weight: 800; background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
 .word-meta-chip.article.gender-m { color: #6ea8e0; }
 .word-meta-chip.article.gender-f { color: #e08aa8; }
 .word-meta-chip.article.gender-n { color: #7fc9a0; }
 
-.word-meta-chip.level { color: var(--green); border-color: rgba(122,171,106,0.45); background: rgba(122,171,106,0.1); letter-spacing: 0.04em; }
+.word-meta-chip.level { color: var(--green); background: rgba(122,171,106,0.12); letter-spacing: 0.04em; }
 
 /* ─── Modal Sections ─────────────────────────────────────────────────────── */
+/* One hairline above each group instead of a card around it. */
 .modal-section {
-  margin-top: 12px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
 .modal-section-label {
   display: block;
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
   margin-bottom: 10px;
 }
 
-.modal-translation { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
-.modal-explanation { font-size: 13px; color: var(--surface-dim); line-height: 1.6; }
+.modal-translation { margin-top: 14px; font-size: 20px; font-weight: 600; line-height: 1.35; color: var(--surface); }
+.modal-explanation { margin-top: 6px; font-size: 13.5px; color: var(--surface-dim); line-height: 1.55; white-space: pre-line; }
 
 /* ─── Examples ───────────────────────────────────────────────────────────── */
-.examples-list { display: flex; flex-direction: column; gap: 8px; }
+.examples-list { display: flex; flex-direction: column; gap: 14px; }
 
 .example-item {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 8px;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  background: rgba(240, 230, 211, 0.04);
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--border-strong);
   font-size: 14px;
   color: var(--surface);
   line-height: 1.55;
@@ -325,31 +320,67 @@
 .action-list-btn:first-child { border-top: 0; }
 .action-list-btn:hover { background: var(--bg-card); }
 
+/* Forms as name → value rows: the name quiet on the left, the form in the
+   reading face on the right, aligned on one column so the eye runs down it. */
 .word-details-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 12px;
-  font-size: 12px;
+  grid-template-columns: minmax(96px, auto) 1fr;
+  column-gap: 16px;
+  row-gap: 10px;
+  align-items: baseline;
+}
+
+.word-form-row { display: contents; }
+
+.word-form-name {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
   color: var(--text-muted);
+  line-height: 1.3;
 }
 
-.word-details-grid span {
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: rgba(240, 230, 211, 0.04);
-}
-
-/* Infinitiv · Präteritum · Perfekt read as one row, the way a verb is learned. */
-.word-details-grid.verb-forms { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.word-details-grid.verb-forms b { overflow-wrap: anywhere; }
+.word-form-name small { font-size: 11px; opacity: 0.8; }
 
 .word-details-grid b {
-  display: block;
-  margin-top: 2px;
+  min-width: 0;
+  font-family: var(--font-reading);
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.25;
   color: var(--surface);
+  overflow-wrap: break-word;
 }
+
+.word-details-with-action { display: flex; align-items: center; gap: 6px; }
+
+/* What the verb governs: the preposition is what has to be memorised. */
+.word-government { margin-top: 22px; }
+.word-government-label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+
+.verb-gov { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.verb-gov li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.verb-gov-prep { font-family: var(--font-reading); font-size: 18px; font-weight: 600; color: var(--accent-bright); }
+.verb-gov-case {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  cursor: help;
+}
+.verb-gov-akk { color: #e8c271; background: rgba(212, 168, 71, 0.15); }
+.verb-gov-dat { color: #7cc8bc; background: rgba(124, 200, 188, 0.14); }
+.verb-gov-gen { color: #c9a0dc; background: rgba(201, 160, 220, 0.14); }
+.verb-gov-hint { font-size: 13.5px; color: var(--surface-dim); }
+
+/* Flashcard back: one quiet line under the forms, never louder than them. */
+.verb-gov.verb-gov-card { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 4px 14px; }
+.verb-gov-card li { gap: 5px; }
+.verb-gov-card .verb-gov-prep { font-family: var(--font-ui); font-size: 14px; color: var(--surface); }
+.verb-gov-card .verb-gov-hint { font-size: 12.5px; color: var(--text-muted); }
+.srs-history-card .verb-gov-card { justify-content: flex-start; margin-top: 4px; }
 
 /* ─── Grammar: open button in the Word modal ─────────────────────────────── */
 .grammar-open-btn {
@@ -371,6 +402,23 @@
 }
 .grammar-open-btn:hover { background: rgba(212, 168, 71, 0.16); }
 .grammar-open-btn:active { transform: scale(0.99); }
+
+/* In the word modal the follow-ups are one list of rows. */
+.word-actions { margin-top: 24px; border-top: 1px solid var(--border); }
+.word-actions .grammar-open-btn {
+  margin: 0;
+  padding: 14px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.word-actions .grammar-open-btn:first-child { color: var(--accent); }
+.word-actions .grammar-open-btn:hover { background: rgba(212, 168, 71, 0.06); }
+.word-actions .grammar-open-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.word-actions .grammar-open-btn > svg { color: var(--text-muted); }
 
 /* ─── Grammar modal (separate sheet over the Word modal) ─────────────────── */
 .grammar-modal-backdrop { z-index: 84; align-items: flex-end; }

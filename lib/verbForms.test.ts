@@ -89,7 +89,7 @@ test("verb summary needs past, participle and auxiliary", () => {
   assert.equal(summarizeGermanVerb("backen", { praeteritum: "backte" }), null);
   assert.deepEqual(
     summarizeGermanVerb("einkaufen", { praeteritum: "kaufte ein", partizip2: "eingekauft", hilfsverb: "haben", trennbar: "да" }),
-    { praeteritum: "kaufte ein", perfekt: "hat eingekauft", verbClass: "weak", separable: true },
+    { praeteritum: "kaufte ein", perfekt: "hat eingekauft", verbClass: "weak", separable: true, government: [{ prep: "in", case: "Dat", hint: "где" }] },
   );
   assert.equal(summarizeGermanVerb("gehen", { praeteritum: "ging", partizip2: "gegangen", hilfsverb: "sein" })?.verbClass, "strong");
 });

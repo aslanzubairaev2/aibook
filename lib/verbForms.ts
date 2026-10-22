@@ -5,12 +5,15 @@
 // verb-table module — kept in one place so the irregular-stem list and the
 // form labels do not drift into two copies.
 
+import { germanVerbGovernment, type Government } from "@/lib/verbGovernment";
+
 /** Human-readable label for each key `forms` can carry. */
 export const FORM_LABEL: Record<string, string> = {
   praeteritum: "Präteritum",
   partizip2: "Partizip II",
   hilfsverb: "вспом. глагол",
   trennbar: "отделяемая",
+  rektion: "управление",
   komparativ: "сравнит.",
   superlativ: "превосх.",
 };
@@ -206,6 +209,8 @@ export type GermanVerbSummary = {
   perfekt: string;
   verbClass: GermanVerbClass;
   separable: boolean;
+  /** «warten auf + Akk»: the preposition and case the verb needs; empty when it takes none. */
+  government: Government[];
 };
 
 /** «hat gebacken» / «ist gegangen» — the auxiliary is half of what Partizip II is for. */
@@ -236,6 +241,7 @@ export function summarizeGermanVerb(infinitive: string, forms: Record<string, st
     perfekt: germanPerfekt(clean.partizip2, clean.hilfsverb),
     verbClass: classifyGermanVerb(infinitive.replace(/^sich\s+/iu, ""), infinitive, clean),
     separable: isMarkedSeparable(clean.trennbar),
+    government: germanVerbGovernment(infinitive, clean.rektion),
   };
 }
 
@@ -261,7 +267,7 @@ const FORM_KEY_BY_LABEL: Record<string, string> = {
   "partizip 2": "partizip2",
   "infinitiv": "infinitiv",
 };
-const VERB_DETAIL_KEYS = new Set(["praeteritum", "partizip2", "hilfsverb", "trennbar", "infinitiv"]);
+const VERB_DETAIL_KEYS = new Set(["praeteritum", "partizip2", "hilfsverb", "trennbar", "rektion", "infinitiv"]);
 /** A verb has no plural; importers sometimes put the wir-form there («мн. ч.: sollen»). */
 const PLURAL_LABEL = /^(мн\.?\s*ч\.?|plural|pl\.?)$/iu;
 /** «мн. ч.: нет данных для глагола» and similar placeholders say nothing. */

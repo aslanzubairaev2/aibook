@@ -12,6 +12,7 @@ import {
   summarizeGermanVerb,
   type GermanVerbSummary,
 } from "@/lib/verbForms";
+import type { Government } from "@/lib/verbGovernment";
 
 /**
  * Präteritum, Perfekt and the verb's class for a German infinitive. Uses the
@@ -58,14 +59,40 @@ export function VerbClassChips({ summary, className = "word-meta-chip" }: { summ
   );
 }
 
-/** Compact line for a flashcard back: «книжн. backte · разг. hat gebacken · сильный». */
+const CASE_TITLE: Record<Government["case"], string> = { Akk: "Akkusativ", Dat: "Dativ", Gen: "Genitiv" };
+
+/**
+ * «auf + Akk  кого/что» for each construction the verb takes. The preposition
+ * is what has to be memorised, so it carries the colour; the case is a small
+ * tag in its own colour (Akk and Dat differ at a glance), the Russian question
+ * stays quiet.
+ */
+export function VerbGovernment({ items, className = "" }: { items: Government[]; className?: string }) {
+  if (items.length === 0) return null;
+  return (
+    <ul className={`verb-gov ${className}`} aria-label="Управление: предлог и падеж">
+      {items.map((g, i) => (
+        <li key={i}>
+          {g.prep && <span className="verb-gov-prep">{g.prep}</span>}
+          <abbr className={`verb-gov-case verb-gov-${g.case.toLowerCase()}`} title={CASE_TITLE[g.case]}>{g.case}</abbr>
+          {g.hint && <span className="verb-gov-hint">{g.hint}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Compact lines for a flashcard back: «книжн. backte · разг. hat gebacken · сильный», then «auf + Akk». */
 export function CardVerbForms({ summary }: { summary: GermanVerbSummary }) {
   return (
-    <div className="card-verb-forms">
-      <span title="Präteritum — книжное прошедшее"><i>книжн.</i> <b>{summary.praeteritum}</b></span>
-      <span title="Perfekt — разговорное прошедшее"><i>разг.</i> <b>{summary.perfekt}</b></span>
-      <VerbClassChips summary={summary} className="card-verb-chip" />
-    </div>
+    <>
+      <div className="card-verb-forms">
+        <span title="Präteritum — книжное прошедшее"><i>книжн.</i> <b>{summary.praeteritum}</b></span>
+        <span title="Perfekt — разговорное прошедшее"><i>разг.</i> <b>{summary.perfekt}</b></span>
+        <VerbClassChips summary={summary} className="card-verb-chip" />
+      </div>
+      <VerbGovernment items={summary.government} className="verb-gov-card" />
+    </>
   );
 }
 
