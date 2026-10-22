@@ -36,6 +36,7 @@ import { AGENT_LIMITS, AGENT_TIPS, CAPABILITY_AREAS } from "@/lib/mcp/capabiliti
 import { ASSESSMENT_HANDLERS, ASSESSMENT_TOOLS } from "@/lib/mcp/assessmentTools";
 import { TRAINING_HANDLERS, TRAINING_TOOLS } from "@/lib/mcp/trainingTools";
 import { PRONOUN_HANDLERS, PRONOUN_TOOLS } from "@/lib/mcp/pronounTools";
+import { GRAMMAR_HANDLERS, GRAMMAR_TOOLS } from "@/lib/mcp/grammarTools";
 import { difficultyFromSm2 } from "@/lib/srs/fsrs";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
@@ -2184,6 +2185,7 @@ export const MCP_TOOLS: McpToolDef[] = [
   ...ASSESSMENT_TOOLS,
   ...TRAINING_TOOLS,
   ...PRONOUN_TOOLS,
+  ...GRAMMAR_TOOLS,
 ];
 
 const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
@@ -2211,6 +2213,7 @@ const HANDLERS: Record<string, (ctx: Ctx, args: Args) => Promise<unknown>> = {
   ...ASSESSMENT_HANDLERS,
   ...TRAINING_HANDLERS,
   ...PRONOUN_HANDLERS,
+  ...GRAMMAR_HANDLERS,
 };
 
 /** Every tool that is advertised must be callable, and vice versa. */

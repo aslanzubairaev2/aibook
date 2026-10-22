@@ -6,6 +6,8 @@ import { CHECKS, OUTCOMES, TRAINERS, dayInZone, normalizeEvent, type TrainingEve
 import { summarizeTraining, type StoredEvent } from "./summary";
 import { pronounGaps, pronounSummary, type PronounEvent } from "@/lib/pronouns/stats";
 import { pronounFilters, readReviews } from "@/lib/pronouns/store";
+import { grammarSummary, trainerOf, type GrammarEvent } from "@/lib/grammar/stats";
+import { ERROR_TYPES, MODES, TRAINER_IDS } from "@/lib/grammar/task";
 
 const COLUMNS =
   "id, client_event_id, occurred_at, local_date, time_zone, trainer, mode, session_id, entry_id, card_id, word, checks, form, pronoun, tense, prompt, answer, expected, outcome, attempt_no, hint_used, answer_shown, self_grade, meta";
@@ -71,6 +73,15 @@ async function readEvents(admin: SupabaseClient, userId: string, range: { from: 
     query = query.ilike("word", `%${word}%`);
   }
   if (typeof filters.entry_id === "string" && filters.entry_id) query = query.eq("entry_id", filters.entry_id);
+  // A developer's test runs are marked in meta and stay out of every figure unless asked for.
+  if (filters.include_test_events !== true) query = query.not("meta", "cs", JSON.stringify({ test_run: true }));
+  // Grammar trainers («Глаголы и предлоги», «Артикли и падежи») keep their task in meta too.
+  if (typeof filters.trainer === "string" && (TRAINER_IDS as readonly string[]).includes(filters.trainer)) {
+    if (typeof filters.response_mode === "string" && (MODES as readonly string[]).includes(filters.response_mode)) query = query.contains("meta", { response_mode: filters.response_mode });
+    if (typeof filters.construction_key === "string" && filters.construction_key) query = query.contains("meta", { key: filters.construction_key });
+    if (typeof filters.answer_kind === "string" && filters.answer_kind) query = query.contains("meta", { answer_kind: filters.answer_kind });
+    if (typeof filters.error_type === "string" && (ERROR_TYPES as readonly string[]).includes(filters.error_type)) query = query.contains("meta", { error_types: [filters.error_type] });
+  }
   // Pronoun practice keeps its task in meta; its filters read it there, in SQL, so paging stays exact.
   const p = pronounFilters(filters);
   if (p.verb) query = query.contains("meta", { verb: p.verb });
@@ -90,7 +101,7 @@ export async function trainingHistory(admin: SupabaseClient, userId: string, arg
   const limit = Math.min(200, Math.max(1, Number(args.limit) || 50));
   const offset = Math.max(0, Number(args.offset) || 0);
   const { rows, total } = await readEvents(admin, userId, range, args, limit, offset);
-  const reviews = rows.some((e) => e.trainer === "pronouns") ? await readReviews(admin, userId) : [];
+  const reviews = rows.some((e) => e.trainer === "pronouns" || trainerOf(e)) ? await readReviews(admin, userId) : [];
   return {
     period: range,
     total,
@@ -122,6 +133,7 @@ export async function trainingHistory(admin: SupabaseClient, userId: string, arg
       event_id: e.id,
       client_event_id: e.client_event_id,
       ...(e.trainer === "pronouns" ? { pronoun_task: pronounDetails(e, reviews.filter((r) => r.event_id === e.id)) } : {}),
+      ...(trainerOf(e) ? { grammar_task: grammarDetails(e, reviews.filter((r) => r.event_id === e.id)) } : {}),
     })),
   };
 }
@@ -138,6 +150,23 @@ function pronounDetails(e: StoredEvent, reviews: { outcome: string | null; compo
     delayed_review: m.delayed_review ?? false, recheck_of: m.recheck_of ?? null, followup_of: m.followup_of ?? null,
     assigned_session_id: m.assigned_session_id ?? null, active_ms: m.active_ms ?? null, speech: m.speech ?? null,
     technical_reason: m.technical_reason ?? null, check_method: latest ? "teacher" : m.check_method ?? "rules",
+    effective_outcome: latest?.outcome ?? e.outcome, reviews,
+  };
+}
+
+/** One grammar-trainer answer as the teacher reads it: the construction, mode, kind of answer, each named difference, the correction link. */
+function grammarDetails(e: StoredEvent, reviews: { outcome: string | null; components: unknown; note: string | null; created_at: string }[]) {
+  const m = e.meta as Record<string, unknown>;
+  const latest = reviews[reviews.length - 1];
+  return {
+    construction: m.key, construction_label: m.key_label, response_mode: m.response_mode, answer_kind: m.answer_kind,
+    combination: m.combo ?? null, preposition: m.preposition ?? null, case: m.case ?? null, frame: m.frame ?? null, slots: m.slots ?? null,
+    sentence_type: m.sentence_type ?? null, object_kind: m.object_kind ?? null,
+    error_types: m.error_types, issues: m.issues, typos: m.typos, feedback: m.feedback, uncertain_reason: m.uncertain_reason,
+    first_answer: e.attempt_no === 1 && !m.correction_of, correction_of: m.correction_of ?? null,
+    repeat_of: m.repeat_of ?? null, delayed_review: m.delayed_review ?? false, assigned_session_id: m.assigned_session_id ?? null,
+    active_ms: m.active_ms ?? null, speech: m.speech ?? null, technical_reason: m.technical_reason ?? null,
+    test_run: m.test_run === true, check_method: latest ? "teacher" : m.check_method ?? "rules",
     effective_outcome: latest?.outcome ?? e.outcome, reviews,
   };
 }
@@ -163,9 +192,15 @@ export async function trainingSummary(admin: SupabaseClient, userId: string, arg
   const pronouns = pronounRows.length || args.trainer === "pronouns"
     ? pronounSummary(pronounRows as unknown as PronounEvent[], await readReviews(admin, userId), pronounFilters(args))
     : undefined;
+  const grammar: Record<string, unknown> = {};
+  for (const trainer of TRAINER_IDS) {
+    const own = rows.filter((e) => e.trainer === trainer);
+    if (own.length || args.trainer === trainer) grammar[trainer] = grammarSummary(own as unknown as GrammarEvent[], { includeTests: args.include_test_events === true });
+  }
   return {
     ...summary,
     ...(pronouns ? { pronouns } : {}),
+    ...(Object.keys(grammar).length ? { grammar_trainers: grammar } : {}),
     events_considered: rows.length,
     truncated: total > rows.length,
     note: rows.length === 0
@@ -201,4 +236,11 @@ export async function readPronounEvents(admin: SupabaseClient, userId: string, p
   const range = await resolvePeriod(admin, userId, { period });
   const { rows } = await readAll(admin, userId, range, { trainer: "pronouns" }, 5000);
   return rows as unknown as PronounEvent[];
+}
+
+/** One grammar trainer's answers for the learner's own screens (statistics, due constructions). */
+export async function readGrammarEvents(admin: SupabaseClient, userId: string, trainer: string, period: "last_30_days" | "all" = "all") {
+  const range = await resolvePeriod(admin, userId, { period });
+  const { rows } = await readAll(admin, userId, range, { trainer }, 5000);
+  return rows as unknown as GrammarEvent[];
 }

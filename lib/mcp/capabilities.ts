@@ -98,6 +98,18 @@ export const CAPABILITY_AREAS: CapabilityArea[] = [
     ],
   },
   {
+    area: "Grammar trainers («глаголы и предлоги», «артикли и падежи»)",
+    summary:
+      "Two trainers in Практика. «Глаголы и предлоги» (verb_prepositions): does a verb need a preposition, which one, and which case — a catalogue of A1–A2 combinations, each in one meaning (warten auf, denken an, sprechen über / mit, bitten um, fragen nach, teilnehmen an, aufpassen auf, danken für; a reflexive block: sich freuen auf / über, sich interessieren für, sich erinnern an, sich kümmern um), mixed with verbs that take none (sehen, hören, suchen, brauchen, besuchen, fragen, kennen, anrufen, einladen, helfen). «Артикли и падежи» (articles_cases): the form of der / ein / kein / mein…Ihr in Nominativ, Akkusativ and Dativ (mit, bei, zu; verbs with Dativ and geben / schenken as separate blocks), one or two gaps. Modes: quick choice, sentence building from word buttons with distractors, written and spoken translation; endless practice or sets, no timer; a cheat sheet that never loses the task (an answer after opening it counts as assisted). Answers are checked by rules and each difference named: wrong / missing / extra preposition, case, gender, determiner form, noun form, conjugation, word order; typos apart; speech glitches and unknown words never become errors. get_grammar_trainer_config shows the catalogue, settings and limits; update_grammar_trainer_config marks constructions learned and changes the selection; create_grammar_trainer_session assigns a session with a link. Results: get_training_summary → grammar_trainers (by mode, by answer kind — independent / assisted / correction / technical — by error type and construction, recent errors with the correction); get_training_history with trainer, response_mode, answer_kind, error_type, construction_key. Developer test runs are marked and left out unless include_test_events is true.",
+    tools: ["get_grammar_trainer_config", "update_grammar_trainer_config", "create_grammar_trainer_session"],
+    say: [
+      "«как у меня с предлогами после глаголов?»",
+      "«отметь sprechen mit и denken an как изученные»",
+      "«назначь 20 заданий на артикли в Dativ с mit»",
+      "«какие ошибки в падежах я делаю?»",
+    ],
+  },
+  {
     area: "Reading texts",
     summary:
       "Texts the learner reads in the app. You write them yourself — you are the language model, this server never spends the learner's AI budget — and create_lesson saves them into «Мои уроки» with an optional glossary and comprehension questions. list_catalogue searches the ready-made public shelves and reports the share of words the learner already knows in each text.",

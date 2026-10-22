@@ -7,7 +7,7 @@
 // one of them (checks), and a flashcard self-rating (outcome «self_rated» with
 // self_grade) is never mistaken for an automatically checked right answer.
 
-export const TRAINERS = ["review", "active", "nouns", "verbs", "adjectives", "prepositions", "pronouns"] as const;
+export const TRAINERS = ["review", "active", "nouns", "verbs", "adjectives", "prepositions", "pronouns", "verb_prepositions", "articles_cases"] as const;
 export type Trainer = typeof TRAINERS[number];
 
 // needs_review: the rules could not judge the answer with confidence — it waits
@@ -31,6 +31,10 @@ export const CHECKS = [
   "listening",
   "spoken_production",
   "pronoun",
+  // «Глаголы и предлоги»: does the verb take a preposition, which one, which case.
+  "verb_government",
+  // «Артикли и падежи»: the form of an article or possessive in a sentence.
+  "determiner",
 ] as const;
 export type Check = typeof CHECKS[number];
 
@@ -50,6 +54,8 @@ export const KNOWLEDGE: Record<Check, "translation" | "article" | "plural" | "ve
   listening: "card_recall",
   spoken_production: "card_recall",
   pronoun: "pronoun_use",
+  verb_government: "case_government",
+  determiner: "article",
 };
 
 export type TrainingEvent = {

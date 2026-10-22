@@ -130,7 +130,8 @@ export async function reviewAnswer(admin: SupabaseClient, userId: string, args: 
   const { data: event, error } = await admin.from("training_events").select("id, trainer, outcome, meta, answer, expected, prompt").eq("user_id", userId).eq("id", eventId).maybeSingle();
   if (error) throw new Error(`event read failed: ${error.message}`);
   if (!event) throw new Error("No such training event for this learner.");
-  if (event.trainer !== "pronouns") throw new Error("Only pronoun practice answers can be re-graded with this tool.");
+  const grammar = event.trainer === "verb_prepositions" || event.trainer === "articles_cases";
+  if (event.trainer !== "pronouns" && !grammar) throw new Error("Only pronoun practice and grammar trainer answers can be re-graded with this tool.");
   const outcome = args.outcome === undefined ? null : String(args.outcome);
   if (outcome !== null && !REVIEW_OUTCOMES.includes(outcome)) throw new Error(`outcome must be one of ${REVIEW_OUTCOMES.join(", ")}`);
   let components: Record<string, string> | null = null;
@@ -138,7 +139,7 @@ export async function reviewAnswer(admin: SupabaseClient, userId: string, args: 
     if (typeof args.components !== "object" || args.components === null || Array.isArray(args.components)) throw new Error("components must be an object like {\"object\": \"correct\"}");
     components = {};
     for (const [k, v] of Object.entries(args.components as Record<string, unknown>)) {
-      if (!(COMPONENTS as readonly string[]).includes(k)) throw new Error(`unknown component «${k}». Known: ${COMPONENTS.join(", ")}`);
+      if (!grammar && !(COMPONENTS as readonly string[]).includes(k)) throw new Error(`unknown component «${k}». Known: ${COMPONENTS.join(", ")}`);
       if (!["correct", "error", "typo"].includes(String(v))) throw new Error(`component ${k}: use correct, error or typo`);
       components[k] = String(v);
     }

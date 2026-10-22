@@ -19,6 +19,7 @@ import { NounsView } from "@/components/nouns/NounsView";
 import { OtherPosView } from "@/components/otherpos/OtherPosView";
 import { PracticeView } from "@/components/practice/PracticeView";
 import { PronounsView } from "@/components/pronouns/PronounsView";
+import { GrammarView } from "@/components/grammar/GrammarView";
 import { DictionaryView } from "@/components/dictionary/DictionaryView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { AuthScreen } from "@/components/auth/AuthScreen";
@@ -82,7 +83,7 @@ const SAVING_TO_LIBRARY_MESSAGE = "\u0421\u043e\u0445\u0440\u0430\u043d\u044f\u0
 const BOOK_IN_LIBRARY_MESSAGE = "\u041a\u043d\u0438\u0433\u0430 \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435";
 const DOWNLOAD_ERROR_MESSAGE = "\u041e\u0448\u0438\u0431\u043a\u0430 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0438";
 const DEFAULT_CHAPTER_TITLE = "\u0413\u043b\u0430\u0432\u0430 1";
-const APP_SECTIONS: AppSection[] = ["home", "discover", "dictionary", "practice", "books", "reader", "homework", "cards", "verbs", "nouns", "otherpos", "pronouns", "settings", "auth", "live-translate"];
+const APP_SECTIONS: AppSection[] = ["home", "discover", "dictionary", "practice", "books", "reader", "homework", "cards", "verbs", "nouns", "otherpos", "pronouns", "verbpreps", "articles", "settings", "auth", "live-translate"];
 
 function pickColor(title: string) {
   let hash = 0;
@@ -1255,6 +1256,8 @@ function AppInner() {
           onOpenNouns={() => setSection("nouns")}
           onOpenOtherPos={() => setSection("otherpos")}
           onOpenPronouns={() => setSection("pronouns")}
+          onOpenVerbPreps={() => setSection("verbpreps")}
+          onOpenArticles={() => setSection("articles")}
         />
       )}
 
@@ -1281,6 +1284,14 @@ function AppInner() {
 
       {section === "pronouns" && (
         <PronounsView onBack={() => setSection("practice")} />
+      )}
+
+      {section === "verbpreps" && (
+        <GrammarView key="verb_prepositions" trainer="verb_prepositions" onBack={() => setSection("practice")} />
+      )}
+
+      {section === "articles" && (
+        <GrammarView key="articles_cases" trainer="articles_cases" onBack={() => setSection("practice")} />
       )}
 
       {section === "settings" && (

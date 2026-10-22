@@ -75,7 +75,7 @@ export const PRONOUN_TOOLS: McpToolDef[] = [
     name: "submit_pronoun_answer_review",
     title: "Пересмотреть оценку ответа",
     description:
-      "Correct an automatic verdict on one pronoun practice answer — the rules marked a valid variant wrong, or an answer waits for review (outcome needs_review). Give event_id from get_training_history, and an outcome and/or per-part verdicts (subject, object, conjugation, sentence_type, word_order, government, separable_prefix, negation, spelling: correct | error | typo), with a note. The automatic verdict is kept; every review is kept; summaries count the latest one. Returns the automatic verdict and the review history.",
+      "Correct an automatic verdict on one pronoun practice answer (or a «Глаголы и предлоги» / «Артикли и падежи» answer — there components are free-form, e.g. {\"case\": \"correct\"}) — the rules marked a valid variant wrong, or an answer waits for review (outcome needs_review). Give event_id from get_training_history, and an outcome and/or per-part verdicts (subject, object, conjugation, sentence_type, word_order, government, separable_prefix, negation, spelling: correct | error | typo), with a note. The automatic verdict is kept; every review is kept; summaries count the latest one. Returns the automatic verdict and the review history.",
     inputSchema: {
       type: "object",
       properties: {
