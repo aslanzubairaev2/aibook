@@ -259,7 +259,7 @@ export const TAP_COLUMNS: { ru: string; nom: string; acc: string }[] = [
 ];
 
 function tapBank(): string[] {
-  return [...TAP_COLUMNS.map((c) => c.nom), ...TAP_COLUMNS.map((c) => c.acc), "nicht"];
+  return [...TAP_COLUMNS.map((c) => c.nom), ...TAP_COLUMNS.map((c) => c.acc)];
 }
 
 /** The sentence's own words plus three that test the distinctions: a wrong verb person, the object's subject form, a confusable pronoun. */

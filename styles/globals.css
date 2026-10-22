@@ -3227,8 +3227,7 @@ textarea,
 .pron-build-line.wrong { border-style: solid; border-color: var(--red); }
 .pron-build-placeholder { color: var(--text-muted); font-size: 14px; font-weight: 500; }
 
-/* Tap keyboard: one column per person — я / ich / mich — always in the same
-   place; «nicht» on its own row, in red, because it is a different decision. */
+/* Tap keyboard: one column per person — я / ich / mich — always in the same place. */
 .pron-keys { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px 5px; }
 .pron-key-label { text-align: center; font-size: 11px; font-weight: 700; color: var(--text-muted); }
 .pron-key {
@@ -3239,14 +3238,6 @@ textarea,
 }
 .pron-key:hover:not(:disabled) { border-color: var(--accent); }
 .pron-key:active:not(:disabled) { transform: scale(0.94); }
-.pron-key-nicht {
-  grid-column: 1 / -1; justify-self: start; min-width: 110px; padding: 0 18px;
-  border-color: rgba(196, 106, 106, 0.6); background: rgba(196, 106, 106, 0.16); color: #e38b8b;
-}
-.pron-key-nicht:hover:not(:disabled) { border-color: var(--red); }
-.pron-key-nicht:disabled { opacity: 0.3; cursor: default; }
-.pron-slot-nicht { border-color: rgba(196, 106, 106, 0.7); color: #e38b8b; background: rgba(196, 106, 106, 0.08); }
-.pron-slot-nicht.filled { background: rgba(196, 106, 106, 0.18); }
 @media (max-width: 420px) {
   .pron-flow .verb-quiz-card { padding: 16px 12px; }
   .pron-keys { gap: 5px 3px; }

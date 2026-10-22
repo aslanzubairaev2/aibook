@@ -32,6 +32,11 @@ function seedFrom(id: string, n: number): number {
   return h >>> 0;
 }
 
+/** Active answer time; called from event handlers only. */
+function elapsedSince(start: number): number {
+  return Date.now() - start;
+}
+
 function cap(s: string): string {
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
@@ -53,7 +58,6 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
   }));
   const [index, setIndex] = useState(0);
   const [filled, setFilled] = useState<Partial<Record<Role, string>>>({});
-  const [nichtIn, setNichtIn] = useState(false); // tap: the «nicht» blank of a negation
   const [placed, setPlaced] = useState<number[]>([]); // build: bank indexes, in order
   const [result, setResult] = useState<CheckResult | null>(null);
   const [score, setScore] = useState({ right: 0, total: 0, streak: 0 });
@@ -92,13 +96,12 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
     timerRef.current = null;
     setIndex((i) => i + 1);
     setFilled({});
-    setNichtIn(false);
     setPlaced([]);
     setResult(null);
   }, []);
 
   function finish(answer: string, check: CheckResult) {
-    const ms = Date.now() - shownAtRef.current;
+    const ms = elapsedSince(shownAtRef.current);
     logTrainingEvent(pronounEventInput(task, {
       sessionId, assignedSessionId, answer, outcome: check.outcome, result: check, attemptNo: 1, correctionOf: null,
       hintUsed: false, answerShown: false, activeMs: ms > 0 && ms < 30 * 60 * 1000 ? ms : null,
@@ -115,28 +118,18 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
     }
   }
 
-  const negation = task?.sentenceType === "negation";
-
-  // tap: a pronoun goes into the next empty pronoun blank, «nicht» into its own;
-  // once every blank is filled, the answer is checked.
+  // tap: only the pronouns are trained — the rest of the sentence, nicht
+  // included, is given. A pronoun goes into the next empty blank; once both
+  // are filled, the answer is checked.
   function tap(word: string) {
     if (!task || result) return;
     const order: Role[] = task.tokens.filter((t) => t.slot === "S" || t.slot === "O").map((t) => (t.slot === "S" ? "subject" : "object"));
-    let nextFilled = filled;
-    let nextNicht = nichtIn;
-    if (word === "nicht") {
-      if (!negation || nichtIn) return;
-      nextNicht = true;
-      setNichtIn(true);
-    } else {
-      const role = order.find((r) => !filled[r]);
-      if (!role) return;
-      nextFilled = { ...filled, [role]: word };
-      setFilled(nextFilled);
-    }
-    if (!order.every((r) => nextFilled[r]) || (negation && !nextNicht)) return;
+    const role = order.find((r) => !filled[r]);
+    if (!role) return;
+    const nextFilled = { ...filled, [role]: word };
+    setFilled(nextFilled);
+    if (!order.every((r) => nextFilled[r])) return;
     const check = checkBlanks(task, nextFilled);
-    if (negation) check.components.negation = "correct";
     const answer = task.tokens.map((t) => (t.slot === "S" ? nextFilled.subject : t.slot === "O" ? nextFilled.object : t.text)).join(" ");
     finish(answer, check);
   }
@@ -171,11 +164,9 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
       if (e.key === "Backspace") {
         e.preventDefault();
         if (mode === "build") setPlaced((p) => p.slice(0, -1));
-        else if (nichtIn) setNichtIn(false);
         else setFilled((f) => { const c = { ...f }; if (c.object) delete c.object; else delete c.subject; return c; });
         return;
       }
-      if (mode === "tap" && e.key.toLowerCase() === "n") { e.preventDefault(); tap("nicht"); return; }
       const n = e.key === "0" ? 10 : Number(e.key);
       if (mode === "build" && Number.isInteger(n) && n >= 1 && task.bank && n <= task.bank.length) {
         e.preventDefault();
@@ -226,15 +217,6 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
               const role: Role | null = t.slot === "S" ? "subject" : t.slot === "O" ? "object" : null;
               const end = i === task.tokens.length - 1 ? (task.sentenceType === "question" ? "?" : ".") : "";
               const shown = (w: string) => (i === 0 ? cap(w) : w);
-              if (t.slot === "NICHT") {
-                return (
-                  <span key={i}>
-                    <button type="button" className={`pron-slot pron-slot-nicht${nichtIn ? " filled" : ""}${result ? " right" : ""}`} onClick={() => !result && setNichtIn(false)} aria-label="Отрицание">
-                      {nichtIn ? "nicht" : "…"}
-                    </button>{end}
-                  </span>
-                );
-              }
               if (!role) return <span key={i}>{shown(t.text)}{end}</span>;
               const value = filled[role];
               const state = result ? (result.components[role] === "correct" ? " right" : " wrong") : "";
@@ -266,7 +248,6 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
             {TAP_COLUMNS.map((c, i) => (
               <button key={`a-${i}`} type="button" className="pron-key" onClick={() => tap(c.acc)}>{c.acc}</button>
             ))}
-            <button type="button" className="pron-key pron-key-nicht" onClick={() => tap("nicht")} disabled={!negation || nichtIn}>nicht</button>
           </div>
         )}
 
