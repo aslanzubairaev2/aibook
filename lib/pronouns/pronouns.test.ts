@@ -204,7 +204,9 @@ test("tap: one fixed bank, both pronouns blank, judged like gaps", () => {
   const t = makeTask({ kind: "people", verb: "rufen", sentenceType: "statement", modal: false, subject: "sie_pl", object: "sie_pl", noun: null }, "tap", { id: id(), focusRole: "object", random: rng(4) });
   assert.equal(t.prompt_ru, "Они зовут их.");
   assert.deepEqual(t.blanks, ["subject", "object"]);
-  assert.ok(!t.bank!.includes("es") && t.bank!.includes("uns") && t.bank!.includes("Sie"));
+  assert.deepEqual(t.bank!.slice(0, 9), ["ich", "du", "er", "sie", "es", "wir", "ihr", "sie", "Sie"]);
+  assert.deepEqual(t.bank!.slice(9, 18), ["mich", "dich", "ihn", "sie", "es", "uns", "euch", "sie", "Sie"]);
+  assert.equal(t.bank![18], "nicht");
   assert.equal(checkBlanks(t, { subject: "sie", object: "sie" }).outcome, "correct");
   const wrong = checkBlanks(t, { subject: "sie", object: "Sie" });
   assert.equal(wrong.components.object, "error");

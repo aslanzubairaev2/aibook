@@ -7,7 +7,7 @@ import { flushTrainingEvents, logTrainingEvent, newId } from "@/lib/training/cli
 import { checkBlanks, checkSentence, type CheckResult } from "@/lib/pronouns/check";
 import type { SessionSettings } from "@/lib/pronouns/config";
 import { pronounEventInput } from "@/lib/pronouns/record";
-import { followUps, planSession, type PronounTask, type Role } from "@/lib/pronouns/tasks";
+import { TAP_COLUMNS, followUps, planSession, type PronounTask, type Role } from "@/lib/pronouns/tasks";
 
 type FlowMode = "tap" | "build";
 
@@ -53,6 +53,7 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
   }));
   const [index, setIndex] = useState(0);
   const [filled, setFilled] = useState<Partial<Record<Role, string>>>({});
+  const [nichtIn, setNichtIn] = useState(false); // tap: the «nicht» blank of a negation
   const [placed, setPlaced] = useState<number[]>([]); // build: bank indexes, in order
   const [result, setResult] = useState<CheckResult | null>(null);
   const [score, setScore] = useState({ right: 0, total: 0, streak: 0 });
@@ -91,6 +92,7 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
     timerRef.current = null;
     setIndex((i) => i + 1);
     setFilled({});
+    setNichtIn(false);
     setPlaced([]);
     setResult(null);
   }, []);
@@ -113,15 +115,30 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
     }
   }
 
-  // tap: a pronoun goes into the next empty blank; when both are in, it is checked.
+  const negation = task?.sentenceType === "negation";
+
+  // tap: a pronoun goes into the next empty pronoun blank, «nicht» into its own;
+  // once every blank is filled, the answer is checked.
   function tap(word: string) {
     if (!task || result) return;
     const order: Role[] = task.tokens.filter((t) => t.slot === "S" || t.slot === "O").map((t) => (t.slot === "S" ? "subject" : "object"));
-    const role = order.find((r) => !filled[r]);
-    if (!role) return;
-    const nextFilled = { ...filled, [role]: word };
-    setFilled(nextFilled);
-    if (order.every((r) => nextFilled[r])) finish(`${nextFilled.subject ?? ""} … ${nextFilled.object ?? ""}`.trim(), checkBlanks(task, nextFilled));
+    let nextFilled = filled;
+    let nextNicht = nichtIn;
+    if (word === "nicht") {
+      if (!negation || nichtIn) return;
+      nextNicht = true;
+      setNichtIn(true);
+    } else {
+      const role = order.find((r) => !filled[r]);
+      if (!role) return;
+      nextFilled = { ...filled, [role]: word };
+      setFilled(nextFilled);
+    }
+    if (!order.every((r) => nextFilled[r]) || (negation && !nextNicht)) return;
+    const check = checkBlanks(task, nextFilled);
+    if (negation) check.components.negation = "correct";
+    const answer = task.tokens.map((t) => (t.slot === "S" ? nextFilled.subject : t.slot === "O" ? nextFilled.object : t.text)).join(" ");
+    finish(answer, check);
   }
 
   function unTap(role: Role) {
@@ -154,13 +171,15 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
       if (e.key === "Backspace") {
         e.preventDefault();
         if (mode === "build") setPlaced((p) => p.slice(0, -1));
+        else if (nichtIn) setNichtIn(false);
         else setFilled((f) => { const c = { ...f }; if (c.object) delete c.object; else delete c.subject; return c; });
         return;
       }
+      if (mode === "tap" && e.key.toLowerCase() === "n") { e.preventDefault(); tap("nicht"); return; }
       const n = e.key === "0" ? 10 : Number(e.key);
-      if (Number.isInteger(n) && n >= 1 && task.bank && n <= task.bank.length) {
+      if (mode === "build" && Number.isInteger(n) && n >= 1 && task.bank && n <= task.bank.length) {
         e.preventDefault();
-        if (mode === "tap") tap(task.bank[n - 1]); else place(n - 1);
+        place(n - 1);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -207,6 +226,15 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
               const role: Role | null = t.slot === "S" ? "subject" : t.slot === "O" ? "object" : null;
               const end = i === task.tokens.length - 1 ? (task.sentenceType === "question" ? "?" : ".") : "";
               const shown = (w: string) => (i === 0 ? cap(w) : w);
+              if (t.slot === "NICHT") {
+                return (
+                  <span key={i}>
+                    <button type="button" className={`pron-slot pron-slot-nicht${nichtIn ? " filled" : ""}${result ? " right" : ""}`} onClick={() => !result && setNichtIn(false)} aria-label="Отрицание">
+                      {nichtIn ? "nicht" : "…"}
+                    </button>{end}
+                  </span>
+                );
+              }
               if (!role) return <span key={i}>{shown(t.text)}{end}</span>;
               const value = filled[role];
               const state = result ? (result.components[role] === "correct" ? " right" : " wrong") : "";
@@ -229,15 +257,28 @@ export function PronounFlow({ mode, settings, dueDifficulties, limit, assignedSe
           </div>
         )}
 
-        {!result && (
+        {!result && mode === "tap" && (
+          <div className="pron-keys" role="group" aria-label="Местоимения">
+            {TAP_COLUMNS.map((c) => <span key={`ru-${c.ru}`} className="pron-key-label">{c.ru}</span>)}
+            {TAP_COLUMNS.map((c, i) => (
+              <button key={`n-${i}`} type="button" className="pron-key" onClick={() => tap(c.nom)} aria-label={`${c.nom} — ${c.ru}`}>{c.nom}</button>
+            ))}
+            {TAP_COLUMNS.map((c, i) => (
+              <button key={`a-${i}`} type="button" className="pron-key" onClick={() => tap(c.acc)}>{c.acc}</button>
+            ))}
+            <button type="button" className="pron-key pron-key-nicht" onClick={() => tap("nicht")} disabled={!negation || nichtIn}>nicht</button>
+          </div>
+        )}
+
+        {!result && mode === "build" && (
           <div className="pron-bank">
             {task.bank!.map((w, i) => (
-              <button key={`${w}-${i}`} type="button" className="pron-chip" disabled={mode === "build" && placed.includes(i)}
-                onClick={() => (mode === "tap" ? tap(w) : place(i))}>
+              <button key={`${w}-${i}`} type="button" className="pron-chip" disabled={placed.includes(i)}
+                onClick={() => place(i)}>
                 {w}
               </button>
             ))}
-            {mode === "build" && placed.length > 0 && (
+            {placed.length > 0 && (
               <button type="button" className="pron-chip pron-chip-undo" onClick={() => setPlaced((p) => p.slice(0, -1))} aria-label="Убрать последнее слово"><Delete size={16} /></button>
             )}
           </div>

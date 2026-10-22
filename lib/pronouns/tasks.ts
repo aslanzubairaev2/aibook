@@ -240,15 +240,26 @@ function choiceOptions(spec: TaskSpec, role: Role, random: () => number): string
 }
 
 /**
- * One fixed bank for every task, in the same order every time — the hand
- * learns where «uns» is. Subject forms first, object forms after; tapping
- * fills the next empty blank, so choosing «wir» for an object is possible
- * and is exactly the error being trained.
+ * The tap keyboard: one column per person, always in the same place — the
+ * Russian word on top, the subject form under it, the object form under that
+ * (я · ich · mich). «она» and «они» get a column each although both are
+ * «sie» in German. Tapping fills the next empty pronoun blank, so «wir» for
+ * an object stays possible — exactly the error being trained.
  */
-export const TAP_BANK = ["ich", "du", "er", "sie", "es", "wir", "ihr", "Sie", "mich", "dich", "ihn", "uns", "euch"];
+export const TAP_COLUMNS: { ru: string; nom: string; acc: string }[] = [
+  { ru: "я", nom: "ich", acc: "mich" },
+  { ru: "ты", nom: "du", acc: "dich" },
+  { ru: "он", nom: "er", acc: "ihn" },
+  { ru: "она", nom: "sie", acc: "sie" },
+  { ru: "оно", nom: "es", acc: "es" },
+  { ru: "мы", nom: "wir", acc: "uns" },
+  { ru: "вы", nom: "ihr", acc: "euch" },
+  { ru: "они", nom: "sie", acc: "sie" },
+  { ru: "Вы", nom: "Sie", acc: "Sie" },
+];
 
-function tapBank(spec: TaskSpec): string[] {
-  return spec.kind === "people" ? TAP_BANK.filter((w) => w !== "es") : TAP_BANK;
+function tapBank(): string[] {
+  return [...TAP_COLUMNS.map((c) => c.nom), ...TAP_COLUMNS.map((c) => c.acc), "nicht"];
 }
 
 /** The sentence's own words plus three that test the distinctions: a wrong verb person, the object's subject form, a confusable pronoun. */
@@ -297,7 +308,7 @@ export function makeTask(spec: TaskSpec, mode: ResponseMode, opts: {
     tokens: german.tokens,
     blanks,
     options: mode === "choice" ? choiceOptions(spec, role, opts.random) : null,
-    bank: mode === "tap" ? tapBank(spec) : mode === "build" ? buildBank(spec, german.tokens, opts.random) : null,
+    bank: mode === "tap" ? tapBank() : mode === "build" ? buildBank(spec, german.tokens, opts.random) : null,
     focus_role: role,
     difficulty: difficultyOf(spec, role),
     delayed_review: opts.delayedReview ?? false,
