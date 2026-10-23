@@ -143,7 +143,7 @@ export function WordModal({ analysis, isOpen, isLoading, lang, nativeLang, selec
         {isLoading || !word ? (
           <div className="word-modal-skeleton">
             <div className="word-hero">
-              <div className="word-hero-lemma">{displayWord ? displayWord.toUpperCase() : "..."}</div>
+              <div className="word-hero-lemma">{displayWord || "…"}</div>
             </div>
             <div className="modal-section">
               <span className="modal-section-label">{TRANSLATION_LABEL}</span>
