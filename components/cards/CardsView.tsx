@@ -20,6 +20,8 @@ import type { CardVerifyDictionaryEntry } from "@/lib/ai/cardVerify";
 import { CardFixModal, type CardFixApplyResult } from "@/components/cards/CardFixModal";
 import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardSkillProgressMap, getCardVariantProgressMap, saveCardVariantProgress } from "@/lib/db/local";
 import { pushCardVariant } from "@/lib/sync/cardOutbox";
+import { cardsForWordKeys, strugglingWordKeys } from "@/lib/srs/struggling";
+import { getLocalNounsDict, getLocalOtherPosDict, getLocalPackProgress, getLocalVerbsDict } from "@/lib/db/local";
 import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
@@ -224,6 +226,19 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     () => (batch ? new Set<string>() : heldBackNewCards(cards, newPerDay, new Date(todayEndTime))),
     [batch, cards, newPerDay, todayEndTime],
   );
+
+  // Words that keep being missed in the grammar trainers count as «Сложные»
+  // here too — one notion of a hard word, wherever it was drilled.
+  const extraHard = useMemo(() => {
+    const keys = strugglingWordKeys([
+      { entries: getLocalVerbsDict(targetLanguage)?.entries ?? [], progress: getLocalPackProgress("verbs") },
+      { entries: getLocalNounsDict(targetLanguage)?.entries ?? [], progress: getLocalPackProgress("nouns") },
+      { entries: getLocalOtherPosDict(targetLanguage)?.entries ?? [], progress: getLocalPackProgress("otherpos") },
+    ]);
+    return cardsForWordKeys(cards, keys);
+    // progressRevision: the trainers' progress was refreshed from the account.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, targetLanguage, progressRevision]);
 
   const stats = useMemo(
     () => computeDeckStats(cards, variantProgress, new Date(todayEndTime), heldNew),
@@ -502,9 +517,9 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
       // Shuffled so multi-variant sessions interleave instead of running all of
       // one variant before the next.
       shuffleTrainQueue(
-        buildTrainQueue(filterByPos(cards, pos), { status, type: filter, variants, book, sourceId, excluded, ignoreSchedule, heldNew }, variantProgress, todayEndTime),
+        buildTrainQueue(filterByPos(cards, pos), { status, type: filter, variants, book, sourceId, excluded, ignoreSchedule, heldNew, extraHard }, variantProgress, todayEndTime),
       ),
-    [cards, variantProgress, todayEndTime, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, heldNew],
+    [cards, variantProgress, todayEndTime, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, heldNew, extraHard],
   );
 
   // Live counts for the filter chips, computed in a single pass. Each chip used
@@ -514,12 +529,12 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     () => activeTab === "train"
       ? countTrainCandidates(
         filterByPos(cards, trainPos),
-        { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, heldNew },
+        { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, heldNew, extraHard },
         variantProgress,
         todayEndTime,
       )
       : { byStatus: { all: 0, new: 0, learning: 0, review: 0, relearning: 0, hard: 0 }, byType: { all: 0, word: 0, phrase: 0, sentence: 0, expression: 0 } },
-    [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime, heldNew],
+    [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime, heldNew, extraHard],
   );
 
   // The productive trainer keeps its own schedule but must obey the same
@@ -542,12 +557,12 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     () => activeTab === "train"
       ? countTrainCandidates(
         filterByPos(cards, trainPos),
-        { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, ignoreSchedule: true },
+        { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, ignoreSchedule: true, extraHard },
         variantProgress,
         todayEndTime,
       ).byType.all
       : 0,
-    [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
+    [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime, extraHard],
   );
 
   // Today's due work in the directions this session leaves out. «Сегодня»
@@ -560,11 +575,11 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     if (others.length === 0) return 0;
     return countTrainCandidates(
       filterByPos(cards, trainPos),
-      { status: trainStatus, type: trainFilter, variants: others, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, heldNew },
+      { status: trainStatus, type: trainFilter, variants: others, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, heldNew, extraHard },
       variantProgress,
       todayEndTime,
     ).byType.all;
-  }, [activeTab, sessionOver, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime, heldNew]);
+  }, [activeTab, sessionOver, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime, heldNew, extraHard]);
 
   function trainAllDirections() {
     const variants = [...ALL_TRAIN_VARIANTS];
@@ -1905,7 +1920,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
                 </div>
                 {trainStatus === "hard" && (
                   <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-                    Карточки с частыми ошибками — включая не назначенные на сегодня
+                    Карточки с частыми ошибками — включая не назначенные на сегодня и слова, которые не даются в тренажёрах глаголов и существительных
                   </div>
                 )}
               </div>

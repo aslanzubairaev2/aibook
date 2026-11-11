@@ -658,6 +658,8 @@ export type TrainSelection = {
   excluded?: string[];
   /** Never-seen words over today's limit (heldBackNewCards); skipped by the scheduled session only. */
   heldNew?: ReadonlySet<string>;
+  /** Cards whose word keeps being missed in a grammar trainer (lib/srs/struggling.ts) — part of «Сложные». */
+  extraHard?: ReadonlySet<string>;
   /**
    * Drill: take everything in scope, whether or not it is due.
    *
@@ -700,7 +702,9 @@ export function buildTrainQueue(
   const items: TrainQueueItem[] = [];
   for (const card of scoped) {
     if (held?.has(card.id)) continue;
+    const hardElsewhere = selection.status === "hard" && Boolean(selection.extraHard?.has(card.id));
     const matching = selection.variants.filter((variant) => {
+      if (hardElsewhere) return true;
       const p = getVariantProgress(card, variant, variantProgress);
       return matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule);
     });
@@ -769,12 +773,13 @@ export function countTrainCandidates(
   const bury = buriesAnsweredToday(selection);
   for (const card of scoped) {
     const typeMatches = selection.type === "all" || card.type === selection.type;
+    const hardElsewhere = Boolean(selection.extraHard?.has(card.id));
     const progress = new Map(selection.variants.map((v) => [v, getVariantProgress(card, v, variantProgress)] as const));
     const pick = (keep: (p: VariantProgress) => boolean, buryToday = bury) =>
       pickDirectionForToday(card, selection.variants.filter((v) => keep(progress.get(v)!)), variantProgress, todayEndMs, buryToday);
 
     if (typeMatches) {
-      if (pick(isHardProgress, false)) counts.byStatus.hard += 1;
+      if (hardElsewhere || pick(isHardProgress, false)) counts.byStatus.hard += 1;
       const dueVariant = pick((p) => isVariantDue(p, todayEndMs), true);
       if (dueVariant) {
         // «Все статусы» is the scheduled session, which leaves the words over
@@ -784,7 +789,7 @@ export function countTrainCandidates(
       }
     }
     if (holdsBackNew(selection) && selection.heldNew?.has(card.id)) continue;
-    const chosen = pick((p) => matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule));
+    const chosen = pick((p) => (selection.status === "hard" && hardElsewhere) || matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule));
     if (chosen) {
       counts.byType.all += 1;
       counts.byType[card.type] += 1;
