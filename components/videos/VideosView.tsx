@@ -9,6 +9,7 @@ import type { Flashcard, UserProfile } from "@/lib/types";
 import { VideoCard } from "./VideoCard";
 import { VideoPlayerModal } from "./VideoPlayerModal";
 import { sbGetVideoLibrary, sbUpsertVideoLibrary, sbHideVideoFromHistory } from "@/lib/db/supabase";
+import { FilterSheet } from "@/components/ui/FilterSheet";
 
 type Props = {
   cards: Flashcard[];
@@ -312,7 +313,7 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard, 
       </div>
 
       {filtersOpen && (
-        <div className="all-filter-panel">
+        <FilterSheet title="Фильтры" onClose={() => setFiltersOpen(false)}>
           <FilterGroup label="Язык">
             <FilterChip active={selectedLang === "de"} onClick={() => setSelectedLang("de")}>Немецкий</FilterChip>
             <FilterChip active={selectedLang === "en"} onClick={() => setSelectedLang("en")}>Английский</FilterChip>
@@ -336,7 +337,7 @@ export function VideosView({ profile, initialQuery, initialLanguage, onAddCard, 
             {QUICK_TOPICS.map((topic) => <FilterChip key={topic} active={submittedSearch.toLowerCase() === topic.toLowerCase()} onClick={() => chooseQuickTopic(topic)}>{topic}</FilterChip>)}
           </FilterGroup>
           <button type="button" className="videos-filter-apply" onClick={() => void loadVideos(0, false)}>Применить фильтры</button>
-        </div>
+        </FilterSheet>
       )}
 
       <div className="videos-count-row">

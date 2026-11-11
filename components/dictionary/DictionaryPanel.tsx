@@ -15,6 +15,7 @@ import { LEARNING_ITEM_TYPES, type AiAnalysis, type CefrLevel, type Flashcard, t
 import { sbAuthHeaders } from "@/lib/db/supabase";
 import { EditMetadataModal } from "@/components/ui/EditMetadataModal";
 import { isPhrase } from "@/lib/wordMenu";
+import { FilterSheet } from "@/components/ui/FilterSheet";
 
 const LEVELS: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];
 const CONTENT_TYPE_LABELS: Record<LearningItemType, string> = {
@@ -492,7 +493,7 @@ export function DictionaryPanel({
         </div>
 
         {filtersOpen && (
-          <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
+          <FilterSheet title="Фильтры" onClose={() => setFiltersOpen(false)}>
             <div className="filter-group">
               <div className="filter-group-label">Тип материала</div>
               <div className="filter-chips">
@@ -567,7 +568,7 @@ export function DictionaryPanel({
                 Сбросить фильтры
               </button>
             )}
-          </div>
+          </FilterSheet>
         )}
       </div>
 

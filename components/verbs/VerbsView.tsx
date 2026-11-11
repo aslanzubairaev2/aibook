@@ -26,6 +26,7 @@ import { isDifficultWord, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import { groupVerbsByPack } from "@/lib/verbPacks";
 import type { UserProfile } from "@/lib/types";
+import { FilterSheet } from "@/components/ui/FilterSheet";
 
 type Props = {
   profile: UserProfile;
@@ -579,7 +580,7 @@ export function VerbsView({ profile, onBack }: Props) {
           </div>
 
           {filtersOpen && allVerbs.length > 0 && (
-            <div className="all-filter-panel">
+            <FilterSheet title="Фильтры" onClose={() => setFiltersOpen(false)}>
               <div className="filter-group">
                 <div className="filter-group-label">Тип спряжения</div>
                 <div className="filter-chips">
@@ -598,11 +599,11 @@ export function VerbsView({ profile, onBack }: Props) {
                   ))}
                 </div>
               </div>
-            </div>
+            </FilterSheet>
           )}
 
           {modesOpen && allVerbs.length > 0 && (
-            <div className="all-filter-panel">
+            <FilterSheet title="Режимы тренировки" onClose={() => setModesOpen(false)}>
               <div className="filter-group">
                 <div className="filter-group-label">Фильтр слов для тренировки</div>
                 <div className="filter-chips">
@@ -673,7 +674,7 @@ export function VerbsView({ profile, onBack }: Props) {
                   </div>
                 </div>
               )}
-            </div>
+            </FilterSheet>
           )}
 
           {allGlagolEntries.length > 0 && groups.length === 0 && loosePending.length === 0 && <p className="dict-nothing">Ничего не нашлось.</p>}

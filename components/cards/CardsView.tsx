@@ -33,6 +33,7 @@ import { ProductiveTrainer } from "@/components/cards/ProductiveTrainer";
 import { logTrainingEvent } from "@/lib/training/client";
 import { CARDS_STYLES } from "@/components/cards/cardsStyles";
 import { normalizeFront, type FilterStatus, type FilterType, type SortOrder, TYPE_LABELS, discussionModeForCard, TRAIN_STATUS_LABELS, TRAIN_VARIANT_LABELS, VARIANT_SHORT_LABELS, STATUS_LABELS, isPlayerShowing, cardNoun, sourceNoun, ttsProvidersFor, TokenizedText, type WordFacts, EMPTY_SKILL_STATE, DueCardRow, AllCardRow, StatsPanel } from "@/components/cards/cardsParts";
+import { FilterSheet } from "@/components/ui/FilterSheet";
 
 type Props = {
   cards: Flashcard[];
@@ -1825,7 +1826,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
           ) : (
           <>
           {showTrainFilterPanel && (
-            <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
+            <FilterSheet title="Фильтры тренировки" onClose={() => setShowTrainFilterPanel(false)}>
               {/* One control for the whole question of where the cards come
                   from. It used to be a select for «only this one» with a wall
                   of chips under it for «all but these» — thirty-five chips
@@ -1977,7 +1978,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
                   Сбросить фильтры
                 </button>
               )}
-            </div>
+            </FilterSheet>
           )}
 
           {trainQueue.length === 0 ? (
@@ -2246,7 +2247,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
           </div>
 
           {showFilterPanel && (
-            <div className="all-filter-panel" onClick={(e) => e.stopPropagation()}>
+            <FilterSheet title="Фильтры списка" onClose={() => setShowFilterPanel(false)}>
               <div className="filter-group">
                 <div className="filter-group-label">Статус</div>
                 <div className="filter-chips">
@@ -2336,7 +2337,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
                   )}
                 </div>
               )}
-            </div>
+            </FilterSheet>
           )}
 
           <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 700, marginBottom: 8 }}>

@@ -36,6 +36,7 @@ import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter, trainingError
 import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
 import { NOUN_ARTICLE_TTS_CACHE_SCOPE } from "@/lib/ttsCacheScope";
+import { FilterSheet } from "@/components/ui/FilterSheet";
 
 type Props = {
   profile: UserProfile;
@@ -566,7 +567,7 @@ export function NounsView({ profile, onBack }: Props) {
           </div>
 
           {filtersOpen && allNouns.length > 0 && (
-            <div className="all-filter-panel">
+            <FilterSheet title="Фильтры" onClose={() => setFiltersOpen(false)}>
               <div className="filter-group">
                 <div className="filter-group-label">Род</div>
                 <div className="filter-chips">
@@ -583,11 +584,11 @@ export function NounsView({ profile, onBack }: Props) {
                   ))}
                 </div>
               </div>
-            </div>
+            </FilterSheet>
           )}
 
           {modesOpen && allNouns.length > 0 && (
-            <div className="all-filter-panel">
+            <FilterSheet title="Режимы тренировки" onClose={() => setModesOpen(false)}>
               <div className="filter-group">
                 <div className="filter-group-label">Фильтр слов для тренировки</div>
                 <div className="filter-chips">
@@ -642,7 +643,7 @@ export function NounsView({ profile, onBack }: Props) {
                   </div>
                 </div>
               )}
-            </div>
+            </FilterSheet>
           )}
 
           {allNouns.length > 0 && groups.length === 0 && <p className="dict-nothing">Ничего не нашлось.</p>}

@@ -23,6 +23,7 @@ import { countDueWords, planWordSession } from "@/lib/srs/wordSchedule";
 import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
+import { FilterSheet } from "@/components/ui/FilterSheet";
 
 type Props = {
   profile: UserProfile;
@@ -296,7 +297,7 @@ export function OtherPosView({ profile, onBack }: Props) {
           </div>
 
           {filtersOpen && (
-            <div className="all-filter-panel">
+            <FilterSheet title="Фильтр" onClose={() => setFiltersOpen(false)}>
               <div className="filter-group">
                 <div className="filter-group-label">Фильтр слов для тренировки</div>
                 <div className="filter-chips">
@@ -305,7 +306,7 @@ export function OtherPosView({ profile, onBack }: Props) {
                   <button type="button" className={`filter-chip ${trainingFilter === "difficult" ? "active" : ""}`} onClick={() => chooseTrainingFilter("difficult")}>Сложные ({difficultCount})</button>
                 </div>
               </div>
-            </div>
+            </FilterSheet>
           )}
 
           {groups.length === 0 && <p className="dict-nothing">{OTHER_POS_CATEGORY_LABEL[category]} пока не найдены.</p>}
