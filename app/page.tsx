@@ -1133,6 +1133,15 @@ function AppInner() {
       <WordContextMenu cards={cards} />
       {section === "home" && (
         <HomeDashboard
+          cards={cards}
+          books={books}
+          profile={profile}
+          progressRevision={progressRevision}
+          onOpenTrainer={(trainer) => {
+            if (trainer === "cards") { setTrainBatch(null); setCardsInitialTab("train"); }
+            setSection(trainer);
+          }}
+          onOpenBook={(book) => void handleOpenBook(book)}
           onOpenTests={() => { setDiscoverInitialTab("tests"); setSection("discover"); }}
           onOpenLiveChat={() => setIsLiveChatOpen(true)}
           onOpenLiveTranslate={() => setSection("live-translate")}

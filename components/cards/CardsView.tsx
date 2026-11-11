@@ -752,6 +752,18 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrivedForBatch]);
 
+  // Arriving on the training tab from «Сегодня» is the same request as pressing
+  // «Начать тренировку»: build the queue, or the learner lands on an empty
+  // trainer with their reviews one more tap away.
+  const directSessionStartedRef = useRef(false);
+  useEffect(() => {
+    if (initialTab !== "train" || arrivedForBatch || directSessionStartedRef.current) return;
+    if (cards.length === 0) return;
+    directSessionStartedRef.current = true;
+    startTrainingSession(trainStatus, trainFilter, trainVariants);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab, arrivedForBatch, cards.length]);
+
   // --- Restore SRS session when dueCards become available ---
   const sessionRestoredRef = useRef(false);
   useEffect(() => {
@@ -2404,14 +2416,17 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
           </div>
           <div className="srs-today-side">
             <span className="srs-today-done">{stats.reviewedToday} из {todayPlanned}</span>
-            <span className="srs-today-sub">
-              сделано сегодня · {stats.dueCards} карт.{stats.heldNewCards > 0 ? ` · новых на потом: ${stats.heldNewCards}` : ""}
-            </span>
+            <span className="srs-today-sub">сделано сегодня · {stats.dueCards} карт.</span>
           </div>
         </div>
         <div className="srs-today-bar" role="progressbar" aria-valuenow={todayDonePct} aria-valuemin={0} aria-valuemax={100}>
           <i style={{ width: `${todayDonePct}%` }} />
         </div>
+        {stats.heldNewCards > 0 && (
+          <div className="srs-today-sub" style={{ marginBottom: 6 }}>
+            Новых на потом: {stats.heldNewCards} · лимит {newPerDay} в день
+          </div>
+        )}
         <div className="srs-today-foot">
           <span className="srs-today-chip" title={`Лучшая серия: ${stats.bestStreak} дн.`}>
             <Flame size={12} fill={stats.streak > 0 ? "var(--accent)" : "none"} />

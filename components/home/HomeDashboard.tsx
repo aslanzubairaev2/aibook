@@ -2,14 +2,23 @@
 
 import { ChevronRight, Languages, Phone } from "lucide-react";
 import { TestsList } from "@/components/assessment/TestsList";
+import { TodayPlan } from "@/components/home/TodayPlan";
+import type { TodayTrainer } from "@/lib/today";
+import type { Book, Flashcard, UserProfile } from "@/lib/types";
 
 type Props = {
+  cards: Flashcard[];
+  books: Book[];
+  profile: UserProfile;
+  progressRevision?: number;
+  onOpenTrainer: (trainer: TodayTrainer) => void;
+  onOpenBook: (book: Book) => void;
   onOpenTests: () => void;
   onOpenLiveChat: () => void;
   onOpenLiveTranslate: () => void;
 };
 
-export function HomeDashboard({ onOpenTests, onOpenLiveChat, onOpenLiveTranslate }: Props) {
+export function HomeDashboard({ cards, books, profile, progressRevision, onOpenTrainer, onOpenBook, onOpenTests, onOpenLiveChat, onOpenLiveTranslate }: Props) {
   return (
     <section className="screen home-screen">
       <header className="home-header">
@@ -24,6 +33,15 @@ export function HomeDashboard({ onOpenTests, onOpenLiveChat, onOpenLiveTranslate
           <Phone size={19} />
         </button>
       </header>
+
+      <TodayPlan
+        cards={cards}
+        books={books}
+        profile={profile}
+        revision={progressRevision}
+        onOpenTrainer={onOpenTrainer}
+        onOpenBook={onOpenBook}
+      />
 
       <button className="live-translate-home-card" onClick={onOpenLiveTranslate} type="button">
         <span className="live-translate-home-icon">
