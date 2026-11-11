@@ -105,6 +105,11 @@ export type CardFilters = {
   trainMode?: "recognize" | "active";
   /** Full-immersion training: nothing on screen but the card and the grades. */
   zenMode?: boolean;
+  /**
+   * How many never-seen words a scheduled session may introduce per day;
+   * 0 = no limit. See heldBackNewCards in lib/cards.ts.
+   */
+  newPerDay?: number;
 };
 
 /**

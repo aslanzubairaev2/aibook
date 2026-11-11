@@ -19,6 +19,7 @@ import {
 } from "@/lib/db/local";
 import { usePackProgress } from "@/lib/srs/usePackProgress";
 import { formatTrainedAt, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
+import { countDueWords, planWordSession } from "@/lib/srs/wordSchedule";
 import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
@@ -137,8 +138,13 @@ export function OtherPosView({ profile, onBack }: Props) {
 
   const activeEntries = category === "prepositions" ? prepositionEntries : adjectiveEntries;
 
+  // «Все» is the scheduled session — the words whose day has come; the two
+  // filters are deliberate drills over every word that matches.
+  const dueCount = useMemo(() => countDueWords(activeEntries, progress.words), [activeEntries, progress.words]);
   const trainableEntries = useMemo(
-    () => activeEntries.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
+    () => trainingFilter === "all"
+      ? planWordSession(activeEntries, progress.words)
+      : activeEntries.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
     [activeEntries, progress.words, trainingFilter],
   );
   const unfamiliarCount = useMemo(
@@ -277,9 +283,11 @@ export function OtherPosView({ profile, onBack }: Props) {
                 className="dict-train-btn verbs-train-all-btn"
                 disabled={trainableEntries.length === 0}
                 onClick={() => trainPack(`${category}:__all__`, trainableEntries)}
-                title={trainableEntries.length === 0 ? "Для этого фильтра пока нет слов" : undefined}
+                title={trainableEntries.length === 0 ? (trainingFilter === "all" ? "На сегодня всё повторено" : "Для этого фильтра пока нет слов") : undefined}
               >
-                <Dumbbell size={14} /> {trainingFilter === "all" ? "Тренировать всё" : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"}`}
+                <Dumbbell size={14} /> {trainingFilter === "all"
+                  ? (dueCount === 0 ? "На сегодня всё" : `Тренировать ${trainableEntries.length}${dueCount > trainableEntries.length ? ` из ${dueCount}` : ""}`)
+                  : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"} (${trainableEntries.length})`}
               </button>
             )}
             <button type="button" className="icon-btn training-reset-all-btn" onClick={resetAllTrainingProgress} aria-label="Сбросить прогресс всех пачек" title="Сбросить прогресс всех пачек">

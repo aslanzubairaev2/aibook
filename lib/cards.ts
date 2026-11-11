@@ -357,6 +357,7 @@ export type ResolvedCardFilters = {
   trainMode: NonNullable<CardFilters["trainMode"]>;
   trainPos: string;
   zenMode: boolean;
+  newPerDay: number;
 };
 
 function resolveCefrFilters(saved: CardFilters | undefined): { levels: CefrLevel[]; mode: CefrFilterMode } {
@@ -452,6 +453,7 @@ export function resolveCardFilters(
       // Zen is how the learner likes to train, not part of what is being
       // trained, so a batch narrows the deck without changing the view.
       zenMode: saved?.zenMode ?? false,
+      newPerDay: normalizeNewPerDay(saved?.newPerDay),
     };
   }
 
@@ -475,6 +477,7 @@ export function resolveCardFilters(
     trainMode: saved?.trainMode ?? "recognize",
     trainPos: saved?.trainPos ?? "all",
     zenMode: saved?.zenMode ?? false,
+    newPerDay: normalizeNewPerDay(saved?.newPerDay),
   };
 }
 
@@ -569,6 +572,67 @@ export function pickDirectionForToday(
   return best;
 }
 
+// ─── New words per day ──────────────────────────────────────────────────────
+//
+// A word never seen before is «due» from the moment it is saved, so a page of
+// sixty photographed words used to land in the same day's session — and then
+// come back together a few days later as one wave of reviews. The scheduled
+// session now introduces a fixed number a day; the rest simply wait their
+// turn. A deliberate run (a pack drill, «пройти заново», the «Новые» chip)
+// is not limited: there the learner asked for exactly those words.
+
+export const NEW_PER_DAY_OPTIONS = [10, 20, 40, 0] as const;
+export const DEFAULT_NEW_PER_DAY = 20;
+
+export function normalizeNewPerDay(value: unknown): number {
+  return (NEW_PER_DAY_OPTIONS as readonly number[]).includes(value as number) ? (value as number) : DEFAULT_NEW_PER_DAY;
+}
+
+function isNeverSeen(card: Flashcard): boolean {
+  return card.status === "new" && !card.lastReviewedAt;
+}
+
+/**
+ * Words met for the first time today. Read off the cards themselves, so every
+ * device agrees: a first answer leaves at most one success and no lapse, while
+ * any word reviewed before today has either more successes or a lapse behind it.
+ */
+export function countIntroducedToday(cards: Flashcard[], now: Date = new Date()): number {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const startMs = start.getTime();
+  let count = 0;
+  for (const card of cards) {
+    const reviewed = card.lastReviewedAt ? Date.parse(card.lastReviewedAt) : NaN;
+    if (reviewed >= startMs && card.lapses === 0 && card.repetitions <= 1) count += 1;
+  }
+  return count;
+}
+
+/**
+ * The never-seen words today's scheduled session leaves for another day.
+ *
+ * The most recently added go first: the page photographed this morning is
+ * what the learner is working on, and an old backlog must not stand in its way.
+ */
+export function heldBackNewCards(cards: Flashcard[], newPerDay: number, now: Date = new Date()): Set<string> {
+  const held = new Set<string>();
+  if (!(newPerDay > 0)) return held;
+  const fresh = cards.filter(isNeverSeen);
+  const budget = Math.max(0, newPerDay - countIntroducedToday(cards, now));
+  if (fresh.length <= budget) return held;
+  const newestFirst = fresh
+    .map((card, index) => ({ card, index, added: Date.parse(card.addedAt) || 0 }))
+    .sort((a, b) => b.added - a.added || a.index - b.index);
+  for (const { card } of newestFirst.slice(budget)) held.add(card.id);
+  return held;
+}
+
+/** Whether the limit applies to this selection — only the plain scheduled session. */
+function holdsBackNew(selection: { ignoreSchedule?: boolean; status: TrainStatus }): boolean {
+  return !selection.ignoreSchedule && selection.status === "all";
+}
+
 /** The direction a card asks for today, if any — every direction considered. */
 export function todaysDirection(card: Flashcard, variantProgress: VariantProgressMap, todayEndMs: number): TrainVariant | null {
   const due = ALL_TRAIN_VARIANTS.filter((v) => isVariantDue(getVariantProgress(card, v, variantProgress), todayEndMs));
@@ -592,6 +656,8 @@ export type TrainSelection = {
   sourceId?: string | null;
   /** Source keys this session leaves alone — see filterCardsByTrainingSource. */
   excluded?: string[];
+  /** Never-seen words over today's limit (heldBackNewCards); skipped by the scheduled session only. */
+  heldNew?: ReadonlySet<string>;
   /**
    * Drill: take everything in scope, whether or not it is due.
    *
@@ -630,8 +696,10 @@ export function buildTrainQueue(
   const typed = selection.type === "all" ? cards : cards.filter((c) => c.type === selection.type);
   const scoped = filterCardsByTrainingSource(typed, selection.book ?? "all", selection.sourceId ?? null, selection.excluded);
 
+  const held = holdsBackNew(selection) ? selection.heldNew : undefined;
   const items: TrainQueueItem[] = [];
   for (const card of scoped) {
+    if (held?.has(card.id)) continue;
     const matching = selection.variants.filter((variant) => {
       const p = getVariantProgress(card, variant, variantProgress);
       return matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule);
@@ -709,10 +777,13 @@ export function countTrainCandidates(
       if (pick(isHardProgress, false)) counts.byStatus.hard += 1;
       const dueVariant = pick((p) => isVariantDue(p, todayEndMs), true);
       if (dueVariant) {
-        counts.byStatus.all += 1;
+        // «Все статусы» is the scheduled session, which leaves the words over
+        // today's limit out; the «Новые» chip still counts every one of them.
+        if (!selection.heldNew?.has(card.id)) counts.byStatus.all += 1;
         counts.byStatus[progress.get(dueVariant)!.status] += 1;
       }
     }
+    if (holdsBackNew(selection) && selection.heldNew?.has(card.id)) continue;
     const chosen = pick((p) => matchesTrainStatus(p, selection.status, isVariantDue(p, todayEndMs), selection.ignoreSchedule));
     if (chosen) {
       counts.byType.all += 1;
@@ -738,6 +809,8 @@ export type DeckStats = {
   byStatus: Record<CardStatus, number>;
   /** Distinct cards with at least one variant due today. */
   dueCards: number;
+  /** Never-seen words left for another day by the daily limit. */
+  heldNewCards: number;
   /** Individual repetitions waiting today — what a full session actually costs. */
   dueReps: number;
   dueByVariant: Record<TrainVariant, number>;
@@ -858,6 +931,7 @@ export function computeDeckStats(
   cards: Flashcard[],
   variantProgress: VariantProgressMap,
   now: Date = new Date(),
+  heldNew?: ReadonlySet<string>,
 ): DeckStats {
   const todayEnd = new Date(now);
   todayEnd.setHours(23, 59, 59, 999);
@@ -871,6 +945,7 @@ export function computeDeckStats(
     totalCards: cards.length,
     byStatus: { new: 0, learning: 0, review: 0, relearning: 0 },
     dueCards: 0,
+    heldNewCards: 0,
     dueReps: 0,
     dueByVariant: { forward: 0, reverse: 0, audio: 0 },
     overdueReps: 0,
@@ -917,7 +992,9 @@ export function computeDeckStats(
     let cardHard = false;
     // Today's plan holds one direction per word (see pickDirectionForToday);
     // the others wait for a later day and are counted there, not here.
-    const todays = todaysDirection(card, variantProgress, todayEndMs);
+    const isHeld = heldNew?.has(card.id) ?? false;
+    if (isHeld) stats.heldNewCards += 1;
+    const todays = isHeld ? null : todaysDirection(card, variantProgress, todayEndMs);
 
     for (const variant of ALL_TRAIN_VARIANTS) {
       const p = getVariantProgress(card, variant, variantProgress);
@@ -938,6 +1015,8 @@ export function computeDeckStats(
           cardOverdue = true;
           stats.overdueReps += 1;
         }
+      } else if (isHeld) {
+        // Waiting for its day; it has no date to put on the forecast yet.
       } else if (!isVariantDue(p, todayEndMs)) {
         const inDays = Math.ceil((Date.parse(p.dueAt) - todayEndMs) / dayMs);
         if (inDays >= 1 && inDays < FORECAST_DAYS) stats.forecast[inDays].count += 1;

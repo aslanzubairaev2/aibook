@@ -51,7 +51,7 @@ export function usePackProgress(module: PackModule) {
     const first = !seenRef.current.has(entryId);
     seenRef.current.add(entryId);
     setProgress((prev) => {
-      const next = recordAnswer(prev, entryId, correct, first, Date.now());
+      const next = recordAnswer(prev, entryId, correct, first, Date.now(), module !== "verbs");
       saveLocalPackProgress(module, next);
       return next;
     });

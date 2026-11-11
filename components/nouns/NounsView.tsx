@@ -30,7 +30,8 @@ import {
   type NounQuizPresentation,
 } from "@/lib/nounsQuizModes";
 import { usePackProgress } from "@/lib/srs/usePackProgress";
-import { formatTrainedAt, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
+import { formatTrainedAt, localDayKey, packCoverage, type TrainingFilter } from "@/lib/srs/packProgress";
+import { countDueWords, planWordSession } from "@/lib/srs/wordSchedule";
 import { isDifficultWord, isUnfamiliarWord, matchesTrainingFilter, trainingErrors } from "@/lib/srs/adaptiveDifficulty";
 import { PackBar } from "@/components/ui/PackBar";
 import type { UserProfile } from "@/lib/types";
@@ -197,8 +198,14 @@ export function NounsView({ profile, onBack }: Props) {
     });
   }, [allNouns, genderFilter, query]);
 
+  // «Все» is the scheduled session: only the words whose day has come, a
+  // sitting's worth at a time. The two filters are deliberate drills and take
+  // every word that matches, due or not.
+  const dueCount = useMemo(() => countDueWords(nouns, progress.words), [nouns, progress.words]);
   const trainingNouns = useMemo(
-    () => nouns.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
+    () => trainingFilter === "all"
+      ? planWordSession(nouns, progress.words)
+      : nouns.filter((entry) => matchesTrainingFilter(progress.words[entry.id], trainingFilter)),
     [nouns, progress.words, trainingFilter],
   );
   const unfamiliarCount = useMemo(
@@ -279,7 +286,7 @@ export function NounsView({ profile, onBack }: Props) {
     });
 
   /** Starts a session on one pack — stamps it, then hands the words to the quiz. */
-  function trainPack(packKey: string, packNouns: DictionaryEntry[], variant: TrainingFilter) {
+  function trainPack(packKey: string, packNouns: DictionaryEntry[], variant: string) {
     if (packNouns.length === 0) return;
     startSession(packKey);
     // The whole pack and its «Незнакомые»/«Сложные» subsets are different
@@ -541,10 +548,14 @@ export function NounsView({ profile, onBack }: Props) {
                 type="button"
                 className="dict-train-btn verbs-train-all-btn"
                 disabled={trainingNouns.length === 0}
-                onClick={() => trainPack("__all__", trainingNouns, trainingFilter)}
-                title={trainingNouns.length === 0 ? "Для этого фильтра пока нет слов" : undefined}
+                // The scheduled list is different every day, so yesterday's
+                // unfinished round must not be resumed in its place.
+                onClick={() => trainPack("__all__", trainingNouns, trainingFilter === "all" ? `due:${localDayKey(Date.now())}` : trainingFilter)}
+                title={trainingNouns.length === 0 ? (trainingFilter === "all" ? "На сегодня всё повторено" : "Для этого фильтра пока нет слов") : undefined}
               >
-                <Dumbbell size={14} /> {trainingFilter === "all" ? "Тренировать всё" : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"}`}
+                <Dumbbell size={14} /> {trainingFilter === "all"
+                  ? (dueCount === 0 ? "На сегодня всё" : `Тренировать ${trainingNouns.length}${dueCount > trainingNouns.length ? ` из ${dueCount}` : ""}`)
+                  : `Тренировать ${trainingFilter === "difficult" ? "сложные" : "незнакомые"} (${trainingNouns.length})`}
               </button>
             )}
             {Object.keys(progress.words).length > 0 && (

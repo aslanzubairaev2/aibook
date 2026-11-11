@@ -8,6 +8,8 @@ import { isLeech, recallChance, reviewMemory, type ReviewGrade } from "@/lib/srs
 import {
   ALL_TRAIN_VARIANTS,
   buildTrainQueue,
+  heldBackNewCards,
+  NEW_PER_DAY_OPTIONS,
   computeDeckStats,
   countTrainCandidates,
   deckInsight,
@@ -609,6 +611,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   // push the grade buttons under the fold, so every single one of those
   // decisions cost a scroll down and a scroll back up.
   const [zenMode, setZenMode] = useState(initialFilters.zenMode);
+  const [newPerDay, setNewPerDay] = useState(initialFilters.newPerDay);
   // Snapshot of the cards being trained this session — built once per session
   // start/filter change rather than re-derived from the (mutating) `cards`
   // prop on every render, so grading a card can't shrink the queue out from
@@ -701,9 +704,16 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
 
   // --- Stats ---
   // One traversal of the deck, reused by the banner, the badges and the panel.
+  // Never-seen words over today's limit. A pack opened from the dictionary is
+  // a deliberate choice of exactly those words, so nothing is held back there.
+  const heldNew = useMemo(
+    () => (batch ? new Set<string>() : heldBackNewCards(cards, newPerDay, new Date(todayEndTime))),
+    [batch, cards, newPerDay, todayEndTime],
+  );
+
   const stats = useMemo(
-    () => computeDeckStats(cards, variantProgress, new Date(todayEndTime)),
-    [cards, variantProgress, todayEndTime],
+    () => computeDeckStats(cards, variantProgress, new Date(todayEndTime), heldNew),
+    [cards, variantProgress, todayEndTime, heldNew],
   );
 
   // A card belongs on "today" when any of its three directions is due — the
@@ -719,8 +729,8 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
   }, [cards, variantProgress]);
 
   const dueCards = useMemo(
-    () => cards.filter((card) => todaysDirection(card, variantProgress, todayEndTime) !== null),
-    [cards, variantProgress, todayEndTime],
+    () => cards.filter((card) => !heldNew.has(card.id) && todaysDirection(card, variantProgress, todayEndTime) !== null),
+    [cards, variantProgress, todayEndTime, heldNew],
   );
 
   // Arriving straight on the training tab (from the dictionary's «тренировать»)
@@ -966,9 +976,9 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
       // Shuffled so multi-variant sessions interleave instead of running all of
       // one variant before the next.
       shuffleTrainQueue(
-        buildTrainQueue(filterByPos(cards, pos), { status, type: filter, variants, book, sourceId, excluded, ignoreSchedule }, variantProgress, todayEndTime),
+        buildTrainQueue(filterByPos(cards, pos), { status, type: filter, variants, book, sourceId, excluded, ignoreSchedule, heldNew }, variantProgress, todayEndTime),
       ),
-    [cards, variantProgress, todayEndTime, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos],
+    [cards, variantProgress, todayEndTime, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, heldNew],
   );
 
   // Live counts for the filter chips, computed in a single pass. Each chip used
@@ -978,12 +988,12 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     () => activeTab === "train"
       ? countTrainCandidates(
         filterByPos(cards, trainPos),
-        { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded },
+        { status: trainStatus, type: trainFilter, variants: trainVariants, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, heldNew },
         variantProgress,
         todayEndTime,
       )
       : { byStatus: { all: 0, new: 0, learning: 0, review: 0, relearning: 0, hard: 0 }, byType: { all: 0, word: 0, phrase: 0, sentence: 0, expression: 0 } },
-    [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime],
+    [activeTab, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime, heldNew],
   );
 
   // The productive trainer keeps its own schedule but must obey the same
@@ -1024,11 +1034,11 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
     if (others.length === 0) return 0;
     return countTrainCandidates(
       filterByPos(cards, trainPos),
-      { status: trainStatus, type: trainFilter, variants: others, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded },
+      { status: trainStatus, type: trainFilter, variants: others, book: trainBook, sourceId: trainSourceId, excluded: trainExcluded, heldNew },
       variantProgress,
       todayEndTime,
     ).byType.all;
-  }, [activeTab, sessionOver, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime]);
+  }, [activeTab, sessionOver, cards, trainStatus, trainFilter, trainVariants, trainBook, trainSourceId, trainExcluded, trainPos, filterByPos, variantProgress, todayEndTime, heldNew]);
 
   function trainAllDirections() {
     const variants = [...ALL_TRAIN_VARIANTS];
@@ -2394,7 +2404,9 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
           </div>
           <div className="srs-today-side">
             <span className="srs-today-done">{stats.reviewedToday} из {todayPlanned}</span>
-            <span className="srs-today-sub">сделано сегодня · {stats.dueCards} карт.</span>
+            <span className="srs-today-sub">
+              сделано сегодня · {stats.dueCards} карт.{stats.heldNewCards > 0 ? ` · новых на потом: ${stats.heldNewCards}` : ""}
+            </span>
           </div>
         </div>
         <div className="srs-today-bar" role="progressbar" aria-valuenow={todayDonePct} aria-valuemin={0} aria-valuemax={100}>
@@ -2673,6 +2685,27 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
                     Карточки с частыми ошибками — включая не назначенные на сегодня
                   </div>
                 )}
+              </div>
+
+              <div className="filter-group">
+                <div className="filter-group-label">Новых слов в день</div>
+                <div className="filter-chips">
+                  {NEW_PER_DAY_OPTIONS.map((n) => (
+                    <button
+                      key={n}
+                      className={`filter-chip ${newPerDay === n ? "active" : ""}`}
+                      onClick={() => { setNewPerDay(n); persistCardFilters({ newPerDay: n }); }}
+                      type="button"
+                    >
+                      {n === 0 ? "Без лимита" : n}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                  {stats.heldNewCards > 0
+                    ? `Ещё ${stats.heldNewCards} новых ждут следующих дней. Пачку из словаря и «Новые» лимит не ограничивает.`
+                    : "Столько незнакомых слов в день добавляет обычная тренировка. Пачку из словаря и «Новые» лимит не ограничивает."}
+                </div>
               </div>
 
               <div className="filter-group">

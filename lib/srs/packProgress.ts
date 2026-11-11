@@ -13,6 +13,7 @@
 // the retry fills that slot. A pack at 100% has been genuinely worked through.
 
 import type { DrillState } from "./drillSchedule";
+import { nextWordMemory, type WordMemory } from "@/lib/srs/wordSchedule";
 
 export type PackModule = "verbs" | "nouns" | "otherpos";
 
@@ -30,6 +31,8 @@ export type WordTrainingState = {
   at: number;
   /** Local calendar day on which every selected drill for this word was completed. */
   completedDay?: string;
+  /** The word's own FSRS schedule — Существительные and other parts of speech (lib/srs/wordSchedule.ts). */
+  mem?: WordMemory;
 };
 
 /** Everything one module remembers: per-word state plus per-pack session meta. */
@@ -119,9 +122,14 @@ export function recordAnswer(
   correct: boolean,
   firstThisSession: boolean,
   now: number,
+  /** Also move the word's own schedule — off for Глаголы, whose drills are scheduled one by one. */
+  schedule = false,
 ): ModuleProgress {
   const prev = progress.words[entryId];
   const ok = firstThisSession ? correct : (prev?.ok ?? true) && correct;
+  const mem = schedule
+    ? nextWordMemory(prev?.mem, correct, firstThisSession, prev?.ok ?? true, now)
+    : prev?.mem;
 
   return {
     ...progress,
@@ -132,6 +140,7 @@ export function recordAnswer(
         attempts: (prev?.attempts ?? 0) + 1,
         correct: (prev?.correct ?? 0) + (correct ? 1 : 0),
         at: now,
+        ...(mem ? { mem } : {}),
       },
     },
   };

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { BookA, ChevronRight, Flame, Link2, Repeat, Shapes, Signpost, Users } from "lucide-react";
-import { computeDeckStats } from "@/lib/cards";
+import { computeDeckStats, heldBackNewCards, normalizeNewPerDay } from "@/lib/cards";
 import { getCardVariantProgressMap, getLocalNounsDict, getLocalOtherPosDict, getLocalVerbsDict } from "@/lib/db/local";
 import { isNounEntry, nounGender } from "@/lib/nounForms";
 import { isPrepositionEntry, prepositionCaseFor } from "@/lib/prepositionForms";
@@ -44,9 +44,11 @@ export function PracticeView({ cards, profile, onOpenCards, onOpenVerbs, onOpenN
   // prompts (recognition, recall, listening), and "390" here against "680"
   // there was the same queue counted in two units.
   const due = useMemo(() => {
-    const stats = computeDeckStats(cards, getCardVariantProgressMap(), new Date(todayEndTime));
+    const now = new Date(todayEndTime);
+    const held = heldBackNewCards(cards, normalizeNewPerDay(profile.cardFilters?.newPerDay), now);
+    const stats = computeDeckStats(cards, getCardVariantProgressMap(), now, held);
     return { reps: stats.dueReps, cards: stats.dueCards };
-  }, [cards, todayEndTime]);
+  }, [cards, todayEndTime, profile.cardFilters?.newPerDay]);
 
   // Read once at mount: the counts are a hint about how much there is to do,
   // not a live figure worth a request every time this screen is opened.
