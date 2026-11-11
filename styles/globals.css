@@ -739,29 +739,35 @@ textarea,
 }
 
 /* ─── Home Dashboard ─────────────────────────────────────────────────────── */
-/* «Сегодня»: one dense row per trainer. */
-.today-plan { margin-bottom: 16px; }
-.today-plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
-.today-plan-title { margin: 0; font-size: 15px; font-weight: 800; }
-.today-plan-meta { font-size: 11px; font-weight: 700; color: var(--text-muted); text-align: right; }
-.today-plan-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
-.today-plan-list li + li { border-top: 1px solid var(--border); }
-.today-plan-row {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px;
-  width: 100%; min-height: 44px; padding: 8px 10px 8px 12px; text-align: left;
-  color: var(--text-primary); background: var(--bg-secondary); transition: background var(--transition-fast);
+/* «Сегодня»: one card, one dense row per trainer. */
+.today-plan {
+  margin-bottom: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--bg-elevated); overflow: hidden;
 }
-.today-plan-row:hover { background: var(--bg-elevated); }
+.today-plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 13px 16px 9px; }
+.today-plan-title { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.today-plan-meta { font-size: 11px; font-weight: 600; color: var(--text-muted); text-align: right; }
+.today-plan-list { list-style: none; margin: 0; padding: 0; }
+.today-plan-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px;
+  width: 100%; min-height: 52px; padding: 8px 12px 8px 16px;
+  border: 0; border-top: 1px solid rgba(240, 230, 211, 0.06); border-radius: 0;
+  color: var(--text-primary); background: transparent; text-align: left;
+  transition: background var(--transition-fast);
+}
+.today-plan-row:hover { background: rgba(240, 230, 211, 0.04); }
 .today-plan-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.today-plan-icon { display: grid; place-items: center; color: var(--accent); }
+.today-plan-icon {
+  display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px;
+  color: var(--accent); background: rgba(212, 168, 71, 0.13);
+}
+.today-plan-row.idle .today-plan-icon { color: var(--text-muted); background: rgba(240, 230, 211, 0.06); }
+.today-plan-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .today-plan-name { font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.today-plan-count { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
-.today-plan-count strong { font-size: 16px; font-weight: 900; color: var(--accent); font-variant-numeric: tabular-nums; }
-.today-plan-count svg { align-self: center; color: var(--green); }
-.today-plan-note { font-size: 11px; font-weight: 700; color: var(--text-muted); }
+.today-plan-note { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-plan-count { font-size: 19px; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
 .today-plan-arrow { color: var(--text-muted); }
-.today-plan-row.done .today-plan-icon { color: var(--text-muted); }
-.today-plan-foot { margin: 6px 2px 0; font-size: 11px; font-weight: 700; color: var(--text-muted); }
+.today-plan-foot { margin: 0; padding: 9px 16px 11px; border-top: 1px solid rgba(240, 230, 211, 0.06); font-size: 11px; color: var(--text-muted); }
 
 .home-header {
   display: flex;

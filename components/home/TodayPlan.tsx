@@ -9,7 +9,7 @@
 // and costs no request.
 
 import { useEffect, useMemo, useState } from "react";
-import { BookA, BookOpen, Check, ChevronRight, Flame, Link2, Repeat, Layers } from "lucide-react";
+import { BookA, BookOpen, ChevronRight, Flame, Link2, Repeat, Layers } from "lucide-react";
 import {
   getCardVariantProgressMap, getLocalConjugationTenses, getLocalNounsDict, getLocalOtherPosDict,
   getLocalPackProgress, getLocalVerbsDict, getLocalVerbsQuizModes,
@@ -38,17 +38,16 @@ type Props = {
   onOpenBook: (book: Book) => void;
 };
 
-const TRAINERS: Record<TodayTrainer, { title: string; unit: string; icon: typeof Flame }> = {
-  cards: { title: "Карточки", unit: "повторений", icon: Layers },
-  verbs: { title: "Глаголы", unit: "глаголов", icon: Repeat },
-  nouns: { title: "Существительные", unit: "слов", icon: BookA },
-  otherpos: { title: "Предлоги и прилагательные", unit: "слов", icon: Link2 },
+const TRAINERS: Record<TodayTrainer, { title: string; icon: typeof Flame }> = {
+  cards: { title: "Карточки", icon: Layers },
+  verbs: { title: "Глаголы", icon: Repeat },
+  nouns: { title: "Существительные", icon: BookA },
+  otherpos: { title: "Предлоги и прилагательные", icon: Link2 },
 };
 
 function rowNote(row: TodayRow): string {
-  if (row.review > 0) return row.fresh > 0 ? `и ${row.fresh} новых` : "к повторению";
-  if (row.fresh > 0) return `новых: ${row.fresh}`;
-  return "на сегодня всё";
+  if (row.review > 0) return row.fresh > 0 ? `к повторению · ещё ${row.fresh} новых` : "к повторению";
+  return `${row.fresh} новых — можно начать`;
 }
 
 export function TodayPlan({ cards, books, profile, revision = 0, onOpenTrainer, onOpenBook }: Props) {
@@ -125,9 +124,7 @@ export function TodayPlan({ cards, books, profile, revision = 0, onOpenTrainer, 
       <div className="today-plan-head">
         <h2 className="today-plan-title">Сегодня</h2>
         <span className="today-plan-meta">
-          {plan.totalReview > 0 ? `${plan.totalReview} к повторению` : "повторения сделаны"}
-          {plan.doneToday > 0 ? ` · сделано ${plan.doneToday}` : ""}
-          {plan.streak > 1 ? ` · ${plan.streak} дн. подряд` : ""}
+          {[plan.doneToday > 0 ? `сделано ${plan.doneToday}` : "", plan.streak > 1 ? `${plan.streak} дн. подряд` : ""].filter(Boolean).join(" · ")}
         </span>
       </div>
 
@@ -135,16 +132,15 @@ export function TodayPlan({ cards, books, profile, revision = 0, onOpenTrainer, 
         {rows.map((row) => {
           const meta = TRAINERS[row.trainer];
           const Icon = meta.icon;
-          const done = row.review === 0;
           return (
             <li key={row.trainer}>
-              <button type="button" className={`today-plan-row ${done ? "done" : ""}`} onClick={() => onOpenTrainer(row.trainer)}>
+              <button type="button" className={`today-plan-row ${row.review === 0 ? "idle" : ""}`} onClick={() => onOpenTrainer(row.trainer)}>
                 <span className="today-plan-icon"><Icon size={17} /></span>
-                <span className="today-plan-name">{meta.title}</span>
-                <span className="today-plan-count">
-                  {done ? <Check size={15} aria-hidden /> : <strong>{row.review}</strong>}
+                <span className="today-plan-text">
+                  <span className="today-plan-name">{meta.title}</span>
                   <span className="today-plan-note">{rowNote(row)}</span>
                 </span>
+                <span className="today-plan-count">{row.review > 0 ? row.review : ""}</span>
                 <ChevronRight size={16} className="today-plan-arrow" />
               </button>
             </li>
@@ -152,12 +148,13 @@ export function TodayPlan({ cards, books, profile, revision = 0, onOpenTrainer, 
         })}
         {reading && (
           <li>
-            <button type="button" className="today-plan-row done" onClick={() => onOpenBook(reading)}>
+            <button type="button" className="today-plan-row idle" onClick={() => onOpenBook(reading)}>
               <span className="today-plan-icon"><BookOpen size={17} /></span>
-              <span className="today-plan-name">{reading.title}</span>
-              <span className="today-plan-count">
+              <span className="today-plan-text">
+                <span className="today-plan-name">{reading.title}</span>
                 <span className="today-plan-note">читать дальше · {Math.round(reading.progress)}%</span>
               </span>
+              <span className="today-plan-count" />
               <ChevronRight size={16} className="today-plan-arrow" />
             </button>
           </li>
