@@ -1,4 +1,4 @@
-import type { AiMode, DiscussLearnerSnapshot, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
+import type { AiMode, DiscussContentPart, DiscussLearnerSnapshot, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
 import { supabase } from "@/lib/db/supabase";
 import { getLocalGeminiKey, getLocalAiProvider } from "@/lib/db/local";
 import { AI_REQUEST_TIMEOUT_MS, fetchWithTimeout } from "@/lib/net/freshFetch";
@@ -45,8 +45,17 @@ async function getAiHeaders() {
   return headers;
 }
 
-export async function discussWithAi(request: DiscussRequest): Promise<DiscussMessage> {
+/**
+ * Asks the tutor. With `onPartial` the answer is read as it is written: the
+ * callback gets the text so far each time it grows, and the promise still
+ * resolves with the finished message (chips, buttons and all).
+ */
+export async function discussWithAi(
+  request: DiscussRequest,
+  onPartial?: (contentParts: DiscussContentPart[]) => void,
+): Promise<DiscussMessage> {
   const headers = await getAiHeaders();
+  if (onPartial) headers["x-stream"] = "1";
   // A reply that role-plays or reasons through a homework check can take a
   // while to generate — bounded generously rather than left uncapped.
   const res = await fetchWithTimeout("/api/ai/discuss", {
@@ -66,5 +75,31 @@ export async function discussWithAi(request: DiscussRequest): Promise<DiscussMes
     throw new Error(err || "AI discussion failed");
   }
 
-  return res.json() as Promise<DiscussMessage>;
+  const streamed = (res.headers.get("content-type") ?? "").includes("ndjson");
+  if (!onPartial || !streamed || !res.body) return res.json() as Promise<DiscussMessage>;
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finished: DiscussMessage | null = null;
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as
+      | { type: "partial"; contentParts: DiscussContentPart[] }
+      | { type: "done"; message: DiscussMessage }
+      | { type: "error"; error: string };
+    if (event.type === "partial") onPartial(event.contentParts);
+    else if (event.type === "done") finished = event.message;
+    else throw new Error(event.error || "AI discussion failed");
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = done ? "" : lines.pop() ?? "";
+    for (const line of lines) handle(line);
+    if (done) break;
+  }
+  if (!finished) throw new Error("AI discussion ended early");
+  return finished;
 }

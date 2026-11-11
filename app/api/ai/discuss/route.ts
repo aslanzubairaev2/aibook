@@ -8,7 +8,8 @@
 import { GoogleGenAI, Type, type GenerateContentResponse } from "@google/genai";
 import { NextResponse } from "next/server";
 import { AI_CONFIG } from "@/lib/config";
-import type { AiMode, DiscussLearnerSnapshot, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
+import type { AiMode, DiscussContentPart, DiscussLearnerSnapshot, DiscussMessage, DiscussWordProfile, GrammarEncounter } from "@/lib/types";
+import { parsePartialJson } from "@/lib/ai/partialJson";
 import { getApiKeyForRequest } from "@/lib/ai/serverAuth";
 import { parseModelJson } from "@/lib/ai/jsonResponse";
 import { buildDiscussSystemPrompt, parseDiscussReply } from "@/lib/ai/buildDiscussPrompt";
@@ -90,6 +91,66 @@ function looksUnavailable(err: unknown): boolean {
   );
 }
 
+/** The parts of the answer that have arrived so far, in the shape the chat renders. */
+function partialContentParts(value: unknown): DiscussContentPart[] {
+  const parts = (value as { contentParts?: unknown } | null)?.contentParts;
+  if (!Array.isArray(parts)) return [];
+  return parts.flatMap((part): DiscussContentPart[] => {
+    const p = (part ?? {}) as Record<string, unknown>;
+    const text = typeof p.text === "string" ? p.text : "";
+    if (!text.trim()) return [];
+    const translation = typeof p.translation === "string" ? p.translation : "";
+    return [p.type === "learning" && translation ? { type: "learning", text, translation } : { type: "text", text }];
+  });
+}
+
+/**
+ * The answer as newline-delimited JSON events: `partial` with the text written
+ * so far (every time it grows), then one `done` carrying the finished message
+ * — parsed exactly as the non-streaming path parses it — or one `error`.
+ */
+function streamDiscussReply(chunks: AsyncGenerator<GenerateContentResponse>): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      let raw = "";
+      let shown = 0;
+      try {
+        for await (const chunk of chunks) {
+          let piece = "";
+          try {
+            piece = chunk.text ?? "";
+          } catch {
+            piece = "";
+          }
+          if (!piece) continue;
+          raw += piece;
+          const contentParts = partialContentParts(parsePartialJson(raw));
+          const size = contentParts.reduce((sum, part) => sum + part.text.length + (part.translation?.length ?? 0), 0);
+          if (size > shown) {
+            shown = size;
+            send({ type: "partial", contentParts });
+          }
+        }
+        const parsed = parseModelJson(raw);
+        send({ type: "done", message: parseDiscussReply(parsed.ok ? parsed.value : null, raw) });
+      } catch (err) {
+        send({ type: "error", error: err instanceof Error ? err.message : "Unknown error" });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
 export const maxDuration = 120;
 
 export async function POST(req: Request) {
@@ -144,7 +205,7 @@ export async function POST(req: Request) {
 
   const ai = new GoogleGenAI(BASE_URL ? { apiKey, httpOptions: { baseUrl: BASE_URL } } : { apiKey });
 
-  const call = (model: string) => ai.models.generateContent({
+  const request = (model: string) => ({
     model,
     contents,
     config: {
@@ -161,6 +222,30 @@ export async function POST(req: Request) {
       thinkingConfig: { thinkingBudget: model === AI_CONFIG.discussModel ? AI_CONFIG.discussThinkingBudget : 0 },
     },
   });
+  const call = (model: string) => ai.models.generateContent(request(model));
+
+  // The chat asks for the answer as it is written; everything else (tests,
+  // older clients) gets it whole, as before.
+  if (req.headers.get("x-stream") === "1") {
+    const open = (model: string) => ai.models.generateContentStream(request(model));
+    let chunks: AsyncGenerator<GenerateContentResponse>;
+    try {
+      chunks = discussModelUnavailable ? await open(AI_CONFIG.model) : await open(AI_CONFIG.discussModel);
+    } catch (err) {
+      if (discussModelUnavailable || !looksUnavailable(err)) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        return NextResponse.json({ error: msg }, { status: 500 });
+      }
+      discussModelUnavailable = true;
+      try {
+        chunks = await open(AI_CONFIG.model);
+      } catch (fallbackErr) {
+        const msg = fallbackErr instanceof Error ? fallbackErr.message : "Unknown error";
+        return NextResponse.json({ error: msg }, { status: 500 });
+      }
+    }
+    return streamDiscussReply(chunks);
+  }
 
   let response: GenerateContentResponse;
   try {

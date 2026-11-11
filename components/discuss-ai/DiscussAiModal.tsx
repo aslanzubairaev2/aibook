@@ -112,6 +112,8 @@ export function DiscussAiModal({
 }: Props) {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  // The answer being written, shown as it arrives instead of a spinner.
+  const [streaming, setStreaming] = useState<DiscussContentPart[] | null>(null);
   const appendDictation = useCallback((text: string) => {
     setInput(previous => [previous.trim(), text].filter(Boolean).join(" "));
   }, []);
@@ -136,7 +138,9 @@ export function DiscussAiModal({
   useEffect(() => {
     if (!isOpen) return;
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isOpen]);
+    // Once when an answer starts arriving, not on every word of it: being
+    // dragged down the page while reading is worse than scrolling yourself.
+  }, [messages, isOpen, streaming !== null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Read the learner's level once per opening. A failure here is not worth
   // showing anyone: the discussion just proceeds without the hint.
@@ -223,7 +227,7 @@ export function DiscussAiModal({
         learnerSnapshot: learnerSnapshotRef.current,
         history: [],
         message: INITIAL_DISCUSS_REQUEST,
-      });
+      }, setStreaming);
       if (response.grammarPatterns?.length) {
         saveGrammarPatterns(targetLanguage, response.grammarPatterns);
       }
@@ -243,6 +247,7 @@ export function DiscussAiModal({
         onMessagesChange(fallback);
       }
     } finally {
+      setStreaming(null);
       setIsSending(false);
     }
   }
@@ -295,7 +300,7 @@ export function DiscussAiModal({
         learnerSnapshot: learnerSnapshotRef.current,
         history: historyForApi,
         message: fullText,
-      });
+      }, setStreaming);
       if (response.grammarPatterns?.length) {
         saveGrammarPatterns(targetLanguage, response.grammarPatterns);
       }
@@ -313,6 +318,7 @@ export function DiscussAiModal({
       latestMessagesRef.current = nextMessages;
       onMessagesChange(nextMessages);
     } finally {
+      setStreaming(null);
       setIsSending(false);
     }
   }, [isSending, dictation.busy, quotedText, onMessagesChange, mode, selectedText, sentence, sentenceBefore, sentenceAfter, nativeLanguage, targetLanguage, learnerLevel.summary, wordProfile, homeworkContext]);
@@ -439,7 +445,7 @@ export function DiscussAiModal({
         </header>
 
         <div className="discuss-messages">
-          {messages.length === 0 && (
+          {messages.length === 0 && !streaming && (
             <div className="discuss-empty">
               {isSending ? TYPING_TEXT : EMPTY_TEXT}
             </div>
@@ -473,7 +479,18 @@ export function DiscussAiModal({
               </div>
             </div>
           ))}
-          {isSending && messages.length > 0 && (
+          {streaming && (
+            <div className="discuss-row model" aria-live="polite">
+              <div className="discuss-bubble model-selectable">
+                <DiscussMessageContent
+                  message={{ role: "model", contentParts: streaming }}
+                  lang={targetLanguage}
+                  onWordTap={onWordTap}
+                />
+              </div>
+            </div>
+          )}
+          {isSending && !streaming && messages.length > 0 && (
             <div className="discuss-row model">
               <div className="discuss-bubble typing">
                 <Loader2 size={14} className="spin" />
