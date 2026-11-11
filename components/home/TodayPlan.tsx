@@ -13,7 +13,11 @@ import { BookA, BookOpen, Check, ChevronRight, Flame, Link2, Repeat, Layers } fr
 import {
   getCardVariantProgressMap, getLocalConjugationTenses, getLocalNounsDict, getLocalOtherPosDict,
   getLocalPackProgress, getLocalVerbsDict, getLocalVerbsQuizModes,
+  saveLocalNounsDict, saveLocalOtherPosDict, saveLocalVerbsDict,
 } from "@/lib/db/local";
+import { sbAuthHeaders } from "@/lib/db/supabase";
+import { useAuth } from "@/lib/auth/useAuth";
+import { freshFetch } from "@/lib/net/freshFetch";
 import { normalizeNewPerDay } from "@/lib/cards";
 import { isAdjectiveEntry } from "@/lib/adjectiveEndings";
 import { isNounEntry, nounGender } from "@/lib/nounForms";
@@ -21,6 +25,7 @@ import { isPrepositionEntry, prepositionCaseFor } from "@/lib/prepositionForms";
 import { PROGRESS_SYNCED_EVENT } from "@/lib/sync/progressSync";
 import { buildTodayPlan, type TodayRow, type TodayTrainer } from "@/lib/today";
 import { normalizePos } from "@/lib/verbForms";
+import type { DictionaryBatch, DictionaryEntry } from "@/lib/db/dictionaryStore";
 import type { Book, Flashcard, UserProfile } from "@/lib/types";
 
 type Props = {
@@ -57,6 +62,34 @@ export function TodayPlan({ cards, books, profile, revision = 0, onOpenTrainer, 
   }, []);
 
   const language = profile.targetLanguage;
+
+  // The trainers cache the dictionary the first time they are opened. On a
+  // device where one has not been opened yet its row would simply be missing,
+  // so the dictionary is fetched once here to fill whichever cache is empty.
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+  useEffect(() => {
+    if (!userId) return;
+    if (getLocalVerbsDict(language) && getLocalNounsDict(language) && getLocalOtherPosDict(language)) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await freshFetch(`/api/dictionary?language=${encodeURIComponent(language)}`, { headers: await sbAuthHeaders() });
+        if (!res.ok) return;
+        const data = await res.json() as { entries?: DictionaryEntry[]; batches?: DictionaryBatch[] };
+        if (cancelled) return;
+        const entries = data.entries ?? [];
+        const batches = data.batches ?? [];
+        if (!getLocalVerbsDict(language)) saveLocalVerbsDict(language, entries, batches);
+        if (!getLocalNounsDict(language)) saveLocalNounsDict(language, entries, batches);
+        if (!getLocalOtherPosDict(language)) saveLocalOtherPosDict(language, entries, batches);
+        setSyncTick((n) => n + 1);
+      } catch {
+        // Offline: the rows appear the next time home is opened with a connection.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId, language]);
   const newPerDay = normalizeNewPerDay(profile.cardFilters?.newPerDay);
 
   const plan = useMemo(() => {
