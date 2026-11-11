@@ -38,6 +38,14 @@ export type ModuleProgress = {
   packs: Record<string, { sessions: number; lastTrainedAt: number }>;
   /** Per-drill schedules keyed `${entryId}|${drill}` — only the Глаголы trainer keeps them (lib/srs/drillSchedule.ts). */
   drills?: Record<string, DrillState>;
+  /**
+   * When a word (by entry id) or a pack (`pack:${key}`) was reset, ms since
+   * epoch. Without it a reset could not survive a sync: another device's older
+   * copy still holds the answers and merging would bring them straight back.
+   */
+  removed?: Record<string, number>;
+  /** When «сбросить всё» was last pressed — everything answered before it is gone. */
+  clearedAt?: number;
 };
 
 export type PackCoverage = {
@@ -142,7 +150,7 @@ export function recordSession(progress: ModuleProgress, packKey: string, now: nu
 }
 
 /** Forgets everything about the given words — the pack's «сбросить прогресс». */
-export function resetWords(progress: ModuleProgress, entryIds: string[], packKey?: string): ModuleProgress {
+export function resetWords(progress: ModuleProgress, entryIds: string[], packKey?: string, now: number = Date.now()): ModuleProgress {
   const words = { ...progress.words };
   for (const id of entryIds) delete words[id];
   const packs = { ...progress.packs };
@@ -151,7 +159,16 @@ export function resetWords(progress: ModuleProgress, entryIds: string[], packKey
   const drills = progress.drills
     ? Object.fromEntries(Object.entries(progress.drills).filter(([key]) => !ids.has(key.split("|")[0])))
     : undefined;
-  return drills ? { words, packs, drills } : { words, packs };
+  const removed = { ...progress.removed };
+  for (const id of entryIds) removed[id] = now;
+  if (packKey) removed[`pack:${packKey}`] = now;
+  return {
+    words,
+    packs,
+    ...(drills ? { drills } : {}),
+    removed,
+    ...(progress.clearedAt ? { clearedAt: progress.clearedAt } : {}),
+  };
 }
 
 /** Stable local-calendar key used for the rule «once completed today, skip it today». */
@@ -180,8 +197,60 @@ export function markWordCompleted(progress: ModuleProgress, entryId: string, now
 }
 
 /** Forgets every word and every pack in one trainer module. */
-export function resetAllProgress(): ModuleProgress {
-  return emptyModuleProgress();
+export function resetAllProgress(now: number = Date.now()): ModuleProgress {
+  return { ...emptyModuleProgress(), clearedAt: now };
+}
+
+function newerBy<T>(a: T | undefined, b: T | undefined, time: (value: T) => number): T | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return time(b) > time(a) ? b : a;
+}
+
+/**
+ * Two copies of one module's progress — this device's and the account's —
+ * folded into one. Each word, drill and pack keeps whichever copy was answered
+ * last; a reset on either side removes everything answered before it.
+ *
+ * Symmetric and idempotent, so it does not matter which device syncs first or
+ * how many times the same copy is merged in.
+ */
+export function mergeModuleProgress(a: ModuleProgress, b: ModuleProgress): ModuleProgress {
+  const clearedAt = Math.max(a.clearedAt ?? 0, b.clearedAt ?? 0);
+  const removed: Record<string, number> = {};
+  for (const source of [a.removed, b.removed]) {
+    for (const [id, at] of Object.entries(source ?? {})) {
+      // A reset older than «сбросить всё» says nothing the latter does not.
+      if (at > clearedAt) removed[id] = Math.max(removed[id] ?? 0, at);
+    }
+  }
+  const alive = (id: string, at: number) => at > clearedAt && at > (removed[id] ?? 0);
+
+  const words: Record<string, WordTrainingState> = {};
+  for (const id of new Set([...Object.keys(a.words), ...Object.keys(b.words)])) {
+    const state = newerBy(a.words[id], b.words[id], (w) => w.at);
+    if (state && alive(id, state.at)) words[id] = state;
+  }
+
+  const packs: ModuleProgress["packs"] = {};
+  for (const key of new Set([...Object.keys(a.packs), ...Object.keys(b.packs)])) {
+    const pack = newerBy(a.packs[key], b.packs[key], (p) => p.lastTrainedAt);
+    if (pack && alive(`pack:${key}`, pack.lastTrainedAt)) packs[key] = pack;
+  }
+
+  const drills: Record<string, DrillState> = {};
+  for (const key of new Set([...Object.keys(a.drills ?? {}), ...Object.keys(b.drills ?? {})])) {
+    const drill = newerBy(a.drills?.[key], b.drills?.[key], (d) => d.at);
+    if (drill && alive(key.split("|")[0], drill.at)) drills[key] = drill;
+  }
+
+  return {
+    words,
+    packs,
+    ...(Object.keys(drills).length ? { drills } : {}),
+    ...(Object.keys(removed).length ? { removed } : {}),
+    ...(clearedAt ? { clearedAt } : {}),
+  };
 }
 
 /** «сегодня» / «27 августа» — how the pack head dates its last session. */

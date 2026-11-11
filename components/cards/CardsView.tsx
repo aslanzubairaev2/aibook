@@ -51,7 +51,8 @@ import { makeAiCacheKey, makeDiscussCacheKey, makeWordContextCacheKey } from "@/
 import type { CardVerifyDictionaryEntry } from "@/lib/ai/cardVerify";
 import { CardFixModal, type CardFixApplyResult } from "@/components/cards/CardFixModal";
 import { getLocalAiAnalysis, saveLocalAiAnalysis, getLocalProfile, saveLocalProfile, getSrsSession, saveSrsSession, clearSrsSession, getLocalDiscussHistory, saveLocalDiscussHistory, getCardSkillProgressMap, getCardVariantProgressMap, saveCardVariantProgress } from "@/lib/db/local";
-import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertCardVariantProgress, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
+import { pushCardVariant } from "@/lib/sync/cardOutbox";
+import { sbInsertFlashcard, sbGetDiscussHistory, sbSaveDiscussHistory, sbUpsertSettings, sbAuthHeaders } from "@/lib/db/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
 import { WordModal } from "@/components/word-modal/WordModal";
 import { CardVerbForms, useCardVerbSummary } from "@/components/verbs/VerbPrincipalParts";
@@ -1170,7 +1171,7 @@ export function CardsView({ cards, initialTab, trainBatch, progressRevision = 0,
       const progress = { ...srsUpdate, lastReviewedAt: now };
       saveCardVariantProgress(card.id, variant, progress);
       setVariantProgress(getCardVariantProgressMap());
-      if (user) void sbUpsertCardVariantProgress(user.id, [{ cardId: card.id, variant, progress }]);
+      if (user) void pushCardVariant(user.id, card.id, variant, progress);
       // The card's own lastReviewedAt is deliberately left alone: it is the
       // recognition prompt's record, and stamping it here counted one graded
       // reverse prompt as two reviews in «сделано сегодня». The streak reads

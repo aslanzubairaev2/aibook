@@ -373,12 +373,14 @@ export async function sbInsertFlashcard(card: Omit<DbFlashcard, "id" | "created_
   return (data as { id: string }).id;
 }
 
-export async function sbUpsertFlashcard(card: DbFlashcard): Promise<void> {
-  if (!supabase) return;
+/** False when the write did not reach the account — the caller keeps it for a retry. */
+export async function sbUpsertFlashcard(card: DbFlashcard): Promise<boolean> {
+  if (!supabase) return false;
   const { error } = await supabase
     .from("flashcards")
     .upsert(card, { onConflict: "id" });
   if (error) console.error("sbUpsertFlashcard:", error.message);
+  return !error;
 }
 
 export async function sbDeleteFlashcard(cardId: string): Promise<void> {
@@ -387,10 +389,40 @@ export async function sbDeleteFlashcard(cardId: string): Promise<void> {
   if (error) console.error("sbDeleteFlashcard:", error.message);
 }
 
-export async function sbDeleteFlashcards(cardIds: string[]): Promise<void> {
-  if (!supabase || cardIds.length === 0) return;
+export async function sbDeleteFlashcards(cardIds: string[]): Promise<boolean> {
+  if (!supabase) return false;
+  if (cardIds.length === 0) return true;
   const { error } = await supabase.from("flashcards").delete().in("id", cardIds);
   if (error) console.error("sbDeleteFlashcards:", error.message);
+  return !error;
+}
+
+// ─── Trainer progress documents (user_progress_state) ────────────────────────
+
+export type DbProgressState = { key: string; value: unknown; updated_at: string };
+
+/** Null when the read failed — which must never be mistaken for "nothing stored". */
+export async function sbGetProgressState(userId: string, keys: string[]): Promise<DbProgressState[] | null> {
+  if (!supabase || keys.length === 0) return null;
+  const { data, error } = await supabase
+    .from("user_progress_state")
+    .select("key, value, updated_at")
+    .eq("user_id", userId)
+    .in("key", keys);
+  if (error) {
+    console.error("sbGetProgressState:", error.message);
+    return null;
+  }
+  return (data ?? []) as DbProgressState[];
+}
+
+export async function sbUpsertProgressState(userId: string, key: string, value: unknown): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from("user_progress_state")
+    .upsert({ user_id: userId, key, value, updated_at: new Date().toISOString() }, { onConflict: "user_id,key" });
+  if (error) console.error("sbUpsertProgressState:", error.message);
+  return !error;
 }
 
 export async function sbGetCardVariantProgress(userId: string): Promise<DbCardVariantProgress[] | null> {

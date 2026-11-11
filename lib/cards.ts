@@ -1,4 +1,4 @@
-import { CEFR_LEVELS, type CardFilters, type CardVariantState, type CefrFilterMode, type CefrLevel, type Flashcard, type LearningItemType, type PackSort, type PackTraining, type SkillProgress, type TrainVariant } from "@/lib/types";
+import { CEFR_LEVELS, type CardFilters, type CardSkillState, type CardVariantState, type CefrFilterMode, type CefrLevel, type Flashcard, type LearningItemType, type PackSort, type PackTraining, type SkillProgress, type TrainVariant } from "@/lib/types";
 import { isStrugglingMemory } from "@/lib/srs/fsrs";
 
 export const ALL_TRAIN_VARIANTS: TrainVariant[] = ["forward", "reverse", "audio"];
@@ -93,6 +93,23 @@ export function mergeCardVariantProgress(
     const reverse = newerProgress(local[cardId]?.reverse, remote[cardId]?.reverse);
     const audio = newerProgress(local[cardId]?.audio, remote[cardId]?.audio);
     if (reverse || audio) merged[cardId] = { reverse, audio };
+  }
+  return merged;
+}
+
+/** The same rule for the typed-answer skills (recall / listen / produce) of the active trainer. */
+export function mergeCardSkillProgress(
+  local: Record<string, CardSkillState>,
+  remote: Record<string, CardSkillState>,
+): Record<string, CardSkillState> {
+  const merged: Record<string, CardSkillState> = {};
+  for (const cardId of new Set([...Object.keys(local), ...Object.keys(remote)])) {
+    const state: CardSkillState = {};
+    for (const skill of ["recall", "listen", "produce"] as const) {
+      const progress = newerProgress(local[cardId]?.[skill], remote[cardId]?.[skill]);
+      if (progress) state[skill] = progress;
+    }
+    if (Object.keys(state).length) merged[cardId] = state;
   }
   return merged;
 }

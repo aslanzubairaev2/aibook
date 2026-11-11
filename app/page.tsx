@@ -27,12 +27,14 @@ import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import {
   sbGetBooks, sbGetChapters, sbGetFlashcards, sbGetSettings, sbGetProgress,
   sbGetCardVariantProgress, sbUpsertCardVariantProgress,
-  sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbUpsertFlashcard, sbDeleteFlashcard, sbDeleteFlashcards, sbAuthHeaders, supabase,
+  sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbAuthHeaders, supabase,
   type DbBook, type DbCardVariantProgress, type DbReadingProgress, type DbUserSettings, type DbFlashcard,
 } from "@/lib/db/supabase";
 import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, deleteLocalCards, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalCards, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { flushTrainingEvents } from "@/lib/training/client";
+import { flushCardOutbox, overlayPendingCards, pushCard, pushCardDeletes } from "@/lib/sync/cardOutbox";
+import { pullProgress, startProgressSync, stopProgressSync } from "@/lib/sync/progressSync";
 import { parseBook } from "@/lib/parser/index";
 import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress, type TrainBatch } from "@/lib/cards";
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
@@ -427,6 +429,7 @@ function AppInner() {
     
     // Set dynamic namespace for the specific user before loading from cache
     setLocalNamespace(`user:${userId}`);
+    startProgressSync(userId);
     
     // The saved screen is restored before anything is awaited: it needs no
     // books to be known, and waiting on IndexedDB first is what made a wake-up
@@ -527,7 +530,8 @@ function AppInner() {
 
     // Flashcards
     if (dbCards.length > 0) {
-      const localCards = dbCards.map(dbCardToFlashcard);
+      // An answer still waiting in the outbox is newer than the account's copy.
+      const localCards = overlayPendingCards(dbCards.map(dbCardToFlashcard));
       setCards(localCards);
       // The mirror has to be written too. Cards created server-side — every
       // word of a photographed dictionary batch — existed only in Supabase
@@ -564,6 +568,9 @@ function AppInner() {
       saveLocalProfile(updated);
     }
     setIsRemoteSyncReady(true);
+    // Whatever an earlier visit could not deliver, and the trainers' progress.
+    void flushCardOutbox(userId);
+    void pullProgress();
   }, []);
 
   /**
@@ -594,13 +601,23 @@ function AppInner() {
 
     const localById = new Map(getLocalCards().map((card) => [card.id, card]));
     const reviewedMs = (card?: Flashcard) => (card?.lastReviewedAt ? Date.parse(card.lastReviewedAt) || 0 : 0);
-    const nextCards = dbCards.map(dbCardToFlashcard).map((remote) => {
+    const ahead: Flashcard[] = [];
+    const nextCards = overlayPendingCards(dbCards.map(dbCardToFlashcard).map((remote) => {
       const local = localById.get(remote.id);
-      return local && reviewedMs(local) > reviewedMs(remote) ? local : remote;
-    });
+      if (local && reviewedMs(local) > reviewedMs(remote)) {
+        ahead.push(local);
+        return local;
+      }
+      return remote;
+    }));
     saveLocalCards(nextCards);
     setCards(nextCards);
     setProgressRevision((n) => n + 1);
+    // A local answer the account never received is sent now rather than only
+    // being kept here, so the other devices get it too.
+    for (const card of ahead) void pushCard(userId, card);
+    void flushCardOutbox(userId);
+    void pullProgress().then(() => setProgressRevision((n) => n + 1));
   }, []);
 
   useEffect(() => {
@@ -640,6 +657,7 @@ function AppInner() {
       window.setTimeout(() => void flushTrainingEvents(), 3000);
     } else {
       // Not logged in → switch namespace to guest
+      stopProgressSync();
       setLocalNamespace("guest");
 
       void (async () => {
@@ -791,28 +809,7 @@ function AppInner() {
   function handleUpdateCard(card: Flashcard) {
     saveLocalCard(card);
     setCards((prev) => prev.map((c) => (c.id === card.id ? card : c)));
-    if (user) {
-      const dbCard: DbFlashcard = {
-        id: card.id,
-        user_id: user.id,
-        vocabulary_item_id: null,
-        front: card.front,
-        back: card.back,
-        source_book_title: card.sourceBookTitle || card.source || null,
-        selection_type: card.type,
-        repetitions: card.repetitions,
-        lapses: card.lapses,
-        easiness_factor: card.easeFactor,
-        ...(card.stability != null ? { stability: card.stability, difficulty: card.difficulty ?? null } : {}),
-        interval_days: card.intervalDays,
-        next_review_at: card.dueAt,
-        last_reviewed_at: card.lastReviewedAt || null,
-        source_book_id: card.sourceBookId || null,
-        status: card.status,
-        created_at: card.addedAt || new Date().toISOString(),
-      };
-      void sbUpsertFlashcard(dbCard);
-    }
+    if (user) void pushCard(user.id, card);
   }
 
   function handleDeleteCard(id: string) {
@@ -823,7 +820,7 @@ function AppInner() {
     saveLocalProfile(updatedProfile);
     setProfile(updatedProfile);
     if (user) {
-      void sbDeleteFlashcard(id);
+      void pushCardDeletes(user.id, [id]);
     }
   }
 
@@ -845,7 +842,7 @@ function AppInner() {
       setProfile(updatedProfile);
     });
     if (user) {
-      void sbDeleteFlashcards(ids);
+      void pushCardDeletes(user.id, ids);
     }
   }
 

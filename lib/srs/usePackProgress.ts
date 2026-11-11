@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { PROGRESS_SYNCED_EVENT } from "@/lib/sync/progressSync";
 import { getLocalPackProgress, saveLocalPackProgress } from "@/lib/db/local";
 import { drillId, recordDrillAnswer, type DrillKey } from "@/lib/srs/drillSchedule";
 import { markWordCompleted, recordAnswer, recordSession, resetAllProgress, resetWords, type ModuleProgress, type PackModule } from "@/lib/srs/packProgress";
@@ -18,6 +19,17 @@ export function usePackProgress(module: PackModule) {
   const [progress, setProgress] = useState<ModuleProgress>(() => getLocalPackProgress(module));
   const seenRef = useRef<Set<string>>(new Set());
   const drillSeenRef = useRef<Set<string>>(new Set());
+
+  // Another device's answers arrived and were merged into the local copy:
+  // take that copy, or the next answer here would be saved over it.
+  useEffect(() => {
+    const onSynced = (event: Event) => {
+      if ((event as CustomEvent<{ key: string }>).detail?.key !== `pack_progress:${module}`) return;
+      setProgress(getLocalPackProgress(module));
+    };
+    window.addEventListener(PROGRESS_SYNCED_EVENT, onSynced);
+    return () => window.removeEventListener(PROGRESS_SYNCED_EVENT, onSynced);
+  }, [module]);
 
   /** A session is starting on this pack — stamps it and clears the per-session set. */
   const startSession = useCallback((packKey: string) => {

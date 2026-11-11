@@ -5,6 +5,7 @@ import {
   emptyModuleProgress,
   isCompletedToday,
   markWordCompleted,
+  mergeModuleProgress,
   packCoverage,
   recordAnswer,
   recordSession,
@@ -129,6 +130,46 @@ test("resetAllProgress forgets every word and every pack", () => {
   let progress = session(emptyModuleProgress(), [["a", true], ["b", false]]);
   progress = recordSession(progress, "pack-a", NOW);
   progress = recordSession(progress, "pack-b", NOW);
-  assert.deepEqual(resetAllProgress(), { words: {}, packs: {} });
+  assert.deepEqual(resetAllProgress(NOW), { words: {}, packs: {}, clearedAt: NOW });
   assert.notDeepEqual(progress, resetAllProgress());
+});
+
+test("merging two devices keeps the later answer for each word, drill and pack", () => {
+  const phone: ModuleProgress = {
+    words: { a: { ok: true, attempts: 3, correct: 2, at: NOW + 10 }, b: { ok: false, attempts: 1, correct: 0, at: NOW } },
+    packs: { p: { sessions: 2, lastTrainedAt: NOW + 10 } },
+  };
+  const laptop: ModuleProgress = {
+    words: { a: { ok: false, attempts: 1, correct: 0, at: NOW }, c: { ok: true, attempts: 1, correct: 1, at: NOW + 5 } },
+    packs: { p: { sessions: 1, lastTrainedAt: NOW } },
+  };
+  const merged = mergeModuleProgress(phone, laptop);
+  assert.equal(merged.words.a.attempts, 3);
+  assert.equal(merged.words.b.ok, false);
+  assert.equal(merged.words.c.ok, true);
+  assert.equal(merged.packs.p.sessions, 2);
+  // Order and repetition do not matter.
+  assert.deepEqual(mergeModuleProgress(laptop, phone), merged);
+  assert.deepEqual(mergeModuleProgress(merged, phone), merged);
+});
+
+test("a reset on one device is not undone by another device's older copy", () => {
+  let phone = session(emptyModuleProgress(), [["a", true], ["b", true]]);
+  phone = recordSession(phone, "pack", NOW);
+  const laptop = phone;
+
+  const reset = resetWords(phone, ["a"], "pack", NOW + 1000);
+  const merged = mergeModuleProgress(reset, laptop);
+  assert.equal(merged.words.a, undefined);
+  assert.equal(merged.packs.pack, undefined);
+  assert.equal(merged.words.b.ok, true);
+
+  // Answered again after the reset — that answer stands.
+  const again = recordAnswer(merged, "a", true, true, NOW + 2000);
+  assert.equal(mergeModuleProgress(again, laptop).words.a.at, NOW + 2000);
+
+  // «Сбросить всё» wins over everything answered before it, on any device.
+  const cleared = mergeModuleProgress(resetAllProgress(NOW + 3000), again);
+  assert.deepEqual(cleared.words, {});
+  assert.deepEqual(cleared.packs, {});
 });

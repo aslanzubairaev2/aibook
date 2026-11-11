@@ -75,6 +75,15 @@ export function getLocalNamespace(): string {
   return activeNamespace;
 }
 
+// Trainer progress is mirrored to the account by lib/sync/progressSync.ts. It
+// registers itself here rather than being imported, so this module stays free
+// of any network code; the listener is told which collection just changed.
+let progressWriteListener: ((key: string) => void) | null = null;
+
+export function setProgressWriteListener(listener: ((key: string) => void) | null) {
+  progressWriteListener = listener;
+}
+
 // The legacy → namespaced copy only has to happen once per key per session.
 const migratedKeys = new Set<string>();
 
@@ -861,6 +870,19 @@ export function saveCardSkillProgress(cardId: string, skill: ProductiveSkill, pr
   } catch {
     // silently fail
   }
+  progressWriteListener?.("card_skill_progress");
+}
+
+/** Replaces the local copy after it has been merged with the account's (lib/sync/progressSync.ts). */
+export function saveCardSkillProgressMap(progress: SkillProgressMap): void {
+  if (typeof window === "undefined") return;
+  const nsKey = getNsKey(SKILL_PROGRESS_KEY);
+  skillCache = { key: nsKey, value: progress };
+  try {
+    localStorage.setItem(nsKey, JSON.stringify(progress));
+  } catch {
+    // silently fail
+  }
 }
 
 // Recognize-mode "reverse"/"audio" variant progress, keyed by card id. The
@@ -1164,9 +1186,9 @@ export function saveLocalOtherPosOpenGroups(keys: Set<string>): void {
 
 // ─── Pack training coverage (Глаголы / Существительные) ──────────────────────
 //
-// Local only, like the productive-recall skill progress above: the remote
-// tables have no column for it, and this is a per-device sense of "прошёл ли я
-// эту пачку", not a schedule that has to be shared between devices.
+// Read and written here for speed and offline use; the account's copy is kept
+// in step by lib/sync/progressSync.ts (the verb drills carry real schedules,
+// which must not die with one browser's site data).
 
 export function getLocalPackProgress(module: PackModule): ModuleProgress {
   if (typeof window === "undefined") return emptyModuleProgress();
@@ -1174,18 +1196,26 @@ export function getLocalPackProgress(module: PackModule): ModuleProgress {
     const raw = localStorage.getItem(getNsKey(`${PACK_PROGRESS_KEY}_${module}`));
     if (!raw) return emptyModuleProgress();
     const parsed = JSON.parse(raw) as Partial<ModuleProgress>;
-    return { words: parsed.words ?? {}, packs: parsed.packs ?? {}, ...(parsed.drills ? { drills: parsed.drills } : {}) };
+    return {
+      words: parsed.words ?? {},
+      packs: parsed.packs ?? {},
+      ...(parsed.drills ? { drills: parsed.drills } : {}),
+      ...(parsed.removed ? { removed: parsed.removed } : {}),
+      ...(parsed.clearedAt ? { clearedAt: parsed.clearedAt } : {}),
+    };
   } catch {
     return emptyModuleProgress();
   }
 }
 
-export function saveLocalPackProgress(module: PackModule, progress: ModuleProgress): void {
+/** `silent` is for the sync itself writing a merged copy back — that is not a new answer to upload. */
+export function saveLocalPackProgress(module: PackModule, progress: ModuleProgress, options?: { silent?: boolean }): void {
   try {
     localStorage.setItem(getNsKey(`${PACK_PROGRESS_KEY}_${module}`), JSON.stringify(progress));
   } catch {
     // silently fail
   }
+  if (!options?.silent) progressWriteListener?.(`pack_progress:${module}`);
 }
 
 export function getLocalNounsQuizPresentations(): NounQuizPresentation[] {
