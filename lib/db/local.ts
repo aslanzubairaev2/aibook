@@ -125,6 +125,7 @@ let skillCache: ReadCache<SkillProgressMap> = null;
 
 function invalidateReadCaches() {
   cardsCache = null;
+  cardsHydratedKey = null;
   variantCache = null;
   skillCache = null;
   migratedKeys.clear();
@@ -141,7 +142,6 @@ function watchCrossTabWrites() {
       invalidateReadCaches();
       return;
     }
-    if (event.key.endsWith(CARDS_KEY)) cardsCache = null;
     if (event.key.endsWith(VARIANT_PROGRESS_KEY)) variantCache = null;
     if (event.key.endsWith(SKILL_PROGRESS_KEY)) skillCache = null;
   });
@@ -295,6 +295,121 @@ export async function deleteLocalBook(id: string): Promise<void> {
 }
 
 // --- Cards ---
+//
+// The deck lives in IndexedDB; what the rest of the app reads is an in-memory
+// copy of it. It used to be one JSON string in localStorage, rewritten in full
+// on every single grade and silently dropped once the ~5 MB quota was reached
+// (a few thousand cards with examples). Reads stay synchronous — the training
+// queue asks for the deck constantly — so the copy has to be loaded once per
+// account with hydrateLocalCards() before anything is shown.
+
+let cardsHydratedKey: string | null = null;
+let cardsHydrating: { key: string; promise: Promise<Flashcard[]> } | null = null;
+let cardsWriteQueued = false;
+let cardsWriting: Promise<void> | null = null;
+let cardsChannel: BroadcastChannel | null = null;
+
+function cardsBroadcast(): BroadcastChannel | null {
+  if (cardsChannel || typeof window === "undefined" || typeof BroadcastChannel === "undefined") return cardsChannel;
+  cardsChannel = new BroadcastChannel("aibook-cards");
+  // Another tab changed the deck: take its copy, or the next write from this
+  // tab would put the old deck back.
+  cardsChannel.onmessage = (event) => {
+    const key = event.data as string;
+    if (key !== cardsHydratedKey) return;
+    void getIDBValue(key).then((value) => {
+      if (Array.isArray(value) && key === getNsKey(CARDS_KEY)) cardsCache = { key, value: value as Flashcard[] };
+    });
+  };
+  return cardsChannel;
+}
+
+function readLegacyCards(nsKey: string): Flashcard[] | null {
+  try {
+    const raw = localStorage.getItem(nsKey);
+    return raw ? (JSON.parse(raw) as Flashcard[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Loads the deck of the active account into memory. Call (and await) it after
+ * every namespace switch, before the first getLocalCards().
+ */
+export function hydrateLocalCards(): Promise<Flashcard[]> {
+  if (typeof window === "undefined") return Promise.resolve([]);
+  const nsKey = getNsKey(CARDS_KEY);
+  if (cardsHydratedKey === nsKey && cardsCache?.key === nsKey) return Promise.resolve(cardsCache.value);
+  if (cardsHydrating?.key === nsKey) return cardsHydrating.promise;
+  const promise = (async () => {
+    const stored = await getIDBValue(nsKey);
+    let cards: Flashcard[];
+    if (Array.isArray(stored)) {
+      cards = stored as Flashcard[];
+    } else {
+      // First run after the move: carry the localStorage deck over.
+      cards = readLegacyCards(nsKey) ?? [];
+      if (cards.length > 0) {
+        try {
+          await setIDBValue(nsKey, cards);
+          localStorage.removeItem(nsKey);
+        } catch {
+          // IndexedDB refused; the localStorage copy stays where it is.
+        }
+      }
+    }
+    // The account may have been switched, or the deck replaced from the
+    // server, while this was being read — then that newer state stands.
+    if (getNsKey(CARDS_KEY) !== nsKey) return cards;
+    if (cardsHydratedKey === nsKey && cardsCache?.key === nsKey) return cardsCache.value;
+    cardsCache = { key: nsKey, value: cards };
+    cardsHydratedKey = nsKey;
+    cardsBroadcast();
+    return cards;
+  })().finally(() => {
+    if (cardsHydrating?.key === nsKey) cardsHydrating = null;
+  });
+  cardsHydrating = { key: nsKey, promise };
+  return promise;
+}
+
+async function persistCards(): Promise<void> {
+  // Whatever is in memory when the turn comes is what gets written, so a burst
+  // of grades costs one write, not one each.
+  const snapshot = cardsCache;
+  if (!snapshot) return;
+  try {
+    await setIDBValue(snapshot.key, snapshot.value);
+    try {
+      localStorage.removeItem(snapshot.key);
+    } catch {
+      // ignore
+    }
+    cardsBroadcast()?.postMessage(snapshot.key);
+  } catch {
+    // No IndexedDB (some private modes): fall back to the old place.
+    try {
+      localStorage.setItem(snapshot.key, JSON.stringify(snapshot.value));
+    } catch {
+      // Storage full or unavailable — the in-memory copy still serves this session.
+    }
+  }
+}
+
+function schedulePersistCards() {
+  if (cardsWriteQueued) return;
+  cardsWriteQueued = true;
+  cardsWriting = (cardsWriting ?? Promise.resolve()).then(() => {
+    cardsWriteQueued = false;
+    return persistCards();
+  });
+}
+
+/** Resolves once every change made so far is on disk. */
+export function flushLocalCards(): Promise<void> {
+  return cardsWriting ?? Promise.resolve();
+}
 
 /**
  * The cached array is shared, not copied — callers must treat it as read-only
@@ -303,46 +418,53 @@ export async function deleteLocalBook(id: string): Promise<void> {
 export function getLocalCards(): Flashcard[] {
   if (typeof window === "undefined") return [];
   const nsKey = getNsKey(CARDS_KEY);
-  const read = readCached(cardsCache, nsKey, () => {
-    try {
-      return JSON.parse(localStorage.getItem(nsKey) ?? "[]") as Flashcard[];
-    } catch {
-      return [];
-    }
+  if (cardsCache?.key === nsKey) return cardsCache.value;
+  // Not hydrated yet: an old localStorage deck is still better than nothing,
+  // but it is not cached — hydration decides what the deck really is.
+  return readLegacyCards(nsKey) ?? [];
+}
+
+/**
+ * A change to one card needs the whole deck in memory first: applied to a
+ * deck that has not been loaded, it would write a one-card deck over the real one.
+ */
+function withHydratedCards(change: (cards: Flashcard[]) => Flashcard[]): void {
+  if (typeof window === "undefined") return;
+  const nsKey = getNsKey(CARDS_KEY);
+  if (cardsHydratedKey === nsKey && cardsCache?.key === nsKey) {
+    saveLocalCards(change(cardsCache.value));
+    return;
+  }
+  void hydrateLocalCards().then((cards) => {
+    if (getNsKey(CARDS_KEY) === nsKey) saveLocalCards(change(cards));
   });
-  cardsCache = read.cache;
-  return read.value;
 }
 
 export function saveLocalCard(card: Flashcard): void {
-  const cards = getLocalCards();
-  const idx = cards.findIndex((c) => c.id === card.id);
-  const next = idx >= 0
-    ? cards.map((c, i) => (i === idx ? card : c))
-    : [card, ...cards];
-  saveLocalCards(next);
+  withHydratedCards((cards) => {
+    const idx = cards.findIndex((c) => c.id === card.id);
+    return idx >= 0 ? cards.map((c, i) => (i === idx ? card : c)) : [card, ...cards];
+  });
 }
 
+/** Replaces the whole deck (after a load from the account, or a bulk change). */
 export function saveLocalCards(cards: Flashcard[]): void {
   if (typeof window === "undefined") return;
   const nsKey = getNsKey(CARDS_KEY);
   cardsCache = { key: nsKey, value: cards };
-  try {
-    localStorage.setItem(nsKey, JSON.stringify(cards));
-  } catch {
-    // Storage full or unavailable — the in-memory copy still serves this session.
-  }
+  cardsHydratedKey = nsKey;
+  schedulePersistCards();
 }
 
 export function deleteLocalCard(id: string): void {
-  saveLocalCards(getLocalCards().filter((c) => c.id !== id));
+  withHydratedCards((cards) => cards.filter((c) => c.id !== id));
 }
 
-/** Remove several cards in one localStorage write. */
+/** Remove several cards in one write. */
 export function deleteLocalCards(ids: Iterable<string>): void {
   const idsToDelete = new Set(ids);
   if (idsToDelete.size === 0) return;
-  saveLocalCards(getLocalCards().filter((c) => !idsToDelete.has(c.id)));
+  withHydratedCards((cards) => cards.filter((c) => !idsToDelete.has(c.id)));
 }
 
 

@@ -30,7 +30,7 @@ import {
   sbUpsertBook, sbUpsertChapter, sbUpsertLastView, sbAuthHeaders, supabase,
   type DbBook, type DbCardVariantProgress, type DbReadingProgress, type DbUserSettings, type DbFlashcard,
 } from "@/lib/db/supabase";
-import { getLocalBooks, getLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, deleteLocalCards, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalCards, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
+import { getLocalBooks, getLocalCards, hydrateLocalCards, getLocalLastView, getLocalProfile, saveLocalBook, saveLocalCard, deleteLocalCard, deleteLocalCards, saveLocalLastView, saveLocalProfile, saveLocalBooks, saveLocalCards, saveLocalReaderSelection, saveLocalProgressAnchor, setLocalNamespace, getLocalNamespace, getCardVariantProgressMap, saveCardVariantProgressMap } from "@/lib/db/local";
 import { freshFetch } from "@/lib/net/freshFetch";
 import { flushTrainingEvents } from "@/lib/training/client";
 import { flushCardOutbox, overlayPendingCards, pushCard, pushCardDeletes } from "@/lib/sync/cardOutbox";
@@ -440,11 +440,11 @@ function AppInner() {
     }
 
     // Load from cache immediately for instant UI
-    const localBooks = await getLocalBooks();
+    const [localBooks, storedCards] = await Promise.all([getLocalBooks(), hydrateLocalCards()]);
     // Shared lessons are cached alongside own books for instant resume,
     // but they don't belong in the library list.
     setBooks(localBooks.filter((b) => !b.sharedBookId));
-    setCards(getLocalCards());
+    setCards(overlayPendingCards(storedCards));
     setProfile(getLocalProfile());
     
     if (lastView?.section === "reader" && lastView.bookId) {
@@ -661,10 +661,10 @@ function AppInner() {
       setLocalNamespace("guest");
 
       void (async () => {
-        const guestBooks = await getLocalBooks();
+        const [guestBooks, guestCards] = await Promise.all([getLocalBooks(), hydrateLocalCards()]);
         const lastView = getLocalLastView();
         setBooks(guestBooks.filter((b) => !b.sharedBookId));
-        setCards(getLocalCards());
+        setCards(guestCards);
         setProfile(getLocalProfile());
         
         if (lastView?.section === "reader" && lastView.bookId) {
