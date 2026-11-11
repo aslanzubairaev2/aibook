@@ -8,21 +8,11 @@ import { FLASHCARD_PREVIEW_EVENT } from "@/lib/wordMenu";
 import { AppShell } from "@/components/ui/AppShell";
 import { AudioScrubber } from "@/components/ui/AudioScrubber";
 import { HomeDashboard } from "@/components/home/HomeDashboard";
-import { LiveChatModal } from "@/components/livechat/LiveChatModal";
-import { LiveTranslateView } from "@/components/live-translate/LiveTranslateView";
-import { LibraryView } from "@/components/library/LibraryView";
-import { DiscoverView } from "@/components/discover/DiscoverView";
-import { ReaderView } from "@/components/reader/ReaderView";
-import { CardsView } from "@/components/cards/CardsView";
-import { VerbsView } from "@/components/verbs/VerbsView";
-import { NounsView } from "@/components/nouns/NounsView";
-import { OtherPosView } from "@/components/otherpos/OtherPosView";
-import { PracticeView } from "@/components/practice/PracticeView";
-import { PronounsView } from "@/components/pronouns/PronounsView";
-import { GrammarView } from "@/components/grammar/GrammarView";
-import { DictionaryView } from "@/components/dictionary/DictionaryView";
-import { SettingsView } from "@/components/settings/SettingsView";
-import { AuthScreen } from "@/components/auth/AuthScreen";
+import {
+  AuthScreen, CardsView, DictionaryView, DiscoverView, GrammarView, HomeworkView, LibraryView, LiveChatModal,
+  LiveTranslateView, NounsView, OtherPosView, PracticeView, PronounsView, ReaderView, SettingsView, VerbsView,
+  preloadScreens,
+} from "@/components/ui/lazyScreens";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import {
   sbGetBooks, sbGetChapters, sbGetFlashcards, sbGetSettings, sbGetProgress,
@@ -40,7 +30,7 @@ import { ALL_TRAIN_VARIANTS, mergeCardVariantProgress, type TrainBatch } from "@
 import { normalizeTtsProvider } from "@/lib/ttsProviders";
 import { normalizeLiveTranslateProvider } from "@/lib/ai/liveTranslateState";
 import type { AppSection, Book, CardVariantState, Flashcard, ReaderProgressSnapshot, UserProfile } from "@/lib/types";
-import { HomeworkView, type HomeworkBook } from "@/components/homework/HomeworkView";
+import type { HomeworkBook } from "@/components/homework/HomeworkView";
 import type { HomeworkAnswers } from "@/components/homework/homeworkAnswers";
 import { assignHomeworkAnswerKeys, parseExercise, type HomeworkExercise } from "@/lib/ai/buildHomeworkPrompt";
 
@@ -1103,6 +1093,18 @@ function AppInner() {
     setSection("discover");
   }, [profile.targetLanguage]);
 
+  // The other screens' code is fetched while the first one is being looked
+  // at, so a tab tapped a moment later opens without a wait.
+  useEffect(() => {
+    if (!isHydrated) return;
+    return preloadScreens();
+  }, [isHydrated]);
+
+  // The voice chat keeps its state between openings, so once opened it stays
+  // mounted — but there is no reason to load it before the first call.
+  const [liveChatMounted, setLiveChatMounted] = useState(false);
+  if (isLiveChatOpen && !liveChatMounted) setLiveChatMounted(true);
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   if (authLoading || !isHydrated) {
@@ -1314,7 +1316,7 @@ function AppInner() {
         />
       )}
       <AudioScrubber />
-      <LiveChatModal
+      {liveChatMounted && <LiveChatModal
         isOpen={isLiveChatOpen}
         nativeLanguage={profile.nativeLanguage}
         targetLanguage={profile.targetLanguage}
@@ -1323,7 +1325,7 @@ function AppInner() {
         onAddCard={handleAddCard}
         onClose={() => { setIsLiveChatOpen(false); setLiveChatTextContext(null); }}
         onOpenSettings={() => { setIsLiveChatOpen(false); setLiveChatTextContext(null); setSection("settings"); }}
-      />
+      />}
     </AppShell>
   );
 }
